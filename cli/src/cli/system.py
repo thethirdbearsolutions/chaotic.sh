@@ -211,11 +211,16 @@ def generate_systemd_service(port: int, secret_key: str) -> str:
     """Generate systemd user service file content.
 
     Paths are quoted to handle spaces and special characters safely.
+    systemd uses a minimal PATH, so we explicitly include common tool paths.
     """
+    home = Path.home()
     # Quote paths for systemd (handles spaces and special chars)
     project_dir = shlex.quote(str(PROJECT_DIR))
     database_path = shlex.quote(str(DATABASE_PATH))
     database_url = shlex.quote(f"sqlite+aiosqlite:///{DATABASE_PATH}")
+
+    # Common paths where just/uv might be installed
+    extra_paths = f"{home}/.local/bin:{home}/.cargo/bin:/usr/local/bin"
 
     return f"""[Unit]
 Description=Chaotic Server
@@ -227,6 +232,7 @@ WorkingDirectory={project_dir}
 ExecStart=/usr/bin/env just serve-prod
 Restart=on-failure
 RestartSec=5
+Environment=PATH={extra_paths}:/usr/bin:/bin
 Environment=DATABASE_URL={database_url}
 Environment=DATABASE_PATH={database_path}
 Environment=PORT={port}
