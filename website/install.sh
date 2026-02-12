@@ -143,7 +143,14 @@ main() {
 
     # Auto-install uv if missing
     if ! has_command uv; then
-        printf "  uv: ${YELLOW}MISSING${NC} - will install automatically\n"
+        printf "  uv: ${YELLOW}MISSING${NC}\n"
+        if [ -t 0 ]; then
+            printf "  Install uv now? [Y/n] "
+            read _answer < /dev/tty
+            case "$_answer" in
+                [nN]*) error "uv is required. Install manually: https://docs.astral.sh/uv/" ;;
+            esac
+        fi
         info "Installing uv..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
@@ -158,7 +165,14 @@ main() {
 
     # Auto-install just if missing (via uv from PyPI)
     if ! has_command just; then
-        printf "  just: ${YELLOW}MISSING${NC} - will install automatically\n"
+        printf "  just: ${YELLOW}MISSING${NC}\n"
+        if [ -t 0 ]; then
+            printf "  Install just now? [Y/n] "
+            read _answer < /dev/tty
+            case "$_answer" in
+                [nN]*) error "just is required. Install manually: https://github.com/casey/just#installation" ;;
+            esac
+        fi
         info "Installing just..."
         uv tool install rust-just
         export PATH="$HOME/.local/bin:$PATH"
