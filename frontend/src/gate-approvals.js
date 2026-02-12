@@ -138,8 +138,8 @@ async function handleReviewApproval(event, ritualId, issueId, ritualName) {
 /**
  * Entry point for review approve buttons in the approvals list.
  */
-function approveReviewFromList(ritualId, issueId, ritualName, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote) {
-    showReviewApprovalModal(ritualId, issueId, ritualName, '', issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote);
+function approveReviewFromList(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote) {
+    showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote);
 }
 
 // Export to window for onclick handlers

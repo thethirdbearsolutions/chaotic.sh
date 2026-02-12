@@ -5502,6 +5502,36 @@ input[type="checkbox"] {
     align-self: center;
 }
 
+.gate-attestation-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    border-left: 3px solid var(--accent-color);
+}
+
+.gate-approval-attestation-note {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    border-left: 3px solid var(--accent-color);
+}
+
+.badge-gate {
+    background: var(--badge-urgent-bg, #f97316);
+    color: var(--badge-urgent-text, #fff);
+}
+
+.badge-review {
+    background: var(--badge-medium-bg, #3b82f6);
+    color: var(--badge-medium-text, #fff);
+}
+
 /* ============================================================================
    Sprint Detail View
    ============================================================================ */

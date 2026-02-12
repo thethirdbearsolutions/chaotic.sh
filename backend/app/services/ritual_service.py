@@ -1216,44 +1216,15 @@ class RitualService:
                                       requested_by_name, requested_at}
         """
         from app.models.project import Project
-        from app.models.user import User
 
-        # Get the project
         project = await self.db.get(Project, project_id)
         if not project:
             return []
 
-        # Self-heal: clear any orphaned limbo records where attestation exists (CHT-730)
-        try:
-            await self._cleanup_orphaned_ticket_limbo(project_id)
-        except Exception:
-            logger.exception(
-                "Failed to cleanup orphaned limbo records for project=%s",
-                project_id,
-            )
-
-        # Get all uncleared limbo records for issues in this project
-        limbo_records = await self.db.execute(
-            select(TicketLimbo)
-            .join(Issue, TicketLimbo.issue_id == Issue.id)
-            .join(Ritual, TicketLimbo.ritual_id == Ritual.id)
-            .where(
-                Issue.project_id == project_id,
-                TicketLimbo.cleared_at.is_(None),
-                Ritual.is_active == True,
-            )
-            .options(
-                selectinload(TicketLimbo.issue),
-                selectinload(TicketLimbo.ritual),
-                selectinload(TicketLimbo.requested_by),
-            )
-        )
-        limbo_records = list(limbo_records.scalars().all())
-
+        limbo_records = await self._get_pending_gate_limbo_records(project_id)
         if not limbo_records:
             return []
 
-        # Group by issue
         issues_map: dict[str, dict] = {}
         for limbo in limbo_records:
             issue = limbo.issue
@@ -1283,29 +1254,8 @@ class RitualService:
 
         return list(issues_map.values())
 
-    async def get_issues_with_pending_approvals(self, project_id: str) -> list[dict]:
-        """Get issues with any pending human action — GATE or REVIEW rituals.
-
-        Combines:
-        - GATE rituals: from TicketLimbo (existing logic)
-        - REVIEW rituals: from RitualAttestation where approved_at IS NULL
-
-        Returns a list of dicts with:
-            - issue_id, identifier, title, status, project_id, project_name
-            - pending_approvals: list of {ritual_id, ritual_name, ritual_prompt, trigger,
-                                          approval_mode, limbo_type, requested_by_name,
-                                          requested_at, attestation_note}
-        """
-        from app.models.project import Project
-        from app.models.user import User
-
-        project = await self.db.get(Project, project_id)
-        if not project:
-            return []
-
-        issues_map: dict[str, dict] = {}
-
-        # 1. GATE rituals from TicketLimbo (same as get_issues_with_pending_gates)
+    async def _get_pending_gate_limbo_records(self, project_id: str):
+        """Get uncleared limbo records for a project (shared by gates and approvals queries)."""
         try:
             await self._cleanup_orphaned_ticket_limbo(project_id)
         except Exception:
@@ -1314,7 +1264,7 @@ class RitualService:
                 project_id,
             )
 
-        limbo_records = await self.db.execute(
+        result = await self.db.execute(
             select(TicketLimbo)
             .join(Issue, TicketLimbo.issue_id == Issue.id)
             .join(Ritual, TicketLimbo.ritual_id == Ritual.id)
@@ -1329,27 +1279,50 @@ class RitualService:
                 selectinload(TicketLimbo.requested_by),
             )
         )
-        for limbo in limbo_records.scalars().all():
-            issue = limbo.issue
-            ritual = limbo.ritual
-            requested_by = limbo.requested_by
+        return list(result.scalars().all())
 
-            if issue.id not in issues_map:
-                issues_map[issue.id] = {
+    async def get_issues_with_pending_approvals(self, project_id: str) -> list[dict]:
+        """Get issues with any pending human action — GATE or REVIEW rituals.
+
+        Combines:
+        - GATE rituals: from TicketLimbo (shared query)
+        - REVIEW rituals: from RitualAttestation where approved_at IS NULL
+
+        Returns a list of dicts with:
+            - issue_id, identifier, title, status, project_id, project_name
+            - pending_approvals: list of {ritual_id, ritual_name, ritual_prompt, trigger,
+                                          approval_mode, limbo_type, requested_by_name,
+                                          requested_at, attestation_note}
+        """
+        from app.models.project import Project
+
+        project = await self.db.get(Project, project_id)
+        if not project:
+            return []
+
+        issues_map: dict[str, dict] = {}
+
+        def _ensure_issue(issue_id, issue, list_key="pending_approvals"):
+            if issue_id not in issues_map:
+                issues_map[issue_id] = {
                     "issue_id": issue.id,
                     "identifier": issue.identifier,
                     "title": issue.title,
                     "status": issue.status.value,
                     "project_id": project_id,
                     "project_name": project.name,
-                    "pending_approvals": [],
+                    list_key: [],
                 }
 
-            issues_map[issue.id]["pending_approvals"].append({
-                "ritual_id": ritual.id,
-                "ritual_name": ritual.name,
-                "ritual_prompt": ritual.prompt,
-                "trigger": ritual.trigger.value,
+        # 1. GATE rituals from TicketLimbo
+        for limbo in await self._get_pending_gate_limbo_records(project_id):
+            _ensure_issue(limbo.issue.id, limbo.issue)
+            requested_by = limbo.requested_by
+            issues_map[limbo.issue.id]["pending_approvals"].append({
+                "ritual_id": limbo.ritual.id,
+                "ritual_name": limbo.ritual.name,
+                "ritual_prompt": limbo.ritual.prompt,
+                "trigger": limbo.ritual.trigger.value,
                 "approval_mode": "gate",
                 "limbo_type": limbo.limbo_type.value,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
@@ -1376,26 +1349,13 @@ class RitualService:
             )
         )
         for attestation in review_attestations.scalars().all():
-            issue = attestation.issue
-            ritual = attestation.ritual
+            _ensure_issue(attestation.issue.id, attestation.issue)
             attester = attestation.attester
-
-            if issue.id not in issues_map:
-                issues_map[issue.id] = {
-                    "issue_id": issue.id,
-                    "identifier": issue.identifier,
-                    "title": issue.title,
-                    "status": issue.status.value,
-                    "project_id": project_id,
-                    "project_name": project.name,
-                    "pending_approvals": [],
-                }
-
-            issues_map[issue.id]["pending_approvals"].append({
-                "ritual_id": ritual.id,
-                "ritual_name": ritual.name,
-                "ritual_prompt": ritual.prompt,
-                "trigger": ritual.trigger.value,
+            issues_map[attestation.issue.id]["pending_approvals"].append({
+                "ritual_id": attestation.ritual.id,
+                "ritual_name": attestation.ritual.name,
+                "ritual_prompt": attestation.ritual.prompt,
+                "trigger": attestation.ritual.trigger.value,
                 "approval_mode": "review",
                 "limbo_type": None,
                 "requested_by_name": attester.name if attester else "Unknown",

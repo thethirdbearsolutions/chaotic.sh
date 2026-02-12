@@ -2048,13 +2048,17 @@ function renderGateApprovals() {
         return;
     }
 
-    // Use pending_approvals if available (new endpoint), fall back to pending_gates (old)
-    const getApprovals = (item) => item.pending_approvals || item.pending_gates || [];
+    // Filter helper: returns only the approvals matching a predicate
+    const getApprovals = (item) => item.pending_approvals || [];
+    const filterPred = (pred) => (item) => {
+        const filtered = getApprovals(item).filter(pred);
+        return filtered.length > 0 ? { ...item, _filteredApprovals: filtered } : null;
+    };
 
-    // Group by type: GATE claim, GATE close, REVIEW
-    const claimGates = pendingItems.filter(g => getApprovals(g).some(r => r.approval_mode === 'gate' && r.limbo_type === 'claim'));
-    const closeGates = pendingItems.filter(g => getApprovals(g).some(r => r.approval_mode === 'gate' && r.limbo_type === 'close'));
-    const reviewItems = pendingItems.filter(g => getApprovals(g).some(r => r.approval_mode === 'review'));
+    // Group by type: GATE claim, GATE close, REVIEW (each issue only shows matching rituals per section)
+    const claimGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'claim')).filter(Boolean);
+    const closeGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'close')).filter(Boolean);
+    const reviewItems = pendingItems.map(filterPred(r => r.approval_mode === 'review')).filter(Boolean);
 
     let html = '';
 
@@ -2121,6 +2125,7 @@ function renderGateApprovals() {
                 d.ritualId,
                 d.issueId,
                 d.ritualName,
+                d.ritualPrompt,
                 d.issueIdentifier,
                 d.issueTitle,
                 d.requestedBy,
@@ -2132,7 +2137,7 @@ function renderGateApprovals() {
 }
 
 function renderApprovalIssue(approvalIssue) {
-    const approvals = approvalIssue.pending_approvals || approvalIssue.pending_gates || [];
+    const approvals = approvalIssue._filteredApprovals || approvalIssue.pending_approvals || [];
     const ritualList = approvals.map(r => {
         const isReview = r.approval_mode === 'review';
         const waitingLabel = isReview ? 'Attested by' : 'Waiting';
