@@ -411,6 +411,9 @@ def list_profiles() -> list[str]:
                     continue
                 if f.is_file() and f.suffix == ".json":
                     name = f.stem
+                    # Skip non-profile JSON files
+                    if name == "server":
+                        continue
                     # Include 'config' as 'default' for clarity
                     if name == "config":
                         profiles.append("default")
