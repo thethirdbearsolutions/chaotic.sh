@@ -139,6 +139,7 @@ def resolve_project(identifier: str) -> dict:
     Raises:
         click.ClickException if project not found
     """
+    identifier = identifier.strip()
     team_id = get_current_team()
     projects = client.get_projects(team_id)
 
@@ -163,6 +164,19 @@ def resolve_project(identifier: str) -> dict:
     for p in projects:
         if p["name"].lower() == identifier_lower:
             return p
+
+    # Try UUID prefix match
+    prefix_matches = [p for p in projects if p["id"].startswith(identifier)]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    if len(prefix_matches) > 1:
+        matches = "\n".join(
+            f"  {p['id']} ({p.get('key', '?')}: {p.get('name', 'Unnamed')})"
+            for p in prefix_matches
+        )
+        raise click.ClickException(
+            f"Ambiguous project ID prefix '{identifier}'. Matches:\n{matches}"
+        )
 
     raise click.ClickException(f"Project not found: '{identifier}'")
 
@@ -880,18 +894,23 @@ def project():
 
 
 @project.command("list")
+@json_option
 @require_team
 @handle_error
 def project_list():
     """List all projects in current team."""
     projects = client.get_projects(get_current_team())
+    if is_json_output():
+        output_json(projects)
+        return
+
     if not projects:
         console.print("[yellow]No projects found. Create one with 'chaotic project create'[/yellow]")
         return
 
     current = get_current_project()
     table = Table(title="Projects")
-    table.add_column("ID", style="dim")
+    table.add_column("ID", style="dim", overflow="fold")
     table.add_column("Key")
     table.add_column("Name")
     table.add_column("Issues")

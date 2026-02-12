@@ -43,6 +43,16 @@ def sample_teams():
     ]
 
 
+@pytest.fixture
+def sample_projects():
+    """Sample project data for testing."""
+    return [
+        {"id": "88c62d3e-ba4c-4a1a-96d4-6115d83f4826", "key": "CHT", "name": "Chaotic"},
+        {"id": "822aa9f8-fb31-4d88-b610-31d3361a9f62", "key": "WEB", "name": "Web Platform"},
+        {"id": "88c62d3e-0000-0000-0000-000000000000", "key": "CHT2", "name": "Chaotic 2"},
+    ]
+
+
 # =============================================================================
 # Document ID Resolution Tests
 # =============================================================================
@@ -478,3 +488,45 @@ class TestResolveTeamIdResolutionOrder:
         # "abc" should match the key first
         result = resolve_team_id("abc")
         assert result == "id-1"  # Matched by key
+
+
+# =============================================================================
+# Project ID Resolution Tests
+# =============================================================================
+
+class TestResolveProject:
+    """Tests for project resolution by ID/key/name/prefix."""
+
+    def test_exact_uuid_match(self, sample_projects):
+        """Full UUID should resolve directly."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            result = resolve_project("88c62d3e-ba4c-4a1a-96d4-6115d83f4826")
+
+        assert result["key"] == "CHT"
+
+    def test_prefix_match_single(self, sample_projects):
+        """Unique UUID prefix should resolve."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            result = resolve_project("822aa9f8")
+
+        assert result["key"] == "WEB"
+
+    def test_prefix_match_ambiguous_raises_error(self, sample_projects):
+        """Ambiguous prefix should fail with actionable message."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            with pytest.raises(click.ClickException) as exc_info:
+                resolve_project("88c62d3e")
+
+        assert "Ambiguous project ID prefix" in str(exc_info.value)

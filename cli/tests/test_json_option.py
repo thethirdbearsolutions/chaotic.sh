@@ -53,6 +53,22 @@ class TestJsonAfterSubcommand:
         data = json.loads(result.output)
         assert 'authenticated' in data
 
+    def test_project_list_json_after_subcommand(self, cli_runner):
+        """chaotic project list --json should produce JSON output."""
+        from cli.main import cli, client
+
+        client.get_projects = MagicMock(return_value=[
+            {"id": "p-1", "key": "CHT", "name": "Chaotic", "issue_count": 42},
+        ])
+
+        with patch('cli.main.get_current_team', return_value='test-team-123'):
+            result = cli_runner.invoke(cli, ['project', 'list', '--json'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data[0]['id'] == 'p-1'
+
 
 class TestJsonBeforeSubcommand:
     """Test that --json still works before the subcommand (backward compat)."""
