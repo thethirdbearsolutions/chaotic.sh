@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaotic - Agent-First Project Infrastructure</title>
+    <meta name="description" content="Stop managing agents. Start designing their world. Chaotic is agent-first project infrastructure. You build the physics. Agents learn the rules.">
+    <link rel="icon" href="favicon.ico" sizes="48x48">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <a href="index.html" class="logo">
+                <img src="favicon-256x256.png" alt="Chaotic logo" width="32" height="32">
+                <span class="logo-text">Chaotic</span>
+            </a>
+            <nav class="nav">
+                <a href="#features" class="nav-link">Features</a>
+                <a href="#how-it-works" class="nav-link">How it Works</a>
+                <a href="#comparison" class="nav-link">Why Chaotic</a>
+                <a href="manifesto.html" class="nav-link">Manifesto</a>
+                <a href="philosophy.html" class="nav-link">Philosophy</a>
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary">GitHub</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1 class="hero-title">Chaotic</h1>
+            <p class="hero-tagline">Stop managing agents. Start designing their world.</p>
+            <p class="hero-description">
+              A CLI-native issue tracker with enforced budgets and ritual checkpoints.
+              <br>
+              You define the physics. They learn the rules.
+            </p>
+            <div class="hero-cta">
+                <a href="#install" class="btn btn-primary btn-large">Get Started</a>
+                <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Problem Section -->
+    <section class="section" id="problem">
+        <div class="section-content">
+            <h2 class="section-title">The Agent Runaway</h2>
+            <div class="problem-grid">
+                <div class="problem-text">
+                    <p>AI coding agents have no brakes. They'll burn your token budget, ignore your architecture, and close 20 tickets in a loop without stopping to think.</p>
+                    <p>Jira and Linear are human-first. Agents are guests in our world. In their world, they need <strong>physics</strong>.</p>
+                </div>
+                <div class="problem-visual">
+                    <div class="terminal-mock">
+                        <div class="terminal-header">
+                            <span class="terminal-dot red"></span>
+                            <span class="terminal-dot yellow"></span>
+                            <span class="terminal-dot green"></span>
+                            <span class="terminal-title">agent.sh</span>
+                        </div>
+                        <div class="terminal-body">
+                            <div class="terminal-line">
+                                <span class="prompt">$</span> chaotic issue move CHT-001 done
+                            </div>
+                            <div class="terminal-line success">Issue CHT-001 moved to Done.</div>
+                            <div class="terminal-line">
+                                <span class="prompt">$</span> chaotic issue move CHT-002 done
+                            </div>
+                            <div class="terminal-line success">Issue CHT-002 moved to Done.</div>
+                            <div class="terminal-line">
+                                <span class="prompt">$</span> chaotic issue move CHT-003 done
+                            </div>
+                            <div class="terminal-line success">Issue CHT-003 moved to Done.</div>
+                            <div class="terminal-line dim">... 17 more tickets ...</div>
+                            <div class="terminal-line">
+                                <span class="prompt">$</span> chaotic issue move CHT-021 done
+                            </div>
+                            <div class="terminal-line error blink">Error: Sprint is in arrears. Run `chaotic sprint close` to continue.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Insight Section -->
+    <section class="section section-alt" id="insight">
+        <div class="section-content">
+            <h2 class="section-title">The Insight</h2>
+            <div class="insight-content">
+                <blockquote class="insight-quote">
+                    You don't tell a toddler "don't fall down the stairs" 500 times.<br>
+                    You put a gate in front of the stairs.
+                </blockquote>
+                <p class="insight-text">
+                    <strong>Chaotic</strong> applies this to AI. The agent just uses a CLI. Sometimes commands succeed. Sometimes they fail with hard errors. The agent adapts to the world you've built.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Core Mechanics Section -->
+    <section class="section" id="features">
+        <div class="section-content">
+            <h2 class="section-title">Core Mechanics</h2>
+            <div class="features-grid">
+                <!-- Rituals -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                            <path d="M2 17l10 5 10-5"/>
+                            <path d="M2 12l10 5 10-5"/>
+                        </svg>
+                    </div>
+                    <h3 class="feature-title">1. Rituals</h3>
+                    <p class="feature-description"><strong>Rituals</strong> are checkpoints you define. They can trigger on sprint close, ticket claim, or ticket close:</p>
+                    <ul class="ritual-list">
+                        <li>Run the test suite</li>
+                        <li>Attest documentation is current</li>
+                        <li>Request an oppositional code review</li>
+                        <li>File a design spec with the alternatives you considered</li>
+                        <li>Reflect on what went well this sprint and vent about what frustrated you</p>
+                    </ul>
+                    <p class="feature-note">Until rituals complete, the action is blocked. The pause is the point.</p>
+                </div>
+
+                <!-- Sprints & Limbo -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12,6 12,12 16,14"/>
+                        </svg>
+                    </div>
+                    <h3 class="feature-title">2. Sprints & Limbo</h3>
+                    <p class="feature-description">Sprints have point budgets. Exceed it, and the project enters <strong>Arrears</strong>. Close a sprint, and it enters <strong>Limbo</strong> until rituals clear.</p>
+                    <div class="formula">
+                        Points<sub>Spent</sub> > Budget &rArr; State: <span class="state-arrears">Arrears</span>
+                    </div>
+                    <p class="feature-note">The CLI blocks work until the constraint clears. Not a suggestion. A wall.</p>
+                </div>
+
+                <!-- Human Gates -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                    </div>
+                    <h3 class="feature-title">3. Human Gates</h3>
+                    <p class="feature-description">You set the autonomy level for each ritual.</p>
+                    <div class="gates-list">
+                        <div class="gate-item">
+                            <span class="gate-label auto">Auto:</span>
+                            <span class="gate-desc">Agent attests, work continues.</span>
+                        </div>
+                        <div class="gate-item">
+                            <span class="gate-label review">Review:</span>
+                            <span class="gate-desc">Agent attests, you click Approve.</span>
+                        </div>
+                        <div class="gate-item">
+                            <span class="gate-label gate">Gate:</span>
+                            <span class="gate-desc">You do the ritual yourself.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section class="section section-alt" id="how-it-works">
+        <div class="section-content">
+            <h2 class="section-title">How It Works</h2>
+            <div class="architecture-grid">
+                <div class="arch-card">
+                    <div class="arch-icon cli">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="4,17 10,11 4,5"/>
+                            <line x1="12" y1="19" x2="20" y2="19"/>
+                        </svg>
+                    </div>
+                    <h3 class="arch-title">The CLI (chaotic)</h3>
+                    <p class="arch-subtitle">Optimized for agents.</p>
+                    <ul class="arch-features">
+                        <li>Structured errors</li>
+                        <li>Predictable behavior</li>
+                        <li>Copy-pasteable remedies</li>
+                    </ul>
+                </div>
+                <div class="arch-divider">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="arch-card">
+                    <div class="arch-icon web">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                    </div>
+                    <h3 class="arch-title">The Dashboard</h3>
+                    <p class="arch-subtitle">Optimized for humans.</p>
+                    <ul class="arch-features">
+                        <li>Set budgets & rules</li>
+                        <li>Approve rituals</li>
+                        <li>Watch it all happen</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Live Demo Section -->
+    <section class="section" id="demo">
+        <div class="section-content">
+            <h2 class="section-title">See It In Action</h2>
+            <p class="demo-subtitle">The agent hits a wall. You decide when to open the gate.</p>
+            <div class="demo-container">
+                <!-- CLI Side -->
+                <div class="demo-pane cli-pane">
+                    <div class="pane-header">
+                        <span class="pane-label">Agent Terminal</span>
+                    </div>
+                    <div class="demo-terminal">
+                        <div class="terminal-line typed" style="--delay: 0s">
+                            <span class="prompt">$</span> chaotic issue move CHT-042 done
+                        </div>
+                        <div class="terminal-line error typed" style="--delay: 0.6s">
+                            <span class="error-code">Error: Sprint is in arrears.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 0.9s">
+                            <span class="remedy">Run `chaotic sprint close` to continue.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 1.6s">
+                            <span class="prompt">$</span> chaotic sprint close
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 2.2s">
+                            <span class="output">Sprint 'Week 5' closed.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 2.5s">
+                            <span class="output">Run `chaotic ritual list` to continue.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 3.2s">
+                            <span class="prompt">$</span> chaotic ritual list
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 3.8s">
+                            <span class="output">Sprint-Close Rituals:</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 4.1s">
+                            <span class="output">  • architecture-review (auto)</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 4.3s">
+                            <span class="output dim">      Review the codebase for brittle code or coupling issues.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 4.6s">
+                            <span class="output">  • backlog-review (review)</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 4.8s">
+                            <span class="output dim">      Reprioritize tickets based on what you learned this sprint.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 5.5s">
+                            <span class="prompt">✻ Let me perform a thorough architecture review to check for brittle code, bad couplings, or high-value refactoring opportunities...</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 7.0s">
+                            <span class="prompt">$</span> chaotic ritual attest architecture-review
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 7.6s">
+                            <span class="output success">Ritual 'architecture-review' cleared. 1 remaining.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 8.3s">
+                            <span class="prompt">$</span> chaotic ritual attest backlog-review
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 8.9s">
+                            <span class="output warning">Ritual 'backlog-review' attested, pending human approval.</span>
+                        </div>
+                        <div class="terminal-line typed" style="--delay: 9.6s">
+                            <span class="prompt">$</span> <span class="cursor">_</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Divider -->
+                <div class="demo-divider">
+                    <div class="divider-line"></div>
+                    <span class="divider-text">meanwhile</span>
+                    <div class="divider-line"></div>
+                </div>
+
+                <!-- Web UI Side -->
+                <div class="demo-pane web-pane">
+                    <div class="pane-header">
+                        <span class="pane-label">Human Dashboard</span>
+                    </div>
+                    <div class="demo-webui">
+                        <div class="webui-notification pulse" style="--delay: 8.9s">
+                            <div class="notification-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                    <line x1="12" y1="9" x2="12" y2="13"/>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                                </svg>
+                            </div>
+                            <div class="notification-content">
+                                <div class="notification-title">Approval Needed</div>
+                                <div class="notification-text">Agent attested "backlog-review"</div>
+                            </div>
+                            <button class="btn btn-primary btn-small">Approve</button>
+                        </div>
+                        <div class="webui-card">
+                            <div class="card-header">
+                                <span class="card-title">Sprint: Week 6</span>
+                                <span class="badge badge-arrears">Limbo</span>
+                            </div>
+                            <div class="card-stats">
+                                <div class="stat">
+                                    <span class="stat-value">21</span>
+                                    <span class="stat-label">Points Spent</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-value">20</span>
+                                    <span class="stat-label">Budget</span>
+                                </div>
+                            </div>
+                            <div class="ritual-checklist">
+                                <div class="checklist-title">Rituals:</div>
+                                <label class="checklist-item checked">
+                                    <input type="checkbox" checked disabled>
+                                    <span>architecture-review</span>
+                                    <span class="ritual-badge auto">cleared</span>
+                                </label>
+                                <label class="checklist-item pending">
+                                    <input type="checkbox" disabled>
+                                    <span>backlog-review</span>
+                                    <span class="ritual-badge review">awaiting approval</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Growth Section -->
+    <section class="section section-alt" id="growth">
+        <div class="section-content">
+            <h2 class="section-title">Grows With You</h2>
+            <div class="growth-grid">
+                <div class="growth-copy">
+                    <p class="growth-lead">
+                        Chaotic scales in two directions: human workflows and agent autonomy. Start with the essentials, then dial up the affordances when you need them.
+                    </p>
+                    <div class="growth-points">
+                        <div class="growth-point">
+                            <span class="growth-dot human"></span>
+                            <div>
+                                <h3>Human affordances</h3>
+                                <p>Begin with basic issue tracking, then layer on labels, issue types, docs, and sprints as the team expands.</p>
+                            </div>
+                        </div>
+                        <div class="growth-point">
+                            <span class="growth-dot agent"></span>
+                            <div>
+                                <h3>Agent affordances</h3>
+                                <p>Delegate a ticket, then add rituals, budgets, estimation requirements, and multi-agent coordination when stakes rise.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="growth-note">
+                        Drag the sliders to see the system surface more structure as you grow.
+                    </p>
+                </div>
+                <div class="growth-panel">
+                    <div class="growth-controls">
+                        <div class="growth-control">
+                            <div class="control-header">
+                                <span>Human affordances</span>
+                                <span class="control-level">Simple → Full stack</span>
+                            </div>
+                            <div class="slider-row">
+                                <span class="slider-label">Start simple</span>
+                                <input class="growth-slider" type="range" min="1" max="5" value="2" data-target="human" aria-label="Human affordances slider">
+                                <span class="slider-label">Full team</span>
+                            </div>
+                        </div>
+                        <div class="growth-control">
+                            <div class="control-header">
+                                <span>Agent affordances</span>
+                                <span class="control-level">Basic → Orchestrated</span>
+                            </div>
+                            <div class="slider-row">
+                                <span class="slider-label">Single agent</span>
+                                <input class="growth-slider" type="range" min="1" max="5" value="2" data-target="agent" aria-label="Agent affordances slider">
+                                <span class="slider-label">Multi-agent</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="growth-features">
+                        <div class="feature-column" data-track="human">
+                            <h3>Human track</h3>
+                            <ul class="growth-list">
+                                <li data-level="1">Basic issue tracking</li>
+                                <li data-level="2">Teammates + assignees</li>
+                                <li data-level="3">Labels + issue types</li>
+                                <li data-level="4">Docs + knowledge base</li>
+                                <li data-level="5">Sprints + retrospectives</li>
+                            </ul>
+                        </div>
+                        <div class="feature-column" data-track="agent">
+                            <h3>Agent track</h3>
+                            <ul class="growth-list">
+                                <li data-level="1">Basic issue delegation</li>
+                                <li data-level="2">Ticket-close rituals</li>
+                                <li data-level="3">Sprint budgets</li>
+                                <li data-level="4">Open/claim estimate rules</li>
+                                <li data-level="5">Sprint limbo + multi-agent tokens</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="growth-axis">
+                        <span>More human structure ↔ more agent structure</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Install Section -->
+    <section class="section cta-section" id="install">
+        <div class="section-content">
+            <h2 class="cta-title">Ready to build the world?</h2>
+            <div class="cta-terminal">
+                <div class="terminal-mock small">
+                    <div class="terminal-header">
+                        <span class="terminal-dot red"></span>
+                        <span class="terminal-dot yellow"></span>
+                        <span class="terminal-dot green"></span>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="terminal-line">
+                            <span class="prompt">$</span> curl -sSL https://chaotic.sh/install.sh | sh
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="cta-buttons">
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
+                <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-logo">
+                <img src="favicon-256x256.png" alt="Chaotic logo" width="24" height="24">
+                <span>Chaotic</span>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh">GitHub</a>
+                <a href="manifesto.html">Manifesto</a>
+                <a href="philosophy.html">Philosophy</a>
+            </div>
+            <p class="footer-copyright">&copy; 2025-2026 Chaotic. Agent-first project infrastructure.</p>
+        </div>
+    </footer>
+
+    <script>
+        const sliders = document.querySelectorAll('.growth-slider');
+
+        const updateGrowth = (slider) => {
+            const target = slider.dataset.target;
+            const level = parseInt(slider.value, 10);
+            const items = document.querySelectorAll(`[data-track="${target}"] [data-level]`);
+
+            items.forEach((item) => {
+                const itemLevel = parseInt(item.dataset.level, 10);
+                item.classList.toggle('active', itemLevel <= level);
+            });
+        };
+
+        sliders.forEach((slider) => {
+            updateGrowth(slider);
+            slider.addEventListener('input', () => updateGrowth(slider));
+        });
+
+        // Easter egg: click tagline to cycle
+        const taglines = [
+            "Stop managing agents. Start designing their world.",
+            "Linear, but it's a CLI.",
+            "A single pane of glass for your Ralph loops.",
+            "The physics engine for software teams.",
+            "Project management that speaks in exit codes.",
+            "Because I'm afraid of Gas Town.",
+        ];
+
+        const taglineEl = document.querySelector('.hero-tagline');
+        let taglineIdx = 0;
+
+        taglineEl.style.cursor = 'default';
+        taglineEl.addEventListener('click', () => {
+            taglineIdx = (taglineIdx + 1) % taglines.length;
+            taglineEl.textContent = taglines[taglineIdx];
+        });
+    </script>
+</body>
+</html>

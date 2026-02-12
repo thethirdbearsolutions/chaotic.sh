@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+# Pre-commit hook: lint staged frontend JS files
+# Install: ln -sf ../../chaotic/frontend/hooks/pre-commit .git/hooks/pre-commit
+#
+# Note: this lints working tree copies of staged files, not the exact staged
+# content. If you have unstaged changes in the same files, results may differ.
+
+FRONTEND_DIR="chaotic/frontend"
+
+# Get staged .js files in the frontend src directory (newline-delimited)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep "^${FRONTEND_DIR}/src/.*\.js$" || true)
+
+if [ -z "$STAGED_FILES" ]; then
+    exit 0
+fi
+
+# Run ESLint from the frontend directory, passing files via xargs to handle
+# filenames safely (no word-splitting issues)
+cd "$FRONTEND_DIR" || exit 1
+
+if ! echo "$STAGED_FILES" | sed "s|^${FRONTEND_DIR}/||" | xargs npx eslint; then
+    echo ""
+    echo "ESLint failed. Fix errors before committing."
+    echo "Run 'cd $FRONTEND_DIR && npm run lint:fix' to auto-fix what's possible."
+    exit 1
+fi
+
+exit 0

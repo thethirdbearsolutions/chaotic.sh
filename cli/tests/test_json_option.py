@@ -1,0 +1,112 @@
+"""Tests for the json_option decorator (CHT-711).
+
+Verifies that --json works both before and after subcommand names.
+"""
+import json
+import pytest
+from unittest.mock import patch, MagicMock
+from click.testing import CliRunner
+
+
+@pytest.fixture(autouse=True)
+def mock_dependencies(patched_client, patched_auth, patched_project):
+    """Mock client, config, and auth before importing main."""
+    yield
+
+
+class TestJsonAfterSubcommand:
+    """Test that --json works after the subcommand name."""
+
+    def test_issue_list_json_after_subcommand(self, cli_runner):
+        """chaotic issue list --json should produce JSON output."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[
+            {"id": "1", "identifier": "CHT-1", "title": "Test",
+             "status": "backlog", "priority": "medium",
+             "issue_type": "task", "estimate": 3, "sprint_id": None},
+        ])
+        client.get_sprints = MagicMock(return_value=[])
+
+        with patch('cli.config.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data[0]['identifier'] == 'CHT-1'
+
+    def test_status_json_after_subcommand(self, cli_runner):
+        """chaotic status --json should produce JSON output."""
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={'name': 'Test', 'email': 'test@test.com'})
+
+        with patch('cli.main.find_local_config', return_value=None), \
+             patch('cli.main.get_effective_profile', return_value='default'), \
+             patch('cli.main.get_current_team', return_value=None), \
+             patch('cli.main.get_current_project', return_value=None), \
+             patch('cli.main.get_api_key', return_value=None):
+            result = cli_runner.invoke(cli, ['status', '--json'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert 'authenticated' in data
+
+
+class TestJsonBeforeSubcommand:
+    """Test that --json still works before the subcommand (backward compat)."""
+
+    def test_global_json_still_works(self, cli_runner):
+        """chaotic --json status should still produce JSON output."""
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={'name': 'Test', 'email': 'test@test.com'})
+
+        with patch('cli.main.find_local_config', return_value=None), \
+             patch('cli.main.get_effective_profile', return_value='default'), \
+             patch('cli.main.get_current_team', return_value=None), \
+             patch('cli.main.get_current_project', return_value=None), \
+             patch('cli.main.get_api_key', return_value=None):
+            result = cli_runner.invoke(cli, ['--json', 'status'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert 'authenticated' in data
+
+
+class TestJsonOptionDecorator:
+    """Unit tests for the json_option decorator itself."""
+
+    def test_sets_ctx_obj_json_when_flag_passed(self):
+        """json_option should set ctx.obj['json'] = True when --json is used."""
+        import click
+        from cli.main import json_option
+
+        @click.command()
+        @json_option
+        def dummy_cmd():
+            ctx = click.get_current_context()
+            click.echo(f"json={ctx.obj.get('json', False)}")
+
+        runner = CliRunner()
+        result = runner.invoke(dummy_cmd, ['--json'])
+        assert result.exit_code == 0
+        assert 'json=True' in result.output
+
+    def test_does_not_set_json_without_flag(self):
+        """json_option should not set ctx.obj['json'] when --json is not used."""
+        import click
+        from cli.main import json_option
+
+        @click.command()
+        @json_option
+        def dummy_cmd():
+            ctx = click.get_current_context()
+            obj = ctx.obj or {}
+            click.echo(f"json={obj.get('json', False)}")
+
+        runner = CliRunner()
+        result = runner.invoke(dummy_cmd, [])
+        assert result.exit_code == 0
+        assert 'json=False' in result.output

@@ -1,0 +1,56 @@
+# Databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.backup*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+.eggs/
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+
+# Node
+node_modules/
+
+# Frontend build cache
+.vite/
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Chaotic local config
+.chaotic
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel

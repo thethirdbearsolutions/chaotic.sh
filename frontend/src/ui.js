@@ -1,0 +1,108 @@
+/**
+ * UI utilities for Chaotic frontend
+ * Modal, toast notifications, and dropdown management
+ */
+
+let currentDropdownKeyHandler = null;
+
+/**
+ * Show the modal overlay
+ */
+export function showModal() {
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+/**
+ * Hide the modal overlay
+ */
+export function closeModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+}
+
+/**
+ * Show a toast notification
+ * @param {string} message - Message to display
+ * @param {'success'|'error'|'info'} type - Toast type
+ */
+export function showToast(message, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.remove();
+  }, 3000);
+}
+
+/**
+ * Close all open inline dropdowns
+ */
+export function closeAllDropdowns() {
+  document.querySelectorAll('.inline-dropdown').forEach((d) => d.remove());
+  if (currentDropdownKeyHandler) {
+    document.removeEventListener('keydown', currentDropdownKeyHandler);
+    currentDropdownKeyHandler = null;
+  }
+}
+
+/**
+ * Set the current dropdown keyboard handler
+ * @param {Function|null} handler - Keyboard event handler
+ */
+export function setDropdownKeyHandler(handler) {
+  if (currentDropdownKeyHandler) {
+    document.removeEventListener('keydown', currentDropdownKeyHandler);
+  }
+  currentDropdownKeyHandler = handler;
+  if (handler) {
+    document.addEventListener('keydown', handler);
+  }
+}
+
+/**
+ * Get the current dropdown keyboard handler
+ * @returns {Function|null}
+ */
+export function getDropdownKeyHandler() {
+  return currentDropdownKeyHandler;
+}
+
+/**
+ * Register a click-outside handler for a dropdown.
+ * Closes the dropdown when clicking outside of it.
+ *
+ * @param {HTMLElement} dropdown - The dropdown element
+ * @param {Object} options - Configuration options
+ * @param {boolean} options.multiSelect - If true, clicks inside the dropdown don't close it
+ *                                        (for multi-select dropdowns like labels)
+ * @returns {Function} Cleanup function to remove the handler
+ */
+export function registerDropdownClickOutside(dropdown, options = {}) {
+  const { multiSelect = false } = options;
+
+  const handler = (e) => {
+    // For multi-select dropdowns, don't close when clicking inside
+    if (multiSelect && dropdown.contains(e.target)) {
+      return;
+    }
+    closeAllDropdowns();
+    document.removeEventListener('click', handler);
+  };
+
+  // Use setTimeout to avoid the current click event triggering the handler
+  setTimeout(() => document.addEventListener('click', handler), 0);
+
+  // Return cleanup function
+  return () => document.removeEventListener('click', handler);
+}
+
+// Attach to window for backward compatibility with HTML handlers
+Object.assign(window, {
+  showModal,
+  closeModal,
+  showToast,
+  closeAllDropdowns,
+  registerDropdownClickOutside,
+});

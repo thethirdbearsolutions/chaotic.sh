@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorize Chaotic CLI</title>
+    <link rel="icon" href="/static/favicon.ico" sizes="48x48">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --border-color: #30363d;
+            --accent-color: #6366f1;
+            --accent-hover: #5558e3;
+            --success-color: #238636;
+            --error-color: #f85149;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 440px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .logo h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .logo p {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .cli-badge {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-family: monospace;
+            margin-top: 12px;
+        }
+
+        .step {
+            display: none;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border-color);
+        }
+
+        .error {
+            color: var(--error-color);
+            font-size: 13px;
+            margin-top: 8px;
+        }
+
+        .success {
+            text-align: center;
+            padding: 24px 0;
+        }
+
+        .success-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            color: var(--success-color);
+        }
+
+        .info-box {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .info-box strong {
+            color: var(--text-primary);
+        }
+
+        .info-box span {
+            color: var(--text-secondary);
+        }
+
+        .switch-link {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .switch-link a {
+            color: var(--accent-color);
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .switch-link a:hover {
+            text-decoration: underline;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 16px 0;
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border-color);
+        }
+
+        .divider span {
+            padding: 0 12px;
+        }
+
+        .inline-form {
+            display: none;
+            margin-top: 12px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+        }
+
+        .inline-form.active {
+            display: block;
+        }
+
+        .inline-form .form-group {
+            margin-bottom: 12px;
+        }
+
+        .inline-form .form-group:last-of-type {
+            margin-bottom: 0;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .form-help {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .btn-row .btn {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Chaotic</h1>
+            <p>Authorize CLI Access</p>
+            <div class="cli-badge">chaotic init</div>
+        </div>
+
+        <!-- Step 1: Login -->
+        <div id="step-login" class="step active">
+            <h2>Sign In</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" required>
+                </div>
+                <div id="login-error" class="error" style="display: none;"></div>
+                <button type="submit" class="btn">Sign In</button>
+            </form>
+            <div class="switch-link">
+                Don't have an account? <a href="/" target="_blank">Sign up first</a>
+            </div>
+        </div>
+
+        <!-- Step 2: Select/Create Team -->
+        <div id="step-team" class="step">
+            <h2>Select Team</h2>
+            <div class="info-box">
+                <strong>Logged in as:</strong> <span id="user-name"></span>
+            </div>
+
+            <div class="form-group">
+                <label for="team">Team</label>
+                <select id="team">
+                    <option value="">Select a team...</option>
+                </select>
+            </div>
+
+            <div class="divider"><span>or</span></div>
+
+            <a class="switch-link" style="display: block; text-align: left;" onclick="toggleNewTeam()">+ Create new team</a>
+
+            <div id="new-team-form" class="inline-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="new-team-name">Team Name</label>
+                        <input type="text" id="new-team-name" placeholder="My Team">
+                    </div>
+                    <div class="form-group" style="flex: 0 0 100px;">
+                        <label for="new-team-key">Key</label>
+                        <input type="text" id="new-team-key" placeholder="TEAM" maxlength="10" style="text-transform: uppercase;">
+                    </div>
+                </div>
+                <p class="form-help">Key is a short identifier (2-10 chars) used in issue IDs like TEAM-123</p>
+            </div>
+
+            <div id="team-error" class="error" style="display: none;"></div>
+            <button class="btn" style="margin-top: 16px;" onclick="handleTeamNext()">Next</button>
+        </div>
+
+        <!-- Step 3: Select/Create Project -->
+        <div id="step-project" class="step">
+            <h2>Select Project</h2>
+            <div class="info-box">
+                <strong>Team:</strong> <span id="selected-team-name"></span>
+            </div>
+
+            <div class="form-group">
+                <label for="project">Project</label>
+                <select id="project">
+                    <option value="">Select a project...</option>
+                </select>
+            </div>
+
+            <div class="divider"><span>or</span></div>
+
+            <a class="switch-link" style="display: block; text-align: left;" onclick="toggleNewProject()">+ Create new project</a>
+
+            <div id="new-project-form" class="inline-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="new-project-name">Project Name</label>
+                        <input type="text" id="new-project-name" placeholder="My Project">
+                    </div>
+                    <div class="form-group" style="flex: 0 0 100px;">
+                        <label for="new-project-key">Key</label>
+                        <input type="text" id="new-project-key" placeholder="PRJ" maxlength="10" style="text-transform: uppercase;">
+                    </div>
+                </div>
+                <p class="form-help">Key is used in issue IDs like PRJ-123</p>
+            </div>
+
+            <div id="project-error" class="error" style="display: none;"></div>
+            <div class="btn-row">
+                <button class="btn btn-secondary" onclick="goBackToTeam()">Back</button>
+                <button class="btn" onclick="handleAuthorize()">Authorize CLI</button>
+            </div>
+        </div>
+
+        <!-- Step 4: Success/Redirecting -->
+        <div id="step-success" class="step">
+            <div class="success">
+                <div class="success-icon">✓</div>
+                <h2>CLI Authorized!</h2>
+                <p>Redirecting back to terminal...</p>
+            </div>
+        </div>
+
+        <!-- Loading state -->
+        <div id="step-loading" class="step">
+            <div class="loading">
+                <p>Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        const CALLBACK = {{ callback | tojson }};
+        const STATE = {{ state | tojson }};
+
+        let token = null;
+        let currentUser = null;
+        let teams = [];
+        let projects = [];
+        let selectedTeamId = null;
+        let selectedTeamName = null;
+
+        // Show a step
+        function showStep(stepId) {
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.getElementById('step-' + stepId).classList.add('active');
+        }
+
+        // API request helper
+        async function apiRequest(method, path, data = null) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const options = { method, headers };
+            if (data) options.body = JSON.stringify(data);
+
+            const response = await fetch(API_BASE + path, options);
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.detail || 'Request failed');
+            }
+            return result;
+        }
+
+        // Toggle new team form
+        function toggleNewTeam() {
+            const form = document.getElementById('new-team-form');
+            form.classList.toggle('active');
+            if (form.classList.contains('active')) {
+                document.getElementById('team').value = '';
+                document.getElementById('new-team-name').focus();
+            }
+        }
+
+        // Toggle new project form
+        function toggleNewProject() {
+            const form = document.getElementById('new-project-form');
+            form.classList.toggle('active');
+            if (form.classList.contains('active')) {
+                document.getElementById('project').value = '';
+                document.getElementById('new-project-name').focus();
+            }
+        }
+
+        // Handle login
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('login-error');
+
+            try {
+                errorEl.style.display = 'none';
+                const result = await apiRequest('POST', '/auth/login', { email, password });
+                token = result.access_token;
+
+                // Get user info
+                currentUser = await apiRequest('GET', '/auth/me');
+                document.getElementById('user-name').textContent = currentUser.name;
+
+                // Load teams
+                await loadTeams();
+                showStep('team');
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        });
+
+        async function loadTeams() {
+            teams = await apiRequest('GET', '/teams');
+            const teamSelect = document.getElementById('team');
+            teamSelect.innerHTML = '';
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = '';
+            defaultOpt.textContent = 'Select a team...';
+            teamSelect.appendChild(defaultOpt);
+            teams.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.id;
+                opt.dataset.name = t.name;
+                opt.textContent = `${t.name} (${t.key})`;
+                teamSelect.appendChild(opt);
+            });
+        }
+
+        async function loadProjects(teamId) {
+            projects = await apiRequest('GET', `/projects?team_id=${teamId}`);
+            const projectSelect = document.getElementById('project');
+            projectSelect.innerHTML = '';
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = '';
+            defaultOpt.textContent = 'Select a project...';
+            projectSelect.appendChild(defaultOpt);
+            projects.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `${p.name} (${p.key})`;
+                projectSelect.appendChild(opt);
+            });
+        }
+
+        async function handleTeamNext() {
+            const errorEl = document.getElementById('team-error');
+            errorEl.style.display = 'none';
+
+            const teamSelect = document.getElementById('team');
+            const newTeamName = document.getElementById('new-team-name').value.trim();
+            const newTeamKey = document.getElementById('new-team-key').value.trim().toUpperCase();
+
+            try {
+                if (newTeamName && newTeamKey) {
+                    // Create new team
+                    const newTeam = await apiRequest('POST', '/teams', {
+                        name: newTeamName,
+                        key: newTeamKey
+                    });
+                    selectedTeamId = newTeam.id;
+                    selectedTeamName = newTeam.name;
+                } else if (teamSelect.value) {
+                    // Use existing team
+                    selectedTeamId = teamSelect.value;
+                    selectedTeamName = teamSelect.options[teamSelect.selectedIndex].dataset.name;
+                } else {
+                    throw new Error('Please select a team or create a new one');
+                }
+
+                document.getElementById('selected-team-name').textContent = selectedTeamName;
+                await loadProjects(selectedTeamId);
+                showStep('project');
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        function goBackToTeam() {
+            showStep('team');
+        }
+
+        async function handleAuthorize() {
+            const errorEl = document.getElementById('project-error');
+            errorEl.style.display = 'none';
+
+            const projectSelect = document.getElementById('project');
+            const newProjectName = document.getElementById('new-project-name').value.trim();
+            const newProjectKey = document.getElementById('new-project-key').value.trim().toUpperCase();
+
+            let projectId = null;
+
+            try {
+                if (newProjectName && newProjectKey) {
+                    // Create new project
+                    const newProject = await apiRequest('POST', `/projects?team_id=${selectedTeamId}`, {
+                        name: newProjectName,
+                        key: newProjectKey
+                    });
+                    projectId = newProject.id;
+                } else if (projectSelect.value) {
+                    // Use existing project
+                    projectId = projectSelect.value;
+                }
+                // Note: project is optional, so no error if neither
+
+                showStep('loading');
+
+                // Always create a fresh API key for this CLI session
+                const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+                const keyResult = await apiRequest('POST', '/api-keys', {
+                    name: `CLI - ${timestamp}`
+                });
+
+                // Build callback URL with params
+                const params = new URLSearchParams({
+                    key: keyResult.key,
+                    team: selectedTeamId,
+                    state: STATE
+                });
+                if (projectId) params.append('project', projectId);
+
+                showStep('success');
+
+                // Redirect to CLI callback after short delay
+                setTimeout(() => {
+                    window.location.href = CALLBACK + '?' + params.toString();
+                }, 1000);
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                showStep('project');
+            }
+        }
+
+        // Check if already logged in (token in localStorage)
+        async function checkExistingAuth() {
+            const existingToken = localStorage.getItem('chaotic_token');
+            if (existingToken) {
+                token = existingToken;
+                try {
+                    currentUser = await apiRequest('GET', '/auth/me');
+                    document.getElementById('user-name').textContent = currentUser.name;
+                    await loadTeams();
+                    showStep('team');
+                } catch (err) {
+                    // Token invalid, show login
+                    token = null;
+                    showStep('login');
+                }
+            }
+        }
+
+        checkExistingAuth();
+    </script>
+</body>
+</html>
