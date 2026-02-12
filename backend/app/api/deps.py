@@ -9,14 +9,21 @@ from app.services.user_service import UserService
 from app.services.api_key_service import APIKeyService
 from app.utils.security import decode_token
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> User:
     """Get current authenticated user via JWT token or API key."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
 
     # Check if this is an API key (starts with ck_)
@@ -153,7 +160,7 @@ async def check_user_project_access(db: AsyncSession, user: User, project_id: st
 
 
 async def get_auth_method(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> str:
     """Get the authentication method used (jwt or api_key).
 
@@ -166,6 +173,8 @@ async def get_auth_method(
     If token validation fails in get_current_user, the request will be rejected
     before this auth method value is used.
     """
+    if not credentials:
+        return "jwt"  # Will be rejected by get_current_user anyway
     token = credentials.credentials
     if token.startswith("ck_"):
         return "api_key"

@@ -28,7 +28,7 @@ class TestJsonAfterSubcommand:
         ])
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
 
         assert result.exit_code == 0

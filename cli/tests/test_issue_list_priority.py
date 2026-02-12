@@ -57,7 +57,7 @@ class TestIssueListPriorityFilter:
         client.get_issues = MagicMock(return_value=[sample_issues[0]])
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--priority', 'high'])
 
         assert result.exit_code == 0
@@ -73,7 +73,7 @@ class TestIssueListPriorityFilter:
         client.get_issues = MagicMock(return_value=[sample_issues[0], sample_issues[1]])
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--priority', 'high,urgent'])
 
         assert result.exit_code == 0
@@ -89,7 +89,7 @@ class TestIssueListPriorityFilter:
         client.get_issues = MagicMock(return_value=[sample_issues[0]])
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--status', 'backlog', '--priority', 'high'])
 
         assert result.exit_code == 0
@@ -106,7 +106,7 @@ class TestIssueListPriorityFilter:
         client.get_issues = MagicMock(return_value=sample_issues)
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list'])
 
         assert result.exit_code == 0

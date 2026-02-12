@@ -55,7 +55,7 @@ class TestRitualAttestSprint:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'sprint-report', '--note', 'Report written.',
@@ -77,7 +77,7 @@ class TestRitualAttestSprint:
             "approved_at": None,
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'sprint-report', '--note', 'Report written.',
@@ -92,7 +92,7 @@ class TestRitualAttestSprint:
 
         client.get_rituals = MagicMock(return_value=[mock_ritual])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'sprint-report',
@@ -107,7 +107,7 @@ class TestRitualAttestSprint:
 
         client.get_rituals = MagicMock(return_value=[mock_ritual])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'sprint-report', '--note', '   ',
@@ -122,7 +122,7 @@ class TestRitualAttestSprint:
 
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'nonexistent', '--note', 'test',
@@ -146,7 +146,7 @@ class TestRitualAttestSprint:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'sprint-report',
@@ -171,7 +171,7 @@ class TestRitualAttestTicket:
             "approved_at": "2026-02-11T00:00:00",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'run-tests',
@@ -191,7 +191,7 @@ class TestRitualAttestTicket:
 
         client.get_rituals = MagicMock(return_value=[mock_ticket_ritual])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'run-tests', '--note', 'All tests pass.',
@@ -213,7 +213,7 @@ class TestRitualAttestTicket:
             "approved_at": None,
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'attest', 'run-tests',
@@ -239,7 +239,7 @@ class TestRitualStatus:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'status'])
 
@@ -257,7 +257,7 @@ class TestRitualStatus:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'status'])
 
@@ -283,7 +283,7 @@ class TestRitualStatus:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'status', 'CHT-100'])
 
@@ -305,7 +305,7 @@ class TestRitualStatus:
             "completed_rituals": [],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'status', 'CHT-100'])
 
@@ -332,7 +332,7 @@ class TestRitualStatus:
             ],
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'status', 'CHT-100'])
 
@@ -358,7 +358,7 @@ class TestRitualCreate:
             "name": "my-ritual",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'create', 'my-ritual', 'Do the thing.',
@@ -392,7 +392,7 @@ class TestRitualCreate:
             "name": "code-review",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, [
                 'ritual', 'create', 'code-review', 'Did you review the code?',

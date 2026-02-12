@@ -49,7 +49,7 @@ class TestBudgetShortcut:
         client.get_current_sprint = MagicMock(return_value=sprint_data)
         client.get_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_team', return_value='team-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['budget'])
@@ -72,7 +72,7 @@ class TestIssueViewAlias:
         })
         client.get_sub_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100'])
 
         assert result.exit_code == 0
@@ -93,7 +93,7 @@ class TestIssueViewAlias:
         })
         client.get_sub_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', 'CHT-101'])
 
         assert result.exit_code == 0
@@ -115,7 +115,7 @@ class TestIssueGetAlias:
         })
         client.get_sub_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'get', 'CHT-100'])
 
         assert result.exit_code == 0
@@ -134,7 +134,7 @@ class TestIssueCompleteAlias:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.update_issue = MagicMock(return_value=mock_issue)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'complete', 'CHT-100'])
 
         assert result.exit_code == 0
@@ -153,7 +153,7 @@ class TestIssueCancelAlias:
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.update_issue = MagicMock(return_value=mock_issue)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'cancel', 'CHT-100'])
 
         assert result.exit_code == 0
@@ -172,7 +172,7 @@ class TestIssueCancelAlias:
         }
         client.get_issue_by_identifier = MagicMock(return_value=canceled_issue)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'cancel', 'CHT-100'])
 
         assert result.exit_code == 0
@@ -192,7 +192,7 @@ class TestIssueStartAlias:
         client.get_me = MagicMock(return_value=user)
         client.update_issue = MagicMock(return_value=mock_issue)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'start', 'CHT-100'])
 
         assert result.exit_code == 0

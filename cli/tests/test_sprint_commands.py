@@ -37,7 +37,7 @@ class TestSprintCurrent:
 
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'current'])
 
@@ -51,7 +51,7 @@ class TestSprintCurrent:
 
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'current'])
 
@@ -65,7 +65,7 @@ class TestSprintCurrent:
         mock_sprint["limbo"] = True
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'current'])
 
@@ -80,7 +80,7 @@ class TestSprintCurrent:
 
         client.get_current_sprint = MagicMock(side_effect=APIError("No active sprint"))
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'current'])
 
@@ -98,7 +98,7 @@ class TestSprintShow:
         client.get_sprint = MagicMock(return_value=mock_sprint)
         client.get_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, ['sprint', 'show'])
@@ -122,7 +122,7 @@ class TestSprintShow:
         client.get_sprint = MagicMock(return_value=mock_sprint)
         client.get_issues = MagicMock(return_value=issues)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, ['sprint', 'show'])
@@ -138,7 +138,7 @@ class TestSprintShow:
         client.get_sprint = MagicMock(return_value=mock_sprint)
         client.get_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, ['sprint', 'show'])
@@ -153,7 +153,7 @@ class TestSprintShow:
         client.get_sprint = MagicMock(return_value=mock_sprint)
         client.get_issues = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123') as mock_resolve:
             result = cli_runner.invoke(cli, ['sprint', 'show', 'Sprint 30'])
@@ -187,7 +187,7 @@ class TestSprintList:
         ]
         client.get_sprints = MagicMock(return_value=sprints)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'list'])
 
@@ -201,7 +201,7 @@ class TestSprintList:
 
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'list'])
 
@@ -214,7 +214,7 @@ class TestSprintList:
 
         client.get_sprints = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'list', '--status', 'active'])
 
@@ -231,7 +231,7 @@ class TestSprintBudget:
 
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'budget'])
 
@@ -247,7 +247,7 @@ class TestSprintBudget:
         mock_sprint["budget"] = None
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'budget'])
 
@@ -261,7 +261,7 @@ class TestSprintBudget:
         mock_sprint["points_spent"] = 25
         client.get_current_sprint = MagicMock(return_value=mock_sprint)
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['sprint', 'budget'])
 
@@ -282,7 +282,7 @@ class TestSprintClose:
             "limbo": True,
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, ['sprint', 'close'])
@@ -300,7 +300,7 @@ class TestSprintClose:
             "limbo": False,
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, ['sprint', 'close'])
@@ -321,7 +321,7 @@ class TestSprintUpdate:
             "name": "Sprint 30 Renamed",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -341,7 +341,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -359,7 +359,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -377,7 +377,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -395,7 +395,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -413,7 +413,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -432,7 +432,7 @@ class TestSprintUpdate:
             "name": "New Name",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -451,7 +451,7 @@ class TestSprintUpdate:
 
         client.update_sprint = MagicMock()
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -470,7 +470,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123') as mock_resolve:
             result = cli_runner.invoke(cli, [
@@ -486,7 +486,7 @@ class TestSprintUpdate:
 
         client.update_sprint = MagicMock(side_effect=APIError("Sprint not found"))
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -502,7 +502,7 @@ class TestSprintUpdate:
 
         client.update_sprint = MagicMock(return_value={"name": ""})
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
             result = cli_runner.invoke(cli, [
@@ -517,7 +517,7 @@ class TestSprintUpdate:
         import click
         from cli.main import cli, client
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'), \
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.resolve_sprint_id',
                    side_effect=click.ClickException("Sprint 'xyz' not found")):
@@ -536,8 +536,7 @@ class TestSprintUpdate:
             "name": "Sprint 30",
         })
 
-        with patch('cli.config.get_current_project', return_value=None), \
-             patch('cli.main.get_current_project', return_value=None), \
+        with patch('cli.main.get_current_project', return_value=None), \
              patch('cli.main.resolve_sprint_id') as mock_resolve:
             result = cli_runner.invoke(cli, [
                 'sprint', 'update', 'raw-sprint-id', '--name', 'Renamed',

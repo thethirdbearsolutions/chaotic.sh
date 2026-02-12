@@ -34,7 +34,7 @@ class TestRitualListLimbo:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -59,7 +59,7 @@ class TestRitualListLimbo:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -78,7 +78,7 @@ class TestRitualListLimbo:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -102,7 +102,7 @@ class TestRitualListLimbo:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -136,7 +136,7 @@ class TestRitualListLimbo:
             },
         ])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -168,7 +168,7 @@ class TestRitualListNormal:
             },
         ])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -186,7 +186,7 @@ class TestRitualListNormal:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list'])
 
         assert result.exit_code == 0
@@ -212,7 +212,7 @@ class TestRitualListNormal:
         })
         client.get_rituals = MagicMock(return_value=[])
 
-        with patch('cli.config.get_current_project', return_value='test-project-123'):
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['ritual', 'list', '--pending'])
 
         assert result.exit_code == 0

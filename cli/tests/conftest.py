@@ -51,5 +51,5 @@ def patched_auth():
 @pytest.fixture
 def patched_project():
     """Patch config.get_current_project."""
-    with patch('cli.config.get_current_project', return_value='test-project-123'):
+    with patch('cli.main.get_current_project', return_value='test-project-123'):
         yield
