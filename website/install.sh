@@ -240,7 +240,9 @@ main() {
 
     # Install Chaotic CLI
     info "Installing Chaotic CLI..."
-    uv tool install --prerelease=allow chaotic-cli
+    # Allow pre-releases for chaotic-cli itself without enabling pre-release
+    # resolution for all transitive dependencies.
+    uv tool install "chaotic-cli>=0.1.0a0"
     success "Chaotic CLI installed"
 
     # Ensure ~/.local/bin is in the user's shell profile for future sessions
