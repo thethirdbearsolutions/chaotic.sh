@@ -411,6 +411,22 @@ class RitualService:
                         selected.append(ritual)
         return selected
 
+    def _is_ritual_pending(self, ritual: Ritual, attestation: RitualAttestation | None) -> bool:
+        """Check if a ritual is still pending based on its attestation state.
+
+        A ritual is pending if:
+        - No attestation exists, OR
+        - Approval mode is REVIEW and not yet approved, OR
+        - Approval mode is GATE and not yet completed (approved)
+        """
+        if attestation is None:
+            return True
+        if ritual.approval_mode == ApprovalMode.REVIEW and attestation.approved_at is None:
+            return True
+        if ritual.approval_mode == ApprovalMode.GATE and attestation.approved_at is None:
+            return True
+        return False
+
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str
     ) -> list[Ritual]:
@@ -436,17 +452,8 @@ class RitualService:
         pending = []
         for ritual in selected_rituals:
             attestation = await self.get_attestation(ritual.id, sprint_id)
-
-            if attestation is None:
-                # No attestation yet
+            if self._is_ritual_pending(ritual, attestation):
                 pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.REVIEW and attestation.approved_at is None:
-                # Attested but awaiting approval
-                pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.GATE:
-                # Gate mode - only human can complete, check if approved
-                if attestation.approved_at is None:
-                    pending.append(ritual)
 
         return pending
 
@@ -584,17 +591,8 @@ class RitualService:
         pending = []
         for ritual in selected_rituals:
             attestation = await self.get_issue_attestation(ritual.id, issue_id)
-
-            if attestation is None:
-                # No attestation yet
+            if self._is_ritual_pending(ritual, attestation):
                 pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.REVIEW and attestation.approved_at is None:
-                # Attested but awaiting approval
-                pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.GATE:
-                # Gate mode - only human can complete, check if approved
-                if attestation.approved_at is None:
-                    pending.append(ritual)
 
         return pending
 
@@ -642,17 +640,8 @@ class RitualService:
         pending = []
         for ritual in selected_rituals:
             attestation = await self.get_issue_attestation(ritual.id, issue_id)
-
-            if attestation is None:
-                # No attestation yet
+            if self._is_ritual_pending(ritual, attestation):
                 pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.REVIEW and attestation.approved_at is None:
-                # Attested but awaiting approval
-                pending.append(ritual)
-            elif ritual.approval_mode == ApprovalMode.GATE:
-                # Gate mode - only human can complete, check if approved
-                if attestation.approved_at is None:
-                    pending.append(ritual)
 
         return pending
 
