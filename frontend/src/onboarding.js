@@ -47,7 +47,6 @@ function renderStep() {
 
     const steps = tourMode ? getTourSteps() : getSetupSteps();
     const step = steps[currentStep];
-    const totalSteps = steps.length;
 
     const progressDots = steps.map((_, i) =>
         `<span class="onboarding-dot${i === currentStep ? ' active' : ''}${i < currentStep ? ' completed' : ''}"></span>`
@@ -219,6 +218,7 @@ function getSetupSteps() {
 }
 
 function getTourSteps() {
+    const closeLink = '<div class="onboarding-skip"><a href="#" onclick="window._onboardingFinish(); return false;">Close tour</a></div>';
     return [
         {
             html: `
@@ -231,6 +231,7 @@ function getTourSteps() {
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
                 </div>
+                ${closeLink}
             `
         },
         {
@@ -247,6 +248,7 @@ function getTourSteps() {
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
                 </div>
+                ${closeLink}
             `
         },
         {

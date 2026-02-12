@@ -748,7 +748,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <h3>No issues assigned to you</h3>
                 <p>Issues assigned to you will appear here</p>
             </div>
-        `;return}e.innerHTML=cn.map(t=>Ne.renderIssueRow(t)).join("")}}window.filterMyIssues=to;let Ce=null,He=0,_t=null,St=null,pn=null,ni=!1;function no(){try{return localStorage.getItem("chaotic_onboarding_complete")==="true"}catch{return!1}}function so(){try{localStorage.setItem("chaotic_onboarding_complete","true")}catch{}}function io(e){const t=e.trim().toUpperCase().split(/\s+/).filter(Boolean);return t.length===0?"":t.length===1?t[0].substring(0,4):t.slice(0,4).map(n=>n[0]).join("")}function cd(){Ce||(Ce=document.createElement("div"),Ce.id="onboarding-overlay",Ce.className="onboarding-overlay",document.getElementById("app").appendChild(Ce))}function mn(){if(!Ce)return;const e=ni?oo():ao(),t=e[He];e.length;const n=e.map((s,i)=>`<span class="onboarding-dot${i===He?" active":""}${i<He?" completed":""}"></span>`).join("");Ce.innerHTML=`
+        `;return}e.innerHTML=cn.map(t=>Ne.renderIssueRow(t)).join("")}}window.filterMyIssues=to;let Ce=null,He=0,_t=null,St=null,pn=null,ni=!1;function no(){try{return localStorage.getItem("chaotic_onboarding_complete")==="true"}catch{return!1}}function so(){try{localStorage.setItem("chaotic_onboarding_complete","true")}catch{}}function io(e){const t=e.trim().toUpperCase().split(/\s+/).filter(Boolean);return t.length===0?"":t.length===1?t[0].substring(0,4):t.slice(0,4).map(n=>n[0]).join("")}function cd(){Ce||(Ce=document.createElement("div"),Ce.id="onboarding-overlay",Ce.className="onboarding-overlay",document.getElementById("app").appendChild(Ce))}function mn(){if(!Ce)return;const e=ni?oo():ao(),t=e[He],n=e.map((s,i)=>`<span class="onboarding-dot${i===He?" active":""}${i<He?" completed":""}"></span>`).join("");Ce.innerHTML=`
         <div class="onboarding-container">
             <div class="onboarding-progress">${n}</div>
             <div class="onboarding-step">
@@ -846,7 +846,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingFinish()">Go to Dashboard</button>
                 </div>
-            `,onMount(){const e=document.getElementById("onboarding-done-team"),t=document.getElementById("onboarding-done-project"),n=document.getElementById("onboarding-done-issue");e&&_t&&(e.textContent=`${_t.name} (${_t.key})`),t&&St&&(t.textContent=`${St.name} (${St.key})`),n&&pn&&(n.textContent=`${pn.identifier} - ${pn.title}`)}}]}function oo(){return[{html:`
+            `,onMount(){const e=document.getElementById("onboarding-done-team"),t=document.getElementById("onboarding-done-project"),n=document.getElementById("onboarding-done-issue");e&&_t&&(e.textContent=`${_t.name} (${_t.key})`),t&&St&&(t.textContent=`${St.name} (${St.key})`),n&&pn&&(n.textContent=`${pn.identifier} - ${pn.title}`)}}]}function oo(){const e='<div class="onboarding-skip"><a href="#" onclick="window._onboardingFinish(); return false;">Close tour</a></div>';return[{html:`
                 <h2>Welcome Back!</h2>
                 <p class="onboarding-subtitle">Here's a quick tour of Chaotic.</p>
                 <div class="onboarding-tips">
@@ -856,6 +856,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
                 </div>
+                ${e}
             `},{html:`
                 <h2>Keyboard Shortcuts</h2>
                 <p class="onboarding-subtitle">Work faster with shortcuts.</p>
@@ -869,6 +870,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
                 </div>
+                ${e}
             `},{html:`
                 <h2>CLI Integration</h2>
                 <p class="onboarding-subtitle">Manage issues from your terminal.</p>

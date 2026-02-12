@@ -591,10 +591,9 @@ def _run_quickstart_wizard():
                 console.print(f"  [green]✓ Account created and signed in![/green]")
             except APIError as e:
                 if "already" in str(e).lower():
-                    console.print(f"  [yellow]Email already registered. Trying to sign in...[/yellow]")
-                    result = client.login(email, password)
-                    set_token(result["access_token"])
-                    console.print(f"  [green]✓ Signed in![/green]")
+                    console.print(f"  [yellow]That email is already registered.[/yellow]")
+                    console.print("  [dim]Run quickstart again and choose 'Already have an account'.[/dim]")
+                    raise SystemExit(1)
                 else:
                     raise
         console.print()
@@ -624,7 +623,7 @@ def _run_quickstart_wizard():
         console.print("  [dim]Teams organize your people and projects.[/dim]")
         console.print()
 
-        while True:
+        for _attempt in range(5):
             team_name = click.prompt("  Team name", default="My Team")
             default_key = suggest_key(team_name)
             team_key = click.prompt("  Team key (2-10 chars, used in issue IDs)", default=default_key).upper()
@@ -639,6 +638,8 @@ def _run_quickstart_wizard():
                     console.print(f"  [yellow]Key '{team_key}' is already taken. Try another.[/yellow]")
                 else:
                     raise
+        else:
+            raise click.ClickException("Too many attempts. Run 'chaotic team create' manually.")
         console.print()
     step += 1
 
@@ -666,7 +667,7 @@ def _run_quickstart_wizard():
         console.print("  [dim]Projects group related issues. One per repo or component.[/dim]")
         console.print()
 
-        while True:
+        for _attempt in range(5):
             project_name = click.prompt("  Project name", default="My Project")
             default_key = suggest_key(project_name)
             project_key = click.prompt("  Project key", default=default_key).upper()
@@ -681,6 +682,8 @@ def _run_quickstart_wizard():
                     console.print(f"  [yellow]Key '{project_key}' is already taken. Try another.[/yellow]")
                 else:
                     raise
+        else:
+            raise click.ClickException("Too many attempts. Run 'chaotic project create' manually.")
         console.print()
     step += 1
 
