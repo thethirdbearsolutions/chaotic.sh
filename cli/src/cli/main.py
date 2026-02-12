@@ -2,6 +2,7 @@
 """Chaotic CLI - Command-line interface for Chaotic issue tracker."""
 import functools
 import json
+import sys
 import webbrowser
 import click
 from rich.console import Console
@@ -274,10 +275,11 @@ def cli(ctx, profile, json_output):
         if not get_token() and not get_api_key():
             console.print("\n[bold]Welcome to Chaotic![/bold]\n")
             console.print("To get started, run:\n")
+            console.print("  [bold cyan]chaotic quickstart[/bold cyan]")
+            console.print("  [dim]Interactive setup wizard (recommended)[/dim]\n")
+            console.print("Or for browser-based setup:\n")
             console.print("  [bold cyan]chaotic init[/bold cyan]")
-            console.print("  [dim]Opens browser to authenticate and configure this project[/dim]\n")
-            console.print("Or if you already have an API key:\n")
-            console.print("  [bold cyan]chaotic auth set-key <your-api-key>[/bold cyan]\n")
+            console.print("  [dim]Opens browser to authenticate and configure[/dim]\n")
         else:
             # Authenticated - show status
             ctx.invoke(status)
@@ -503,6 +505,211 @@ def init(url):
 
     console.print(f"\n[bold green]Chaotic initialized![/bold green]")
     console.print("Run [bold]chaotic status[/bold] to verify your setup.")
+
+
+def suggest_key(name: str) -> str:
+    """Suggest a team/project key from a name."""
+    words = [w for w in name.upper().split() if w]
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0][:4]
+    return "".join(w[0] for w in words[:4])
+
+
+@cli.command("quickstart")
+@click.option("--url", default=None, help=f"Chaotic server URL (default: http://localhost:{DEFAULT_PORT})")
+@handle_error
+def quickstart(url):
+    """Interactive setup wizard for new users."""
+    if not sys.stdin.isatty():
+        console.print("[yellow]quickstart requires an interactive terminal.[/yellow]")
+        console.print("Use [bold]chaotic init[/bold] for browser-based setup instead.")
+        raise SystemExit(1)
+
+    console.print()
+    console.print(Panel(
+        "[bold]Welcome to Chaotic![/bold]\n\n"
+        "Chaotic is a lightweight issue tracker\n"
+        "built for teams that use the CLI.\n\n"
+        "Let's get you set up.",
+        title="Chaotic",
+        border_style="blue",
+    ))
+    console.print()
+
+    # Resolve server URL
+    api_url = url or get_api_url() or f"http://localhost:{DEFAULT_PORT}"
+    if not api_url.endswith("/api"):
+        api_url = api_url.rstrip("/") + "/api"
+    set_api_url(api_url)
+
+    try:
+        _run_quickstart_wizard()
+    except (KeyboardInterrupt, click.Abort):
+        console.print("\n[yellow]Setup cancelled.[/yellow]")
+        console.print("Run [bold]chaotic quickstart[/bold] to resume, or [bold]chaotic init[/bold] for browser setup.")
+        raise SystemExit(130)
+
+
+def _run_quickstart_wizard():
+    """Interactive wizard steps. Separated for KeyboardInterrupt handling."""
+    step = 1
+    total_steps = 4
+
+    # Step 1: Account
+    if get_token() or get_api_key():
+        try:
+            me = client.get_me()
+            console.print(f"  [green]✓[/green] Already signed in as [bold]{me['name']}[/bold] ({me['email']})")
+            console.print()
+        except Exception:
+            # Token is stale, proceed to auth
+            pass
+    if not get_token() and not get_api_key():
+        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Account[/bold blue]")
+        console.print()
+
+        has_account = click.confirm("  Already have an account?", default=False)
+        console.print()
+
+        if has_account:
+            email = click.prompt("  Email")
+            password = click.prompt("  Password", hide_input=True)
+            result = client.login(email, password)
+            set_token(result["access_token"])
+            me = client.get_me()
+            console.print(f"  [green]✓ Signed in as {me['name']}[/green]")
+        else:
+            name = click.prompt("  Your name")
+            email = click.prompt("  Email")
+            password = click.prompt("  Password", hide_input=True)
+            try:
+                client.signup(name, email, password)
+                result = client.login(email, password)
+                set_token(result["access_token"])
+                console.print(f"  [green]✓ Account created and signed in![/green]")
+            except APIError as e:
+                if "already" in str(e).lower():
+                    console.print(f"  [yellow]Email already registered. Trying to sign in...[/yellow]")
+                    result = client.login(email, password)
+                    set_token(result["access_token"])
+                    console.print(f"  [green]✓ Signed in![/green]")
+                else:
+                    raise
+        console.print()
+        step += 1
+
+    # Step 2: Team
+    team_id = None
+    team_name = None
+    team_key = None
+
+    try:
+        teams = client.get_teams()
+    except Exception:
+        teams = []
+
+    if teams:
+        team = teams[0]
+        team_id = team["id"]
+        team_name = team["name"]
+        team_key = team["key"]
+        set_current_team(team_id, local=True)
+        console.print(f"  [green]✓[/green] Using team [bold]{team_name}[/bold] ({team_key})")
+        console.print()
+    else:
+        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your Team[/bold blue]")
+        console.print()
+        console.print("  [dim]Teams organize your people and projects.[/dim]")
+        console.print()
+
+        while True:
+            team_name = click.prompt("  Team name", default="My Team")
+            default_key = suggest_key(team_name)
+            team_key = click.prompt("  Team key (2-10 chars, used in issue IDs)", default=default_key).upper()
+            try:
+                result = client.create_team(team_name, team_key)
+                team_id = result["id"]
+                set_current_team(team_id, local=True)
+                console.print(f"  [green]✓ Team created: {team_name} ({team_key})[/green]")
+                break
+            except APIError as e:
+                if "key" in str(e).lower() and ("exists" in str(e).lower() or "already" in str(e).lower()):
+                    console.print(f"  [yellow]Key '{team_key}' is already taken. Try another.[/yellow]")
+                else:
+                    raise
+        console.print()
+    step += 1
+
+    # Step 3: Project
+    project_id = None
+    project_name = None
+    project_key = None
+
+    try:
+        projects = client.get_projects(team_id)
+    except Exception:
+        projects = []
+
+    if projects:
+        project = projects[0]
+        project_id = project["id"]
+        project_name = project["name"]
+        project_key = project["key"]
+        set_current_project(project_id, local=True)
+        console.print(f"  [green]✓[/green] Using project [bold]{project_name}[/bold] ({project_key})")
+        console.print()
+    else:
+        console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your First Project[/bold blue]")
+        console.print()
+        console.print("  [dim]Projects group related issues. One per repo or component.[/dim]")
+        console.print()
+
+        while True:
+            project_name = click.prompt("  Project name", default="My Project")
+            default_key = suggest_key(project_name)
+            project_key = click.prompt("  Project key", default=default_key).upper()
+            try:
+                result = client.create_project(team_id, project_name, project_key)
+                project_id = result["id"]
+                set_current_project(project_id, local=True)
+                console.print(f"  [green]✓ Project created: {project_name} ({project_key})[/green]")
+                break
+            except APIError as e:
+                if "key" in str(e).lower() and ("exists" in str(e).lower() or "already" in str(e).lower()):
+                    console.print(f"  [yellow]Key '{project_key}' is already taken. Try another.[/yellow]")
+                else:
+                    raise
+        console.print()
+    step += 1
+
+    # Step 4: First issue
+    console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your First Issue[/bold blue]")
+    console.print()
+
+    title = click.prompt("  Issue title", default="Set up project")
+    result = client.create_issue(project_id, title)
+    identifier = result.get("identifier", f"{project_key}-{result.get('number', '?')}")
+    console.print(f"  [green]✓ Created: {identifier} - {title}[/green]")
+    console.print()
+
+    # Summary
+    web_url = get_web_url() or f"http://localhost:{DEFAULT_PORT}"
+    console.print(Panel(
+        f"[bold]Your workspace:[/bold]\n"
+        f"  Team:    {team_name} ({team_key})\n"
+        f"  Project: {project_name} ({project_key})\n"
+        f"  Issue:   {identifier} - {title}\n\n"
+        f"[bold]Quick reference:[/bold]\n"
+        f"  chaotic issue list          List issues\n"
+        f"  chaotic issue create \"...\"  Create an issue\n"
+        f"  chaotic status              Show context\n"
+        f"  {web_url}      Open web UI",
+        title="You're all set!",
+        border_style="green",
+    ))
+    console.print()
 
 
 # Auth commands

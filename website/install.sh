@@ -285,9 +285,8 @@ main() {
     fi
 
     printf "${BOLD}Get started:${NC}\n"
-    echo "  chaotic auth signup    # Create your account"
-    echo "  chaotic team create    # Create a team"
-    echo "  chaotic init           # Initialize a project"
+    echo "  chaotic quickstart     # Interactive setup (recommended)"
+    echo "  chaotic init           # Browser-based setup"
     echo ""
 }
 

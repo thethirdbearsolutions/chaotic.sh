@@ -84,7 +84,7 @@ describe('Integration smoke test', () => {
         const testImports = [
             './api.js', './ui.js', './auth.js', './documents.js', './agents.js',
             './teams.js', './projects.js', './rituals.js', './gate-approvals.js',
-            './api-keys.js', './command-palette.js', './dashboard.js', './app.js',
+            './api-keys.js', './command-palette.js', './dashboard.js', './onboarding.js', './app.js',
         ];
 
         expect(testImports).toEqual(mainImports);

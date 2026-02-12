@@ -749,9 +749,8 @@ def system_install(git_version, port, no_start, repo, yes):
     console.print("CLI configured to use local server.")
     console.print()
     console.print("[bold]Next steps:[/bold]")
-    console.print("  chaotic auth signup    # Create your account")
-    console.print("  chaotic team create    # Create a team")
-    console.print("  chaotic init           # Initialize a project")
+    console.print("  chaotic quickstart     # Interactive setup (recommended)")
+    console.print("  chaotic init           # Browser-based setup")
 
 
 @system.command("status")
