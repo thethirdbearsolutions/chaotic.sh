@@ -674,6 +674,9 @@ export async function loadProjectSettingsRituals() {
  * Render rituals in all three ritual tab containers
  */
 function renderProjectSettingsRituals() {
+  // Skip if project settings containers aren't in the DOM (e.g., on the rituals view)
+  if (!document.getElementById('ps-sprint-rituals-list')) return;
+
   const sprintRituals = projectRituals.filter(r => !r.trigger || r.trigger === 'every_sprint');
   const closeRituals = projectRituals.filter(r => r.trigger === 'ticket_close');
   const claimRituals = projectRituals.filter(r => r.trigger === 'ticket_claim');

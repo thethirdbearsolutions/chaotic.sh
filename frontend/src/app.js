@@ -3375,7 +3375,7 @@ async function onRitualsProjectChange() {
 
     try {
         await loadProjectSettingsRituals();
-        renderRitualsView();
+        // renderRitualsView() is called via the _onRitualsChanged callback
     } catch (e) {
         container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
     }
