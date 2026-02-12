@@ -528,9 +528,9 @@ def get_latest_version() -> str | None:
 
 
 def checkout_version(version: str) -> bool:
-    """Checkout a specific version. Returns True on success."""
+    """Checkout a specific version (tag, branch, or commit). Returns True on success."""
     try:
-        run_command(["git", "checkout", "--", version], cwd=SERVER_DIR)
+        run_command(["git", "checkout", version], cwd=SERVER_DIR)
         return True
     except subprocess.CalledProcessError:
         return False
@@ -660,7 +660,7 @@ def system_install(git_version, port, no_start, repo, yes):
     if git_version:
         console.print(f"Checking out {git_version}...")
         try:
-            run_command(["git", "checkout", "--", git_version], cwd=SERVER_DIR)
+            run_command(["git", "checkout", git_version], cwd=SERVER_DIR)
         except subprocess.TimeoutExpired:
             console.print(f"[red]Checkout timed out[/red]")
             raise SystemExit(1)
@@ -678,7 +678,7 @@ def system_install(git_version, port, no_start, repo, yes):
             if result.returncode == 0 and result.stdout.strip():
                 latest_tag = result.stdout.strip()
                 console.print(f"Checking out {latest_tag}...")
-                run_command(["git", "checkout", "--", latest_tag], cwd=SERVER_DIR)
+                run_command(["git", "checkout", latest_tag], cwd=SERVER_DIR)
         except subprocess.CalledProcessError:
             console.print("[dim]No tags found, using main branch.[/dim]")
 
