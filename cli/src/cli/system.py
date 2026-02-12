@@ -52,6 +52,13 @@ def validate_port(port: int) -> bool:
 
 console = Console()
 
+
+def _display_host(host: str) -> str:
+    """Return a user-friendly hostname for display."""
+    if host in ("0.0.0.0", "127.0.0.1"):
+        return "localhost"
+    return host
+
 # File locations
 SERVER_DIR = GLOBAL_CONFIG_DIR / "server"  # Git clone location
 PROJECT_DIR = SERVER_DIR  # Project root is the repo root
@@ -207,7 +214,7 @@ def get_service_file_path() -> Path:
         raise RuntimeError(f"Unsupported OS: {os_type}")
 
 
-def generate_systemd_service(port: int, secret_key: str) -> str:
+def generate_systemd_service(port: int, secret_key: str, host: str = "127.0.0.1") -> str:
     """Generate systemd user service file content.
 
     Paths are quoted to handle spaces and special characters safely.
@@ -235,6 +242,7 @@ RestartSec=5
 Environment=PATH={extra_paths}:/usr/bin:/bin
 Environment=DATABASE_URL={database_url}
 Environment=DATABASE_PATH={database_path}
+Environment=HOST={host}
 Environment=PORT={port}
 Environment=SECRET_KEY={secret_key}
 
@@ -243,7 +251,7 @@ WantedBy=default.target
 """
 
 
-def generate_launchd_plist(port: int, secret_key: str) -> str:
+def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1") -> str:
     """Generate launchd plist file content.
 
     Note: launchd doesn't expand ~ in paths, so we use absolute paths.
@@ -295,6 +303,8 @@ def generate_launchd_plist(port: int, secret_key: str) -> str:
         <string>sqlite+aiosqlite:///{database_path}</string>
         <key>DATABASE_PATH</key>
         <string>{database_path}</string>
+        <key>HOST</key>
+        <string>{html.escape(host)}</string>
         <key>PORT</key>
         <string>{port}</string>
         <key>SECRET_KEY</key>
@@ -309,16 +319,16 @@ def generate_launchd_plist(port: int, secret_key: str) -> str:
 """
 
 
-def write_service_file(port: int, secret_key: str):
+def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1"):
     """Write the appropriate service file for the current OS."""
     os_type = get_os()
     service_path = get_service_file_path()
     service_path.parent.mkdir(parents=True, exist_ok=True)
 
     if os_type == "linux":
-        content = generate_systemd_service(port, secret_key)
+        content = generate_systemd_service(port, secret_key, host)
     elif os_type == "darwin":
-        content = generate_launchd_plist(port, secret_key)
+        content = generate_launchd_plist(port, secret_key, host)
     else:
         raise RuntimeError(f"Unsupported OS: {os_type}")
 
@@ -587,11 +597,12 @@ def system():
 
 @system.command("install")
 @click.option("--version", "git_version", default=None, help="Git tag/branch to install (default: latest release)")
+@click.option("--host", default="127.0.0.1", help="Host/IP to bind to (use 0.0.0.0 for all interfaces)")
 @click.option("--port", default=DEFAULT_PORT, help=f"Port to run on (default: {DEFAULT_PORT})")
 @click.option("--no-start", is_flag=True, help="Install but don't start the server")
 @click.option("--repo", default="https://github.com/thethirdbearsolutions/chaotic.sh.git", help="Git repository URL")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def system_install(git_version, port, no_start, repo, yes):
+def system_install(git_version, host, port, no_start, repo, yes):
     """Install and start a local Chaotic server.
 
     This command clones the Chaotic repository, sets up the database,
@@ -641,6 +652,7 @@ def system_install(git_version, port, no_start, repo, yes):
     if not yes:
         console.print(f"[bold]This will install Chaotic to:[/bold] {SERVER_DIR}")
         console.print(f"[bold]Database:[/bold] {DATABASE_PATH}")
+        console.print(f"[bold]Host:[/bold] {host}")
         console.print(f"[bold]Port:[/bold] {port}")
         if not click.confirm("\nProceed with installation?"):
             console.print("[yellow]Installation cancelled.[/yellow]")
@@ -714,6 +726,7 @@ def system_install(git_version, port, no_start, repo, yes):
 
     # Save server metadata (including secret key)
     save_server_json({
+        "host": host,
         "port": port,
         "secret_key": secret_key,
         "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -722,7 +735,7 @@ def system_install(git_version, port, no_start, repo, yes):
 
     # Write service file
     console.print(f"Installing {'systemd' if os_type == 'linux' else 'launchd'} service...")
-    service_path = write_service_file(port, secret_key)
+    service_path = write_service_file(port, secret_key, host)
     console.print(f"  [dim]{service_path}[/dim]")
 
     # Start service
@@ -745,7 +758,7 @@ def system_install(git_version, port, no_start, repo, yes):
     set_api_url(local_url)
 
     console.print()
-    console.print(f"[bold green]Chaotic is running at http://localhost:{port}[/bold green]")
+    console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
     console.print("CLI configured to use local server.")
     console.print()
     console.print("[bold]Next steps:[/bold]")
@@ -768,9 +781,10 @@ def system_status():
 
     console.print("[bold]Chaotic Server Status[/bold]")
 
+    host = server_info.get("host", "127.0.0.1")
     if is_service_running():
         console.print(f"  Status:   [green]running[/green]")
-        console.print(f"  URL:      http://localhost:{port}")
+        console.print(f"  URL:      http://{_display_host(host)}:{port}")
     else:
         console.print(f"  Status:   [red]stopped[/red]")
         console.print()
@@ -815,7 +829,8 @@ def system_start():
         console.print("Waiting for health check...", end=" ")
         if health_check(port):
             console.print("[green]OK[/green]")
-            console.print(f"\n[green]Server started at http://localhost:{port}[/green]")
+            host = server_info.get("host", "127.0.0.1")
+            console.print(f"\n[green]Server started at http://{_display_host(host)}:{port}[/green]")
         else:
             console.print("[yellow]TIMEOUT[/yellow]")
             console.print("Server may still be starting. Check 'chaotic system status'.")
