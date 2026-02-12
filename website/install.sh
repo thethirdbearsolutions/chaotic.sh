@@ -4,9 +4,10 @@
 #
 # This script:
 # 1. Detects your OS (Linux/macOS)
-# 2. Checks for prerequisites (git, uv, just)
-# 3. Installs the Chaotic CLI via uv
-# 4. Runs 'chaotic system install' to set up a local server
+# 2. Checks for prerequisites (git, python3.10+)
+# 3. Installs uv and just if missing
+# 4. Installs the Chaotic CLI via uv
+# 5. Runs 'chaotic system install' to set up a local server
 
 set -e
 
@@ -78,65 +79,6 @@ check_python() {
     return 1
 }
 
-# Print installation instructions for missing prerequisites
-print_install_instructions() {
-    _os="$1"
-    _missing="$2"
-
-    echo ""
-    printf "${BOLD}Please install missing prerequisites:${NC}\n"
-    echo ""
-
-    case "$_missing" in
-        *git*)
-            echo "  git:"
-            if [ "$_os" = "darwin" ]; then
-                echo "    brew install git"
-                echo "    or: xcode-select --install"
-            else
-                echo "    sudo apt install git      # Debian/Ubuntu"
-                echo "    sudo dnf install git      # Fedora"
-                echo "    sudo pacman -S git        # Arch"
-            fi
-            echo ""
-            ;;
-    esac
-
-    case "$_missing" in
-        *python*)
-            echo "  Python 3.10+:"
-            if [ "$_os" = "darwin" ]; then
-                echo "    brew install python@3.11"
-            else
-                echo "    sudo apt install python3  # Debian/Ubuntu"
-                echo "    sudo dnf install python3  # Fedora"
-            fi
-            echo ""
-            ;;
-    esac
-
-    case "$_missing" in
-        *uv*)
-            echo "  uv (fast Python package manager):"
-            echo "    curl -LsSf https://astral.sh/uv/install.sh | sh"
-            echo ""
-            ;;
-    esac
-
-    case "$_missing" in
-        *just*)
-            echo "  just (command runner):"
-            if [ "$_os" = "darwin" ]; then
-                echo "    brew install just"
-            else
-                echo "    cargo install just"
-                echo "    or see: https://github.com/casey/just#installation"
-            fi
-            echo ""
-            ;;
-    esac
-}
-
 main() {
     echo ""
     printf "${BOLD}Chaotic CLI Installer${NC}\n"
@@ -148,7 +90,7 @@ main() {
     OS=$(detect_os)
     success "Detected: $OS"
 
-    # Check prerequisites
+    # Check hard prerequisites (can't auto-install these)
     info "Checking prerequisites..."
     MISSING=""
 
@@ -166,26 +108,65 @@ main() {
         printf "  python3.10+: ${GREEN}OK${NC} ($PYTHON_VERSION)\n"
     fi
 
+    if [ -n "$MISSING" ]; then
+        echo ""
+        printf "${BOLD}Please install missing prerequisites:${NC}\n"
+        echo ""
+        case "$MISSING" in
+            *git*)
+                echo "  git:"
+                if [ "$OS" = "darwin" ]; then
+                    echo "    brew install git"
+                    echo "    or: xcode-select --install"
+                else
+                    echo "    sudo apt install git      # Debian/Ubuntu"
+                    echo "    sudo dnf install git      # Fedora"
+                    echo "    sudo pacman -S git        # Arch"
+                fi
+                echo ""
+                ;;
+        esac
+        case "$MISSING" in
+            *python*)
+                echo "  Python 3.10+:"
+                if [ "$OS" = "darwin" ]; then
+                    echo "    brew install python@3.11"
+                else
+                    echo "    sudo apt install python3  # Debian/Ubuntu"
+                    echo "    sudo dnf install python3  # Fedora"
+                fi
+                echo ""
+                ;;
+        esac
+        error "Please install missing prerequisites and run this script again."
+    fi
 
-
+    # Auto-install uv if missing
     if ! has_command uv; then
-        printf "  uv: ${RED}MISSING${NC}\n"
-        MISSING="$MISSING uv"
+        info "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+        if has_command uv; then
+            success "uv installed"
+        else
+            error "Failed to install uv. Install manually: https://docs.astral.sh/uv/"
+        fi
     else
         printf "  uv: ${GREEN}OK${NC}\n"
     fi
 
+    # Auto-install just if missing (via uv from PyPI)
     if ! has_command just; then
-        printf "  just: ${RED}MISSING${NC}\n"
-        MISSING="$MISSING just"
+        info "Installing just..."
+        uv tool install rust-just
+        export PATH="$HOME/.local/bin:$PATH"
+        if has_command just; then
+            success "just installed"
+        else
+            error "Failed to install just. Install manually: https://github.com/casey/just#installation"
+        fi
     else
         printf "  just: ${GREEN}OK${NC}\n"
-    fi
-
-    # If missing prerequisites, show instructions and exit
-    if [ -n "$MISSING" ]; then
-        print_install_instructions "$OS" "$MISSING"
-        error "Please install missing prerequisites and run this script again."
     fi
 
     echo ""
@@ -201,7 +182,6 @@ main() {
         warn "You may need to add ~/.local/bin to your PATH:"
         echo '  export PATH="$HOME/.local/bin:$PATH"'
         echo ""
-        # Try to source common profile files
         if [ -f "$HOME/.local/bin/chaotic" ]; then
             CHAOTIC_CMD="$HOME/.local/bin/chaotic"
         else
