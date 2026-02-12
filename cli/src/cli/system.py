@@ -551,7 +551,8 @@ def run_migrations() -> tuple[bool, str]:
                 timeout=120,
             )
         except subprocess.CalledProcessError as e:
-            if "Can't locate revision" in (e.stderr or ""):
+            output = (e.stderr or "") + (e.stdout or "")
+            if "Can't locate revision" in output:
                 # Old migration history from before squash — re-stamp with current head
                 run_command(
                     ["uv", "run", "alembic", "stamp", "head"],
