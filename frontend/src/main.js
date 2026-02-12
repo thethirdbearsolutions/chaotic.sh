@@ -26,6 +26,7 @@ import './gate-approvals.js';
 import './api-keys.js';
 import './command-palette.js';
 import './dashboard.js';
+import './onboarding.js';
 
 // Import main application (attaches all handlers to window)
 import './app.js';

@@ -37,6 +37,7 @@ import {
     setGlobalProjectSelection,
 } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
 import {
     getSprintCache,
     getLimboStatus,
@@ -1403,6 +1404,10 @@ async function initApp() {
     await loadTeams();
 
     const teams = getTeams();
+    if (teams.length === 0 && !hasCompletedOnboarding()) {
+        showOnboarding();
+        return;
+    }
     if (teams.length > 0) {
         await selectTeam(teams[0], true);
     }
@@ -1425,6 +1430,7 @@ window.connectWebSocket = connectWebSocket;
 window.buildAssignees = buildAssignees;
 window.updateAssigneeFilter = updateAssigneeFilter;
 window.loadLabels = loadLabels;
+window.resetOnboarding = resetOnboarding;
 
 // updateUserInfo is now imported from auth.js
 
@@ -3549,6 +3555,7 @@ setCommandPaletteCommands([
     { id: 'search-issues', title: 'Search Issues', subtitle: 'Find issues by title or ID', icon: '🔍', shortcut: '/', action: () => { navigateTo('issues'); setTimeout(() => document.getElementById('issue-search')?.focus(), 100); }, category: 'Actions' },
     { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('team'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
     { id: 'show-shortcuts', title: 'Keyboard Shortcuts', subtitle: 'View all shortcuts', icon: '⌨️', shortcut: '?', action: () => showKeyboardShortcutsHelp(), category: 'Help' },
+    { id: 'show-me-around', title: 'Show Me Around', subtitle: 'Replay the onboarding tour', icon: '🎓', action: () => resetOnboarding(), category: 'Help' },
     { id: 'logout', title: 'Sign Out', subtitle: 'Log out of your account', icon: '🚪', action: () => logout(), category: 'Account' },
 ]);
 
