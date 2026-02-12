@@ -973,6 +973,24 @@ def status():
     else:
         console.print("  [dim]-[/dim] No project selected")
 
+    # Pending GATE approvals
+    if project_id:
+        try:
+            pending_gates = client.get_pending_gates(project_id)
+            if pending_gates:
+                count = len(pending_gates)
+                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting gate approval")
+                for gate in pending_gates[:5]:
+                    ident = gate.get("identifier", "")
+                    title = gate.get("title", "")
+                    rituals = gate.get("pending_gates", [])
+                    ritual_names = ", ".join(r.get("ritual_name", "") for r in rituals)
+                    console.print(f"    [dim]•[/dim] {ident}: {title} [dim]({ritual_names})[/dim]")
+                if count > 5:
+                    console.print(f"    [dim]... and {count - 5} more[/dim]")
+        except Exception:
+            pass  # Don't fail status if gate check fails
+
 
 @cli.command("budget")
 @require_project

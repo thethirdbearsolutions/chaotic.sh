@@ -333,6 +333,9 @@ class Client:
     def get_rituals(self, project_id: str) -> list:
         return self._request("GET", f"/rituals?project_id={project_id}")
 
+    def get_pending_gates(self, project_id: str) -> list:
+        return self._request("GET", f"/rituals/pending-gates?project_id={project_id}")
+
     def get_limbo_status(self, project_id: str) -> dict:
         return self._request("GET", f"/rituals/limbo?project_id={project_id}")
 
