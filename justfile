@@ -42,6 +42,22 @@ install-cli:
 migrate:
     cd backend && sqlite3 ${DATABASE_PATH:-chaotic.db} < scripts/add_rituals.sql
 
+# Install frontend dependencies
+fe-install:
+    cd frontend && npm install
+
+# Build frontend bundle
+fe-build:
+    cd frontend && npm run build
+
+# Run frontend tests
+fe-test:
+    cd frontend && npm test
+
+# Run frontend dev server (with hot reload)
+fe-dev:
+    cd frontend && npm run dev
+
 # Open the web UI in browser
 open:
     open http://localhost:24267
