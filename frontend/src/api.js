@@ -333,6 +333,10 @@ export class ApiClient {
         return this.request('GET', `/rituals/pending-gates?project_id=${projectId}`);
     }
 
+    async getPendingApprovals(projectId) {
+        return this.request('GET', `/rituals/pending-approvals?project_id=${projectId}`);
+    }
+
     async attestRitual(ritualId, projectId, note = null) {
         const data = {};
         if (note) data.note = note;

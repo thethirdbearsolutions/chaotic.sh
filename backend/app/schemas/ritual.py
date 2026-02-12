@@ -310,3 +310,29 @@ class PendingGateIssueResponse(BaseModel):
     project_id: str
     project_name: str
     pending_gates: list[PendingGateRitualInfo]
+
+
+class PendingApprovalRitualInfo(BaseModel):
+    """Info about a pending approval (GATE or REVIEW) on an issue."""
+
+    ritual_id: str
+    ritual_name: str
+    ritual_prompt: str
+    trigger: str  # ticket_close or ticket_claim
+    approval_mode: str  # gate or review
+    limbo_type: str | None  # claim or close (GATE only)
+    requested_by_name: str  # Who is waiting (GATE: who tried, REVIEW: who attested)
+    requested_at: str | None  # ISO timestamp
+    attestation_note: str | None  # The attestation content (REVIEW only)
+
+
+class PendingApprovalIssueResponse(BaseModel):
+    """Schema for an issue with pending approvals (GATE and/or REVIEW)."""
+
+    issue_id: str
+    identifier: str
+    title: str
+    status: str
+    project_id: str
+    project_name: str
+    pending_approvals: list[PendingApprovalRitualInfo]
