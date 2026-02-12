@@ -192,7 +192,7 @@ main() {
 
     # Install Chaotic CLI
     info "Installing Chaotic CLI..."
-    uv tool install chaotic-cli
+    uv tool install --prerelease=allow chaotic-cli
     success "Chaotic CLI installed"
 
     # Verify installation

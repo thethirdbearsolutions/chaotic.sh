@@ -1,0 +1,14 @@
+{
+  "redirects": [
+    {
+      "source": "/docs",
+      "destination": "https://github.com/thethirdbearsolutions/chaotic.sh/tree/main/docs",
+      "permanent": false
+    },
+    {
+      "source": "/docs/:path*",
+      "destination": "https://github.com/thethirdbearsolutions/chaotic.sh/tree/main/docs/:path*",
+      "permanent": false
+    }
+  ]
+}

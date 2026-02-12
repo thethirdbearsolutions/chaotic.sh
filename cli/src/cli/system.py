@@ -54,7 +54,7 @@ console = Console()
 
 # File locations
 SERVER_DIR = GLOBAL_CONFIG_DIR / "server"  # Git clone location
-PROJECT_DIR = SERVER_DIR / "chaotic"  # Actual project root (nested in repo)
+PROJECT_DIR = SERVER_DIR  # Project root is the repo root
 DATA_DIR = GLOBAL_CONFIG_DIR / "data"
 LOGS_DIR = GLOBAL_CONFIG_DIR / "logs"
 SERVER_JSON = GLOBAL_CONFIG_DIR / "server.json"
@@ -636,16 +636,25 @@ def system_install(git_version, port, no_start, repo, yes):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Clone repository
-    console.print(f"Cloning repository to {SERVER_DIR}...")
-    try:
-        run_command(["git", "clone", repo, str(SERVER_DIR)], timeout=300)
-    except subprocess.TimeoutExpired:
-        console.print("[red]Clone timed out (exceeded 5 minutes)[/red]")
-        raise SystemExit(1)
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to clone repository: {e.stderr}[/red]")
-        raise SystemExit(1)
+    # Clone or update repository
+    if (SERVER_DIR / ".git").exists():
+        console.print(f"Existing installation found at {SERVER_DIR}, updating...")
+        try:
+            run_command(["git", "fetch", "--tags"], cwd=SERVER_DIR, timeout=120)
+            run_command(["git", "pull", "--ff-only"], cwd=SERVER_DIR, timeout=120)
+        except subprocess.CalledProcessError as e:
+            console.print(f"[yellow]Warning: Could not update repository: {e.stderr}[/yellow]")
+            console.print("[dim]Continuing with existing version.[/dim]")
+    else:
+        console.print(f"Cloning repository to {SERVER_DIR}...")
+        try:
+            run_command(["git", "clone", repo, str(SERVER_DIR)], timeout=300)
+        except subprocess.TimeoutExpired:
+            console.print("[red]Clone timed out (exceeded 5 minutes)[/red]")
+            raise SystemExit(1)
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]Failed to clone repository: {e.stderr}[/red]")
+            raise SystemExit(1)
 
     # Checkout version if specified
     if git_version:
