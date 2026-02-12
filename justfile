@@ -23,7 +23,7 @@ serve:
 
 # Run the backend server (production mode, supports PORT and DATABASE_URL env vars)
 serve-prod:
-    cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-24267}
+    cd backend && uv run uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
 
 # Run backend tests
 test:

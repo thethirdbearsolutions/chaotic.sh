@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
 
     # Server
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 24267
 
     model_config = SettingsConfigDict(env_file=".env")
