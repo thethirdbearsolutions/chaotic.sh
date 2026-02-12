@@ -264,6 +264,7 @@ function getTourSteps() {
                 <div class="onboarding-actions">
                     <button class="btn btn-primary" onclick="window._onboardingFinish()">Got it!</button>
                 </div>
+                ${closeLink}
             `
         }
     ];
