@@ -1187,6 +1187,7 @@ def project_use(identifier):
 
 @project.command("show")
 @click.argument("identifier", required=False)
+@json_option
 @require_team
 @handle_error
 def project_show(identifier):
@@ -1203,6 +1204,10 @@ def project_show(identifier):
         if not project_id:
             raise click.ClickException("No current project set. Use 'chaotic project use <key>' or provide an identifier.")
         p = client.get_project(project_id)
+
+    if is_json_output():
+        output_json(p)
+        return
 
     scale = p.get('estimate_scale', 'fibonacci').replace('_', ' ').title()
     budget = p.get('default_sprint_budget')
