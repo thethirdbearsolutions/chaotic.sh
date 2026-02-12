@@ -34,11 +34,11 @@ async def lifespan(app: FastAPI):
                 "MUST be changed for production. Set the SECRET_KEY environment variable."
             )
         else:
-            logger.critical(
-                "SECURITY WARNING: Using default SECRET_KEY in production mode! "
-                "JWT tokens are signed with a publicly-known key. "
-                "Set the SECRET_KEY environment variable to a secure random value. "
-                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            raise RuntimeError(
+                "Refusing to start with default SECRET_KEY in production mode. "
+                "JWT tokens would be signed with a publicly-known key. "
+                "Set the SECRET_KEY environment variable to a secure random value: "
+                "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_db()
     yield
