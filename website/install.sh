@@ -5,7 +5,7 @@
 # This script:
 # 1. Detects your OS (Linux/macOS)
 # 2. Checks for prerequisites (git, uv, just)
-# 3. Installs the Chaotic CLI via pip
+# 3. Installs the Chaotic CLI via uv
 # 4. Runs 'chaotic system install' to set up a local server
 
 set -e
@@ -205,7 +205,7 @@ main() {
         if [ -f "$HOME/.local/bin/chaotic" ]; then
             CHAOTIC_CMD="$HOME/.local/bin/chaotic"
         else
-            error "Could not locate chaotic command. Please check your pip installation."
+            error "Could not locate chaotic command. Please check your installation."
         fi
     else
         CHAOTIC_CMD="chaotic"
