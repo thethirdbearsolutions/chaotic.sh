@@ -15,6 +15,7 @@ from app.schemas.ritual import (
     RitualGroupUpdate,
     RitualGroupResponse,
     PendingGateIssueResponse,
+    PendingApprovalIssueResponse,
 )
 from app.services.issue_service import IssueService
 from app.services.ritual_service import RitualService
@@ -197,6 +198,37 @@ async def get_issues_with_pending_gates(
 
     issues = await ritual_service.get_issues_with_pending_gates(project_id)
     return [PendingGateIssueResponse(**issue) for issue in issues]
+
+
+@router.get("/pending-approvals", response_model=list[PendingApprovalIssueResponse])
+async def get_issues_with_pending_approvals(
+    project_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    """Get all issues with pending approvals (GATE + REVIEW rituals).
+
+    Returns issues that need human action: GATE rituals waiting to be
+    completed, and REVIEW rituals that have been attested but not yet approved.
+    """
+    project_service = ProjectService(db)
+    ritual_service = RitualService(db)
+
+    project = await project_service.get_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    if not await check_user_project_access(db, current_user, project_id, project.team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
+
+    issues = await ritual_service.get_issues_with_pending_approvals(project_id)
+    return [PendingApprovalIssueResponse(**issue) for issue in issues]
 
 
 @router.post("/force-clear-limbo", status_code=status.HTTP_200_OK)

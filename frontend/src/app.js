@@ -2017,19 +2017,19 @@ async function loadGateApprovals() {
     const container = document.getElementById('gate-approvals-list');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading">Loading pending GATE approvals...</div>';
+    container.innerHTML = '<div class="loading">Loading pending approvals...</div>';
 
     try {
         // Load from all projects in the team
-        const allGates = [];
+        const allApprovals = [];
         for (const project of getProjects()) {
-            const gates = await api.getPendingGates(project.id);
-            allGates.push(...gates);
+            const approvals = await api.getPendingApprovals(project.id);
+            allApprovals.push(...approvals);
         }
-        setPendingGates(allGates);
+        setPendingGates(allApprovals);
         renderGateApprovals();
     } catch (e) {
-        container.innerHTML = `<div class="empty-state"><h3>Error loading GATE approvals</h3><p>${escapeHtml(e.message)}</p></div>`;
+        container.innerHTML = `<div class="empty-state"><h3>Error loading approvals</h3><p>${escapeHtml(e.message)}</p></div>`;
     }
 }
 
@@ -2037,20 +2037,28 @@ function renderGateApprovals() {
     const container = document.getElementById('gate-approvals-list');
     if (!container) return;
 
-    const pendingGates = getPendingGates();
-    if (pendingGates.length === 0) {
+    const pendingItems = getPendingGates();
+    if (pendingItems.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
-                <h3>No pending GATE approvals</h3>
-                <p>All GATE rituals have been completed. Nice work!</p>
+                <h3>No pending approvals</h3>
+                <p>All rituals have been completed. Nice work!</p>
             </div>
         `;
         return;
     }
 
-    // Group by limbo type (claim vs close)
-    const claimGates = pendingGates.filter(g => g.pending_gates.some(r => r.limbo_type === 'claim'));
-    const closeGates = pendingGates.filter(g => g.pending_gates.some(r => r.limbo_type === 'close'));
+    // Filter helper: returns only the approvals matching a predicate
+    const getApprovals = (item) => item.pending_approvals || [];
+    const filterPred = (pred) => (item) => {
+        const filtered = getApprovals(item).filter(pred);
+        return filtered.length > 0 ? { ...item, _filteredApprovals: filtered } : null;
+    };
+
+    // Group by type: GATE claim, GATE close, REVIEW (each issue only shows matching rituals per section)
+    const claimGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'claim')).filter(Boolean);
+    const closeGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'close')).filter(Boolean);
+    const reviewItems = pendingItems.map(filterPred(r => r.approval_mode === 'review')).filter(Boolean);
 
     let html = '';
 
@@ -2060,7 +2068,7 @@ function renderGateApprovals() {
                 <h3 class="gate-section-title">Waiting to Claim</h3>
                 <p class="gate-section-desc">Someone tried to claim these tickets but is waiting for your approval</p>
                 <div class="gate-list">
-                    ${claimGates.map(renderGateIssue).join('')}
+                    ${claimGates.map(renderApprovalIssue).join('')}
                 </div>
             </div>
         `;
@@ -2072,7 +2080,19 @@ function renderGateApprovals() {
                 <h3 class="gate-section-title">Waiting to Close</h3>
                 <p class="gate-section-desc">Someone tried to close these tickets but is waiting for your approval</p>
                 <div class="gate-list">
-                    ${closeGates.map(renderGateIssue).join('')}
+                    ${closeGates.map(renderApprovalIssue).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    if (reviewItems.length > 0) {
+        html += `
+            <div class="gate-section">
+                <h3 class="gate-section-title">Awaiting Review Approval</h3>
+                <p class="gate-section-desc">An agent attested these rituals and they need your approval</p>
+                <div class="gate-list">
+                    ${reviewItems.map(renderApprovalIssue).join('')}
                 </div>
             </div>
         `;
@@ -2080,7 +2100,7 @@ function renderGateApprovals() {
 
     container.innerHTML = html;
 
-    // Attach click handlers for gate approve buttons
+    // Attach click handlers for gate approve buttons (GATE mode)
     container.querySelectorAll('.gate-approve-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const d = btn.dataset;
@@ -2096,29 +2116,61 @@ function renderGateApprovals() {
             );
         });
     });
+
+    // Attach click handlers for review approve buttons (REVIEW mode)
+    container.querySelectorAll('.review-approve-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const d = btn.dataset;
+            approveReviewFromList(
+                d.ritualId,
+                d.issueId,
+                d.ritualName,
+                d.ritualPrompt,
+                d.issueIdentifier,
+                d.issueTitle,
+                d.requestedBy,
+                d.requestedAt,
+                d.attestationNote
+            );
+        });
+    });
 }
 
-function renderGateIssue(gateIssue) {
-    const ritualList = gateIssue.pending_gates.map(r => {
+function renderApprovalIssue(approvalIssue) {
+    const approvals = approvalIssue._filteredApprovals || approvalIssue.pending_approvals || [];
+    const ritualList = approvals.map(r => {
+        const isReview = r.approval_mode === 'review';
+        const waitingLabel = isReview ? 'Attested by' : 'Waiting';
         const waitingInfo = r.requested_by_name
-            ? `<span class="gate-waiting-info">Waiting: <strong>${escapeHtml(r.requested_by_name)}</strong>${r.requested_at ? ` (${formatRelativeTime(r.requested_at)})` : ''}</span>`
+            ? `<span class="gate-waiting-info">${waitingLabel}: <strong>${escapeHtml(r.requested_by_name)}</strong>${r.requested_at ? ` (${formatRelativeTime(r.requested_at)})` : ''}</span>`
             : '';
+        const attestationNote = isReview && r.attestation_note
+            ? `<div class="gate-attestation-note"><em>${escapeHtml(r.attestation_note)}</em></div>`
+            : '';
+        const btnClass = isReview ? 'review-approve-btn' : 'gate-approve-btn';
+        const btnLabel = isReview ? 'Approve' : 'Complete';
+        const modeLabel = isReview
+            ? '<span class="badge badge-review">review</span>'
+            : '<span class="badge badge-gate">gate</span>';
+
         return `
             <div class="gate-ritual">
                 <div class="gate-ritual-info">
-                    <span class="gate-ritual-name">${escapeHtml(r.ritual_name)}</span>
+                    <span class="gate-ritual-name">${escapeHtml(r.ritual_name)} ${modeLabel}</span>
                     <span class="gate-ritual-prompt">${escapeHtml(r.ritual_prompt)}</span>
                     ${waitingInfo}
+                    ${attestationNote}
                 </div>
-                <button class="btn btn-small btn-primary gate-approve-btn"
+                <button class="btn btn-small btn-primary ${btnClass}"
                     data-ritual-id="${escapeAttr(r.ritual_id)}"
-                    data-issue-id="${escapeAttr(gateIssue.issue_id)}"
+                    data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
                     data-ritual-name="${escapeAttr(r.ritual_name)}"
                     data-ritual-prompt="${escapeAttr(r.ritual_prompt)}"
-                    data-issue-identifier="${escapeAttr(gateIssue.identifier)}"
-                    data-issue-title="${escapeAttr(gateIssue.title)}"
+                    data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
+                    data-issue-title="${escapeAttr(approvalIssue.title)}"
                     data-requested-by="${escapeAttr(r.requested_by_name || '')}"
-                    data-requested-at="${escapeAttr(r.requested_at || '')}">Approve</button>
+                    data-requested-at="${escapeAttr(r.requested_at || '')}"
+                    data-attestation-note="${escapeAttr(r.attestation_note || '')}">${btnLabel}</button>
             </div>
         `;
     }).join('');
@@ -2126,13 +2178,13 @@ function renderGateIssue(gateIssue) {
     return `
         <div class="gate-issue-card">
             <div class="gate-issue-header">
-                <a href="/issue/${encodeURIComponent(gateIssue.identifier)}" onclick="event.preventDefault(); viewIssue('${escapeJsString(gateIssue.issue_id)}')" class="gate-issue-link">
-                    <span class="gate-issue-id">${escapeHtml(gateIssue.identifier)}</span>
-                    <span class="gate-issue-title">${escapeHtml(gateIssue.title)}</span>
+                <a href="/issue/${encodeURIComponent(approvalIssue.identifier)}" onclick="event.preventDefault(); viewIssue('${escapeJsString(approvalIssue.issue_id)}')" class="gate-issue-link">
+                    <span class="gate-issue-id">${escapeHtml(approvalIssue.identifier)}</span>
+                    <span class="gate-issue-title">${escapeHtml(approvalIssue.title)}</span>
                 </a>
-                <span class="badge badge-${gateIssue.status}">${gateIssue.status.replace('_', ' ')}</span>
+                <span class="badge badge-${approvalIssue.status}">${approvalIssue.status.replace('_', ' ')}</span>
             </div>
-            <div class="gate-issue-project">${escapeHtml(gateIssue.project_name)}</div>
+            <div class="gate-issue-project">${escapeHtml(approvalIssue.project_name)}</div>
             <div class="gate-rituals">
                 ${ritualList}
             </div>

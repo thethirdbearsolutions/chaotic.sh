@@ -87,11 +87,70 @@ function completeGateFromList(ritualId, issueId, ritualName, ritualPrompt, issue
     showGateApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, requestedBy, requestedAt);
 }
 
+/**
+ * Show the review approval modal with attestation context.
+ */
+function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote) {
+    document.getElementById('modal-title').textContent = `Approve: ${ritualName}`;
+    document.getElementById('modal-content').innerHTML = `
+        <div class="gate-approval-modal">
+            <div class="gate-approval-issue">
+                <div class="gate-approval-issue-header">
+                    <span class="gate-approval-issue-id">${escapeHtml(issueIdentifier)}</span>
+                    <span class="gate-approval-issue-title">${escapeHtml(issueTitle)}</span>
+                </div>
+                <a href="/issue/${encodeURIComponent(issueIdentifier)}" class="gate-approval-view-link" onclick="event.preventDefault(); closeModal(); viewIssue('${escapeJsString(issueId)}')">View full ticket details →</a>
+            </div>
+            <div class="gate-approval-ritual">
+                <div class="gate-approval-prompt">${escapeHtml(ritualPrompt)}</div>
+                ${attestedBy ? `<div class="gate-approval-requested">Attested by <strong>${escapeHtml(attestedBy)}</strong>${attestedAt ? ` ${formatRelativeTime(attestedAt)}` : ''}</div>` : ''}
+                ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${escapeHtml(attestationNote)}</div>` : ''}
+            </div>
+            <form id="review-approval-form">
+                <button type="submit" class="btn btn-primary">Approve Attestation</button>
+            </form>
+        </div>
+    `;
+    document.getElementById('review-approval-form').addEventListener('submit', (event) => {
+        handleReviewApproval(event, ritualId, issueId, ritualName);
+    });
+    showModal();
+}
+
+/**
+ * Handle review approval form submission.
+ */
+async function handleReviewApproval(event, ritualId, issueId, ritualName) {
+    event.preventDefault();
+
+    try {
+        await api.approveTicketRitual(ritualId, issueId);
+        showToast(`Review ritual "${ritualName}" approved!`, 'success');
+        closeModal();
+        if (typeof window.loadGateApprovals === 'function') {
+            window.loadGateApprovals();
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+/**
+ * Entry point for review approve buttons in the approvals list.
+ */
+function approveReviewFromList(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote) {
+    showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issueIdentifier, issueTitle, attestedBy, attestedAt, attestationNote);
+}
+
 // Export to window for onclick handlers
 window.completeGateFromList = completeGateFromList;
+window.approveReviewFromList = approveReviewFromList;
 
 export {
     showGateApprovalModal,
     handleGateApproval,
-    completeGateFromList
+    completeGateFromList,
+    showReviewApprovalModal,
+    handleReviewApproval,
+    approveReviewFromList
 };
