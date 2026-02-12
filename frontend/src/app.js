@@ -35,6 +35,10 @@ import {
     getEstimateOptions,
     formatEstimate,
     setGlobalProjectSelection,
+    setCurrentSettingsProjectId,
+    getProjectRituals,
+    loadProjectSettingsRituals,
+    renderRitualList,
 } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
@@ -1658,6 +1662,8 @@ function navigateTo(view, pushHistory = true) {
     if (typeof clearProjectSettingsState === 'function') {
         clearProjectSettingsState();
     }
+    // Clear rituals view callback
+    window._onRitualsChanged = null;
 
     // Hide all views
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -1719,6 +1725,9 @@ function navigateTo(view, pushHistory = true) {
         case 'sprints':
             updateSprintProjectFilter();
             break;
+        case 'rituals':
+            loadRitualsView();
+            break;
         case 'documents':
             loadDocuments();
             break;
@@ -1767,7 +1776,7 @@ function handleRoute() {
     } else {
         // /issues, /projects, /board, etc.
         view = parts[0];
-        const validViews = ['my-issues', 'gate-approvals', 'issues', 'board', 'projects', 'sprints', 'documents', 'team', 'settings'];
+        const validViews = ['my-issues', 'gate-approvals', 'rituals', 'issues', 'board', 'projects', 'sprints', 'documents', 'team', 'settings'];
         if (validViews.includes(view)) {
             navigateTo(view, false);
         } else {
@@ -3327,6 +3336,100 @@ async function updateRitualProjectFilter() {
         getProjects().map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 }
 
+// Rituals top-level view
+async function loadRitualsView() {
+    const filter = document.getElementById('rituals-project-filter');
+    if (!filter) return;
+
+    // Set callback so CRUD operations refresh the rituals view
+    window._onRitualsChanged = renderRitualsView;
+
+    await loadProjects();
+    filter.innerHTML = '<option value="">Select a project</option>' +
+        getProjects().map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+
+    // Auto-select saved project
+    const savedProject = getProjectFromUrl() || getSavedProjectId();
+    if (savedProject && getProjects().some(p => p.id === savedProject)) {
+        filter.value = savedProject;
+        onRitualsProjectChange();
+    } else {
+        document.getElementById('rituals-content').innerHTML =
+            '<div class="empty-state">Select a project to view and manage rituals.</div>';
+    }
+}
+
+async function onRitualsProjectChange() {
+    const projectId = document.getElementById('rituals-project-filter').value;
+    const container = document.getElementById('rituals-content');
+
+    if (!projectId) {
+        container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
+        return;
+    }
+
+    // Set the project context so create/edit/delete functions work
+    setCurrentSettingsProjectId(projectId);
+
+    container.innerHTML = '<div class="loading">Loading rituals...</div>';
+
+    try {
+        await loadProjectSettingsRituals();
+        renderRitualsView();
+    } catch (e) {
+        container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderRitualsView() {
+    const container = document.getElementById('rituals-content');
+    const rituals = getProjectRituals();
+
+    const sprintRituals = rituals.filter(r => !r.trigger || r.trigger === 'every_sprint');
+    const closeRituals = rituals.filter(r => r.trigger === 'ticket_close');
+    const claimRituals = rituals.filter(r => r.trigger === 'ticket_claim');
+
+    container.innerHTML = `
+        <div class="rituals-view-sections">
+            <section class="settings-section">
+                <div class="settings-section-header">
+                    <div>
+                        <h3>Sprint Rituals</h3>
+                        <p class="settings-description">Required when closing a sprint</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('every_sprint')">+ Create Ritual</button>
+                </div>
+                <div id="rv-sprint-rituals-list" class="rituals-list"></div>
+            </section>
+            <section class="settings-section">
+                <div class="settings-section-header">
+                    <div>
+                        <h3>Ticket Close Rituals</h3>
+                        <p class="settings-description">Required when closing a ticket</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_close')">+ Create Ritual</button>
+                </div>
+                <div id="rv-close-rituals-list" class="rituals-list"></div>
+            </section>
+            <section class="settings-section">
+                <div class="settings-section-header">
+                    <div>
+                        <h3>Ticket Claim Rituals</h3>
+                        <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_claim')">+ Create Ritual</button>
+                </div>
+                <div id="rv-claim-rituals-list" class="rituals-list"></div>
+            </section>
+        </div>
+    `;
+
+    // Render ritual lists into the view-specific containers
+    renderRitualList('rv-sprint-rituals-list', sprintRituals, 'sprint');
+    renderRitualList('rv-close-rituals-list', closeRituals, 'close');
+    renderRitualList('rv-claim-rituals-list', claimRituals, 'claim');
+}
+
 // Limbo status functions are now in sprints.js module
 
 async function approveRitual(ritualId, projectId) {
@@ -4128,6 +4231,10 @@ Object.assign(window, {
 
     // Projects
     showCreateProjectModal,
+
+    // Rituals top-level view
+    loadRitualsView,
+    onRitualsProjectChange,
 
     // Rituals (pending rituals approval)
     approveRitual,

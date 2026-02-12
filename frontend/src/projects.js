@@ -574,6 +574,20 @@ export function clearProjectSettingsState() {
 }
 
 /**
+ * Set the current settings project ID (used by rituals view to reuse CRUD functions)
+ */
+export function setCurrentSettingsProjectId(projectId) {
+  currentSettingsProjectId = projectId;
+}
+
+/**
+ * Get the current project rituals array
+ */
+export function getProjectRituals() {
+  return projectRituals;
+}
+
+/**
  * Save general settings (name, description, color)
  */
 export async function saveProjectSettingsGeneral() {
@@ -641,12 +655,16 @@ let projectRituals = [];
 /**
  * Load rituals for the current project settings page
  */
-async function loadProjectSettingsRituals() {
+export async function loadProjectSettingsRituals() {
   if (!currentSettingsProjectId) return;
 
   try {
     projectRituals = await api.getRituals(currentSettingsProjectId);
     renderProjectSettingsRituals();
+    // Notify rituals view if active (for CRUD operations triggered from modals)
+    if (typeof window._onRitualsChanged === 'function') {
+      window._onRitualsChanged();
+    }
   } catch (e) {
     showToast(e.message, 'error');
   }
@@ -671,7 +689,7 @@ function renderProjectSettingsRituals() {
  * @param {Array} rituals - Rituals to render
  * @param {string} type - Ritual type for empty message
  */
-function renderRitualList(containerId, rituals, type) {
+export function renderRitualList(containerId, rituals, type) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -907,4 +925,7 @@ Object.assign(window, {
   showEditProjectRitualModal,
   handleUpdateProjectRitual,
   deleteProjectRitual,
+  setCurrentSettingsProjectId,
+  getProjectRituals,
+  loadProjectSettingsRituals,
 });
