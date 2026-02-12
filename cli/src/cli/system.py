@@ -544,11 +544,22 @@ def run_migrations() -> tuple[bool, str]:
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
 
         # Run Alembic migrations
-        run_command(
-            ["uv", "run", "alembic", "upgrade", "head"],
-            cwd=backend_dir,
-            timeout=120,
-        )
+        try:
+            run_command(
+                ["uv", "run", "alembic", "upgrade", "head"],
+                cwd=backend_dir,
+                timeout=120,
+            )
+        except subprocess.CalledProcessError as e:
+            if "Can't locate revision" in (e.stderr or ""):
+                # Old migration history from before squash — re-stamp with current head
+                run_command(
+                    ["uv", "run", "alembic", "stamp", "head"],
+                    cwd=backend_dir,
+                    timeout=30,
+                )
+            else:
+                raise
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
