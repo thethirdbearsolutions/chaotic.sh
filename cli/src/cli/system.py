@@ -50,6 +50,16 @@ def validate_port(port: int) -> bool:
     """Validate port number."""
     return 1024 <= port <= 65535
 
+
+def validate_host(host: str) -> bool:
+    """Validate host/IP address to prevent injection in service files."""
+    # Allow IPv4, IPv6, and valid hostnames (no whitespace, no control chars)
+    if not host or len(host) > 255:
+        return False
+    if re.match(r'^[\w\.\-\:]+$', host):
+        return True
+    return False
+
 console = Console()
 
 
@@ -622,6 +632,11 @@ def system_install(git_version, host, port, no_start, repo, yes):
         console.print("URL must be https:// or git@ format.")
         raise SystemExit(1)
 
+    if not validate_host(host):
+        console.print(f"[red]Invalid host: {host}[/red]")
+        console.print("Host must be a valid IP address or hostname.")
+        raise SystemExit(1)
+
     if not validate_port(port):
         console.print(f"[red]Invalid port: {port}[/red]")
         console.print("Port must be between 1024 and 65535.")
@@ -861,7 +876,8 @@ def system_stop():
 @system.command("reconfigure")
 @click.option("--host", default=None, help="New host/IP to bind (use 0.0.0.0 for all interfaces)")
 @click.option("--port", default=None, type=int, help="New port number")
-def system_reconfigure(host, port):
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def system_reconfigure(host, port, yes):
     """Reconfigure server host, port, or other settings.
 
     Updates server.json, regenerates the service file, and restarts
@@ -884,6 +900,17 @@ def system_reconfigure(host, port):
         console.print("Use --host and/or --port to change settings.")
         return
 
+    # Validate inputs before anything else
+    if host is not None and not validate_host(host):
+        console.print(f"[red]Invalid host: {host}[/red]")
+        console.print("Host must be a valid IP address or hostname.")
+        raise SystemExit(1)
+
+    if port is not None and not validate_port(port):
+        console.print(f"[red]Invalid port: {port}[/red]")
+        console.print("Port must be between 1024 and 65535.")
+        raise SystemExit(1)
+
     server_info = load_server_json()
     current_host = server_info.get("host", "127.0.0.1")
     current_port = server_info.get("port", DEFAULT_PORT)
@@ -896,12 +923,7 @@ def system_reconfigure(host, port):
         console.print("[yellow]No changes — configuration is already set to these values.[/yellow]")
         return
 
-    if port is not None and not validate_port(new_port):
-        console.print(f"[red]Invalid port: {new_port}[/red]")
-        console.print("Port must be between 1024 and 65535.")
-        raise SystemExit(1)
-
-    # Show before/after
+    # Show before/after and confirm
     console.print("[bold]Current config:[/bold]")
     console.print(f"  Host: {current_host}")
     console.print(f"  Port: {current_port}")
@@ -911,6 +933,16 @@ def system_reconfigure(host, port):
     console.print(f"  Port: {new_port}")
     console.print()
 
+    if not yes:
+        if not click.confirm("Apply these changes?"):
+            console.print("[yellow]Reconfigure cancelled.[/yellow]")
+            raise SystemExit(0)
+
+    # Generate secret key inline if missing (avoid ensure_secret_key clobber)
+    if not secret_key:
+        secret_key = generate_secret_key()
+        server_info["secret_key"] = secret_key
+
     # Update server.json
     server_info["host"] = new_host
     server_info["port"] = new_port
@@ -918,8 +950,6 @@ def system_reconfigure(host, port):
     console.print("Updated server.json.")
 
     # Regenerate service file
-    if not secret_key:
-        secret_key = ensure_secret_key()
     service_path = write_service_file(new_port, secret_key, new_host)
     console.print(f"Regenerated service file: {service_path}")
 
@@ -927,7 +957,16 @@ def system_reconfigure(host, port):
     was_running = is_service_running()
     if was_running:
         console.print("Restarting server...")
-        stop_service()
+        if not stop_service():
+            console.print("[red]Failed to stop server.[/red]")
+            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
+            console.print("Try 'chaotic system stop' and then 'chaotic system start' manually.")
+            raise SystemExit(1)
+        if not wait_for_service_stop(timeout=10):
+            console.print("[yellow]Server did not stop in time.[/yellow]")
+            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
+            console.print("Try 'chaotic system stop' and then 'chaotic system start' manually.")
+            raise SystemExit(1)
         if start_service():
             console.print("Waiting for health check...", end=" ")
             if health_check(new_port):
@@ -937,7 +976,8 @@ def system_reconfigure(host, port):
                 console.print("Server may still be starting. Check 'chaotic system status'.")
         else:
             console.print("[red]Failed to restart server.[/red]")
-            console.print("Try 'chaotic system start' manually.")
+            console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
+            console.print("Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
             raise SystemExit(1)
     else:
         console.print("[dim]Server was not running; skipping restart.[/dim]")
