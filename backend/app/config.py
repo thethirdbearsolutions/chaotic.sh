@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
 
+    # CORS
+    cors_origins: str = "*"
+
     # Server
     host: str = "127.0.0.1"
     port: int = 24267
