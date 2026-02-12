@@ -80,6 +80,9 @@ check_python() {
 }
 
 main() {
+    # Ensure common tool install paths are on PATH
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
     echo ""
     printf "${BOLD}Chaotic CLI Installer${NC}\n"
     echo "====================="
