@@ -1494,7 +1494,7 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
             label_ids.append(label["id"])
         data["label_ids"] = label_ids
     if sprint is not None:
-        if sprint.lower() == "none":
+        if sprint.lower() == "none" or sprint == "":
             data["sprint_id"] = None
         else:
             data["sprint_id"] = resolve_sprint_id(sprint, project_id)
@@ -1759,7 +1759,7 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
     if estimate is not None:
         data["estimate"] = estimate
     if sprint is not None:
-        if sprint.lower() == "none":
+        if sprint.lower() == "none" or sprint == "":
             data["sprint_id"] = None
         else:
             project_id = issue.get("project_id") or get_current_project()
