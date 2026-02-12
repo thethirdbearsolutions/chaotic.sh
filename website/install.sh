@@ -65,6 +65,54 @@ has_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Ensure ~/.local/bin is in the user's shell profile
+ensure_path_in_profile() {
+    PATH_LINE="export PATH=\"\$HOME/.local/bin:\$PATH\""
+
+    # Determine shell profile file
+    SHELL_NAME="$(basename "${SHELL:-}")"
+    if [ -z "$SHELL_NAME" ]; then
+        # $SHELL unset — detect from existing rc files
+        if [ -f "$HOME/.zshrc" ]; then
+            SHELL_NAME="zsh"
+        elif [ -f "$HOME/.bashrc" ]; then
+            SHELL_NAME="bash"
+        else
+            SHELL_NAME="sh"
+        fi
+    fi
+
+    case "$SHELL_NAME" in
+        zsh)  PROFILE="$HOME/.zshrc" ;;
+        bash)
+            if [ -f "$HOME/.bash_profile" ]; then
+                PROFILE="$HOME/.bash_profile"
+            elif [ -f "$HOME/.bashrc" ]; then
+                PROFILE="$HOME/.bashrc"
+            else
+                PROFILE="$HOME/.profile"
+            fi
+            ;;
+        *)    PROFILE="$HOME/.profile" ;;
+    esac
+
+    # Check if ~/.local/bin is already in PATH exports in the profile
+    if [ -f "$PROFILE" ] && grep -q 'PATH.*\.local/bin' "$PROFILE" 2>/dev/null; then
+        return 0
+    fi
+
+    # Add it
+    {
+        echo ""
+        echo "# Added by Chaotic installer"
+        echo "$PATH_LINE"
+    } >> "$PROFILE" 2>/dev/null || {
+        warn "Could not update $PROFILE — you may need to manually add ~/.local/bin to your PATH"
+        return 0
+    }
+    PROFILE_UPDATED=1
+}
+
 # Check for Python 3.10+
 check_python() {
     if has_command python3; then
@@ -195,6 +243,10 @@ main() {
     uv tool install --prerelease=allow chaotic-cli
     success "Chaotic CLI installed"
 
+    # Ensure ~/.local/bin is in the user's shell profile for future sessions
+    PROFILE_UPDATED=0
+    ensure_path_in_profile
+
     # Verify installation
     if ! has_command chaotic; then
         warn "chaotic command not found in PATH"
@@ -220,6 +272,18 @@ main() {
     echo ""
     success "Installation complete!"
     echo ""
+
+    # Tell user to restart their shell if we updated the profile
+    if [ "$PROFILE_UPDATED" = "1" ]; then
+        printf "${YELLOW}NOTE:${NC} We added ~/.local/bin to your PATH in ${PROFILE}\n"
+        printf "To use chaotic in this terminal, run:\n"
+        echo ""
+        echo "  . $PROFILE"
+        echo ""
+        printf "Or open a new terminal session.\n"
+        echo ""
+    fi
+
     printf "${BOLD}Get started:${NC}\n"
     echo "  chaotic auth signup    # Create your account"
     echo "  chaotic team create    # Create a team"
