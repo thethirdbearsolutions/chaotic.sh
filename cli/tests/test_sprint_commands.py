@@ -3,6 +3,7 @@
 Tests for sprint current, sprint show, sprint list, sprint budget, and sprint close.
 """
 from unittest.mock import patch, MagicMock
+import click
 import pytest
 
 
@@ -563,3 +564,24 @@ class TestSprintUpdate:
         assert result.exit_code == 0
         mock_resolve.assert_called_once_with('current', 'test-project-123')
         client.update_sprint.assert_called_once_with('current-sprint-id', budget=22)
+
+    def test_sprint_update_no_sprint_id_no_project_errors(self, cli_runner):
+        """sprint update without SPRINT_ID and no project gives clear error (CHT-780)."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value=None):
+            result = cli_runner.invoke(cli, ['sprint', 'update', '--budget', '10'])
+
+        assert result.exit_code != 0
+        assert 'No project selected' in result.output
+
+    def test_sprint_update_no_current_sprint_errors(self, cli_runner):
+        """sprint update without SPRINT_ID when no current sprint gives API error (CHT-780)."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', side_effect=click.ClickException("No current sprint found")):
+            result = cli_runner.invoke(cli, ['sprint', 'update', '--budget', '10'])
+
+        assert result.exit_code != 0
+        assert 'No current sprint' in result.output

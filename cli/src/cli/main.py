@@ -2544,7 +2544,7 @@ def sprint_close(sprint_id):
 
 
 @sprint.command("update")
-@click.argument("sprint_id", required=False, default=None)
+@click.argument("sprint_id", required=False)
 @click.option("--name", help="Sprint name")
 @click.option("--description", help="Sprint description")
 @click.option("--budget", type=int, help="Point budget for the sprint")
