@@ -5,6 +5,8 @@
  * and message handling from the main application module.
  */
 
+/* global api -- provided via window by main.js entry point */
+
 import { getIssues, setIssues, getCurrentUser, getCurrentView, getWebsocket, setWebsocket } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
@@ -18,7 +20,7 @@ let wsFailCount = 0;
 
 /**
  * Connect to the WebSocket for real-time updates.
- * Handles reconnection with exponential backoff on disconnect.
+ * Handles reconnection with fixed-interval retry on disconnect.
  */
 export function connectWebSocket(teamId) {
     // Close existing connection
