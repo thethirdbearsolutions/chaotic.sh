@@ -418,7 +418,7 @@ def list_profiles() -> list[str]:
     Symlinks are ignored for security (to prevent path traversal attacks).
     Permission errors are handled gracefully by returning an empty list.
     """
-    profiles = []
+    profiles = set()
     config_dir = get_chaotic_home()
     if config_dir.exists():
         try:
@@ -431,11 +431,11 @@ def list_profiles() -> list[str]:
                     # Skip non-profile JSON files
                     if name == "server":
                         continue
-                    # Include 'config' as 'default' for clarity
-                    if name == "config":
-                        profiles.append("default")
+                    # 'config' and 'default' are the same profile
+                    if name in ("config", "default"):
+                        profiles.add("default")
                     else:
-                        profiles.append(name)
+                        profiles.add(name)
         except (PermissionError, OSError):
             # Return empty list if we can't read the directory
             return []
