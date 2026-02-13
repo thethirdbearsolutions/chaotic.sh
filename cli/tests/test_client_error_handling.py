@@ -31,13 +31,35 @@ class MockResponse:
         return self._json_data
 
 
+class _MethodDispatchMock(MagicMock):
+    """Mock httpx.Client that routes any HTTP method call to a shared return value.
+
+    Set `mock.method_response` to the desired MockResponse, then any call
+    to `mock.get(...)`, `mock.post(...)`, `mock.patch(...)`, etc. returns it.
+    Also supports the legacy `mock.request(...)` path for older tests.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.method_response = None
+
+    def __getattr__(self, name):
+        if name == "method_response":
+            return super().__getattr__(name)
+        if name in ("get", "post", "put", "patch", "delete", "head", "options", "request"):
+            m = MagicMock()
+            m.return_value = self.method_response
+            return m
+        return super().__getattr__(name)
+
+
 @pytest.fixture
 def mock_client_request():
     """Mock httpx.Client and config for testing."""
     with patch("cli.client.httpx.Client") as mock_httpx, \
          patch("cli.client.get_api_url", return_value="http://test"), \
          patch("cli.client.get_api_key", return_value="test-key"):
-        mock_http_client = MagicMock()
+        mock_http_client = _MethodDispatchMock()
         mock_httpx.return_value.__enter__.return_value = mock_http_client
         yield mock_http_client
 
@@ -58,7 +80,7 @@ class TestTicketRitualsErrorParsing:
                 ],
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -83,7 +105,7 @@ class TestTicketRitualsErrorParsing:
                 "pending_rituals": ["legacy-ritual"],
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -106,7 +128,7 @@ class TestTicketRitualsErrorParsing:
                 "pending_rituals": [],
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -128,7 +150,7 @@ class TestTicketRitualsErrorParsing:
                 ],
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -155,7 +177,7 @@ class TestSprintLimboErrorParsing:
                 ],
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -180,7 +202,7 @@ class TestArrearsErrorParsing:
                 "points_spent": 25,
             }
         }
-        mock_client_request.request.return_value = MockResponse(409, response_data)
+        mock_client_request.method_response = MockResponse(409, response_data)
 
         client = Client()
 
@@ -211,7 +233,7 @@ class TestFormatError:
     def test_dict_with_message_key(self, mock_client_request):
         """Dict detail with message key should use the message."""
         response_data = {"detail": {"message": "Custom error message"}}
-        mock_client_request.request.return_value = MockResponse(400, response_data)
+        mock_client_request.method_response = MockResponse(400, response_data)
 
         client = Client()
         with pytest.raises(APIError, match="Custom error message"):
@@ -220,7 +242,7 @@ class TestFormatError:
     def test_dict_without_message_falls_back_to_str(self, mock_client_request):
         """Dict detail without message key should stringify the dict."""
         response_data = {"detail": {"code": "UNKNOWN"}}
-        mock_client_request.request.return_value = MockResponse(400, response_data)
+        mock_client_request.method_response = MockResponse(400, response_data)
 
         client = Client()
         with pytest.raises(APIError, match="UNKNOWN"):
@@ -232,7 +254,7 @@ class TestFormatError:
         mock_response.status_code = 200
         mock_response.is_success = True
         mock_response.content = b""
-        mock_client_request.request.return_value = mock_response
+        mock_client_request.method_response = mock_response
 
         client = Client()
         result = client._request("DELETE", "/test")
@@ -244,7 +266,7 @@ class TestFormatError:
         mock_response.status_code = 500
         mock_response.is_success = False
         mock_response.content = b""
-        mock_client_request.request.return_value = mock_response
+        mock_client_request.method_response = mock_response
 
         client = Client()
         with pytest.raises(APIError, match="500 with no body"):
@@ -254,7 +276,7 @@ class TestFormatError:
         """204 No Content should return None."""
         mock_response = MagicMock()
         mock_response.status_code = 204
-        mock_client_request.request.return_value = mock_response
+        mock_client_request.method_response = mock_response
 
         client = Client()
         result = client._request("DELETE", "/test")

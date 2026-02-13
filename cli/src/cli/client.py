@@ -32,13 +32,11 @@ class Client:
         """Make API request."""
         url = f"{get_api_url()}{path}"
         with httpx.Client() as client:
-            response = client.request(
-                method,
-                url,
-                headers=self._headers(),
-                json=data if data is not None else None,
-                timeout=30.0,
-            )
+            send = getattr(client, method.lower())
+            kwargs = {"headers": self._headers(), "timeout": 30.0}
+            if data is not None:
+                kwargs["json"] = data
+            response = send(url, **kwargs)
 
             if response.status_code == 204:
                 return None
