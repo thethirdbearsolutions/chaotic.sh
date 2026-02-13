@@ -60,7 +60,7 @@ class Client:
     def _format_error(self, detail) -> str:
         """Format an API error detail into a user-friendly message."""
         if not isinstance(detail, dict):
-            return detail
+            return str(detail)
 
         if "pending_rituals" in detail and "issue_id" in detail:
             return self._format_ticket_ritual_error(detail)

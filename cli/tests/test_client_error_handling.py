@@ -200,6 +200,14 @@ class TestFormatError:
         client = Client()
         assert client._format_error("Something went wrong") == "Something went wrong"
 
+    def test_list_detail_stringified(self):
+        """List error details (e.g. FastAPI validation errors) should be stringified."""
+        client = Client()
+        detail = [{"loc": ["body", "title"], "msg": "field required"}]
+        result = client._format_error(detail)
+        assert isinstance(result, str)
+        assert "field required" in result
+
     def test_dict_with_message_key(self, mock_client_request):
         """Dict detail with message key should use the message."""
         response_data = {"detail": {"message": "Custom error message"}}
