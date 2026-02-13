@@ -8,6 +8,11 @@
 # 3. Installs uv and just if missing
 # 4. Installs the Chaotic CLI via uv
 # 5. Runs 'chaotic system install' to set up a local server
+#
+# Environment variables:
+#   CHAOTIC_SKIP_SYSTEM_INSTALL=1  Skip 'chaotic system install' (CLI only)
+#   CHAOTIC_PORT=<port>            Port for the server (default: 24267)
+#   CHAOTIC_HOST=<host>            Host/IP to bind (default: 127.0.0.1)
 
 set -e
 
@@ -266,10 +271,21 @@ main() {
 
     echo ""
 
-    # Run system install
-    info "Setting up local Chaotic server..."
-    echo ""
-    "$CHAOTIC_CMD" system install --yes
+    # Run system install (unless skipped)
+    if [ "${CHAOTIC_SKIP_SYSTEM_INSTALL:-0}" = "1" ]; then
+        info "Skipping system install (CHAOTIC_SKIP_SYSTEM_INSTALL=1)"
+    else
+        info "Setting up local Chaotic server..."
+        echo ""
+        INSTALL_ARGS="--yes"
+        if [ -n "$CHAOTIC_PORT" ]; then
+            INSTALL_ARGS="$INSTALL_ARGS --port $CHAOTIC_PORT"
+        fi
+        if [ -n "$CHAOTIC_HOST" ]; then
+            INSTALL_ARGS="$INSTALL_ARGS --host $CHAOTIC_HOST"
+        fi
+        "$CHAOTIC_CMD" system install $INSTALL_ARGS
+    fi
 
     echo ""
     success "Installation complete!"
