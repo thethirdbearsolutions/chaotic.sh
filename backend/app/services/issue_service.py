@@ -548,9 +548,15 @@ class IssueService:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_identifier(self, identifier: str) -> Issue | None:
-        """Get issue by identifier (e.g., PRJ-123)."""
-        result = await self.db.execute(
+    async def get_by_identifier(self, identifier: str, team_id: str | None = None) -> Issue | None:
+        """Get issue by identifier (e.g., PRJ-123).
+
+        Args:
+            identifier: The issue identifier (e.g., PRJ-123).
+            team_id: Optional team ID to scope the lookup. When provided,
+                only returns issues belonging to projects in the given team.
+        """
+        query = (
             select(Issue)
             .options(
                 selectinload(Issue.labels),
@@ -559,6 +565,11 @@ class IssueService:
             )
             .where(Issue.identifier == identifier.upper())
         )
+        if team_id is not None:
+            query = query.join(Project, Issue.project_id == Project.id).where(
+                Project.team_id == team_id
+            )
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
     async def update(
@@ -1134,12 +1145,8 @@ class IssueService:
             if identifier == source_identifier:
                 continue
 
-            target = await self.get_by_identifier(identifier)
+            target = await self.get_by_identifier(identifier, team_id=source_team_id)
             if not target:
-                continue
-
-            # Only link to issues within the same team
-            if target.project.team_id != source_team_id:
                 continue
 
             # Check if a relation already exists in either direction
@@ -1167,25 +1174,41 @@ class IssueService:
 
         return created
 
-    async def list_relations(self, issue_id: str) -> list[dict]:
+    async def list_relations(self, issue_id: str, team_id: str | None = None) -> list[dict]:
         """List all relations for an issue (both outgoing and incoming).
 
         Returns a list with relation info and the related issue details.
+
+        Args:
+            issue_id: The issue to list relations for.
+            team_id: Optional team ID filter. When provided, only returns
+                relations where the related issue belongs to a project
+                in the same team, preventing cross-team data leakage.
         """
         # Get outgoing relations (this issue blocks/relates to other issues)
-        outgoing_result = await self.db.execute(
+        outgoing_query = (
             select(IssueRelation, Issue)
             .join(Issue, IssueRelation.related_issue_id == Issue.id)
             .where(IssueRelation.issue_id == issue_id)
         )
+        if team_id is not None:
+            outgoing_query = outgoing_query.join(
+                Project, Issue.project_id == Project.id
+            ).where(Project.team_id == team_id)
+        outgoing_result = await self.db.execute(outgoing_query)
         outgoing = outgoing_result.all()
 
         # Get incoming relations (other issues block/relate to this issue)
-        incoming_result = await self.db.execute(
+        incoming_query = (
             select(IssueRelation, Issue)
             .join(Issue, IssueRelation.issue_id == Issue.id)
             .where(IssueRelation.related_issue_id == issue_id)
         )
+        if team_id is not None:
+            incoming_query = incoming_query.join(
+                Project, Issue.project_id == Project.id
+            ).where(Project.team_id == team_id)
+        incoming_result = await self.db.execute(incoming_query)
         incoming = incoming_result.all()
 
         relations = []

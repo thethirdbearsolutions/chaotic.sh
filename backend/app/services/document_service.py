@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.models.document import Document, DocumentComment, DocumentActivity, DocumentActivityType, document_issues, document_labels
 from app.models.issue import Issue, Label
+from app.models.project import Project
 from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentCommentCreate, DocumentCommentUpdate
 
 
@@ -195,7 +196,30 @@ class DocumentService:
         return list(result.scalars().all())
 
     async def link_issue(self, document_id: str, issue_id: str) -> None:
-        """Link a document to an issue."""
+        """Link a document to an issue.
+
+        Raises:
+            ValueError: If the document and issue belong to different teams.
+        """
+        # Verify document and issue belong to the same team
+        doc_result = await self.db.execute(
+            select(Document.team_id).where(Document.id == document_id)
+        )
+        doc_team_id = doc_result.scalar_one_or_none()
+
+        issue_team_result = await self.db.execute(
+            select(Project.team_id)
+            .join(Issue, Issue.project_id == Project.id)
+            .where(Issue.id == issue_id)
+        )
+        issue_team_id = issue_team_result.scalar_one_or_none()
+
+        if doc_team_id is None or issue_team_id is None:
+            raise ValueError("Document or issue not found")
+
+        if doc_team_id != issue_team_id:
+            raise ValueError("Cannot link document and issue from different teams")
+
         # Check if already linked
         existing = await self.db.execute(
             select(document_issues).where(

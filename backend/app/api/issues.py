@@ -969,6 +969,14 @@ async def update_comment(
             detail="Issue not found",
         )
 
+    project = await project_service.get_by_id(issue.project_id)
+    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this project",
+        )
+
     comment = await issue_service.get_comment_by_id(comment_id)
     if not comment or comment.issue_id != issue_id:
         raise HTTPException(
@@ -1018,6 +1026,14 @@ async def delete_comment(
             detail="Issue not found",
         )
 
+    project = await project_service.get_by_id(issue.project_id)
+    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this project",
+        )
+
     comment = await issue_service.get_comment_by_id(comment_id)
     if not comment or comment.issue_id != issue_id:
         raise HTTPException(
@@ -1032,7 +1048,6 @@ async def delete_comment(
         )
 
     await issue_service.delete_comment(comment)
-    project = await project_service.get_by_id(issue.project_id)
     if project:
         await broadcast_comment_event(
             project.team_id,
@@ -1088,6 +1103,13 @@ async def create_relation(
             detail="Not authorized to access the related issue's project",
         )
 
+    # Prevent cross-team relations
+    if project.team_id != related_project.team_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create relations between issues in different teams",
+        )
+
     relation = await issue_service.create_relation(issue_id, relation_in)
     return {
         "id": relation.id,
@@ -1123,7 +1145,7 @@ async def list_relations(
             detail="Not authorized to access this project",
         )
 
-    relations = await issue_service.list_relations(issue_id)
+    relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
     return relations
 
 
