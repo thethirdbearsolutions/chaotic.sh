@@ -41,11 +41,11 @@ class TestBuildUpgradeCmd:
 
     def test_uv_latest(self):
         cmd = _build_upgrade_cmd("uv", "chaotic-cli", None)
-        assert cmd == ["uv", "tool", "install", "--force", "chaotic-cli", "--prerelease", "allow"]
+        assert cmd == ["uv", "tool", "install", "--force", "chaotic-cli>=0.0.0a0"]
 
     def test_uv_specific_version(self):
         cmd = _build_upgrade_cmd("uv", "chaotic-cli", "0.1.0a9")
-        assert cmd == ["uv", "tool", "install", "--force", "chaotic-cli==0.1.0a9", "--prerelease", "allow"]
+        assert cmd == ["uv", "tool", "install", "--force", "chaotic-cli==0.1.0a9"]
 
     def test_pipx_latest(self):
         cmd = _build_upgrade_cmd("pipx", "chaotic-cli", None)
@@ -53,7 +53,7 @@ class TestBuildUpgradeCmd:
 
     def test_pipx_specific_version(self):
         cmd = _build_upgrade_cmd("pipx", "chaotic-cli", "0.1.0a9")
-        assert cmd == ["pipx", "install", "--force", "chaotic-cli==0.1.0a9", "--pip-args=--pre"]
+        assert cmd == ["pipx", "install", "--force", "chaotic-cli==0.1.0a9"]
 
     def test_pip_latest(self):
         with patch("cli.main.shutil.which", return_value="/usr/bin/pip3"):
@@ -68,12 +68,12 @@ class TestBuildUpgradeCmd:
     def test_uv_git(self):
         git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
         cmd = _build_upgrade_cmd("uv", "chaotic-cli", None, git_url=git_url)
-        assert cmd == ["uv", "tool", "install", "--force", git_url, "--prerelease", "allow"]
+        assert cmd == ["uv", "tool", "install", "--force", git_url]
 
     def test_pipx_git(self):
         git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
         cmd = _build_upgrade_cmd("pipx", "chaotic-cli", None, git_url=git_url)
-        assert cmd == ["pipx", "install", "--force", git_url, "--pip-args=--pre"]
+        assert cmd == ["pipx", "install", "--force", git_url]
 
     def test_pip_git(self):
         git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"

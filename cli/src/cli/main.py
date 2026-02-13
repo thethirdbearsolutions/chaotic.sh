@@ -1006,7 +1006,12 @@ def _detect_installer() -> str | None:
 
 
 def _build_upgrade_cmd(installer: str, pkg: str, version: str | None, git_url: str | None = None) -> list[str]:
-    """Build the upgrade command for the detected installer."""
+    """Build the upgrade command for the detected installer.
+
+    For uv: uses a prerelease-inclusive version specifier (>=0.0.0a0) instead
+    of --prerelease allow, so only chaotic-cli prereleases are accepted —
+    not prereleases of transitive deps like httpx.
+    """
     if git_url:
         source = git_url
     elif version:
@@ -1015,10 +1020,14 @@ def _build_upgrade_cmd(installer: str, pkg: str, version: str | None, git_url: s
         source = pkg
 
     if installer == "uv":
-        cmd = ["uv", "tool", "install", "--force", source, "--prerelease", "allow"]
+        # Use >=0.0.0a0 specifier to opt into prereleases for just this
+        # package, NOT --prerelease allow which leaks to all deps.
+        if not git_url and not version:
+            source = f"{pkg}>=0.0.0a0"
+        cmd = ["uv", "tool", "install", "--force", source]
     elif installer == "pipx":
         if git_url or version:
-            cmd = ["pipx", "install", "--force", source, "--pip-args=--pre"]
+            cmd = ["pipx", "install", "--force", source]
         else:
             cmd = ["pipx", "upgrade", pkg, "--pip-args=--pre"]
     else:
