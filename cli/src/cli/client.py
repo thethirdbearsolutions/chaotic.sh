@@ -43,6 +43,12 @@ class Client:
             if response.status_code == 204:
                 return None
 
+            # Handle empty response bodies (some endpoints return 200 with no body)
+            if not response.content or not response.content.strip():
+                if response.is_success:
+                    return None
+                raise APIError(f"Server returned {response.status_code} with no body")
+
             result = response.json()
 
             if not response.is_success:

@@ -1451,7 +1451,7 @@ def issue_search(query, search_all):
 @click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to not assign, or sprint ID)")
 @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
 @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
-@click.option("--project", "project_key", help="Project key (e.g., CHT) - overrides current project")
+@click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
 @require_team
 @handle_error
 def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, labels, project_key):
@@ -1463,12 +1463,7 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
 
     # Resolve project ID
     if project_key:
-        projects = client.get_projects(get_current_team())
-        project = next((p for p in projects if p["key"] == project_key.upper()), None)
-        if not project:
-            console.print(f"[red]Project with key '{project_key}' not found.[/red]")
-            raise SystemExit(1)
-        project_id = project["id"]
+        project_id = resolve_project_id(project_key)
     else:
         project_id = get_current_project()
         if not project_id:
@@ -2428,6 +2423,15 @@ def sprint_current():
     print_sprint_panel(result, title="Current Sprint")
 
 
+# 'status' as alias for 'current'
+@sprint.command("status", hidden=True)
+@require_project
+@handle_error
+def sprint_status():
+    """Show the current sprint (alias for 'current')."""
+    sprint_current.callback()
+
+
 @sprint.command("budget")
 @require_project
 @handle_error
@@ -2603,11 +2607,37 @@ def _print_ritual_prompt(prompt):
 
 @ritual.command("list")
 @click.option("--pending", is_flag=True, help="Show only pending/incomplete rituals")
+@click.option("--ticket", "ticket_id", help="Show pending rituals for a specific ticket (e.g., CHT-123)")
 @require_project
 @handle_error
-def ritual_list(pending):
+def ritual_list(pending, ticket_id):
     """List rituals and show limbo status."""
     project_id = get_current_project()
+
+    # If --ticket is specified, show pending rituals for that ticket
+    if ticket_id:
+        issue = client.get_issue_by_identifier(ticket_id)
+        if not issue:
+            console.print(f"[red]Issue '{ticket_id}' not found.[/red]")
+            raise SystemExit(1)
+        pending_rituals = client.get_pending_issue_rituals(issue["id"])
+        rituals_list = pending_rituals.get("pending_rituals", [])
+        if not rituals_list:
+            console.print(f"[green]No pending rituals for {ticket_id}.[/green]")
+            return
+        console.print(f"\n[bold]Pending Rituals for {ticket_id}:[/bold]")
+        for r in rituals_list:
+            mode = f"[dim]({r.get('approval_mode', 'auto')})[/dim]"
+            if r.get("attestation"):
+                if r["attestation"].get("approved_at"):
+                    console.print(f"  [green]✓[/green] {r['name']} {mode}")
+                else:
+                    console.print(f"  [yellow]⏳[/yellow] {r['name']} {mode} - attested, pending approval")
+            else:
+                console.print(f"  [red]○[/red] {r['name']} {mode}")
+                _print_ritual_prompt(r['prompt'])
+        return
+
     status = client.get_limbo_status(project_id)
 
     if status["in_limbo"]:

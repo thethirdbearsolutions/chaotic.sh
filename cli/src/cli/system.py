@@ -419,12 +419,14 @@ def wait_for_service_stop(timeout: int = 10) -> bool:
     return False
 
 
-def health_check(port: int, timeout: int = 30) -> bool:
+def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
     """Poll the server health endpoint until it responds or timeout."""
     import urllib.request
     import urllib.error
 
-    url = f"http://localhost:{port}/health"
+    # Use localhost for wildcard binds (0.0.0.0/::) since they accept loopback
+    check_host = "localhost" if host in ("0.0.0.0", "::") else host
+    url = f"http://{check_host}:{port}/health"
     start = time.time()
 
     while time.time() - start < timeout:
@@ -762,7 +764,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
             raise SystemExit(1)
 
         console.print("Waiting for health check...", end=" ")
-        if health_check(port):
+        if health_check(port, host=host):
             console.print("[green]OK[/green]")
         else:
             console.print("[yellow]TIMEOUT[/yellow]")
@@ -841,10 +843,10 @@ def system_start():
     if start_service():
         server_info = load_server_json()
         port = server_info.get("port", DEFAULT_PORT)
+        host = server_info.get("host", "127.0.0.1")
         console.print("Waiting for health check...", end=" ")
-        if health_check(port):
+        if health_check(port, host=host):
             console.print("[green]OK[/green]")
-            host = server_info.get("host", "127.0.0.1")
             console.print(f"\n[green]Server started at http://{_display_host(host)}:{port}[/green]")
         else:
             console.print("[yellow]TIMEOUT[/yellow]")
@@ -969,7 +971,7 @@ def system_reconfigure(host, port, yes):
             raise SystemExit(1)
         if start_service():
             console.print("Waiting for health check...", end=" ")
-            if health_check(new_port):
+            if health_check(new_port, host=new_host):
                 console.print("[green]OK[/green]")
             else:
                 console.print("[yellow]TIMEOUT[/yellow]")
@@ -1153,8 +1155,9 @@ def system_upgrade(target_version, no_backup, yes):
         # Health check
         server_info = load_server_json()
         port = server_info.get("port", DEFAULT_PORT)
+        host = server_info.get("host", "127.0.0.1")
         console.print("Waiting for health check...", end=" ")
-        if health_check(port):
+        if health_check(port, host=host):
             console.print("[green]OK[/green]")
         else:
             console.print("[red]FAILED[/red]")
@@ -1242,8 +1245,9 @@ def system_backup(list_mode, restore_timestamp):
             start_service()
             server_info = load_server_json()
             port = server_info.get("port", DEFAULT_PORT)
+            host = server_info.get("host", "127.0.0.1")
             console.print("Waiting for health check...", end=" ")
-            if health_check(port):
+            if health_check(port, host=host):
                 console.print("[green]OK[/green]")
             else:
                 console.print("[yellow]TIMEOUT[/yellow]")

@@ -1439,6 +1439,8 @@ window.resetOnboarding = resetOnboarding;
 // updateUserInfo is now imported from auth.js
 
 // WebSocket for real-time updates
+let wsFailCount = 0;
+
 function connectWebSocket(teamId) {
     // Close existing connection
     if (websocket) {
@@ -1457,6 +1459,10 @@ function connectWebSocket(teamId) {
 
         websocket.onopen = () => {
             console.log('WebSocket connected');
+            if (wsFailCount > 0) {
+                showToast('Live updates reconnected', 'success');
+            }
+            wsFailCount = 0;
         };
 
         websocket.onmessage = (event) => {
@@ -1466,6 +1472,11 @@ function connectWebSocket(teamId) {
 
         websocket.onclose = () => {
             console.log('WebSocket disconnected');
+            wsFailCount++;
+            // Show toast on first disconnect and periodically after
+            if (wsFailCount === 1) {
+                showToast('Live updates disconnected. Reconnecting...', 'warning');
+            }
             // Attempt reconnect after 5 seconds
             setTimeout(() => {
                 if (window.currentTeam && window.currentTeam.id === teamId) {
