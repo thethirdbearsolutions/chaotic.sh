@@ -31,7 +31,7 @@ class Client:
     def _request(self, method: str, path: str, data: dict = None) -> dict | None:
         """Make API request."""
         url = f"{get_api_url()}{path}"
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client() as client:
             send = getattr(client, method.lower())
             kwargs = {"headers": self._headers()}
             if data is not None:
