@@ -5,6 +5,7 @@
  * project rituals) and ticket-level ritual actions (attest, approve, complete).
  */
 
+import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import {
@@ -33,7 +34,7 @@ export async function updateRitualProjectFilter() {
 
     await loadProjects();
     filter.innerHTML = '<option value="">Select Project</option>' +
-        getProjects().map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        getProjects().map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
 }
 
 /**

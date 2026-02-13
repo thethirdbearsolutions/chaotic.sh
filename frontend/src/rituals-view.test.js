@@ -39,6 +39,16 @@ vi.mock('./issue-detail-view.js', () => ({
     loadTicketRituals: vi.fn(),
 }));
 
+vi.mock('./api.js', () => ({
+    api: {
+        approveAttestation: vi.fn(),
+        completeGateRitual: vi.fn(),
+        attestTicketRitual: vi.fn(),
+        approveTicketRitual: vi.fn(),
+        completeTicketGateRitual: vi.fn(),
+    },
+}));
+
 import {
     updateRitualProjectFilter,
     loadRitualsView,
@@ -58,22 +68,13 @@ import { getProjects, loadProjects, getSavedProjectId, getProjectRituals, loadPr
 import { getProjectFromUrl } from './url-helpers.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
-
-// Set up global api mock
-const mockApi = {
-    approveAttestation: vi.fn(),
-    completeGateRitual: vi.fn(),
-    attestTicketRitual: vi.fn(),
-    approveTicketRitual: vi.fn(),
-    completeTicketGateRitual: vi.fn(),
-};
-window.api = mockApi;
+import { api } from './api.js';
 
 describe('rituals-view', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         // Reset mock implementations (clearAllMocks doesn't clear mockRejectedValue)
-        Object.values(mockApi).forEach(fn => fn.mockReset());
+        Object.values(api).forEach(fn => fn.mockReset());
         document.body.innerHTML = '';
     });
 
@@ -239,6 +240,21 @@ describe('rituals-view', () => {
                 'sprint'
             );
         });
+
+        it('renders sections with empty rituals', () => {
+            document.body.innerHTML = '<div id="rituals-content"></div>';
+            getProjectRituals.mockReturnValue([]);
+
+            renderRitualsView();
+
+            const content = document.getElementById('rituals-content');
+            expect(content.innerHTML).toContain('Sprint Rituals');
+            expect(content.innerHTML).toContain('Ticket Close Rituals');
+            expect(content.innerHTML).toContain('Ticket Claim Rituals');
+            expect(renderRitualList).toHaveBeenCalledWith('rv-sprint-rituals-list', [], 'sprint');
+            expect(renderRitualList).toHaveBeenCalledWith('rv-close-rituals-list', [], 'close');
+            expect(renderRitualList).toHaveBeenCalledWith('rv-claim-rituals-list', [], 'claim');
+        });
     });
 
     // ========================================
@@ -248,14 +264,14 @@ describe('rituals-view', () => {
         it('calls API and refreshes limbo status', async () => {
             await approveRitual('ritual-1', 'proj-1');
 
-            expect(mockApi.approveAttestation).toHaveBeenCalledWith('ritual-1', 'proj-1');
+            expect(api.approveAttestation).toHaveBeenCalledWith('ritual-1', 'proj-1');
             expect(showToast).toHaveBeenCalledWith('Ritual approved!', 'success');
             expect(loadLimboStatus).toHaveBeenCalled();
             expect(showLimboDetailsModal).toHaveBeenCalled();
         });
 
         it('shows error toast on failure', async () => {
-            mockApi.approveAttestation.mockRejectedValue(new Error('Denied'));
+            api.approveAttestation.mockRejectedValue(new Error('Denied'));
 
             await approveRitual('ritual-1', 'proj-1');
 
@@ -293,7 +309,7 @@ describe('rituals-view', () => {
 
             // Wait for async handler
             await vi.waitFor(() => {
-                expect(mockApi.completeGateRitual).toHaveBeenCalledWith('r1', 'p1', 'All good');
+                expect(api.completeGateRitual).toHaveBeenCalledWith('r1', 'p1', 'All good');
                 expect(closeModal).toHaveBeenCalled();
                 expect(showToast).toHaveBeenCalledWith('Limbo cleared! Next sprint is now active.', 'success');
             });
@@ -313,7 +329,7 @@ describe('rituals-view', () => {
         });
 
         it('shows error on API failure', async () => {
-            mockApi.completeGateRitual.mockRejectedValue(new Error('Server error'));
+            api.completeGateRitual.mockRejectedValue(new Error('Server error'));
 
             await completeGateRitual('r1', 'p1', 'Deploy Check');
 
@@ -373,13 +389,13 @@ describe('rituals-view', () => {
         it('calls API and reloads ticket rituals', async () => {
             await attestTicketRitual('r1', 'issue-1');
 
-            expect(mockApi.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1');
+            expect(api.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1');
             expect(showToast).toHaveBeenCalledWith('Ritual attested!', 'success');
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
         });
 
         it('shows error on failure', async () => {
-            mockApi.attestTicketRitual.mockRejectedValue(new Error('Failed'));
+            api.attestTicketRitual.mockRejectedValue(new Error('Failed'));
 
             await attestTicketRitual('r1', 'issue-1');
 
@@ -394,13 +410,13 @@ describe('rituals-view', () => {
         it('calls API and reloads ticket rituals', async () => {
             await approveTicketRitual('r1', 'issue-1');
 
-            expect(mockApi.approveTicketRitual).toHaveBeenCalledWith('r1', 'issue-1');
+            expect(api.approveTicketRitual).toHaveBeenCalledWith('r1', 'issue-1');
             expect(showToast).toHaveBeenCalledWith('Ritual approved!', 'success');
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
         });
 
         it('shows error on failure', async () => {
-            mockApi.approveTicketRitual.mockRejectedValue(new Error('Nope'));
+            api.approveTicketRitual.mockRejectedValue(new Error('Nope'));
 
             await approveTicketRitual('r1', 'issue-1');
 
@@ -443,7 +459,7 @@ describe('rituals-view', () => {
             // Flush microtasks from the async handler
             await new Promise(r => setTimeout(r, 50));
 
-            expect(mockApi.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', 'All good');
+            expect(api.attestTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', 'All good');
             expect(showToast).toHaveBeenCalledWith('Ritual attested!', 'success');
             expect(closeModal).toHaveBeenCalled();
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
@@ -459,7 +475,7 @@ describe('rituals-view', () => {
             await vi.waitFor(() => {
                 expect(showToast).toHaveBeenCalledWith('A note is required for this attestation.', 'error');
             });
-            expect(mockApi.attestTicketRitual).not.toHaveBeenCalled();
+            expect(api.attestTicketRitual).not.toHaveBeenCalled();
         });
     });
 
@@ -490,7 +506,7 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(mockApi.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', 'Deployed');
+                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', 'Deployed');
             });
             expect(closeModal).toHaveBeenCalled();
             expect(loadTicketRituals).toHaveBeenCalledWith('issue-1');
@@ -504,12 +520,12 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(mockApi.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', null);
+                expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'issue-1', null);
             });
         });
 
         it('shows error on API failure', async () => {
-            mockApi.completeTicketGateRitual.mockRejectedValue(new Error('Deploy blocked'));
+            api.completeTicketGateRitual.mockRejectedValue(new Error('Deploy blocked'));
 
             showCompleteTicketRitualModal('r1', 'issue-1', 'Deploy Gate');
 
