@@ -928,7 +928,7 @@ def upgrade(target_version, git, dry_run):
 
     console.print(f"Install method: [bold]{installer}[/bold]")
     if git:
-        console.print(f"Source: [bold]git main[/bold]")
+        console.print("Source: [bold]git main[/bold]")
 
     # Build the upgrade command
     cmd = _build_upgrade_cmd(installer, pkg, target_version, git_url=GIT_URL if git else None)
@@ -957,7 +957,13 @@ def upgrade(target_version, git, dry_run):
     # Report new version using the installer's own listing
     try:
         new_ver = _get_installed_version(installer, pkg)
-        if new_ver and new_ver != current:
+        if git:
+            # Git installs may not bump the version string, so always report success
+            if new_ver:
+                console.print(f"[green]Installed from git main (version {new_ver}).[/green]")
+            else:
+                console.print("[green]Installed from git main.[/green]")
+        elif new_ver and new_ver != current:
             console.print(f"[green]Upgraded: {current} -> {new_ver}[/green]")
         elif new_ver == current:
             console.print(f"[yellow]Already at latest version ({current}).[/yellow]")
@@ -1011,9 +1017,7 @@ def _build_upgrade_cmd(installer: str, pkg: str, version: str | None, git_url: s
     if installer == "uv":
         cmd = ["uv", "tool", "install", "--force", source, "--prerelease", "allow"]
     elif installer == "pipx":
-        if git_url:
-            cmd = ["pipx", "install", "--force", source, "--pip-args=--pre"]
-        elif version:
+        if git_url or version:
             cmd = ["pipx", "install", "--force", source, "--pip-args=--pre"]
         else:
             cmd = ["pipx", "upgrade", pkg, "--pip-args=--pre"]
