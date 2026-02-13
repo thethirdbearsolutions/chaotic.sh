@@ -496,7 +496,7 @@
             slider.addEventListener('input', () => updateGrowth(slider));
         });
 
-        // Easter egg: click tagline to cycle
+        // Rotating taglines with sweep transition
         const taglines = [
             "Stop managing agents. Start designing their world.",
             "Linear, but it's a CLI.",
@@ -508,12 +508,41 @@
 
         const taglineEl = document.querySelector('.hero-tagline');
         let taglineIdx = 0;
+        let rotationTimer = null;
 
+        // Add transition styles
+        taglineEl.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+        taglineEl.style.display = 'inline-block';
+
+        function cycleTagline() {
+            // Sweep out
+            taglineEl.style.opacity = '0';
+            taglineEl.style.transform = 'translateY(-8px)';
+
+            setTimeout(() => {
+                taglineIdx = (taglineIdx + 1) % taglines.length;
+                taglineEl.textContent = taglines[taglineIdx];
+                // Reset position for sweep in
+                taglineEl.style.transform = 'translateY(8px)';
+
+                // Force reflow then sweep in
+                taglineEl.offsetHeight;
+                taglineEl.style.opacity = '1';
+                taglineEl.style.transform = 'translateY(0)';
+            }, 400);
+        }
+
+        // Click to advance manually
         taglineEl.style.cursor = 'default';
         taglineEl.addEventListener('click', () => {
-            taglineIdx = (taglineIdx + 1) % taglines.length;
-            taglineEl.textContent = taglines[taglineIdx];
+            cycleTagline();
+            // Reset auto-rotation timer on click
+            if (rotationTimer) clearInterval(rotationTimer);
+            rotationTimer = setInterval(cycleTagline, 3000);
         });
+
+        // Auto-rotate every 3 seconds
+        rotationTimer = setInterval(cycleTagline, 3000);
     </script>
 </body>
 </html>
