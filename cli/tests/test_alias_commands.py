@@ -71,6 +71,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100'])
@@ -92,6 +93,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'view', 'CHT-100', 'CHT-101'])
@@ -114,6 +116,7 @@ class TestIssueGetAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.get_issue_documents = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'get', 'CHT-100'])
