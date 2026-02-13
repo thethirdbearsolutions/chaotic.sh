@@ -70,8 +70,22 @@ status:
 init:
     chaotic init
 
+# Build CLI package
+cli-build:
+    rm -rf cli/dist/
+    cd cli && uv build
+
+# Publish CLI to PyPI (requires PYPI_TOKEN env var)
+cli-publish: cli-build
+    cd cli && uv publish --token ${PYPI_TOKEN}
+
+# Run CLI tests
+cli-test:
+    cd cli && uv run pytest
+
 # Clean up Python cache files
 clean:
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
     find . -type f -name "*.pyc" -delete 2>/dev/null || true
+    rm -rf cli/dist/
