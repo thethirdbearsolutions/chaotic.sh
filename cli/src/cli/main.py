@@ -260,7 +260,7 @@ def resolve_assignee_id(assignee_value: str) -> str:
 
 # Main CLI group
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.0.0")
+@click.version_option(package_name="chaotic-cli")
 @click.option(
     '--profile', '-p',
     envvar='CHAOTIC_PROFILE',
