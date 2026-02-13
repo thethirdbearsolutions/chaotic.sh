@@ -171,6 +171,7 @@ class TestIssueCancelAlias:
             "status": "canceled",
         }
         client.get_issue_by_identifier = MagicMock(return_value=canceled_issue)
+        client.update_issue = MagicMock()
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'cancel', 'CHT-100'])
