@@ -486,9 +486,12 @@ def check_profile_ambiguity():
     if len(profiles) == 0:
         return
 
-    # Single profile - auto-select it
+    # Single profile - auto-select it (but not "default", which is just
+    # config.json and doesn't need explicit selection — selecting it would
+    # change the write path to default.json)
     if len(profiles) == 1:
-        set_profile(profiles[0])
+        if profiles[0] != "default":
+            set_profile(profiles[0])
         return
 
     # Multiple profiles without explicit selection - fail closed
