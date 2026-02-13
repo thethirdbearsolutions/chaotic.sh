@@ -5,6 +5,7 @@ Tests cover:
 - Backward compatibility with old format (string list)
 - Edge cases: empty pending_rituals, missing keys
 """
+import json
 import pytest
 from unittest.mock import patch, MagicMock
 from cli.client import Client, APIError
@@ -16,6 +17,7 @@ class MockResponse:
     def __init__(self, status_code, json_data):
         self._status_code = status_code
         self._json_data = json_data
+        self.content = json.dumps(json_data).encode() if json_data is not None else b""
 
     @property
     def is_success(self):
