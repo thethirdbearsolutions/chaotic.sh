@@ -70,6 +70,55 @@ class TestJsonAfterSubcommand:
         assert data[0]['id'] == 'p-1'
 
 
+class TestJsonErrorHandling:
+    """Test that errors produce valid JSON when --json is used (CHT-779)."""
+
+    def test_click_exception_outputs_json(self, cli_runner):
+        """ClickException errors should output JSON when --json is enabled."""
+        from cli.main import cli, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "s1", "name": "Sprint 1"},
+        ])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert 'error' in data
+        assert 'not found' in data['error'].lower()
+
+    def test_bad_parameter_outputs_json(self, cli_runner):
+        """BadParameter errors from validation should output JSON when --json is enabled."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--status', 'invalid_status'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert 'error' in data
+        assert 'invalid status' in data['error'].lower()
+
+    def test_click_exception_still_works_without_json(self, cli_runner):
+        """ClickExceptions should still produce normal text when --json is not used."""
+        from cli.main import cli, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "s1", "name": "Sprint 1"},
+        ])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--sprint', 'nonexistent'])
+
+        assert result.exit_code == 1
+        assert 'not found' in result.output.lower()
+        # Should NOT be JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
+
+
 class TestJsonBeforeSubcommand:
     """Test that --json still works before the subcommand (backward compat)."""
 

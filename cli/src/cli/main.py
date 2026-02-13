@@ -99,7 +99,7 @@ def require_project(f):
 
 
 def handle_error(f):
-    """Decorator to handle API errors."""
+    """Decorator to handle API errors and ClickExceptions (for JSON mode)."""
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
@@ -109,6 +109,11 @@ def handle_error(f):
             else:
                 console.print(f"[red]Error: {e}[/red]")
             raise SystemExit(1)
+        except click.ClickException as e:
+            if is_json_output():
+                output_json({"error": e.format_message()})
+                raise SystemExit(1)
+            raise
     wrapper.__name__ = f.__name__
     wrapper.__doc__ = f.__doc__
     return wrapper
