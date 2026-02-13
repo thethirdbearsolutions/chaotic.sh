@@ -545,3 +545,21 @@ class TestSprintUpdate:
         assert result.exit_code == 0
         mock_resolve.assert_not_called()
         client.update_sprint.assert_called_once_with('raw-sprint-id', name='Renamed')
+
+    def test_sprint_update_defaults_to_current(self, cli_runner):
+        """sprint update without SPRINT_ID defaults to current sprint (CHT-780)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={
+            "name": "Current Sprint",
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='current-sprint-id') as mock_resolve:
+            result = cli_runner.invoke(cli, [
+                'sprint', 'update', '--budget', '22',
+            ])
+
+        assert result.exit_code == 0
+        mock_resolve.assert_called_once_with('current', 'test-project-123')
+        client.update_sprint.assert_called_once_with('current-sprint-id', budget=22)

@@ -2544,7 +2544,7 @@ def sprint_close(sprint_id):
 
 
 @sprint.command("update")
-@click.argument("sprint_id")
+@click.argument("sprint_id", required=False, default=None)
 @click.option("--name", help="Sprint name")
 @click.option("--description", help="Sprint description")
 @click.option("--budget", type=int, help="Point budget for the sprint")
@@ -2554,10 +2554,14 @@ def sprint_close(sprint_id):
 def sprint_update(sprint_id, name, description, budget, no_budget):
     """Update a sprint.
 
-    SPRINT_ID can be a full ID or a prefix.
+    SPRINT_ID can be a full ID, prefix, or 'current'. Defaults to current sprint if omitted.
     """
     project_id = get_current_project()
-    if project_id:
+    if sprint_id is None:
+        if not project_id:
+            raise click.ClickException("No project selected and no SPRINT_ID given. Run 'chaotic project use <project_id>' first.")
+        sprint_id = resolve_sprint_id("current", project_id)
+    elif project_id:
         sprint_id = resolve_sprint_id(sprint_id, project_id)
     data = {}
     if name is not None:
