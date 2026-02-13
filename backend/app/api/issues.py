@@ -153,6 +153,9 @@ async def create_issue(
 
     response = issue_to_response(issue)
 
+    # Auto-link cross-referenced issues (CHT-133)
+    await issue_service.create_cross_references(issue.id, issue_in.description)
+
     # Broadcast real-time update
     await broadcast_issue_event(project.team_id, "created", response.model_dump(mode="json"))
 
@@ -617,6 +620,10 @@ async def update_issue(
 
     response = issue_to_response(issue)
 
+    # Auto-link cross-referenced issues when description changes (CHT-133)
+    if issue_in.description is not None:
+        await issue_service.create_cross_references(issue.id, issue_in.description)
+
     # Broadcast real-time update
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
 
@@ -872,6 +879,10 @@ async def create_comment(
         )
 
     comment = await issue_service.create_comment(issue_id, comment_in, current_user.id)
+
+    # Auto-link cross-referenced issues (CHT-133)
+    await issue_service.create_cross_references(issue_id, comment_in.content)
+
     response = IssueCommentResponse(
         id=comment.id,
         issue_id=comment.issue_id,

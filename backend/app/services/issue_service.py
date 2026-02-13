@@ -1,4 +1,5 @@
 """Issue service for issue management."""
+import re
 import random
 from datetime import datetime, timezone
 from sqlalchemy import select, func, case, update
@@ -1099,6 +1100,61 @@ class IssueService:
         """Delete a relation."""
         await self.db.delete(relation)
         await self.db.commit()
+
+    # Cross-reference auto-linking (CHT-133)
+    _IDENTIFIER_RE = re.compile(r'\b([A-Z]{1,10}-\d+)\b')
+
+    async def create_cross_references(self, issue_id: str, text: str) -> list[IssueRelation]:
+        """Extract issue identifiers from text and create relates_to links.
+
+        Skips self-references and duplicates of existing relations.
+        """
+        if not text:
+            return []
+
+        identifiers = set(self._IDENTIFIER_RE.findall(text.upper()))
+        if not identifiers:
+            return []
+
+        # Look up the source issue's identifier so we can skip self-references
+        source = await self.db.execute(
+            select(Issue.identifier).where(Issue.id == issue_id)
+        )
+        source_identifier = source.scalar_one_or_none()
+
+        created = []
+        for identifier in identifiers:
+            if identifier == source_identifier:
+                continue
+
+            target = await self.get_by_identifier(identifier)
+            if not target:
+                continue
+
+            # Check if a relation already exists in either direction
+            existing = await self.db.execute(
+                select(IssueRelation).where(
+                    ((IssueRelation.issue_id == issue_id) & (IssueRelation.related_issue_id == target.id))
+                    | ((IssueRelation.issue_id == target.id) & (IssueRelation.related_issue_id == issue_id))
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            relation = IssueRelation(
+                issue_id=issue_id,
+                related_issue_id=target.id,
+                relation_type=IssueRelationType.RELATES_TO,
+            )
+            self.db.add(relation)
+            created.append(relation)
+
+        if created:
+            await self.db.commit()
+            for r in created:
+                await self.db.refresh(r)
+
+        return created
 
     async def list_relations(self, issue_id: str) -> list[dict]:
         """List all relations for an issue (both outgoing and incoming).
