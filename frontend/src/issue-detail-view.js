@@ -10,7 +10,7 @@ let currentTicketRituals = null;
 // Dependencies injected from app.js
 let deps = {
     api: null,
-    currentView: 'my-issues',
+    getCurrentView: () => 'my-issues',
     showToast: () => {},
     showModal: () => {},
     closeModal: () => {},
@@ -594,7 +594,7 @@ export async function viewIssue(issueId, pushHistory = true) {
 
         // Update URL
         if (pushHistory) {
-            history.pushState({ issueId, view: deps.currentView }, '', `/issue/${issue.identifier}`);
+            history.pushState({ issueId, view: deps.getCurrentView() }, '', `/issue/${issue.identifier}`);
         }
 
         // Store current issue for inline editing
@@ -605,7 +605,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         const detailView = document.getElementById('issue-detail-view');
         detailView.classList.remove('hidden');
 
-        const backView = deps.currentView || 'my-issues';
+        const backView = deps.getCurrentView() || 'my-issues';
         const project = deps.getProjects().find(p => p.id === issue.project_id);
         const assignee = issue.assignee_id ? deps.getAssigneeById(issue.assignee_id) : null;
         const assigneeName = assignee ? deps.formatAssigneeName(assignee) : null;
