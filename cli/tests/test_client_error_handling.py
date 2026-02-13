@@ -190,3 +190,72 @@ class TestArrearsErrorParsing:
         error_msg = str(exc_info.value)
         # Should suggest sprint close command
         assert "chaotic sprint close" in error_msg.lower()
+
+
+class TestFormatError:
+    """Tests for the _format_error helper method (CHT-788)."""
+
+    def test_string_detail_returned_as_is(self):
+        """String error details should be returned unchanged."""
+        client = Client()
+        assert client._format_error("Something went wrong") == "Something went wrong"
+
+    def test_list_detail_stringified(self):
+        """List error details (e.g. FastAPI validation errors) should be stringified."""
+        client = Client()
+        detail = [{"loc": ["body", "title"], "msg": "field required"}]
+        result = client._format_error(detail)
+        assert isinstance(result, str)
+        assert "field required" in result
+
+    def test_dict_with_message_key(self, mock_client_request):
+        """Dict detail with message key should use the message."""
+        response_data = {"detail": {"message": "Custom error message"}}
+        mock_client_request.request.return_value = MockResponse(400, response_data)
+
+        client = Client()
+        with pytest.raises(APIError, match="Custom error message"):
+            client._request("GET", "/test")
+
+    def test_dict_without_message_falls_back_to_str(self, mock_client_request):
+        """Dict detail without message key should stringify the dict."""
+        response_data = {"detail": {"code": "UNKNOWN"}}
+        mock_client_request.request.return_value = MockResponse(400, response_data)
+
+        client = Client()
+        with pytest.raises(APIError, match="UNKNOWN"):
+            client._request("GET", "/test")
+
+    def test_empty_body_success_returns_none(self, mock_client_request):
+        """Empty body with success status should return None."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.is_success = True
+        mock_response.content = b""
+        mock_client_request.request.return_value = mock_response
+
+        client = Client()
+        result = client._request("DELETE", "/test")
+        assert result is None
+
+    def test_empty_body_error_raises(self, mock_client_request):
+        """Empty body with error status should raise APIError."""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.is_success = False
+        mock_response.content = b""
+        mock_client_request.request.return_value = mock_response
+
+        client = Client()
+        with pytest.raises(APIError, match="500 with no body"):
+            client._request("GET", "/test")
+
+    def test_204_returns_none(self, mock_client_request):
+        """204 No Content should return None."""
+        mock_response = MagicMock()
+        mock_response.status_code = 204
+        mock_client_request.request.return_value = mock_response
+
+        client = Client()
+        result = client._request("DELETE", "/test")
+        assert result is None
