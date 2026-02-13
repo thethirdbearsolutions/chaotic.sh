@@ -39,7 +39,7 @@ describe('issue-detail-view', () => {
         // Mock dependencies
         mockDeps = {
             api: mockApi,
-            currentView: 'my-issues',
+            getCurrentView: vi.fn(() => 'my-issues'),
             showToast: vi.fn(),
             navigateTo: vi.fn(),
             getProjects: vi.fn(() => []),

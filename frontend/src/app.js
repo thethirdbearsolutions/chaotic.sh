@@ -129,7 +129,6 @@ import {
 } from './issue-detail-view.js';
 import {
     getCurrentView,
-    setCurrentView,
     getActiveFilterCategory,
     setActiveFilterCategory,
     getSelectedIssueIndex,
@@ -138,13 +137,21 @@ import {
     setPendingGates,
 } from './state.js';
 import { initIssueTooltip } from './issue-tooltip.js';
+import {
+    navigateTo,
+    handleRoute,
+    navigateToIssueByIdentifier,
+    configureRouter,
+    registerViews,
+    initRouter,
+} from './router.js';
 
 // State - now managed by state.js module
 // Local aliases for backward compatibility during migration
 let currentUser = null; // Will be removed - use getCurrentUser()
 // currentTeam is managed via window.currentTeam (set by teams.js)
 window.currentTeam = null;
-let currentView = 'my-issues'; // Will be removed - use getCurrentView()
+// currentView local alias removed — use getCurrentView() from state.js
 let issues = []; // Will be removed - use getIssues()
 // issue-list.js module uses getIssues() dependency to access this array
 // myIssues is now managed by dashboard.js module
@@ -1336,11 +1343,121 @@ function initFilterBar() {
     }
 }
 
+// Configure router (CHT-782)
+configureRouter({
+    beforeNavigate: () => {
+        clearProjectSettingsState();
+        window._onRitualsChanged = null;
+    },
+    detailRoute: (parts) => {
+        if (parts[0] === 'issue' && parts[1]) {
+            viewIssueByPath(parts[1]);
+            return true;
+        }
+        if (parts[0] === 'document' && parts[1]) {
+            viewDocumentByPath(parts[1]);
+            return true;
+        }
+        if (parts[0] === 'sprint' && parts[1]) {
+            viewSprintByPath(parts[1]);
+            return true;
+        }
+        if (parts[0] === 'projects' && parts[1] && parts[2] === 'settings') {
+            viewProjectSettings(parts[1]);
+            return true;
+        }
+        return false;
+    },
+    detailPopstate: (state) => {
+        if (state.issueId) { viewIssue(state.issueId, false); return true; }
+        if (state.identifier) { viewIssueByPath(state.identifier); return true; }
+        if (state.documentId) { viewDocument(state.documentId, false); return true; }
+        if (state.sprintId) { viewSprint(state.sprintId, false); return true; }
+        return false;
+    },
+    restoreProject: () => {
+        const urlProject = getProjectFromUrl();
+        if (urlProject && getProjects().some(p => p.id === urlProject)) {
+            setGlobalProjectSelection(urlProject);
+        }
+    },
+    issueNavigate: (identifier) => viewIssueByPath(identifier),
+});
+
+registerViews({
+    'my-issues': () => {
+        loadMyIssues();
+        loadDashboardActivity();
+    },
+    'gate-approvals': () => {
+        loadGateApprovals();
+    },
+    'issues': () => {
+        // Load filters from URL if present
+        loadFiltersFromUrl();
+        // Initialize filter bar chips and badge
+        initFilterBar();
+        // Populate label filter dropdown
+        populateLabelFilter().then(() => {
+            // Re-apply label filter from URL after options are loaded
+            const urlParams = new URLSearchParams(window.location.search);
+            const labelIds = urlParams.getAll('label');
+            if (labelIds.length > 0) {
+                const dropdown = document.getElementById('label-filter-dropdown');
+                if (dropdown) {
+                    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+                    checkboxes.forEach(cb => {
+                        cb.checked = labelIds.includes(cb.value);
+                    });
+                    updateLabelFilterLabel();
+                }
+            }
+        });
+        // Update sprint filter based on selected project, then load issues
+        updateSprintFilter().then(() => {
+            // Re-apply sprint filter from URL after options are loaded
+            const urlParams = new URLSearchParams(window.location.search);
+            const sprint = urlParams.get('sprint');
+            if (sprint) {
+                const sprintFilter = document.getElementById('sprint-filter');
+                if (sprintFilter) sprintFilter.value = sprint;
+            }
+            loadIssues();
+        });
+    },
+    'board': () => {
+        updateBoardProjectFilter();
+    },
+    'projects': () => {
+        loadProjects().then(renderProjects);
+    },
+    'sprints': () => {
+        updateSprintProjectFilter();
+    },
+    'rituals': () => {
+        loadRitualsView();
+    },
+    'documents': () => {
+        loadDocuments();
+    },
+    'team': () => {
+        loadTeamMembers();
+        loadTeamAgents();
+        loadTeamInvitations();
+    },
+    'settings': () => {
+        loadApiKeys();
+        loadAgents();
+        updateRitualProjectFilter();
+    },
+});
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     initThemeToggle();
     initIssueLinkHandler();
     initIssueTooltip({ api });
+    initRouter();
     if (api.getToken()) {
         try {
             currentUser = await api.getMe();
@@ -1507,14 +1624,14 @@ function handleWebSocketMessage(message) {
             } else if (optimisticIndex >= 0) {
                 // Replace optimistic issue with real one from WebSocket
                 issues[optimisticIndex] = data;
-                if (currentView === 'issues') {
+                if (getCurrentView() === 'issues') {
                     renderIssues();
                 }
                 // Don't show toast - user already knows they created it
             } else {
                 // New issue from another user/session
                 issues.unshift(data);
-                if (currentView === 'issues') {
+                if (getCurrentView() === 'issues') {
                     renderIssues();
                 }
                 showToast(`New issue: ${data.identifier}`, 'info');
@@ -1527,31 +1644,31 @@ function handleWebSocketMessage(message) {
                 const myOptimisticIndex = myIssuesArr.findIndex(i => i._isOptimistic && i.title === data.title);
                 if (myExistingIndex === -1 && myOptimisticIndex === -1) {
                     setMyIssues([data, ...myIssuesArr]);
-                    if (currentView === 'my-issues') {
+                    if (getCurrentView() === 'my-issues') {
                         renderMyIssues();
                     }
                 } else if (myOptimisticIndex >= 0) {
                     myIssuesArr[myOptimisticIndex] = data;
                     setMyIssues(myIssuesArr);
-                    if (currentView === 'my-issues') {
+                    if (getCurrentView() === 'my-issues') {
                         renderMyIssues();
                     }
                 }
             }
 
-            if (currentView === 'my-issues') {
+            if (getCurrentView() === 'my-issues') {
                 loadDashboardActivity();
             }
 
             // Re-render board/sprints when issues are created (CHT-237)
-            if (currentView === 'board') {
+            if (getCurrentView() === 'board') {
                 renderBoard();
-            } else if (currentView === 'sprints') {
+            } else if (getCurrentView() === 'sprints') {
                 loadSprints();
             }
 
             // Refresh issue detail if a child issue was created (CHT-71)
-            if (currentView === 'issue-detail' && data.parent_id === window.currentDetailIssue?.id) {
+            if (getCurrentView() === 'issue-detail' && data.parent_id === window.currentDetailIssue?.id) {
                 viewIssue(window.currentDetailIssue.id, false);
             }
         } else if (type === 'updated') {
@@ -1567,19 +1684,19 @@ function handleWebSocketMessage(message) {
                 setMyIssues(myIssuesForUpdate);
             }
             // Re-render if on issues view
-            if (currentView === 'issues') {
+            if (getCurrentView() === 'issues') {
                 renderIssues();
-            } else if (currentView === 'my-issues') {
+            } else if (getCurrentView() === 'my-issues') {
                 renderMyIssues();
                 loadDashboardActivity();
-            } else if (currentView === 'board') {
+            } else if (getCurrentView() === 'board') {
                 // Re-render board when issues change (CHT-237)
                 renderBoard();
-            } else if (currentView === 'sprints') {
+            } else if (getCurrentView() === 'sprints') {
                 // Re-render sprints when issues change (CHT-237)
                 // Sprints display issue counts, so issue changes affect them
                 loadSprints();
-            } else if (currentView === 'issue-detail') {
+            } else if (getCurrentView() === 'issue-detail') {
                 // Refresh detail view if viewing this issue
                 const detailContent = document.getElementById('issue-detail-content');
                 if (detailContent && detailContent.dataset.issueId === data.id) {
@@ -1591,36 +1708,36 @@ function handleWebSocketMessage(message) {
             issues = issues.filter(i => i.id !== data.id);
             setMyIssues(getMyIssues().filter(i => i.id !== data.id));
             // Re-render
-            if (currentView === 'issues') {
+            if (getCurrentView() === 'issues') {
                 renderIssues();
-            } else if (currentView === 'my-issues') {
+            } else if (getCurrentView() === 'my-issues') {
                 renderMyIssues();
                 loadDashboardActivity();
-            } else if (currentView === 'board') {
+            } else if (getCurrentView() === 'board') {
                 // Re-render board when issues change (CHT-237)
                 renderBoard();
-            } else if (currentView === 'sprints') {
+            } else if (getCurrentView() === 'sprints') {
                 // Re-render sprints when issues change (CHT-237)
                 loadSprints();
             }
             showToast(`Issue ${data.identifier} deleted`, 'info');
         }
         // If viewing issue detail and the deleted issue is the current one, navigate away
-        if (currentView === 'issue-detail' && window.currentDetailIssue?.id === data.id) {
+        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.id) {
             showToast(`Issue ${data.identifier} was deleted`, 'warning');
             navigateTo('my-issues');
         }
     } else if (entity === 'comment') {
-        if (currentView === 'my-issues') {
+        if (getCurrentView() === 'my-issues') {
             loadDashboardActivity();
         }
         // Refresh issue detail if viewing the commented issue (CHT-71)
-        if (currentView === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
             viewIssue(data.issue_id, false);
         }
     } else if (entity === 'relation') {
         // Refresh issue detail if viewing an issue involved in the relation change (CHT-71)
-        if (currentView === 'issue-detail') {
+        if (getCurrentView() === 'issue-detail') {
             const currentIssueId = window.currentDetailIssue?.id;
             if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
                 viewIssue(currentIssueId, false);
@@ -1629,181 +1746,17 @@ function handleWebSocketMessage(message) {
     } else if (entity === 'activity') {
         // Activity event (CHT-359) - reload dashboard activity
         // TODO: In the future, prepend data directly instead of refetching
-        if (currentView === 'my-issues') {
+        if (getCurrentView() === 'my-issues') {
             loadDashboardActivity();
         }
         // Also refresh issue detail if viewing an affected issue
-        if (currentView === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
             viewIssue(data.issue_id, false);
         }
     }
 }
 
-// Navigation
-function navigateTo(view, pushHistory = true) {
-    currentView = view; // Local alias
-    setCurrentView(view); // Update centralized state
-
-    // Update URL (preserve project param across views)
-    if (pushHistory) {
-        let url;
-        const projectId = getProjectFromUrl();
-        const viewsWithProject = ['issues', 'board', 'sprints'];
-
-        if (view === 'my-issues') {
-            url = '/';
-        } else if (view === 'issues' && window.location.search) {
-            // Preserve existing query params when navigating to issues
-            url = `/issues${window.location.search}`;
-        } else if (viewsWithProject.includes(view) && projectId) {
-            // Include project param for views that use project filtering
-            url = `/${view}?project=${projectId}`;
-        } else {
-            url = `/${view}`;
-        }
-        history.pushState({ view }, '', url);
-    }
-
-    // Update nav items
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === view);
-    });
-
-    // Clear project settings state when navigating away
-    if (typeof clearProjectSettingsState === 'function') {
-        clearProjectSettingsState();
-    }
-    // Clear rituals view callback
-    window._onRitualsChanged = null;
-
-    // Hide all views
-    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-
-    // Show selected view
-    const viewEl = document.getElementById(`${view}-view`);
-    if (viewEl) {
-        viewEl.classList.remove('hidden');
-    }
-
-    // Load view data
-    switch (view) {
-        case 'my-issues':
-            loadMyIssues();
-            loadDashboardActivity();
-            break;
-        case 'gate-approvals':
-            loadGateApprovals();
-            break;
-        case 'issues':
-            // Load filters from URL if present
-            loadFiltersFromUrl();
-            // Initialize filter bar chips and badge
-            initFilterBar();
-            // Populate label filter dropdown
-            populateLabelFilter().then(() => {
-                // Re-apply label filter from URL after options are loaded
-                const urlParams = new URLSearchParams(window.location.search);
-                const labelIds = urlParams.getAll('label');
-                if (labelIds.length > 0) {
-                    const dropdown = document.getElementById('label-filter-dropdown');
-                    if (dropdown) {
-                        const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-                        checkboxes.forEach(cb => {
-                            cb.checked = labelIds.includes(cb.value);
-                        });
-                        updateLabelFilterLabel();
-                    }
-                }
-            });
-            // Update sprint filter based on selected project, then load issues
-            updateSprintFilter().then(() => {
-                // Re-apply sprint filter from URL after options are loaded
-                const urlParams = new URLSearchParams(window.location.search);
-                const sprint = urlParams.get('sprint');
-                if (sprint) {
-                    const sprintFilter = document.getElementById('sprint-filter');
-                    if (sprintFilter) sprintFilter.value = sprint;
-                }
-                loadIssues();
-            });
-            break;
-        case 'board':
-            updateBoardProjectFilter();
-            break;
-        case 'projects':
-            loadProjects().then(renderProjects);
-            break;
-        case 'sprints':
-            updateSprintProjectFilter();
-            break;
-        case 'rituals':
-            loadRitualsView();
-            break;
-        case 'documents':
-            loadDocuments();
-            break;
-        case 'team':
-            loadTeamMembers();
-            loadTeamAgents();
-            loadTeamInvitations();
-            break;
-        case 'settings':
-            loadApiKeys();
-            loadAgents();
-            updateRitualProjectFilter();
-            break;
-    }
-}
-
-// URL Router
-function handleRoute() {
-    const path = window.location.pathname;
-    const parts = path.split('/').filter(Boolean);
-
-    // Restore project selection from URL (if present, and valid)
-    const urlProject = getProjectFromUrl();
-    if (urlProject && getProjects().some(p => p.id === urlProject)) {
-        setGlobalProjectSelection(urlProject);
-    }
-
-    let view = 'my-issues';
-    if (parts.length === 0 || parts[0] === '') {
-        navigateTo('my-issues', false);
-    } else if (parts[0] === 'issue' && parts[1]) {
-        // /issue/WEB-5 or /issue/{id}
-        viewIssueByPath(parts[1]);
-        return; // viewIssueByPath handles its own state
-    } else if (parts[0] === 'document' && parts[1]) {
-        viewDocumentByPath(parts[1]);
-        return; // viewDocumentByPath handles its own state
-    } else if (parts[0] === 'sprint' && parts[1]) {
-        // /sprint/:id - sprint detail view
-        viewSprintByPath(parts[1]);
-        return; // viewSprintByPath handles its own state
-    } else if (parts[0] === 'projects' && parts[1] && parts[2] === 'settings') {
-        // /projects/:id/settings
-        viewProjectSettings(parts[1]);
-        return; // viewProjectSettings handles its own state
-    } else {
-        // /issues, /projects, /board, etc.
-        view = parts[0];
-        const validViews = ['my-issues', 'gate-approvals', 'rituals', 'issues', 'board', 'projects', 'sprints', 'documents', 'team', 'settings'];
-        if (validViews.includes(view)) {
-            navigateTo(view, false);
-        } else {
-            view = 'my-issues';
-            navigateTo('my-issues', false);
-        }
-    }
-
-    // Ensure history state is set for this entry (handles initial page load)
-    if (!history.state?.view) {
-        history.replaceState({ view }, '', window.location.href);
-    }
-}
-
-// viewIssueByPath is now in issue-detail-view.js module
-
+// viewDocumentByPath helper (used by router detail route config)
 async function viewDocumentByPath(docId) {
     try {
         await viewDocument(docId, false);
@@ -1811,25 +1764,6 @@ async function viewDocumentByPath(docId) {
         navigateTo('documents', false);
     }
 }
-
-// Handle browser back/forward
-window.addEventListener('popstate', (e) => {
-    // Check specific states first (issue/document/sprint have both id AND view)
-    if (e.state?.issueId) {
-        viewIssue(e.state.issueId, false);
-    } else if (e.state?.identifier) {
-        // Handle issue navigation by identifier (from navigateToIssueByIdentifier)
-        viewIssueByPath(e.state.identifier);
-    } else if (e.state?.documentId) {
-        viewDocument(e.state.documentId, false);
-    } else if (e.state?.sprintId) {
-        viewSprint(e.state.sprintId, false);
-    } else if (e.state?.view) {
-        navigateTo(e.state.view, false);
-    } else {
-        handleRoute();
-    }
-});
 
 function normalizeMemberAssignee(member) {
     const name = member.user_name || member.name || member.user_email || member.email || 'Unknown';
@@ -3152,9 +3086,9 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
         showToast(`Created ${issue.identifier}`, 'success');
 
         // Refresh issues list in the background
-        if (currentView === 'issues') {
+        if (getCurrentView() === 'issues') {
             loadIssues();
-        } else if (currentView === 'my-issues') {
+        } else if (getCurrentView() === 'my-issues') {
             loadMyIssues();
         }
 
@@ -3831,7 +3765,7 @@ setInlineDropdownDependencies({
 // Initialize issue-detail-view module with required dependencies
 setIssueDetailViewDependencies({
     api,
-    currentView,
+    getCurrentView,
     showToast,
     showModal,
     closeModal,
@@ -3954,11 +3888,7 @@ function sanitizeColor(color) {
     return '#6366f1'; // Default accent color
 }
 
-function navigateToIssueByIdentifier(identifier) {
-    // Navigate to the issue detail view
-    history.pushState({ view: 'issue', identifier }, '', `/issue/${identifier}`);
-    viewIssueByPath(identifier);
-}
+// navigateToIssueByIdentifier is now in router.js
 
 // ============================================
 // QUICK CREATE (with optimistic UI)
