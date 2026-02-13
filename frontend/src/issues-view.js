@@ -16,13 +16,12 @@ import {
     setSearchDebounceTimer,
     setSelectedIssueIndex,
 } from './state.js';
-import { getProjects } from './projects.js';
+import { getProjects, setGlobalProjectSelection } from './projects.js';
 import { getMembers } from './teams.js';
 import { ensureSprintCacheForIssues, updateSprintProjectFilter } from './sprints.js';
 import { updateBoardProjectFilter } from './board.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
-import { setGlobalProjectSelection } from './projects.js';
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -1286,7 +1285,7 @@ export async function loadIssues() {
     if (assigneeFilter) {
         // Handle "me" special value
         if (assigneeFilter === 'me') {
-            params.assignee_id = getCurrentUser().id;
+            params.assignee_id = getCurrentUser()?.id;
         } else {
             params.assignee_id = assigneeFilter;
         }

@@ -581,8 +581,9 @@ function handleWebSocketMessage(message) {
                 // Already have this exact issue, skip
             } else if (optimisticIndex >= 0) {
                 // Replace optimistic issue with real one from WebSocket
-                currentIssues[optimisticIndex] = data;
-                setIssues(currentIssues);
+                const updated = [...currentIssues];
+                updated[optimisticIndex] = data;
+                setIssues(updated);
                 if (getCurrentView() === 'issues') {
                     renderIssues();
                 }
@@ -607,8 +608,9 @@ function handleWebSocketMessage(message) {
                         renderMyIssues();
                     }
                 } else if (myOptimisticIndex >= 0) {
-                    myIssuesArr[myOptimisticIndex] = data;
-                    setMyIssues(myIssuesArr);
+                    const updatedMyIssues = [...myIssuesArr];
+                    updatedMyIssues[myOptimisticIndex] = data;
+                    setMyIssues(updatedMyIssues);
                     if (getCurrentView() === 'my-issues') {
                         renderMyIssues();
                     }
@@ -635,14 +637,16 @@ function handleWebSocketMessage(message) {
             const issuesForUpdate = getIssues();
             const issueIndex = issuesForUpdate.findIndex(i => i.id === data.id);
             if (issueIndex >= 0) {
-                issuesForUpdate[issueIndex] = data;
-                setIssues(issuesForUpdate);
+                const updatedIssues = [...issuesForUpdate];
+                updatedIssues[issueIndex] = data;
+                setIssues(updatedIssues);
             }
             const myIssuesForUpdate = getMyIssues();
             const myIndex = myIssuesForUpdate.findIndex(i => i.id === data.id);
             if (myIndex >= 0) {
-                myIssuesForUpdate[myIndex] = data;
-                setMyIssues(myIssuesForUpdate);
+                const updatedMyIssues = [...myIssuesForUpdate];
+                updatedMyIssues[myIndex] = data;
+                setMyIssues(updatedMyIssues);
             }
             // Re-render if on issues view
             if (getCurrentView() === 'issues') {
@@ -2795,6 +2799,7 @@ Object.assign(window, {
     toggleMultiSelect,
     updateStatusFilter,
     updatePriorityFilter,
+    updateLabelFilter,
     clearStatusFilter,
     clearPriorityFilter,
     clearLabelFilter,
