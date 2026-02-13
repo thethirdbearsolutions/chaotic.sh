@@ -891,13 +891,19 @@ def auth_keys_revoke(key_id):
 # CLI self-upgrade command (CHT-811)
 @cli.command("upgrade")
 @click.option("--version", "target_version", default=None, help="Target version (e.g. 0.1.0a9). Defaults to latest.")
+@click.option("--git", is_flag=True, help="Install from git main branch instead of PyPI.")
 @click.option("--dry-run", is_flag=True, help="Show what would be done without executing.")
-def upgrade(target_version, dry_run):
+def upgrade(target_version, git, dry_run):
     """Upgrade the Chaotic CLI to the latest version."""
     import importlib.metadata
     import re
 
     pkg = "chaotic-cli"
+    GIT_URL = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
+
+    if git and target_version:
+        console.print("[red]Cannot use --git and --version together.[/red]")
+        raise SystemExit(1)
 
     # Validate version string if provided
     if target_version and not re.match(r'^[0-9a-zA-Z._-]+$', target_version):
@@ -921,9 +927,11 @@ def upgrade(target_version, dry_run):
         raise SystemExit(1)
 
     console.print(f"Install method: [bold]{installer}[/bold]")
+    if git:
+        console.print(f"Source: [bold]git main[/bold]")
 
     # Build the upgrade command
-    cmd = _build_upgrade_cmd(installer, pkg, target_version)
+    cmd = _build_upgrade_cmd(installer, pkg, target_version, git_url=GIT_URL if git else None)
     console.print(f"Command: [dim]{' '.join(cmd)}[/dim]")
 
     if dry_run:
@@ -991,20 +999,27 @@ def _detect_installer() -> str | None:
     return None
 
 
-def _build_upgrade_cmd(installer: str, pkg: str, version: str | None) -> list[str]:
+def _build_upgrade_cmd(installer: str, pkg: str, version: str | None, git_url: str | None = None) -> list[str]:
     """Build the upgrade command for the detected installer."""
-    version_spec = f"{pkg}=={version}" if version else pkg
+    if git_url:
+        source = git_url
+    elif version:
+        source = f"{pkg}=={version}"
+    else:
+        source = pkg
 
     if installer == "uv":
-        cmd = ["uv", "tool", "install", "--force", version_spec, "--prerelease", "allow"]
+        cmd = ["uv", "tool", "install", "--force", source, "--prerelease", "allow"]
     elif installer == "pipx":
-        if version:
-            cmd = ["pipx", "install", "--force", f"{pkg}=={version}", "--pip-args=--pre"]
+        if git_url:
+            cmd = ["pipx", "install", "--force", source, "--pip-args=--pre"]
+        elif version:
+            cmd = ["pipx", "install", "--force", source, "--pip-args=--pre"]
         else:
             cmd = ["pipx", "upgrade", pkg, "--pip-args=--pre"]
     else:
         pip_cmd = "pip3" if shutil.which("pip3") else "pip"
-        cmd = [pip_cmd, "install", "--upgrade", "--pre", version_spec]
+        cmd = [pip_cmd, "install", "--upgrade", "--pre", source]
 
     return cmd
 

@@ -65,6 +65,22 @@ class TestBuildUpgradeCmd:
             cmd = _build_upgrade_cmd("pip", "chaotic-cli", "0.1.0a9")
         assert cmd == ["pip3", "install", "--upgrade", "--pre", "chaotic-cli==0.1.0a9"]
 
+    def test_uv_git(self):
+        git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
+        cmd = _build_upgrade_cmd("uv", "chaotic-cli", None, git_url=git_url)
+        assert cmd == ["uv", "tool", "install", "--force", git_url, "--prerelease", "allow"]
+
+    def test_pipx_git(self):
+        git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
+        cmd = _build_upgrade_cmd("pipx", "chaotic-cli", None, git_url=git_url)
+        assert cmd == ["pipx", "install", "--force", git_url, "--pip-args=--pre"]
+
+    def test_pip_git(self):
+        git_url = "git+https://github.com/thethirdbearsolutions/chaotic.sh.git#subdirectory=cli"
+        with patch("cli.main.shutil.which", return_value="/usr/bin/pip3"):
+            cmd = _build_upgrade_cmd("pip", "chaotic-cli", None, git_url=git_url)
+        assert cmd == ["pip3", "install", "--upgrade", "--pre", git_url]
+
 
 class TestUpgradeCommand:
     """Integration tests for the upgrade CLI command."""
@@ -146,3 +162,21 @@ class TestUpgradeCommand:
             result = runner.invoke(cli, ["upgrade", "--version", "0.1.0a9", "--dry-run"])
         assert result.exit_code == 0
         assert "0.1.0a9" in result.output
+
+    def test_git_flag_dry_run(self):
+        """--git flag shows git URL in dry run output."""
+        runner = CliRunner()
+        with patch("cli.main._detect_installer", return_value="uv"), \
+             patch("cli.main.check_profile_ambiguity"):
+            result = runner.invoke(cli, ["upgrade", "--git", "--dry-run"])
+        assert result.exit_code == 0
+        assert "git+https://" in result.output
+        assert "git main" in result.output
+
+    def test_git_and_version_mutually_exclusive(self):
+        """--git and --version cannot be used together."""
+        runner = CliRunner()
+        with patch("cli.main.check_profile_ambiguity"):
+            result = runner.invoke(cli, ["upgrade", "--git", "--version", "0.1.0a9"])
+        assert result.exit_code == 1
+        assert "Cannot use --git and --version together" in result.output
