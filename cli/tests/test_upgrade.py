@@ -1,4 +1,5 @@
 """Tests for chaotic upgrade command (CHT-811)."""
+import subprocess
 import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
@@ -59,6 +60,11 @@ class TestBuildUpgradeCmd:
             cmd = _build_upgrade_cmd("pip", "chaotic-cli", None)
         assert cmd == ["pip3", "install", "--upgrade", "--pre", "chaotic-cli"]
 
+    def test_pip_specific_version(self):
+        with patch("cli.main.shutil.which", return_value="/usr/bin/pip3"):
+            cmd = _build_upgrade_cmd("pip", "chaotic-cli", "0.1.0a9")
+        assert cmd == ["pip3", "install", "--upgrade", "--pre", "chaotic-cli==0.1.0a9"]
+
 
 class TestUpgradeCommand:
     """Integration tests for the upgrade CLI command."""
@@ -81,10 +87,62 @@ class TestUpgradeCommand:
         assert "Could not detect" in result.output
 
     def test_upgrade_bypasses_profile_check(self):
-        """Upgrade should work even without a profile configured."""
+        """Upgrade should work even when profile ambiguity would block other commands."""
+        from cli.config import ProfileAmbiguityError
         runner = CliRunner()
-        with patch("cli.main._detect_installer", return_value="pip"), \
-             patch("cli.main.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok\n", stderr="")
+        with patch("cli.main.check_profile_ambiguity", side_effect=ProfileAmbiguityError("ambiguous")), \
+             patch("cli.main._detect_installer", return_value="uv"):
             result = runner.invoke(cli, ["upgrade", "--dry-run"])
         assert result.exit_code == 0
+        assert "uv tool install" in result.output
+
+    def test_successful_upgrade_shows_version_change(self):
+        """Non-dry-run upgrade shows version change."""
+        runner = CliRunner()
+        with patch("cli.main._detect_installer", return_value="uv"), \
+             patch("cli.main.check_profile_ambiguity"), \
+             patch("cli.main.subprocess.run") as mock_run, \
+             patch("cli.main._get_installed_version", return_value="0.2.0"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="Installed chaotic-cli\n", stderr="")
+            result = runner.invoke(cli, ["upgrade"])
+        assert result.exit_code == 0
+        assert "Upgraded" in result.output
+
+    def test_upgrade_failure_shows_error(self):
+        """Failed upgrade shows error message and stderr."""
+        runner = CliRunner()
+        with patch("cli.main._detect_installer", return_value="uv"), \
+             patch("cli.main.check_profile_ambiguity"), \
+             patch("cli.main.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="resolution failed\n")
+            result = runner.invoke(cli, ["upgrade"])
+        assert result.exit_code == 1
+        assert "failed" in result.output.lower()
+        assert "resolution failed" in result.output
+
+    def test_upgrade_timeout_shows_error(self):
+        """Subprocess timeout shows appropriate error."""
+        runner = CliRunner()
+        with patch("cli.main._detect_installer", return_value="uv"), \
+             patch("cli.main.check_profile_ambiguity"), \
+             patch("cli.main.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=120)):
+            result = runner.invoke(cli, ["upgrade"])
+        assert result.exit_code == 1
+        assert "timed out" in result.output.lower()
+
+    def test_invalid_version_string_rejected(self):
+        """Version strings with special characters are rejected."""
+        runner = CliRunner()
+        with patch("cli.main.check_profile_ambiguity"):
+            result = runner.invoke(cli, ["upgrade", "--version", "1.0; rm -rf /"])
+        assert result.exit_code == 1
+        assert "Invalid version" in result.output
+
+    def test_valid_version_string_accepted(self):
+        """Normal version strings are accepted."""
+        runner = CliRunner()
+        with patch("cli.main._detect_installer", return_value="uv"), \
+             patch("cli.main.check_profile_ambiguity"):
+            result = runner.invoke(cli, ["upgrade", "--version", "0.1.0a9", "--dry-run"])
+        assert result.exit_code == 0
+        assert "0.1.0a9" in result.output

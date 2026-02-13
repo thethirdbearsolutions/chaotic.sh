@@ -895,8 +895,14 @@ def auth_keys_revoke(key_id):
 def upgrade(target_version, dry_run):
     """Upgrade the Chaotic CLI to the latest version."""
     import importlib.metadata
+    import re
 
     pkg = "chaotic-cli"
+
+    # Validate version string if provided
+    if target_version and not re.match(r'^[0-9a-zA-Z._-]+$', target_version):
+        console.print(f"[red]Invalid version string: {target_version}[/red]")
+        raise SystemExit(1)
 
     # Get current version
     try:
@@ -940,13 +946,9 @@ def upgrade(target_version, dry_run):
     if result.stdout:
         console.print(result.stdout.strip())
 
-    # Report new version
+    # Report new version using the installer's own listing
     try:
-        new_version_result = subprocess.run(
-            [sys.executable, "-c", f"import importlib.metadata; print(importlib.metadata.version('{pkg}'))"],
-            capture_output=True, text=True, timeout=10,
-        )
-        new_ver = new_version_result.stdout.strip()
+        new_ver = _get_installed_version(installer, pkg)
         if new_ver and new_ver != current:
             console.print(f"[green]Upgraded: {current} -> {new_ver}[/green]")
         elif new_ver == current:
@@ -1005,6 +1007,43 @@ def _build_upgrade_cmd(installer: str, pkg: str, version: str | None) -> list[st
         cmd = [pip_cmd, "install", "--upgrade", "--pre", version_spec]
 
     return cmd
+
+
+def _get_installed_version(installer: str, pkg: str) -> str | None:
+    """Get the installed version of a package using the appropriate tool."""
+    try:
+        if installer == "uv":
+            result = subprocess.run(
+                ["uv", "tool", "list"], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if pkg in line:
+                    # uv tool list format: "chaotic-cli v0.1.0a9"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1].lstrip("v")
+        elif installer == "pipx":
+            result = subprocess.run(
+                ["pipx", "list", "--short"], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if pkg in line:
+                    # pipx list --short format: "chaotic-cli 0.1.0a9"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+        else:
+            # pip: use pip show
+            pip_cmd = "pip3" if shutil.which("pip3") else "pip"
+            result = subprocess.run(
+                [pip_cmd, "show", pkg], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return None
 
 
 # Shortcut: 'me' as alias for 'auth whoami'
