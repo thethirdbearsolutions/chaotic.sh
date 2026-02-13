@@ -17,6 +17,22 @@ let onDetailRoute = null;
 let onDetailPopstate = null;
 let onRestoreProject = null;
 let onIssueNavigate = null;
+let initialized = false;
+
+/**
+ * Reset all router state. Used by tests for isolation.
+ */
+export function resetRouter() {
+    for (const key of Object.keys(viewHandlers)) {
+        delete viewHandlers[key];
+    }
+    onBeforeNavigate = null;
+    onDetailRoute = null;
+    onDetailPopstate = null;
+    onRestoreProject = null;
+    onIssueNavigate = null;
+    initialized = false;
+}
 
 /**
  * Register view load handlers for the navigateTo switch.
@@ -146,6 +162,8 @@ export function navigateToIssueByIdentifier(identifier) {
  * Call this once during app startup.
  */
 export function initRouter() {
+    if (initialized) return;
+    initialized = true;
     window.addEventListener('popstate', (e) => {
         // Try detail popstate handler first (issues, documents, sprints)
         if (e.state && onDetailPopstate && onDetailPopstate(e.state)) {

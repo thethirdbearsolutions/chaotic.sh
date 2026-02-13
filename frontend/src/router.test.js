@@ -23,6 +23,7 @@ import {
     handleRoute,
     navigateToIssueByIdentifier,
     initRouter,
+    resetRouter,
 } from './router.js';
 
 describe('router', () => {
@@ -31,7 +32,8 @@ describe('router', () => {
     let originalLocation;
 
     beforeEach(() => {
-        // Reset mocks
+        // Reset router state for test isolation
+        resetRouter();
         vi.clearAllMocks();
 
         // Mock history
@@ -75,6 +77,7 @@ describe('router', () => {
         });
 
         it('merges with existing handlers', () => {
+            registerViews({ 'my-issues': vi.fn() });
             registerViews({ 'board': vi.fn() });
             expect(getValidViews()).toContain('my-issues');
             expect(getValidViews()).toContain('board');
@@ -83,9 +86,15 @@ describe('router', () => {
 
     describe('getValidViews', () => {
         it('returns list of registered view names', () => {
+            registerViews({ 'my-issues': vi.fn(), 'board': vi.fn() });
             const views = getValidViews();
             expect(Array.isArray(views)).toBe(true);
             expect(views).toContain('my-issues');
+            expect(views).toContain('board');
+        });
+
+        it('returns empty list when no views registered', () => {
+            expect(getValidViews()).toEqual([]);
         });
     });
 
@@ -409,6 +418,52 @@ describe('router', () => {
             window.location.pathname = '/';
             handleRoute();
             expect(restorer).toHaveBeenCalled();
+        });
+    });
+
+    describe('resetRouter', () => {
+        it('clears all registered views', () => {
+            registerViews({ 'board': vi.fn(), 'settings': vi.fn() });
+            expect(getValidViews()).toContain('board');
+            resetRouter();
+            expect(getValidViews()).toEqual([]);
+        });
+
+        it('clears all callbacks', () => {
+            const cleanup = vi.fn();
+            configureRouter({ beforeNavigate: cleanup });
+            resetRouter();
+            registerViews({ 'issues': vi.fn() });
+            navigateTo('issues', false);
+            expect(cleanup).not.toHaveBeenCalled();
+        });
+
+        it('allows initRouter to be called again', () => {
+            const addEventSpy = vi.spyOn(window, 'addEventListener');
+            initRouter();
+            const firstCallCount = addEventSpy.mock.calls.filter(c => c[0] === 'popstate').length;
+            // Without reset, second call is a no-op
+            initRouter();
+            const secondCallCount = addEventSpy.mock.calls.filter(c => c[0] === 'popstate').length;
+            expect(secondCallCount).toBe(firstCallCount); // guard prevented double-add
+            // After reset, can init again
+            resetRouter();
+            initRouter();
+            const thirdCallCount = addEventSpy.mock.calls.filter(c => c[0] === 'popstate').length;
+            expect(thirdCallCount).toBe(firstCallCount + 1);
+            addEventSpy.mockRestore();
+        });
+    });
+
+    describe('initRouter guard', () => {
+        it('only adds popstate listener once', () => {
+            const addEventSpy = vi.spyOn(window, 'addEventListener');
+            initRouter();
+            initRouter();
+            initRouter();
+            const popstateCalls = addEventSpy.mock.calls.filter(c => c[0] === 'popstate');
+            expect(popstateCalls.length).toBe(1);
+            addEventSpy.mockRestore();
         });
     });
 });
