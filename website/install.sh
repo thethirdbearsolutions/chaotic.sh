@@ -293,18 +293,25 @@ main() {
 
     # Tell user to restart their shell if we updated the profile
     if [ "$PROFILE_UPDATED" = "1" ]; then
-        printf "${YELLOW}NOTE:${NC} We added ~/.local/bin to your PATH in ${PROFILE}\n"
-        printf "To use chaotic in this terminal, run:\n"
+        printf "${YELLOW}NOTE: We added ~/.local/bin to your PATH in ${PROFILE}${NC}\n"
+        printf "${YELLOW}To use chaotic in this terminal, run:${NC}\n"
         echo ""
-        echo "  . $PROFILE"
+        printf "${YELLOW}  . ${PROFILE}${NC}\n"
         echo ""
-        printf "Or open a new terminal session.\n"
+        printf "${YELLOW}Or open a new terminal session.${NC}\n"
         echo ""
     fi
 
     printf "${BOLD}Get started:${NC}\n"
     echo "  chaotic quickstart     # Interactive setup (recommended)"
     echo "  chaotic init           # Browser-based setup"
+    echo ""
+    printf "${YELLOW}Remote server?${NC} If you installed on a remote machine and want\n"
+    printf "it accessible outside localhost, run:\n"
+    echo ""
+    echo "  chaotic system reconfigure --host 0.0.0.0"
+    echo ""
+    printf "${YELLOW}(Not recommended yet — this is alpha software!)${NC}\n"
     echo ""
 }
 
