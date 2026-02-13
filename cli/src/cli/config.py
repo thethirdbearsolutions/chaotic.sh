@@ -166,6 +166,9 @@ def get_local_config_path() -> Path:
     1. Existing .chaotic found by walking up
     2. Git repo root (if in a git repo)
     3. Current working directory
+
+    Skips paths that already exist as directories (e.g. ~/.chaotic/ which is
+    the global config dir) to avoid conflicts.
     """
     # First check if we already have a config file
     existing = find_local_config()
@@ -173,10 +176,18 @@ def get_local_config_path() -> Path:
         return existing
 
     # Otherwise, prefer git root, fall back to cwd
+    candidates = []
     git_root = get_git_root()
     if git_root:
-        return git_root / LOCAL_CONFIG_NAME
+        candidates.append(git_root / LOCAL_CONFIG_NAME)
+    candidates.append(Path.cwd() / LOCAL_CONFIG_NAME)
 
+    for candidate in candidates:
+        if not candidate.exists() or candidate.is_file():
+            return candidate
+
+    # All candidates are directories — fall back to cwd anyway and let
+    # save_local_config raise a clear error
     return Path.cwd() / LOCAL_CONFIG_NAME
 
 
@@ -245,10 +256,16 @@ def save_local_config(config: dict):
     1. Existing .chaotic found by walking up
     2. Git repo root (if in a git repo)
     3. Current working directory
+
+    Falls back to global config if the local path conflicts with the
+    global config directory (e.g. when cwd is home dir, ~/.chaotic is
+    already a directory).
     """
     config_path = get_local_config_path()
     if config_path.exists() and config_path.is_dir():
-        raise RuntimeError(f"Cannot save config: {config_path} is a directory. Remove it first.")
+        # Path conflicts with global config dir — save to global instead
+        save_global_config({**load_global_config(), **config})
+        return
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
     # Restrict permissions - config may contain API keys
