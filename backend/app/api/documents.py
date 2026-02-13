@@ -655,6 +655,20 @@ async def update_comment(
             detail="Document not found",
         )
 
+    # Check document access
+    if document.project_id:
+        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
+    else:
+        if not await check_user_team_access(db, current_user, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
+
     comment = await document_service.get_comment_by_id(comment_id)
     if not comment or comment.document_id != document_id:
         raise HTTPException(
@@ -694,6 +708,20 @@ async def delete_comment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
+
+    # Check document access
+    if document.project_id:
+        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
+    else:
+        if not await check_user_team_access(db, current_user, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
 
     comment = await document_service.get_comment_by_id(comment_id)
     if not comment or comment.document_id != document_id:
