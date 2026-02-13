@@ -734,6 +734,10 @@ def _run_quickstart_wizard():
         border_style="green",
     ))
     console.print()
+    console.print("[dim]Remote server? Make it accessible outside localhost with:[/dim]")
+    console.print("[dim]  chaotic system reconfigure --host 0.0.0.0[/dim]")
+    console.print("[dim]  (Not recommended yet — this is alpha software!)[/dim]")
+    console.print()
 
 
 # Auth commands
