@@ -426,6 +426,9 @@ def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
 
     # Use localhost for wildcard binds (0.0.0.0/::) since they accept loopback
     check_host = "localhost" if host in ("0.0.0.0", "::") else host
+    # Bracket IPv6 addresses for URL formatting
+    if ":" in check_host and not check_host.startswith("["):
+        check_host = f"[{check_host}]"
     url = f"http://{check_host}:{port}/health"
     start = time.time()
 

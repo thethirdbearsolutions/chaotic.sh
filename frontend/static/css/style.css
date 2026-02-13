@@ -1205,6 +1205,10 @@ textarea {
     border-color: var(--error-color);
 }
 
+.toast-warning {
+    border-color: var(--warning-color, #f59e0b);
+}
+
 @keyframes slideIn {
     from {
         transform: translateX(100%);
@@ -1926,6 +1930,11 @@ select:focus-visible {
 .toast-error .toast-icon::before {
     content: '✕';
     color: var(--error-color);
+}
+
+.toast-warning .toast-icon::before {
+    content: '⚠';
+    color: var(--warning-color, #f59e0b);
 }
 
 /* Dropdown animation */
