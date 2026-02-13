@@ -53,38 +53,44 @@ class Client:
 
             if not response.is_success:
                 detail = result.get("detail", "Unknown error")
-                # Format structured errors into actionable messages
-                if isinstance(detail, dict):
-                    if "pending_rituals" in detail and "issue_id" in detail:
-                        # Ticket ritual error - show first pending ritual with its prompt
-                        issue_id = detail.get("issue_id", "")
-                        pending = detail.get("pending_rituals", [])
-
-                        if pending:
-                            first = pending[0]
-                            if isinstance(first, dict):
-                                name = first.get("name", "unknown")
-                                prompt = first.get("prompt", "")
-                                prompt_line = f"\n  {prompt}" if prompt else ""
-                                msg = f"Pending ritual: {name}{prompt_line}"
-                            else:
-                                # Fallback for old format (just names)
-                                name = first
-                                msg = f"Pending ritual: {name}"
-                            msg += f"\n\nAfter completing the ritual, run: chaotic ritual attest {name} --ticket {issue_id}"
-                        else:
-                            msg = "Ticket has pending rituals."
-
-                        raise APIError(msg)
-                    elif "pending_rituals" in detail:
-                        raise APIError("Sprint is in limbo. Run `chaotic ritual list` to continue.")
-                    elif "arrears_by" in detail:
-                        raise APIError("Sprint is in arrears. Run `chaotic sprint close` to continue.")
-                    else:
-                        raise APIError(detail.get("message", str(detail)))
-                raise APIError(detail)
+                raise APIError(self._format_error(detail))
 
             return result
+
+    def _format_error(self, detail) -> str:
+        """Format an API error detail into a user-friendly message."""
+        if not isinstance(detail, dict):
+            return detail
+
+        if "pending_rituals" in detail and "issue_id" in detail:
+            return self._format_ticket_ritual_error(detail)
+        if "pending_rituals" in detail:
+            return "Sprint is in limbo. Run `chaotic ritual list` to continue."
+        if "arrears_by" in detail:
+            return "Sprint is in arrears. Run `chaotic sprint close` to continue."
+        return detail.get("message", str(detail))
+
+    def _format_ticket_ritual_error(self, detail: dict) -> str:
+        """Format a ticket ritual error with actionable hint."""
+        issue_id = detail.get("issue_id", "")
+        pending = detail.get("pending_rituals", [])
+
+        if not pending:
+            return "Ticket has pending rituals."
+
+        first = pending[0]
+        if isinstance(first, dict):
+            name = first.get("name", "unknown")
+            prompt = first.get("prompt", "")
+            prompt_line = f"\n  {prompt}" if prompt else ""
+            msg = f"Pending ritual: {name}{prompt_line}"
+        else:
+            # Fallback for old format (just names)
+            name = first
+            msg = f"Pending ritual: {name}"
+
+        msg += f"\n\nAfter completing the ritual, run: chaotic ritual attest {name} --ticket {issue_id}"
+        return msg
 
     # Auth
     def signup(self, name: str, email: str, password: str) -> dict:
