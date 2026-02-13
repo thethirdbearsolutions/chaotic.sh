@@ -356,6 +356,8 @@ def start_service() -> bool:
     os_type = get_os()
     try:
         if os_type == "linux":
+            # Enable lingering so user services survive SSH logout
+            run_command(["loginctl", "enable-linger", os.environ.get("USER", "")], check=False)
             run_command(["systemctl", "--user", "daemon-reload"])
             run_command(["systemctl", "--user", "enable", SYSTEMD_SERVICE])
             run_command(["systemctl", "--user", "start", SYSTEMD_SERVICE])
