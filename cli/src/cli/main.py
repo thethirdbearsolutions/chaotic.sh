@@ -2,6 +2,8 @@
 """Chaotic CLI - Command-line interface for Chaotic issue tracker."""
 import functools
 import json
+import shutil
+import subprocess
 import sys
 import webbrowser
 import click
@@ -281,8 +283,8 @@ def cli(ctx, profile, json_output):
         set_profile(profile)
 
     # Check for profile ambiguity (fail closed when multiple profiles exist)
-    # Skip check for profile management commands (they help resolve ambiguity)
-    if ctx.invoked_subcommand != "profile":
+    # Skip check for profile management and upgrade commands
+    if ctx.invoked_subcommand not in ("profile", "upgrade"):
         try:
             check_profile_ambiguity()
         except ProfileAmbiguityError as e:
@@ -884,6 +886,164 @@ def auth_keys_revoke(key_id):
 
     client.revoke_api_key(key["id"])
     console.print(f"[green]API key '{key['name']}' revoked.[/green]")
+
+
+# CLI self-upgrade command (CHT-811)
+@cli.command("upgrade")
+@click.option("--version", "target_version", default=None, help="Target version (e.g. 0.1.0a9). Defaults to latest.")
+@click.option("--dry-run", is_flag=True, help="Show what would be done without executing.")
+def upgrade(target_version, dry_run):
+    """Upgrade the Chaotic CLI to the latest version."""
+    import importlib.metadata
+    import re
+
+    pkg = "chaotic-cli"
+
+    # Validate version string if provided
+    if target_version and not re.match(r'^[0-9a-zA-Z._-]+$', target_version):
+        console.print(f"[red]Invalid version string: {target_version}[/red]")
+        raise SystemExit(1)
+
+    # Get current version
+    try:
+        current = importlib.metadata.version(pkg)
+    except importlib.metadata.PackageNotFoundError:
+        current = "unknown"
+    console.print(f"Current version: [bold]{current}[/bold]")
+
+    # Detect install method
+    installer = _detect_installer()
+    if installer is None:
+        console.print("[red]Could not detect how chaotic-cli was installed.[/red]")
+        console.print("Try upgrading manually:")
+        console.print("  uv tool install chaotic-cli --prerelease allow")
+        console.print("  pip install --pre --upgrade chaotic-cli")
+        raise SystemExit(1)
+
+    console.print(f"Install method: [bold]{installer}[/bold]")
+
+    # Build the upgrade command
+    cmd = _build_upgrade_cmd(installer, pkg, target_version)
+    console.print(f"Command: [dim]{' '.join(cmd)}[/dim]")
+
+    if dry_run:
+        console.print("[yellow]Dry run — nothing executed.[/yellow]")
+        return
+
+    # Run the upgrade
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        console.print("[red]Upgrade timed out after 120 seconds.[/red]")
+        raise SystemExit(1)
+
+    if result.returncode != 0:
+        console.print(f"[red]Upgrade failed (exit {result.returncode}):[/red]")
+        if result.stderr:
+            console.print(result.stderr.strip())
+        raise SystemExit(1)
+
+    if result.stdout:
+        console.print(result.stdout.strip())
+
+    # Report new version using the installer's own listing
+    try:
+        new_ver = _get_installed_version(installer, pkg)
+        if new_ver and new_ver != current:
+            console.print(f"[green]Upgraded: {current} -> {new_ver}[/green]")
+        elif new_ver == current:
+            console.print(f"[yellow]Already at latest version ({current}).[/yellow]")
+        else:
+            console.print("[green]Upgrade complete.[/green]")
+    except Exception:
+        console.print("[green]Upgrade complete.[/green]")
+
+
+def _detect_installer() -> str | None:
+    """Detect how chaotic-cli was installed: 'uv', 'pipx', or 'pip'."""
+
+    # Check uv tool list
+    if shutil.which("uv"):
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "list"], capture_output=True, text=True, timeout=10,
+            )
+            if "chaotic-cli" in result.stdout:
+                return "uv"
+        except Exception:
+            pass
+
+    # Check pipx
+    if shutil.which("pipx"):
+        try:
+            result = subprocess.run(
+                ["pipx", "list", "--short"], capture_output=True, text=True, timeout=10,
+            )
+            if "chaotic-cli" in result.stdout:
+                return "pipx"
+        except Exception:
+            pass
+
+    # Fallback to pip
+    if shutil.which("pip") or shutil.which("pip3"):
+        return "pip"
+
+    return None
+
+
+def _build_upgrade_cmd(installer: str, pkg: str, version: str | None) -> list[str]:
+    """Build the upgrade command for the detected installer."""
+    version_spec = f"{pkg}=={version}" if version else pkg
+
+    if installer == "uv":
+        cmd = ["uv", "tool", "install", "--force", version_spec, "--prerelease", "allow"]
+    elif installer == "pipx":
+        if version:
+            cmd = ["pipx", "install", "--force", f"{pkg}=={version}", "--pip-args=--pre"]
+        else:
+            cmd = ["pipx", "upgrade", pkg, "--pip-args=--pre"]
+    else:
+        pip_cmd = "pip3" if shutil.which("pip3") else "pip"
+        cmd = [pip_cmd, "install", "--upgrade", "--pre", version_spec]
+
+    return cmd
+
+
+def _get_installed_version(installer: str, pkg: str) -> str | None:
+    """Get the installed version of a package using the appropriate tool."""
+    try:
+        if installer == "uv":
+            result = subprocess.run(
+                ["uv", "tool", "list"], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if pkg in line:
+                    # uv tool list format: "chaotic-cli v0.1.0a9"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1].lstrip("v")
+        elif installer == "pipx":
+            result = subprocess.run(
+                ["pipx", "list", "--short"], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if pkg in line:
+                    # pipx list --short format: "chaotic-cli 0.1.0a9"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+        else:
+            # pip: use pip show
+            pip_cmd = "pip3" if shutil.which("pip3") else "pip"
+            result = subprocess.run(
+                [pip_cmd, "show", pkg], capture_output=True, text=True, timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return None
 
 
 # Shortcut: 'me' as alias for 'auth whoami'

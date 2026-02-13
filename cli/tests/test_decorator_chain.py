@@ -17,10 +17,16 @@ class _FakeAPIError(Exception):
 
 @pytest.fixture(autouse=True)
 def mock_client_module():
-    """Mock the client module with a real exception class for APIError."""
+    """Mock the client module with a real exception class for APIError.
+
+    Also patches cli.main.APIError so that handle_error's except clause
+    catches _FakeAPIError even when cli.main was already imported by earlier
+    test files (which bind the real APIError at import time).
+    """
     mock_mod = MagicMock()
     mock_mod.APIError = _FakeAPIError
-    with patch.dict('sys.modules', {'cli.client': mock_mod}):
+    with patch.dict('sys.modules', {'cli.client': mock_mod}), \
+         patch('cli.main.APIError', _FakeAPIError):
         yield mock_mod
 
 
