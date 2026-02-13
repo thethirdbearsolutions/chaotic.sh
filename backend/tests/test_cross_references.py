@@ -7,6 +7,8 @@ import pytest
 import pytest_asyncio
 from app.services.issue_service import IssueService
 from app.models.issue import Issue, IssueRelationType
+from app.models.project import Project
+from app.models.team import Team, TeamMember, TeamRole
 
 
 @pytest_asyncio.fixture
@@ -143,6 +145,46 @@ class TestCreateCrossReferences:
         relations = await issue_service.create_cross_references(test_issue.id, text)
 
         assert len(relations) == 1
+
+    @pytest.mark.asyncio
+    async def test_skips_cross_team_reference(self, db_session, issue_service, test_issue, test_user):
+        """Mentioning an issue from another team should not create a relation."""
+        # Create a second team and project
+        other_team = Team(name="Other Team", key="OTHER", description="Another team")
+        db_session.add(other_team)
+        await db_session.flush()
+
+        other_member = TeamMember(team_id=other_team.id, user_id=test_user.id, role=TeamRole.OWNER)
+        db_session.add(other_member)
+
+        other_project = Project(
+            team_id=other_team.id,
+            name="Secret Project",
+            key="SEC",
+            description="A secret project",
+            color="#ff0000",
+        )
+        db_session.add(other_project)
+        await db_session.flush()
+
+        other_project.issue_count = 1
+        other_issue = Issue(
+            project_id=other_project.id,
+            identifier="SEC-1",
+            number=1,
+            title="Secret Issue",
+            description="Top secret",
+            creator_id=test_user.id,
+        )
+        db_session.add(other_issue)
+        await db_session.commit()
+        await db_session.refresh(other_issue)
+
+        # Reference the other team's issue — should be silently ignored
+        text = f"See {other_issue.identifier} for details"
+        relations = await issue_service.create_cross_references(test_issue.id, text)
+
+        assert len(relations) == 0
 
 
 class TestCrossReferencesViaApi:

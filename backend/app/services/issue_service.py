@@ -1102,12 +1102,13 @@ class IssueService:
         await self.db.commit()
 
     # Cross-reference auto-linking (CHT-133)
-    _IDENTIFIER_RE = re.compile(r'\b([A-Z]{1,10}-\d+)\b')
+    _IDENTIFIER_RE = re.compile(r'\b([A-Z]{2,10}-\d+)\b')
 
     async def create_cross_references(self, issue_id: str, text: str) -> list[IssueRelation]:
         """Extract issue identifiers from text and create relates_to links.
 
-        Skips self-references and duplicates of existing relations.
+        Skips self-references, cross-team references, and duplicates of
+        existing relations.
         """
         if not text:
             return []
@@ -1116,11 +1117,17 @@ class IssueService:
         if not identifiers:
             return []
 
-        # Look up the source issue's identifier so we can skip self-references
+        # Look up the source issue's identifier and team so we can
+        # skip self-references and cross-team references
         source = await self.db.execute(
-            select(Issue.identifier).where(Issue.id == issue_id)
+            select(Issue.identifier, Project.team_id)
+            .join(Project, Issue.project_id == Project.id)
+            .where(Issue.id == issue_id)
         )
-        source_identifier = source.scalar_one_or_none()
+        source_row = source.one_or_none()
+        if not source_row:
+            return []
+        source_identifier, source_team_id = source_row
 
         created = []
         for identifier in identifiers:
@@ -1129,6 +1136,10 @@ class IssueService:
 
             target = await self.get_by_identifier(identifier)
             if not target:
+                continue
+
+            # Only link to issues within the same team
+            if target.project.team_id != source_team_id:
                 continue
 
             # Check if a relation already exists in either direction

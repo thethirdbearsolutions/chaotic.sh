@@ -1,7 +1,10 @@
 """Issue API routes."""
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Query
 from app.api.deps import DbSession, CurrentUser, check_user_project_access, check_user_team_access
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_utc(dt: datetime | None) -> datetime | None:
@@ -154,7 +157,10 @@ async def create_issue(
     response = issue_to_response(issue)
 
     # Auto-link cross-referenced issues (CHT-133)
-    await issue_service.create_cross_references(issue.id, issue_in.description)
+    try:
+        await issue_service.create_cross_references(issue.id, issue_in.description)
+    except Exception:
+        logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
     # Broadcast real-time update
     await broadcast_issue_event(project.team_id, "created", response.model_dump(mode="json"))
@@ -622,7 +628,10 @@ async def update_issue(
 
     # Auto-link cross-referenced issues when description changes (CHT-133)
     if issue_in.description is not None:
-        await issue_service.create_cross_references(issue.id, issue_in.description)
+        try:
+            await issue_service.create_cross_references(issue.id, issue_in.description)
+        except Exception:
+            logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
     # Broadcast real-time update
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
@@ -881,7 +890,10 @@ async def create_comment(
     comment = await issue_service.create_comment(issue_id, comment_in, current_user.id)
 
     # Auto-link cross-referenced issues (CHT-133)
-    await issue_service.create_cross_references(issue_id, comment_in.content)
+    try:
+        await issue_service.create_cross_references(issue_id, comment_in.content)
+    except Exception:
+        logger.warning("Failed to create cross-references for issue %s", issue_id, exc_info=True)
 
     response = IssueCommentResponse(
         id=comment.id,
