@@ -236,7 +236,12 @@ function renderMarkdown(content) {
             });
             // Parse markdown then sanitize HTML to prevent XSS
             const rawHtml = marked.parse(content);
-            return DOMPurify.sanitize(rawHtml);
+            // Escape raw-text HTML elements (title, style, textarea, xmp) whose
+            // content gets silently destroyed by DOMPurify since it treats their
+            // children as raw text, not DOM nodes (CHT-829)
+            const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
+                (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+            return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
         } catch (e) {
             console.error('Markdown parsing error:', e);
             // Fall through to safe fallback
