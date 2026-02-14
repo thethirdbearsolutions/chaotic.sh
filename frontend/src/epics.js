@@ -5,6 +5,38 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { navigateToIssueByIdentifier } from './router.js';
+import { getProjects, loadProjects, getSavedProjectId, setGlobalProjectSelection } from './projects.js';
+import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+
+/**
+ * Populate the epics project filter dropdown and auto-select saved project.
+ */
+export async function updateEpicsProjectFilter() {
+    const filter = document.getElementById('epics-project-filter');
+    if (!filter) return;
+
+    await loadProjects();
+    filter.innerHTML = '<option value="">All Projects</option>' +
+        getProjects().map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+
+    const saved = getProjectFromUrl() || getSavedProjectId();
+    if (saved && getProjects().some(p => p.id === saved)) {
+        filter.value = saved;
+    }
+    loadEpics();
+}
+
+/**
+ * Handle project filter change in the epics view.
+ */
+export function onEpicsProjectChange() {
+    const projectId = document.getElementById('epics-project-filter')?.value;
+    if (projectId) {
+        setGlobalProjectSelection(projectId);
+        updateUrlWithProject(projectId);
+    }
+    loadEpics();
+}
 
 /**
  * Load and render the epics list view.
@@ -20,7 +52,14 @@ export async function loadEpics() {
             listEl.innerHTML = '<div class="empty-state">Select a team to view epics.</div>';
             return;
         }
-        const epics = await api.getTeamIssues(window.currentTeam.id, { issue_type: 'epic' });
+
+        const projectId = document.getElementById('epics-project-filter')?.value;
+        let epics;
+        if (projectId) {
+            epics = await api.getIssues({ project_id: projectId, issue_type: 'epic' });
+        } else {
+            epics = await api.getTeamIssues(window.currentTeam.id, { issue_type: 'epic' });
+        }
 
         if (!epics || epics.length === 0) {
             listEl.innerHTML = `

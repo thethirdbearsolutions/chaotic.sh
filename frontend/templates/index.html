@@ -420,6 +420,11 @@
                 <div id="epics-view" class="view hidden">
                     <div class="view-header">
                         <h2>Epics</h2>
+                        <div class="view-actions">
+                            <select id="epics-project-filter" onchange="onEpicsProjectChange()">
+                                <option value="">All Projects</option>
+                            </select>
+                        </div>
                     </div>
                     <div id="epics-list" class="list"></div>
                 </div>

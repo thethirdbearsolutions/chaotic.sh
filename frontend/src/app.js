@@ -58,7 +58,7 @@ import {
     getGroupByValue,
 } from './issues-view.js';
 import { completeGateFromList } from './gate-approvals.js';
-import { loadEpics } from './epics.js';
+import { loadEpics, updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
 import { createKeyboardHandler } from './keyboard.js';
 import {
     getTeams,
@@ -379,7 +379,7 @@ registerViews({
         });
     },
     'epics': () => {
-        loadEpics();
+        updateEpicsProjectFilter();
     },
     'board': () => {
         updateBoardProjectFilter();
@@ -2329,6 +2329,9 @@ Object.assign(window, {
 
     // Projects
     showCreateProjectModal,
+
+    // Epics
+    onEpicsProjectChange,
 
     // Rituals top-level view
     loadRitualsView,
