@@ -414,3 +414,45 @@ class TestIssueUpdateErrors:
             ])
 
         assert result.exit_code != 0
+
+
+class TestIssueUpdateParent:
+    """Tests for issue update --parent and --no-parent (CHT-821)."""
+
+    def test_update_parent(self, cli_runner, mock_issue):
+        """issue update CHT-100 --parent CHT-50 sets parent_id."""
+        from cli.main import cli, client
+
+        parent_issue = {"id": "parent-uuid-50", "identifier": "CHT-50", "title": "Epic"}
+        client.get_issue_by_identifier = MagicMock(side_effect=[mock_issue, parent_issue])
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--parent', 'CHT-50'])
+
+        assert result.exit_code == 0
+        assert 'CHT-100 updated' in result.output
+        client.update_issue.assert_called_once_with('issue-uuid-123', parent_id='parent-uuid-50')
+
+    def test_update_no_parent(self, cli_runner, mock_issue):
+        """issue update CHT-100 --no-parent clears parent_id."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--no-parent'])
+
+        assert result.exit_code == 0
+        assert 'CHT-100 updated' in result.output
+        client.update_issue.assert_called_once_with('issue-uuid-123', parent_id=None)
+
+    def test_update_parent_and_no_parent_conflict(self, cli_runner, mock_issue):
+        """issue update --parent and --no-parent together is an error."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--parent', 'CHT-50', '--no-parent'])
+
+        assert result.exit_code != 0
+        assert 'Cannot use --parent and --no-parent together' in result.output
