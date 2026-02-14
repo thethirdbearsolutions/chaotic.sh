@@ -1545,6 +1545,7 @@ def issue():
 @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
 @click.option("--priority", help="Filter by priority (urgent, high, medium, low, no_priority). Comma-separated for multiple.")
 @click.option("--sprint", help="Filter by sprint ('current' for active sprint, or sprint ID)")
+@click.option("--no-sprint", "no_sprint", is_flag=True, help="Show only issues not assigned to any sprint")
 @click.option("--epic", help="Filter by epic/parent issue (e.g., CHT-12)")
 @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
 @click.option("--search", help="Search in title, description, and identifier.")
@@ -1554,7 +1555,7 @@ def issue():
 @json_option
 @require_project
 @handle_error
-def issue_list(status, priority, sprint, epic, label, search, limit, sort_by, order):
+def issue_list(status, priority, sprint, no_sprint, epic, label, search, limit, sort_by, order):
     """List issues in current project."""
     # Validate status values if provided (CHT-502)
     if status:
@@ -1577,7 +1578,14 @@ def issue_list(status, priority, sprint, epic, label, search, limit, sort_by, or
     if epic:
         epic_issue = client.get_issue_by_identifier(epic)
         parent_id = epic_issue["id"]
-    sprint_id = resolve_sprint_id(sprint, project_id) if sprint else None
+    if sprint and no_sprint:
+        raise click.UsageError("Cannot use both --sprint and --no-sprint")
+    if no_sprint:
+        sprint_id = "no_sprint"
+    elif sprint:
+        sprint_id = resolve_sprint_id(sprint, project_id)
+    else:
+        sprint_id = None
     issues = client.get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search)
 
     # JSON output mode (CHT-170)
@@ -2803,15 +2811,22 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
 
     Resolution order (first match wins):
     1. "current" → active sprint ID
-    2. Full UUID → passed through
-    3. Sprint name → matched case-insensitively
-    4. UUID prefix → matched against project sprints
+    2. "next" → planned sprint ID
+    3. Full UUID → passed through
+    4. Sprint name → matched case-insensitively
+    5. UUID prefix → matched against project sprints
 
     Raises ClickException on ambiguity or not found.
     """
     if sprint_value.lower() == "current":
         current = client.get_current_sprint(project_id)
         return current["id"]
+
+    if sprint_value.lower() == "next":
+        sprints = client.get_sprints(project_id, status="planned")
+        if not sprints:
+            raise click.ClickException("No planned (next) sprint found. Use 'chaotic sprint list' to see available sprints.")
+        return sprints[0]["id"]
 
     # Fetch all sprints for resolution
     sprints = client.get_sprints(project_id)
