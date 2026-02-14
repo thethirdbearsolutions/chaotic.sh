@@ -1272,6 +1272,7 @@ class RitualService:
                 Issue.project_id == project_id,
                 TicketLimbo.cleared_at.is_(None),
                 Ritual.is_active == True,
+                Issue.status.notin_([IssueStatus.DONE, IssueStatus.CANCELED]),
             )
             .options(
                 selectinload(TicketLimbo.issue),
@@ -1341,6 +1342,7 @@ class RitualService:
                 RitualAttestation.issue_id.isnot(None),
                 Ritual.approval_mode == ApprovalMode.REVIEW,
                 Ritual.is_active == True,
+                Issue.status.notin_([IssueStatus.DONE, IssueStatus.CANCELED]),
             )
             .options(
                 selectinload(RitualAttestation.issue),
