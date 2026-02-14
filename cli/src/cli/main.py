@@ -1733,7 +1733,7 @@ def issue_search(query, search_all):
 
 @issue.command("create")
 @click.argument("title", required=False)
-@click.option("--title", "title_opt", help="Issue title (alternative to positional argument)")
+@click.option("--title", "-t", "title_opt", help="Issue title (alternative to positional argument)")
 @click.option("--description", default="")
 @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
 @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
@@ -4046,7 +4046,7 @@ def doc_list(search, project, sprint, show_all):
 @doc.command("create")
 @click.argument("title_words", nargs=-1)
 @click.option("--title", "title_opt", help="Document title (alternative to positional argument)")
-@click.option("--content", default="")
+@click.option("--content", "--body", default="")
 @click.option("--icon", default="")
 @click.option("--project", help="Project to attach doc to (ID, key, or name). Omit for global/team-wide.")
 @click.option("--sprint", help="Sprint to attach doc to (ID, name, or 'current')")
