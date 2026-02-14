@@ -431,7 +431,7 @@ export function toggleTicketRituals() {
         content.classList.toggle('collapsed', ticketRitualsCollapsed);
     }
     if (toggleIcon) {
-        toggleIcon.classList.toggle('rotated', !ticketRitualsCollapsed);
+        toggleIcon.classList.toggle('rotated', ticketRitualsCollapsed);
     }
 }
 
@@ -484,7 +484,7 @@ export function renderTicketRituals(issueId) {
     content.classList.toggle('collapsed', ticketRitualsCollapsed);
     const toggleIcon = container.querySelector('.section-toggle-icon');
     if (toggleIcon) {
-        toggleIcon.classList.toggle('rotated', !ticketRitualsCollapsed);
+        toggleIcon.classList.toggle('rotated', ticketRitualsCollapsed);
     }
 
     // Determine the right warning message based on ritual triggers
@@ -744,7 +744,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                         <div class="section-header section-header-collapsible" onclick="toggleTicketRituals()">
                             <h3>Ticket Rituals</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle ticket rituals">
-                                <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M4 6l4 4 4-4"/>
                                 </svg>
                             </button>
