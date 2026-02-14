@@ -1939,6 +1939,10 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
             console.print(f"[dim]Removed label: {label_name}[/dim]")
             labels_modified = True
 
+    # Validate parent flags before building update data
+    if parent and clear_parent:
+        raise click.ClickException("Cannot use --parent and --no-parent together.")
+
     data = {}
     if title is not None:
         data["title"] = title
@@ -1952,10 +1956,10 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
         data["issue_type"] = issue_type
     if estimate is not None:
         data["estimate"] = estimate
-    if parent and clear_parent:
-        raise click.ClickException("Cannot use --parent and --no-parent together.")
     if parent:
         parent_issue = client.get_issue_by_identifier(parent)
+        if parent_issue["id"] == issue["id"]:
+            raise click.ClickException("An issue cannot be its own parent.")
         data["parent_id"] = parent_issue["id"]
     if clear_parent:
         data["parent_id"] = None

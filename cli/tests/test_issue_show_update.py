@@ -451,8 +451,41 @@ class TestIssueUpdateParent:
         from cli.main import cli, client
 
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
 
         result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--parent', 'CHT-50', '--no-parent'])
 
         assert result.exit_code != 0
         assert 'Cannot use --parent and --no-parent together' in result.output
+        client.update_issue.assert_not_called()
+
+    def test_update_self_parent_rejected(self, cli_runner, mock_issue):
+        """issue update CHT-100 --parent CHT-100 rejects self-parenting."""
+        from cli.main import cli, client
+
+        # get_issue_by_identifier is called twice: once for the issue, once for the parent
+        # Both return the same issue, simulating self-parenting
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--parent', 'CHT-100'])
+
+        assert result.exit_code != 0
+        assert 'cannot be its own parent' in result.output
+        client.update_issue.assert_not_called()
+
+    def test_update_parent_not_found(self, cli_runner, mock_issue):
+        """issue update --parent CHT-999 shows error when parent not found."""
+        from cli.main import cli, client
+        from cli.main import APIError
+
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[mock_issue, APIError("Issue not found")]
+        )
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--parent', 'CHT-999'])
+
+        assert result.exit_code != 0
+        assert 'Issue not found' in result.output
+        client.update_issue.assert_not_called()
