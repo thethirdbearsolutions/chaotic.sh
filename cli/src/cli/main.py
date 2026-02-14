@@ -1720,6 +1720,10 @@ def issue_show(identifiers):
         if len(identifiers) == 1:
             issue = client.get_issue_by_identifier(identifiers[0])
             issue['comments'] = client.get_comments(issue["id"])
+            try:
+                issue['sub_issues'] = client.get_sub_issues(issue["id"])
+            except APIError:
+                issue['sub_issues'] = []
             output_json(issue)
         else:
             issues = [client.get_issue_by_identifier(i) for i in identifiers]
@@ -1731,14 +1735,33 @@ def issue_show(identifiers):
         issue = client.get_issue_by_identifier(identifiers[0])
         comments = client.get_comments(issue["id"])
 
-        console.print(Panel(
-            f"[bold]{issue['title']}[/bold]\n\n"
-            f"[dim]Status:[/dim] {issue['status'].replace('_', ' ').title()}\n"
-            f"[dim]Priority:[/dim] {issue['priority'].replace('_', ' ').title()}\n"
-            f"[dim]Type:[/dim] {issue.get('issue_type', 'task').replace('_', ' ').title()}\n"
+        # Build panel lines
+        panel_lines = [
+            f"[bold]{issue['title']}[/bold]\n",
+            f"[dim]Status:[/dim] {issue['status'].replace('_', ' ').title()}",
+            f"[dim]Priority:[/dim] {issue['priority'].replace('_', ' ').title()}",
+            f"[dim]Type:[/dim] {issue.get('issue_type', 'task').replace('_', ' ').title()}",
             f"[dim]Estimate:[/dim] {issue.get('estimate') or '-'} points",
-            title=issue["identifier"]
-        ))
+        ]
+
+        # Show parent info if this is a sub-issue
+        if issue.get('parent_id'):
+            try:
+                parent = client.get_issue(issue['parent_id'])
+                panel_lines.append(f"[dim]Parent:[/dim] {parent['identifier']}: {parent['title']}")
+            except APIError:
+                panel_lines.append(f"[dim]Parent:[/dim] [dim](unable to load)[/dim]")
+
+        # Show sub-issue summary
+        try:
+            sub_issues = client.get_sub_issues(issue['id'])
+            if sub_issues:
+                done_count = sum(1 for s in sub_issues if s.get('status') in ('done', 'canceled'))
+                panel_lines.append(f"[dim]Sub-issues:[/dim] {done_count}/{len(sub_issues)} done")
+        except APIError:
+            pass
+
+        console.print(Panel("\n".join(panel_lines), title=issue["identifier"]))
 
         console.print("\n[dim]Description:[/dim]")
         description = issue.get('description') or 'No description'
