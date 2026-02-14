@@ -34,6 +34,7 @@ class IssueType(str, Enum):
     CHORE = "chore"
     DOCS = "docs"
     TECH_DEBT = "tech_debt"
+    EPIC = "epic"
 
 
 class IssueRelationType(str, Enum):
