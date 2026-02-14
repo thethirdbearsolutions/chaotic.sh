@@ -171,7 +171,7 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/issues?project_id={project_id}", data)
 
-    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None) -> list:
+    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None) -> list:
         params = {}
         if project_id:
             params["project_id"] = project_id
@@ -189,6 +189,8 @@ class Client:
             params["order"] = order
         if search:
             params["search"] = search
+        if issue_type:
+            params["issue_type"] = issue_type
 
         # Build base query with urlencode for single params
         query = urlencode(params) if params else ""
