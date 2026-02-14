@@ -35,7 +35,7 @@ from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
 from app.models.issue import Issue, IssueStatus, IssuePriority, IssueType, ActivityType
 from app.models.user import User
-from app.websocket import broadcast_issue_event, broadcast_comment_event
+from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event
 
 router = APIRouter()
 
@@ -249,8 +249,9 @@ async def create_issue(
     except Exception:
         logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
-    # Broadcast real-time update
+    # Broadcast real-time updates
     await broadcast_issue_event(project.team_id, "created", response.model_dump(mode="json"))
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id})
 
     return response
 
@@ -489,6 +490,7 @@ async def batch_update_issues(
     responses = [issue_to_response(issue) for issue in updated]
     for resp in responses:
         await broadcast_issue_event(team_id, "updated", resp.model_dump(mode="json"))
+        await broadcast_activity_event(team_id, "created", {"issue_id": resp.id})
     return responses
 
 
@@ -730,8 +732,9 @@ async def update_issue(
         except Exception:
             logger.warning("Failed to create cross-references for issue %s", issue.id, exc_info=True)
 
-    # Broadcast real-time update
+    # Broadcast real-time updates
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": issue.id})
 
     return response
 
@@ -1002,6 +1005,7 @@ async def create_comment(
         updated_at=ensure_utc(comment.updated_at),
     )
     await broadcast_comment_event(project.team_id, "created", response.model_dump(mode="json"))
+    await broadcast_activity_event(project.team_id, "created", {"issue_id": comment.issue_id})
     return response
 
 
