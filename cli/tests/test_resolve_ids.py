@@ -530,3 +530,56 @@ class TestResolveProject:
                 resolve_project("88c62d3e")
 
         assert "Ambiguous project ID prefix" in str(exc_info.value)
+
+    def test_key_match(self, sample_projects):
+        """Project key should resolve (case-insensitive)."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            result = resolve_project("web")
+
+        assert result["key"] == "WEB"
+
+    def test_name_match(self, sample_projects):
+        """Project name should resolve (case-insensitive)."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            result = resolve_project("Web Platform")
+
+        assert result["key"] == "WEB"
+
+    def test_name_match_ambiguous_raises_error(self):
+        """Ambiguous project name should fail with actionable message."""
+        from cli.main import resolve_project, client
+
+        projects_with_dupe = [
+            {"id": "id-1", "key": "P1", "name": "My Project"},
+            {"id": "id-2", "key": "P2", "name": "My Project"},
+        ]
+        client.get_projects = MagicMock(return_value=projects_with_dupe)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            with pytest.raises(click.ClickException) as exc_info:
+                resolve_project("My Project")
+
+        assert "Ambiguous project name" in str(exc_info.value)
+        assert "P1" in str(exc_info.value)
+        assert "P2" in str(exc_info.value)
+        assert "key or ID" in str(exc_info.value)
+
+    def test_not_found_raises_error(self, sample_projects):
+        """Non-matching identifier should fail."""
+        from cli.main import resolve_project, client
+
+        client.get_projects = MagicMock(return_value=sample_projects)
+
+        with patch('cli.main.get_current_team', return_value='team-123'):
+            with pytest.raises(click.ClickException) as exc_info:
+                resolve_project("Nonexistent")
+
+        assert "not found" in str(exc_info.value)

@@ -169,9 +169,18 @@ def resolve_project(identifier: str) -> dict:
 
     # Try match on name (case-insensitive)
     identifier_lower = identifier.lower()
-    for p in projects:
-        if p["name"].lower() == identifier_lower:
-            return p
+    name_matches = [p for p in projects if p["name"].lower() == identifier_lower]
+    if len(name_matches) == 1:
+        return name_matches[0]
+    if len(name_matches) > 1:
+        matches = "\n".join(
+            f"  {p.get('key', '?')}: {p.get('name', 'Unnamed')} ({p['id'][:8]}…)"
+            for p in name_matches
+        )
+        raise click.ClickException(
+            f"Ambiguous project name '{identifier}'. Matches:\n{matches}\n"
+            f"Use the project key or ID for precision."
+        )
 
     # Try UUID prefix match
     prefix_matches = [p for p in projects if p["id"].startswith(identifier)]
