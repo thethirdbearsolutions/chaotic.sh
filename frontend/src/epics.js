@@ -16,7 +16,11 @@ export async function loadEpics() {
     listEl.innerHTML = '<div class="loading">Loading epics...</div>';
 
     try {
-        const epics = await api.getIssues({ issue_type: 'epic' });
+        if (!window.currentTeam?.id) {
+            listEl.innerHTML = '<div class="empty-state">Select a team to view epics.</div>';
+            return;
+        }
+        const epics = await api.getTeamIssues(window.currentTeam.id, { issue_type: 'epic' });
 
         if (!epics || epics.length === 0) {
             listEl.innerHTML = `

@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the api module
 vi.mock('./api.js', () => ({
     api: {
-        getIssues: vi.fn(),
+        getTeamIssues: vi.fn(),
         getSubIssues: vi.fn(),
     },
 }));
@@ -34,10 +34,11 @@ describe('loadEpics', () => {
     beforeEach(() => {
         setupDom();
         vi.clearAllMocks();
+        window.currentTeam = { id: 'team-1' };
     });
 
     it('shows empty state when no epics exist', async () => {
-        api.getIssues.mockResolvedValue([]);
+        api.getTeamIssues.mockResolvedValue([]);
 
         await loadEpics();
 
@@ -51,7 +52,7 @@ describe('loadEpics', () => {
             { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'in_progress', estimate: 8 },
             { id: 'e2', identifier: 'CHT-20', title: 'Search Epic', status: 'todo', estimate: 5 },
         ];
-        api.getIssues.mockResolvedValue(epics);
+        api.getTeamIssues.mockResolvedValue(epics);
         api.getSubIssues.mockImplementation((id) => {
             if (id === 'e1') {
                 return Promise.resolve([
@@ -71,12 +72,12 @@ describe('loadEpics', () => {
         expect(el.innerHTML).toContain('2/3');
         expect(el.innerHTML).toContain('CHT-20');
         expect(el.innerHTML).toContain('Search Epic');
-        // Verify issue_type=epic was passed
-        expect(api.getIssues).toHaveBeenCalledWith({ issue_type: 'epic' });
+        // Verify team_id + issue_type=epic was passed
+        expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', { issue_type: 'epic' });
     });
 
     it('shows dash for progress when no sub-issues', async () => {
-        api.getIssues.mockResolvedValue([
+        api.getTeamIssues.mockResolvedValue([
             { id: 'e1', identifier: 'CHT-10', title: 'Empty Epic', status: 'backlog', estimate: null },
         ]);
         api.getSubIssues.mockResolvedValue([]);
@@ -91,7 +92,7 @@ describe('loadEpics', () => {
     });
 
     it('handles sub-issues API failure gracefully', async () => {
-        api.getIssues.mockResolvedValue([
+        api.getTeamIssues.mockResolvedValue([
             { id: 'e1', identifier: 'CHT-10', title: 'Failing Epic', status: 'in_progress', estimate: 3 },
         ]);
         api.getSubIssues.mockRejectedValue(new Error('Not supported'));
@@ -106,7 +107,7 @@ describe('loadEpics', () => {
     });
 
     it('handles API failure loading epics', async () => {
-        api.getIssues.mockRejectedValue(new Error('Network error'));
+        api.getTeamIssues.mockRejectedValue(new Error('Network error'));
 
         await loadEpics();
 
@@ -116,7 +117,7 @@ describe('loadEpics', () => {
     });
 
     it('shows complete progress bar style when all done', async () => {
-        api.getIssues.mockResolvedValue([
+        api.getTeamIssues.mockResolvedValue([
             { id: 'e1', identifier: 'CHT-10', title: 'Done Epic', status: 'done', estimate: 5 },
         ]);
         api.getSubIssues.mockResolvedValue([
@@ -133,7 +134,7 @@ describe('loadEpics', () => {
     });
 
     it('counts canceled as done for progress', async () => {
-        api.getIssues.mockResolvedValue([
+        api.getTeamIssues.mockResolvedValue([
             { id: 'e1', identifier: 'CHT-10', title: 'Mixed Epic', status: 'in_progress', estimate: 5 },
         ]);
         api.getSubIssues.mockResolvedValue([
