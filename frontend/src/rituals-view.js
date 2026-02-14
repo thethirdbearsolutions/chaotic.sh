@@ -105,37 +105,25 @@ export function renderRitualsView() {
 
     container.innerHTML = `
         <div id="rituals-tab-sprint" class="settings-tab-content">
-            <section class="settings-section">
-                <div class="settings-section-header">
-                    <div>
-                        <p class="settings-description">Required when closing a sprint</p>
-                    </div>
-                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('every_sprint')">+ Create Ritual</button>
-                </div>
-                <div id="rv-sprint-rituals-list" class="rituals-list"></div>
-            </section>
+            <div class="settings-section-header">
+                <p class="settings-description">Required when closing a sprint</p>
+                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('every_sprint')">+ Create Ritual</button>
+            </div>
+            <div id="rv-sprint-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-close" class="settings-tab-content hidden">
-            <section class="settings-section">
-                <div class="settings-section-header">
-                    <div>
-                        <p class="settings-description">Required when closing a ticket</p>
-                    </div>
-                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_close')">+ Create Ritual</button>
-                </div>
-                <div id="rv-close-rituals-list" class="rituals-list"></div>
-            </section>
+            <div class="settings-section-header">
+                <p class="settings-description">Required when closing a ticket</p>
+                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_close')">+ Create Ritual</button>
+            </div>
+            <div id="rv-close-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-claim" class="settings-tab-content hidden">
-            <section class="settings-section">
-                <div class="settings-section-header">
-                    <div>
-                        <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
-                    </div>
-                    <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_claim')">+ Create Ritual</button>
-                </div>
-                <div id="rv-claim-rituals-list" class="rituals-list"></div>
-            </section>
+            <div class="settings-section-header">
+                <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
+                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_claim')">+ Create Ritual</button>
+            </div>
+            <div id="rv-claim-rituals-list" class="rituals-list"></div>
         </div>
     `;
 

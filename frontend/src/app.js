@@ -177,6 +177,7 @@ import {
     formatActivityText,
     renderDescriptionContent,
     handleDescriptionClick,
+    toggleSection,
     toggleTicketRituals,
     viewIssueByPath,
     viewIssue,
@@ -516,6 +517,7 @@ window.viewIssue = viewIssue;
 window.viewIssueByPath = viewIssueByPath;
 window.handleDescriptionClick = handleDescriptionClick;
 window.toggleTicketRituals = toggleTicketRituals;
+window.toggleSection = toggleSection;
 
 // Export create issue modal functions to window for inline onclick handlers
 window.toggleCreateIssueOptions = toggleCreateIssueOptions;
@@ -2410,6 +2412,7 @@ Object.assign(window, {
     // completeGateFromList moved to gate-approvals.js
 
     // Ticket rituals
+    toggleSection,
     toggleTicketRituals,
     attestTicketRitual,
     approveTicketRitual,

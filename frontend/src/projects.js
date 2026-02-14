@@ -284,7 +284,7 @@ export function renderProjects() {
  * @param {string} projectId - Project ID
  */
 export function viewProject(projectId) {
-  document.getElementById('project-filter').value = projectId;
+  setGlobalProjectSelection(projectId);
   if (window.navigateTo) {
     window.navigateTo('issues');
   }
@@ -707,7 +707,14 @@ export function renderRitualList(containerId, rituals, type) {
   }
 
   const approvalModeClass = (mode) => escapeAttr(mode || 'auto');
-  container.innerHTML = rituals.map(ritual => `
+  container.innerHTML = rituals.map(ritual => {
+    let groupBadge = '';
+    if (ritual.group_name) {
+      const extraInfo = ritual.weight != null && ritual.weight !== 1 ? ` w:${ritual.weight}` :
+                        ritual.percentage != null ? ` ${ritual.percentage}%` : '';
+      groupBadge = `<span class="badge badge-ritual-group">${escapeHtml(ritual.group_name)}${extraInfo}</span>`;
+    }
+    return `
     <div class="ritual-item mode-${approvalModeClass(ritual.approval_mode)}">
       <div class="ritual-item-info">
         <div class="ritual-item-name">${escapeHtml(ritual.name)}</div>
@@ -716,9 +723,11 @@ export function renderRitualList(containerId, rituals, type) {
         </div>
         <div class="ritual-item-mode">
           <span class="badge badge-ritual-${approvalModeClass(ritual.approval_mode)}">${escapeHtml(ritual.approval_mode || 'auto')}</span>
-          ${ritual.approval_mode === 'auto' ? 'Agent clears immediately' : ''}
-          ${ritual.approval_mode === 'review' ? 'Requires human approval' : ''}
-          ${ritual.approval_mode === 'gate' ? 'Human only' : ''}
+          ${groupBadge}
+          ${!ritual.group_name && ritual.approval_mode === 'auto' ? 'Agent clears immediately' : ''}
+          ${!ritual.group_name && ritual.approval_mode === 'review' ? 'Requires human approval' : ''}
+          ${!ritual.group_name && ritual.approval_mode === 'gate' ? 'Human only' : ''}
+          ${ritual.note_required === false ? '<span class="badge badge-no-note">no note</span>' : ''}
         </div>
       </div>
       <div class="ritual-item-actions">
@@ -726,15 +735,22 @@ export function renderRitualList(containerId, rituals, type) {
         <button class="btn btn-danger btn-small" data-ritual-id="${escapeAttr(ritual.id)}" data-ritual-name="${escapeAttr(ritual.name)}" onclick="deleteProjectRitual(this.dataset.ritualId, this.dataset.ritualName)">Delete</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 /**
  * Show modal to create a ritual with preset trigger
  * @param {string} triggerType - Trigger type to preset
  */
-export function showCreateProjectRitualModal(triggerType) {
+export async function showCreateProjectRitualModal(triggerType) {
   if (!currentSettingsProjectId) return;
+
+  // Load ritual groups for the dropdown
+  let groups = [];
+  try {
+    groups = await api.getRitualGroups(currentSettingsProjectId);
+  } catch { /* ignore */ }
 
   document.getElementById('modal-title').textContent = 'Create Ritual';
   document.getElementById('modal-content').innerHTML = `
@@ -767,11 +783,100 @@ export function showCreateProjectRitualModal(triggerType) {
         </select>
         <p class="form-help">How attestations are approved.</p>
       </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="ritual-note-required" checked>
+          Require note on attestation
+        </label>
+        <p class="form-help">When checked, agents must provide a note when attesting.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-group">Group</label>
+        <select id="ritual-group" onchange="onRitualGroupChange()">
+          <option value="">None (always required)</option>
+          ${groups.map(g => `<option value="${escapeAttr(g.id)}" data-mode="${escapeAttr(g.selection_mode)}">${escapeHtml(g.name)} (${escapeHtml(g.selection_mode)})</option>`).join('')}
+          <option value="__create__">+ Create Group...</option>
+        </select>
+        <p class="form-help">Group rituals for random/round-robin/percentage selection.</p>
+      </div>
+      <div id="ritual-group-create-inline" class="form-group hidden">
+        <div style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex: 1;">
+            <label for="ritual-new-group-name">Group Name</label>
+            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
+          </div>
+          <div>
+            <label for="ritual-new-group-mode">Mode</label>
+            <select id="ritual-new-group-mode">
+              <option value="random_one">Random One</option>
+              <option value="round_robin">Round Robin</option>
+              <option value="percentage">Percentage</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="ritual-weight-group" class="form-group hidden">
+        <label for="ritual-weight">Weight</label>
+        <input type="number" id="ritual-weight" value="1" min="0" step="0.1">
+        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
+      </div>
+      <div id="ritual-percentage-group" class="form-group hidden">
+        <label for="ritual-percentage">Percentage (%)</label>
+        <input type="number" id="ritual-percentage" value="" min="0" max="100" step="1" placeholder="e.g., 50">
+        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
+      </div>
       ${window.renderConditionBuilder ? window.renderConditionBuilder(null) : ''}
       <button type="submit" class="btn btn-primary">Create Ritual</button>
     </form>
   `;
   showModal();
+}
+
+/**
+ * Handle group dropdown change in ritual create/edit modals.
+ * Shows/hides the inline create form and weight/percentage fields.
+ */
+export function onRitualGroupChange() {
+  const select = document.getElementById('ritual-group');
+  const createInline = document.getElementById('ritual-group-create-inline');
+  const weightGroup = document.getElementById('ritual-weight-group');
+  const percentageGroup = document.getElementById('ritual-percentage-group');
+
+  if (select.value === '__create__') {
+    createInline.classList.remove('hidden');
+    weightGroup.classList.add('hidden');
+    percentageGroup.classList.add('hidden');
+  } else {
+    createInline.classList.add('hidden');
+    if (select.value) {
+      const selectedOption = select.options[select.selectedIndex];
+      const mode = selectedOption.dataset.mode;
+      weightGroup.classList.toggle('hidden', mode !== 'random_one');
+      percentageGroup.classList.toggle('hidden', mode !== 'percentage');
+    } else {
+      weightGroup.classList.add('hidden');
+      percentageGroup.classList.add('hidden');
+    }
+  }
+}
+
+/**
+ * Resolve the group_id from the modal form, creating inline group if needed.
+ * @returns {Promise<string|null>} group_id or null
+ */
+async function resolveRitualGroupId() {
+  const select = document.getElementById('ritual-group');
+  if (select.value === '__create__') {
+    const name = document.getElementById('ritual-new-group-name').value.trim();
+    if (!name) {
+      showToast('Group name is required', 'error');
+      throw new Error('Group name required');
+    }
+    const mode = document.getElementById('ritual-new-group-mode').value;
+    const group = await api.createRitualGroup(currentSettingsProjectId, { name, selection_mode: mode });
+    return group.id;
+  }
+  return select.value || null;
 }
 
 /**
@@ -788,13 +893,33 @@ export async function handleCreateProjectRitual(event) {
     return false;
   }
 
+  let groupId;
+  try {
+    groupId = await resolveRitualGroupId();
+  } catch {
+    return false;
+  }
+
   const data = {
     name: document.getElementById('ritual-name').value,
     prompt: document.getElementById('ritual-prompt').value,
     trigger: document.getElementById('ritual-trigger').value,
     approval_mode: document.getElementById('ritual-mode').value,
+    note_required: document.getElementById('ritual-note-required').checked,
     conditions: conditions,
   };
+
+  if (groupId) {
+    data.group_id = groupId;
+    const weightEl = document.getElementById('ritual-weight');
+    const percentageEl = document.getElementById('ritual-percentage');
+    if (!document.getElementById('ritual-weight-group').classList.contains('hidden') && weightEl.value) {
+      data.weight = parseFloat(weightEl.value);
+    }
+    if (!document.getElementById('ritual-percentage-group').classList.contains('hidden') && percentageEl.value) {
+      data.percentage = parseFloat(percentageEl.value);
+    }
+  }
 
   try {
     await api.createRitual(currentSettingsProjectId, data);
@@ -811,9 +936,19 @@ export async function handleCreateProjectRitual(event) {
  * Show modal to edit a ritual from project settings
  * @param {string} ritualId - Ritual ID to edit
  */
-export function showEditProjectRitualModal(ritualId) {
+export async function showEditProjectRitualModal(ritualId) {
   const ritual = projectRituals.find(r => r.id === ritualId);
   if (!ritual) return;
+
+  // Load ritual groups for the dropdown
+  let groups = [];
+  try {
+    groups = await api.getRitualGroups(currentSettingsProjectId);
+  } catch { /* ignore */ }
+
+  const selectedGroup = groups.find(g => g.id === ritual.group_id);
+  const showWeight = selectedGroup && selectedGroup.selection_mode === 'random_one';
+  const showPercentage = selectedGroup && selectedGroup.selection_mode === 'percentage';
 
   document.getElementById('modal-title').textContent = 'Edit Ritual';
   document.getElementById('modal-content').innerHTML = `
@@ -842,6 +977,47 @@ export function showEditProjectRitualModal(ritualId) {
           <option value="gate" ${ritual.approval_mode === 'gate' ? 'selected' : ''}>Gate - Human only</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="ritual-note-required" ${ritual.note_required !== false ? 'checked' : ''}>
+          Require note on attestation
+        </label>
+        <p class="form-help">When checked, agents must provide a note when attesting.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-group">Group</label>
+        <select id="ritual-group" onchange="onRitualGroupChange()">
+          <option value="">None (always required)</option>
+          ${groups.map(g => `<option value="${escapeAttr(g.id)}" data-mode="${escapeAttr(g.selection_mode)}" ${ritual.group_id === g.id ? 'selected' : ''}>${escapeHtml(g.name)} (${escapeHtml(g.selection_mode)})</option>`).join('')}
+          <option value="__create__">+ Create Group...</option>
+        </select>
+      </div>
+      <div id="ritual-group-create-inline" class="form-group hidden">
+        <div style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex: 1;">
+            <label for="ritual-new-group-name">Group Name</label>
+            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
+          </div>
+          <div>
+            <label for="ritual-new-group-mode">Mode</label>
+            <select id="ritual-new-group-mode">
+              <option value="random_one">Random One</option>
+              <option value="round_robin">Round Robin</option>
+              <option value="percentage">Percentage</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="ritual-weight-group" class="form-group ${showWeight ? '' : 'hidden'}">
+        <label for="ritual-weight">Weight</label>
+        <input type="number" id="ritual-weight" value="${ritual.weight || 1}" min="0" step="0.1">
+        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
+      </div>
+      <div id="ritual-percentage-group" class="form-group ${showPercentage ? '' : 'hidden'}">
+        <label for="ritual-percentage">Percentage (%)</label>
+        <input type="number" id="ritual-percentage" value="${ritual.percentage != null ? ritual.percentage : ''}" min="0" max="100" step="1" placeholder="e.g., 50">
+        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
+      </div>
       ${window.renderConditionBuilder ? window.renderConditionBuilder(ritual.conditions) : ''}
       <button type="submit" class="btn btn-primary">Save Changes</button>
     </form>
@@ -864,13 +1040,33 @@ export async function handleUpdateProjectRitual(event, ritualId) {
     return false;
   }
 
+  let groupId;
+  try {
+    groupId = await resolveRitualGroupId();
+  } catch {
+    return false;
+  }
+
   const data = {
     name: document.getElementById('ritual-name').value,
     prompt: document.getElementById('ritual-prompt').value,
     trigger: document.getElementById('ritual-trigger').value,
     approval_mode: document.getElementById('ritual-mode').value,
+    note_required: document.getElementById('ritual-note-required').checked,
     conditions: conditions,
+    group_id: groupId || '',  // empty string removes from group
   };
+
+  if (groupId) {
+    const weightEl = document.getElementById('ritual-weight');
+    const percentageEl = document.getElementById('ritual-percentage');
+    if (!document.getElementById('ritual-weight-group').classList.contains('hidden') && weightEl.value) {
+      data.weight = parseFloat(weightEl.value);
+    }
+    if (!document.getElementById('ritual-percentage-group').classList.contains('hidden') && percentageEl.value) {
+      data.percentage = parseFloat(percentageEl.value);
+    }
+  }
 
   try {
     await api.updateRitual(ritualId, data);
@@ -933,4 +1129,5 @@ Object.assign(window, {
   setCurrentSettingsProjectId,
   getProjectRituals,
   loadProjectSettingsRituals,
+  onRitualGroupChange,
 });

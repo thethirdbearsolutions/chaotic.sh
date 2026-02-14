@@ -823,9 +823,10 @@ describe('handleCreateProjectRitual', () => {
     api.getProjects.mockResolvedValue([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
     api.createRitual.mockResolvedValue({ id: 'ritual-1' });
     api.getRituals.mockResolvedValue([]);
+    api.getRitualGroups = vi.fn().mockResolvedValue([]);
 
     await viewProjectSettings('proj-1');
-    showCreateProjectRitualModal('every_sprint');
+    await showCreateProjectRitualModal('every_sprint');
 
     document.getElementById('ritual-name').value = 'test-ritual';
     document.getElementById('ritual-prompt').value = 'Did you test?';
@@ -841,6 +842,7 @@ describe('handleCreateProjectRitual', () => {
       prompt: 'Did you test?',
       trigger: 'every_sprint',
       approval_mode: 'auto',
+      note_required: true,
       conditions: null,
     });
   });
@@ -898,12 +900,13 @@ describe('showEditProjectRitualModal', () => {
     api.getRituals.mockResolvedValue([
       { id: 'ritual-1', name: 'test-ritual', prompt: 'Did you test?', trigger: 'every_sprint', approval_mode: 'auto' },
     ]);
+    api.getRitualGroups = vi.fn().mockResolvedValue([]);
 
     await viewProjectSettings('proj-1');
     switchProjectSettingsTab('sprint-rituals');
     await new Promise((r) => setTimeout(r, 0)); // Wait for ritual load
 
-    showEditProjectRitualModal('ritual-1');
+    await showEditProjectRitualModal('ritual-1');
     expect(document.getElementById('modal-title').textContent).toBe('Edit Ritual');
     const content = document.getElementById('modal-content').innerHTML;
     expect(content).toContain('test-ritual');

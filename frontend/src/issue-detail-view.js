@@ -402,6 +402,23 @@ export function handleDescriptionClick(event, issueId) {
 }
 
 /**
+ * Toggle a collapsible section (activity, comments)
+ * @param {string} sectionName - 'activity' or 'comments'
+ */
+export function toggleSection(sectionName) {
+    const section = document.getElementById(`${sectionName}-section`);
+    if (!section) return;
+    const content = section.querySelector('.section-collapsible-content');
+    const toggleIcon = section.querySelector('.section-toggle-icon');
+    if (content) {
+        content.classList.toggle('collapsed');
+    }
+    if (toggleIcon) {
+        toggleIcon.classList.toggle('rotated');
+    }
+}
+
+/**
  * Toggle ticket rituals section collapsed state
  */
 export function toggleTicketRituals() {
@@ -737,9 +754,16 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                     </div>
 
-                    <div class="issue-detail-section">
-                        <h3>Activity</h3>
-                        <div class="activity-list">
+                    <div class="issue-detail-section" id="activity-section">
+                        <div class="section-header section-header-collapsible" onclick="toggleSection('activity')">
+                            <h3>Activity</h3>
+                            <button type="button" class="section-toggle" aria-label="Toggle activity">
+                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4 6l4 4 4-4"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="activity-list section-collapsible-content">
                             ${activities.length === 0 ? `
                                 <div class="activity-empty">No activity yet</div>
                             ` : activities.map(activity => `
@@ -755,9 +779,16 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                     </div>
 
-                    <div class="issue-detail-section">
-                        <h3>Comments</h3>
-                        <div class="comments-list">
+                    <div class="issue-detail-section" id="comments-section">
+                        <div class="section-header section-header-collapsible" onclick="toggleSection('comments')">
+                            <h3>Comments</h3>
+                            <button type="button" class="section-toggle" aria-label="Toggle comments">
+                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4 6l4 4 4-4"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="comments-list section-collapsible-content">
                             ${allComments.length === 0 ? `
                                 <div class="comments-empty">No comments yet</div>
                             ` : allComments.map(comment => `

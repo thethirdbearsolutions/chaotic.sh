@@ -353,6 +353,23 @@ export class ApiClient {
         return this.request('POST', `/rituals/${ritualId}/complete?project_id=${projectId}`, data);
     }
 
+    // Ritual Groups
+    async getRitualGroups(projectId) {
+        return this.request('GET', `/rituals/groups?project_id=${projectId}`);
+    }
+
+    async createRitualGroup(projectId, data) {
+        return this.request('POST', `/rituals/groups?project_id=${projectId}`, data);
+    }
+
+    async updateRitualGroup(groupId, data) {
+        return this.request('PATCH', `/rituals/groups/${groupId}`, data);
+    }
+
+    async deleteRitualGroup(groupId) {
+        return this.request('DELETE', `/rituals/groups/${groupId}`);
+    }
+
     // Ticket-close rituals
     async getTicketRitualsStatus(issueId) {
         return this.request('GET', `/rituals/issue/${issueId}/pending`);
