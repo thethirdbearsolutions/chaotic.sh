@@ -843,6 +843,8 @@ function formatIssueType(issueType) {
         feature: 'Feature',
         chore: 'Chore',
         docs: 'Docs',
+        tech_debt: 'Tech Debt',
+        epic: 'Epic',
     };
     return labels[issueType] || 'Task';
 }
@@ -1416,7 +1418,7 @@ async function toggleCreateIssueDropdown(type, event) {
         const currentType = document.getElementById('create-issue-type').value;
         dropdown.innerHTML = `
             <div class="dropdown-header">Type</div>
-            ${['task', 'bug', 'feature', 'chore', 'docs'].map(issueType => `
+            ${['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'].map(issueType => `
                 <button class="dropdown-option ${issueType === currentType ? 'selected' : ''}" onclick="setCreateIssueField('type', '${issueType}', '${formatIssueType(issueType)}')">
                     <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
                 </button>
@@ -1684,6 +1686,8 @@ async function showEditIssueModal(issueId) {
                         <option value="feature" ${issue.issue_type === 'feature' ? 'selected' : ''}>Feature</option>
                         <option value="chore" ${issue.issue_type === 'chore' ? 'selected' : ''}>Chore</option>
                         <option value="docs" ${issue.issue_type === 'docs' ? 'selected' : ''}>Docs</option>
+                        <option value="tech_debt" ${issue.issue_type === 'tech_debt' ? 'selected' : ''}>Tech Debt</option>
+                        <option value="epic" ${issue.issue_type === 'epic' ? 'selected' : ''}>Epic</option>
                     </select>
                 </div>
                 <div class="form-group">

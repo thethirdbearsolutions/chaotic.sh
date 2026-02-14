@@ -2635,6 +2635,8 @@ input[type="checkbox"] {
 .issue-type-badge.type-feature { background: #1e3a5f; color: #93c5fd; }
 .issue-type-badge.type-chore { background: #3f3f46; color: #e4e4e7; }
 .issue-type-badge.type-docs { background: #14532d; color: #86efac; }
+.issue-type-badge.type-tech_debt { background: #4a1d96; color: #d8b4fe; }
+.issue-type-badge.type-epic { background: #92400e; color: #fcd34d; }
 
 .label-check {
     width: 16px;
