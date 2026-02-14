@@ -2308,6 +2308,16 @@ input[type="checkbox"] {
     font-weight: 500;
 }
 
+.activity-comment-link {
+    color: var(--accent-color);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.activity-comment-link:hover {
+    text-decoration: underline;
+}
+
 .activity-issue-link {
     color: var(--accent-color);
     text-decoration: none;

@@ -140,8 +140,14 @@ export function formatActivityText(activity) {
     switch (activity.activity_type) {
         case 'created':
             return 'Created issue';
-        case 'commented':
-            return 'Added a comment';
+        case 'commented': {
+            const preview = activity.new_value
+                ? deps.escapeHtml(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
+                : '';
+            return preview
+                ? `<a href="#comments-section" class="activity-comment-link" title="${preview}" onclick="event.preventDefault(); document.getElementById('comments-section')?.scrollIntoView({behavior: 'smooth'})">Added a comment</a>`
+                : 'Added a comment';
+        }
         case 'status_changed':
             return `Changed status from <strong>${deps.formatStatus(cleanValue(activity.old_value))}</strong> to <strong>${deps.formatStatus(cleanValue(activity.new_value))}</strong>`;
         case 'priority_changed':
