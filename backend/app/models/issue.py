@@ -1,7 +1,7 @@
 """Issue and related models."""
 from datetime import datetime, timezone
 from enum import Enum
-from sqlalchemy import String, DateTime, ForeignKey, Integer, Text, Enum as SQLEnum, Table, Column
+from sqlalchemy import String, DateTime, ForeignKey, Integer, Text, Enum as SQLEnum, Table, Column, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 import uuid
@@ -233,6 +233,9 @@ class IssueRelation(Base):
     """Relationship between issues (blocks, relates_to, duplicates)."""
 
     __tablename__ = "issue_relations"
+    __table_args__ = (
+        UniqueConstraint("issue_id", "related_issue_id", name="uq_issue_relation"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
