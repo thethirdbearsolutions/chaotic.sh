@@ -708,15 +708,17 @@ export function renderRitualList(containerId, rituals, type) {
 
   const approvalModeClass = (mode) => escapeAttr(mode || 'auto');
   container.innerHTML = rituals.map(ritual => `
-    <div class="ritual-item">
+    <div class="ritual-item mode-${approvalModeClass(ritual.approval_mode)}">
       <div class="ritual-item-info">
         <div class="ritual-item-name">${escapeHtml(ritual.name)}</div>
-        <div class="ritual-item-prompt markdown-body">${window.renderMarkdown ? window.renderMarkdown(ritual.prompt) : escapeHtml(ritual.prompt)}</div>
+        <div class="ritual-item-prompt-fade">
+          <div class="ritual-item-prompt markdown-body">${window.renderMarkdown ? window.renderMarkdown(ritual.prompt) : escapeHtml(ritual.prompt)}</div>
+        </div>
         <div class="ritual-item-mode">
           <span class="badge badge-ritual-${approvalModeClass(ritual.approval_mode)}">${escapeHtml(ritual.approval_mode || 'auto')}</span>
-          ${ritual.approval_mode === 'auto' ? '- Agent clears immediately' : ''}
-          ${ritual.approval_mode === 'review' ? '- Requires human approval' : ''}
-          ${ritual.approval_mode === 'gate' ? '- Human only' : ''}
+          ${ritual.approval_mode === 'auto' ? 'Agent clears immediately' : ''}
+          ${ritual.approval_mode === 'review' ? 'Requires human approval' : ''}
+          ${ritual.approval_mode === 'gate' ? 'Human only' : ''}
         </div>
       </div>
       <div class="ritual-item-actions">
