@@ -429,6 +429,18 @@ def wait_for_service_stop(timeout: int = 10) -> bool:
     return False
 
 
+def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Check if a port is already in use."""
+    import socket
+    check_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            return s.connect_ex((check_host, port)) == 0
+    except OSError:
+        return False
+
+
 def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
     """Poll the server health endpoint until it responds or timeout."""
     import urllib.request
@@ -710,10 +722,21 @@ def system_install(git_version, host, port, no_start, repo, yes):
         try:
             run_command(["git", "clone", repo, str(SERVER_DIR)], timeout=300)
         except subprocess.TimeoutExpired:
-            console.print("[red]Clone timed out (exceeded 5 minutes)[/red]")
+            console.print("[red]Clone timed out (exceeded 5 minutes).[/red]")
+            console.print("This usually means a network connectivity issue.")
+            console.print("Check your internet connection and try again.")
             raise SystemExit(1)
         except subprocess.CalledProcessError as e:
-            console.print(f"[red]Failed to clone repository: {e.stderr}[/red]")
+            stderr = e.stderr or ""
+            console.print(f"[red]Failed to clone repository.[/red]")
+            if "Could not resolve host" in stderr:
+                console.print("DNS resolution failed. Check your internet connection.")
+            elif "Connection refused" in stderr or "Connection timed out" in stderr:
+                console.print("Could not connect to the git server. Check your network.")
+            elif "Authentication failed" in stderr:
+                console.print("Authentication failed. Check repository access permissions.")
+            else:
+                console.print(f"[dim]{stderr.strip()}[/dim]")
             raise SystemExit(1)
 
     # Checkout version if specified
@@ -770,18 +793,27 @@ def system_install(git_version, host, port, no_start, repo, yes):
 
     # Start service
     if not no_start:
-        console.print("Starting server...")
-        if not start_service():
-            console.print("[red]Failed to start service.[/red]")
-            console.print("Try starting manually with 'chaotic system start'.")
-            raise SystemExit(1)
-
-        console.print("Waiting for health check...", end=" ")
-        if health_check(port, host=host):
-            console.print("[green]OK[/green]")
+        # Check if port is already in use
+        if is_port_in_use(port, host):
+            console.print(f"[yellow]Warning: Port {port} is already in use.[/yellow]")
+            console.print(f"Another process is listening on port {port}.")
+            console.print(f"Use 'chaotic system reconfigure --port <port>' to change, or stop the other process.")
+            console.print("Installed but not started. Run 'chaotic system start' when the port is free.")
         else:
-            console.print("[yellow]TIMEOUT[/yellow]")
-            console.print("Server may still be starting. Check 'chaotic system status'.")
+            console.print("Starting server...")
+            if not start_service():
+                console.print("[red]Failed to start service.[/red]")
+                console.print("Try starting manually with 'chaotic system start'.")
+                console.print("Check logs with: chaotic system logs -n 20")
+                raise SystemExit(1)
+
+            console.print("Waiting for health check...", end=" ")
+            if health_check(port, host=host):
+                console.print("[green]OK[/green]")
+            else:
+                console.print("[yellow]TIMEOUT[/yellow]")
+                console.print("Server may still be starting. Check 'chaotic system status'.")
+                console.print("Check logs with: chaotic system logs -n 20")
 
     # Update CLI config to point to local server
     local_url = f"http://localhost:{port}/api"
@@ -852,11 +884,20 @@ def system_start():
         console.print("[yellow]Server is already running.[/yellow]")
         raise SystemExit(0)
 
+    server_info = load_server_json()
+    port = server_info.get("port", DEFAULT_PORT)
+    host = server_info.get("host", "127.0.0.1")
+
+    # Check if port is already in use by another process
+    if is_port_in_use(port, host):
+        console.print(f"[red]Port {port} is already in use.[/red]")
+        console.print(f"Another process is listening on port {port}.")
+        console.print(f"\nTo use a different port: chaotic system reconfigure --port <port>")
+        console.print(f"To find what's using the port: lsof -i :{port}")
+        raise SystemExit(1)
+
     console.print("Starting server...")
     if start_service():
-        server_info = load_server_json()
-        port = server_info.get("port", DEFAULT_PORT)
-        host = server_info.get("host", "127.0.0.1")
         console.print("Waiting for health check...", end=" ")
         if health_check(port, host=host):
             console.print("[green]OK[/green]")
@@ -864,8 +905,10 @@ def system_start():
         else:
             console.print("[yellow]TIMEOUT[/yellow]")
             console.print("Server may still be starting. Check 'chaotic system status'.")
+            console.print("Check logs with: chaotic system logs -n 20")
     else:
         console.print("[red]Failed to start server.[/red]")
+        console.print("Check logs with: chaotic system logs -n 20")
         raise SystemExit(1)
 
 
