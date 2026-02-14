@@ -3109,6 +3109,55 @@ def sprint_remove(identifiers):
         console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
 
 
+@sprint.command("issues")
+@json_option
+@require_project
+@handle_error
+def sprint_issues():
+    """List issues in the current sprint.
+
+    Shorthand for 'chaotic issue list --sprint current'.
+    """
+    project_id = get_current_project()
+    sprint_id = resolve_sprint_id("current", project_id)
+    issues = client.get_issues(project_id=project_id, sprint_id=sprint_id, limit=50)
+
+    if is_json_output():
+        output_json(issues)
+        return
+
+    if not issues:
+        console.print("[yellow]No issues in the current sprint.[/yellow]")
+        return
+
+    sprints = client.get_sprints(project_id)
+    sprint_names = {s["id"]: s["name"] for s in sprints}
+
+    table = Table(title="Issues")
+    table.add_column("ID")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Priority")
+    table.add_column("Type")
+    table.add_column("Estimate")
+    table.add_column("Sprint")
+
+    for issue in issues:
+        est = str(issue.get("estimate", "")) if issue.get("estimate") is not None else ""
+        sname = sprint_names.get(issue.get("sprint_id"), "") if issue.get("sprint_id") else ""
+        table.add_row(
+            issue.get("identifier", ""),
+            issue.get("title", ""),
+            (issue.get("status") or "").replace("_", " ").title(),
+            (issue.get("priority") or "").replace("_", " ").title(),
+            (issue.get("issue_type") or "").title(),
+            est,
+            sname,
+        )
+
+    console.print(table)
+
+
 # Ritual commands
 @cli.group()
 def ritual():

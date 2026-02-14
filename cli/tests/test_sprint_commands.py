@@ -673,3 +673,62 @@ class TestSprintRemove:
         assert 'Removed CHT-10' in result.output
         assert 'Removed CHT-11' in result.output
         assert client.update_issue.call_count == 2
+
+
+class TestSprintIssues:
+    """Tests for chaotic sprint issues (CHT-836)."""
+
+    def test_sprint_issues_shows_table(self, cli_runner):
+        """sprint issues displays issues in the current sprint."""
+        from cli.main import cli, client
+
+        issues = [
+            {
+                "identifier": "CHT-100",
+                "title": "Test issue",
+                "status": "in_progress",
+                "priority": "high",
+                "issue_type": "feature",
+                "estimate": 3,
+                "sprint_id": "sprint-1",
+            },
+        ]
+        sprints = [{"id": "sprint-1", "name": "Sprint 30"}]
+        client.get_issues = MagicMock(return_value=issues)
+        client.get_sprints = MagicMock(return_value=sprints)
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-1'):
+            result = cli_runner.invoke(cli, ['sprint', 'issues'])
+
+        assert result.exit_code == 0
+        assert 'CHT-100' in result.output
+        assert 'Test issue' in result.output
+        assert 'Sprint 30' in result.output
+
+    def test_sprint_issues_empty(self, cli_runner):
+        """sprint issues with no issues shows message."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-1'):
+            result = cli_runner.invoke(cli, ['sprint', 'issues'])
+
+        assert result.exit_code == 0
+        assert 'No issues' in result.output
+
+    def test_sprint_issues_json(self, cli_runner):
+        """sprint issues --json outputs JSON."""
+        from cli.main import cli, client
+
+        issues = [{"identifier": "CHT-100", "title": "Test"}]
+        client.get_issues = MagicMock(return_value=issues)
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-1'):
+            result = cli_runner.invoke(cli, ['sprint', 'issues', '--json'])
+
+        assert result.exit_code == 0
+        assert 'CHT-100' in result.output
