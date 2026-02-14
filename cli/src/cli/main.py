@@ -846,11 +846,15 @@ def auth_clear_key():
 
 
 @auth.command("whoami")
+@json_option
 @require_auth
 @handle_error
 def auth_whoami():
     """Show current user info."""
     user = client.get_me()
+    if is_json_output():
+        output_json(user)
+        return
     console.print(Panel(f"[bold]{user['name']}[/bold]\n{user['email']}", title="Current User"))
 
 
@@ -861,11 +865,15 @@ def auth_keys():
 
 
 @auth_keys.command("list")
+@json_option
 @require_auth
 @handle_error
 def auth_keys_list():
     """List your API keys."""
     keys = client.list_api_keys()
+    if is_json_output():
+        output_json(keys)
+        return
     if not keys:
         console.print("[yellow]No API keys found. Create one with 'chaotic auth keys create'[/yellow]")
         return
@@ -1126,11 +1134,15 @@ def _get_installed_version(installer: str, pkg: str) -> str | None:
 
 # Shortcut: 'me' as alias for 'auth whoami'
 @cli.command("me")
+@json_option
 @require_auth
 @handle_error
 def me():
     """Show current user info (shortcut for 'auth whoami')."""
     user = client.get_me()
+    if is_json_output():
+        output_json(user)
+        return
     console.print(Panel(f"[bold]{user['name']}[/bold]\n{user['email']}", title="Current User"))
 
 
@@ -1251,11 +1263,15 @@ def team():
 
 
 @team.command("list")
+@json_option
 @require_auth
 @handle_error
 def team_list():
     """List all your teams."""
     teams = client.get_teams()
+    if is_json_output():
+        output_json(teams)
+        return
     if not teams:
         console.print("[yellow]No teams found. Create one with 'chaotic team create'[/yellow]")
         return
@@ -1278,12 +1294,16 @@ def team_list():
 @click.argument("name")
 @click.argument("key")
 @click.option("--description", default="")
+@json_option
 @require_auth
 @handle_error
 def team_create(name, key, description):
     """Create a new team."""
     result = client.create_team(name, key.upper(), description or None)
     set_current_team(result["id"])
+    if is_json_output():
+        output_json(result)
+        return
     console.print(f"[green]Team created: {result['name']} ({result['key']})[/green]")
     console.print(f"[dim]Set as current team[/dim]")
 
@@ -1306,11 +1326,15 @@ def team_use(team_id):
 
 
 @team.command("show")
+@json_option
 @require_team
 @handle_error
 def team_show():
     """Show current team details."""
     t = client.get_team(get_current_team())
+    if is_json_output():
+        output_json(t)
+        return
     console.print(Panel(
         f"[bold]{t['name']}[/bold]\n"
         f"Key: {t['key']}\n"
@@ -1320,11 +1344,15 @@ def team_show():
 
 
 @team.command("members")
+@json_option
 @require_team
 @handle_error
 def team_members():
     """List team members."""
     members = client.get_team_members(get_current_team())
+    if is_json_output():
+        output_json(members)
+        return
     table = Table(title="Team Members")
     table.add_column("Name")
     table.add_column("Email")
@@ -1403,6 +1431,7 @@ def project_list():
               type=click.Choice(["fibonacci", "linear", "powers_of_2", "tshirt"]),
               help="Estimation scale for issues")
 @click.option("--default-sprint-budget", type=int, help="Default budget for new sprints")
+@json_option
 @require_team
 @handle_error
 def project_create(name, key, description, color, estimate_scale, default_sprint_budget):
@@ -1413,6 +1442,9 @@ def project_create(name, key, description, color, estimate_scale, default_sprint
         default_sprint_budget=default_sprint_budget
     )
     set_current_project(result["id"])
+    if is_json_output():
+        output_json(result)
+        return
     console.print(f"[green]Project created: {result['name']} ({result['key']})[/green]")
     console.print(f"[dim]Set as current project[/dim]")
 
@@ -1589,6 +1621,7 @@ def issue_list(status, priority, sprint, epic, label, search, limit, sort_by, or
 @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
 @click.option("--sort-by", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
 @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
+@json_option
 @require_team
 @handle_error
 def issue_mine(status, limit, sort_by, order):
@@ -1603,6 +1636,9 @@ def issue_mine(status, limit, sort_by, order):
 
     user = client.get_me()
     issues = client.get_issues(assignee_id=user["id"], status=status, limit=limit, sort_by=sort_by, order=order)
+    if is_json_output():
+        output_json(issues)
+        return
     if not issues:
         console.print("[yellow]No issues assigned to you.[/yellow]")
         return
@@ -1646,6 +1682,7 @@ def issue_mine(status, limit, sort_by, order):
 @issue.command("search")
 @click.argument("query")
 @click.option("--all", "-a", "search_all", is_flag=True, help="Search all projects (ignore current project context)")
+@json_option
 @require_team
 @handle_error
 def issue_search(query, search_all):
@@ -1658,6 +1695,9 @@ def issue_search(query, search_all):
     project_id = None if search_all else get_current_project()
 
     issues = client.search_issues(get_current_team(), query, project_id)
+    if is_json_output():
+        output_json(issues or [])
+        return
     if not issues:
         scope = "" if search_all else " in current project"
         console.print(f"[yellow]No issues found matching '{query}'{scope}.[/yellow]")
@@ -1961,6 +2001,7 @@ def issue_get(identifier):
 @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
               help="Auto-attest all pending ticket rituals (requires --note)")
 @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)")
+@json_option
 @require_auth
 @handle_error
 def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
@@ -2080,6 +2121,10 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
 
     if data:
         client.update_issue(issue["id"], **data)
+    if is_json_output():
+        updated = client.get_issue_by_identifier(identifier)
+        output_json(updated)
+        return
     console.print(f"[green]Issue {identifier} updated.[/green]")
 
 
@@ -2111,12 +2156,16 @@ def issue_delete(identifier):
 
 @issue.command("sub-issues")
 @click.argument("identifier")
+@json_option
 @require_auth
 @handle_error
 def issue_sub_issues(identifier):
     """List sub-issues of an issue."""
     issue = client.get_issue_by_identifier(identifier)
     sub_issues = client.get_sub_issues(issue["id"])
+    if is_json_output():
+        output_json(sub_issues or [])
+        return
 
     if not sub_issues:
         console.print(f"[yellow]No sub-issues found for {identifier}.[/yellow]")
@@ -2143,12 +2192,16 @@ def issue_sub_issues(identifier):
 
 @issue.command("relations")
 @click.argument("identifier")
+@json_option
 @require_auth
 @handle_error
 def issue_relations(identifier):
     """Show blocking and related issues."""
     issue = client.get_issue_by_identifier(identifier)
     relations = client.get_relations(issue["id"])
+    if is_json_output():
+        output_json(relations or [])
+        return
 
     if not relations:
         console.print(f"[yellow]No relations found for {identifier}.[/yellow]")
@@ -2940,11 +2993,15 @@ def print_sprint_panel(result: dict, title: str = "Sprint"):
 
 
 @sprint.command("current")
+@json_option
 @require_project
 @handle_error
 def sprint_current():
     """Show the current (active) sprint."""
     result = client.get_current_sprint(get_current_project())
+    if is_json_output():
+        output_json(result)
+        return
     print_sprint_panel(result, title="Current Sprint")
 
 
@@ -2958,11 +3015,15 @@ def sprint_status():
 
 
 @sprint.command("budget")
+@json_option
 @require_project
 @handle_error
 def sprint_budget():
     """Show current sprint budget status."""
     result = client.get_current_sprint(get_current_project())
+    if is_json_output():
+        output_json(result)
+        return
 
     name = result["name"]
     budget = result.get("budget")
@@ -3921,6 +3982,7 @@ def doc():
 @click.option("--project", help="Filter by project (ID, key, or name)")
 @click.option("--sprint", help="Filter by sprint (ID, name, or 'current')")
 @click.option("--all", "show_all", is_flag=True, help="Show all docs (not just current project)")
+@json_option
 @require_team
 @handle_error
 def doc_list(search, project, sprint, show_all):
@@ -3941,6 +4003,9 @@ def doc_list(search, project, sprint, show_all):
             console.print("[yellow]Warning: --sprint ignored (no project context)[/yellow]")
 
     documents = client.get_documents(get_current_team(), project_id=project_id, sprint_id=sprint_id, search=search)
+    if is_json_output():
+        output_json(documents or [])
+        return
     if not documents:
         console.print("[yellow]No documents found.[/yellow]")
         return
@@ -3971,6 +4036,7 @@ def doc_list(search, project, sprint, show_all):
 @click.option("--project", help="Project to attach doc to (ID, key, or name). Omit for global/team-wide.")
 @click.option("--sprint", help="Sprint to attach doc to (ID, name, or 'current')")
 @click.option("--global", "is_global", is_flag=True, help="Create as global doc (not attached to current project)")
+@json_option
 @require_team
 @handle_error
 def doc_create(title, title_opt, content, icon, project, sprint, is_global):
@@ -3999,6 +4065,9 @@ def doc_create(title, title_opt, content, icon, project, sprint, is_global):
 
     data = {"content": content or None, "icon": icon or None, "project_id": project_id, "sprint_id": sprint_id}
     result = client.create_document(get_current_team(), title, **data)
+    if is_json_output():
+        output_json(result)
+        return
     scope = "sprint" if sprint_id else ("project" if project_id else "global")
     console.print(f"[green]Document created ({scope}): {result['title']}[/green]")
 
@@ -4006,6 +4075,7 @@ def doc_create(title, title_opt, content, icon, project, sprint, is_global):
 @doc.command("show")
 @click.argument("document_id")
 @click.option("--comments", is_flag=True, help="Show document comments")
+@json_option
 @require_auth
 @handle_error
 def doc_show(document_id, comments):
@@ -4017,6 +4087,12 @@ def doc_show(document_id, comments):
     document_id = resolve_document_id(document_id, team_id)
 
     d = client.get_document(document_id)
+    if is_json_output():
+        if comments:
+            d['comments'] = client.get_document_comments(d['id'])
+        d['linked_issues'] = client.get_document_issues(d['id'])
+        output_json(d)
+        return
     content = d.get('content') or 'No content'
     # Build subtitle with author and scope
     subtitle_parts = []
@@ -4201,11 +4277,15 @@ def label():
 
 
 @label.command("list")
+@json_option
 @require_team
 @handle_error
 def label_list():
     """List labels in current team."""
     labels = client.get_labels(get_current_team())
+    if is_json_output():
+        output_json(labels or [])
+        return
     if not labels:
         console.print("[yellow]No labels found.[/yellow]")
         return
@@ -4302,12 +4382,16 @@ def agent_create(name, project):
 
 
 @agent.command("list")
+@json_option
 @require_team
 @handle_error
 def agent_list():
     """List agents in current team."""
     team_id = get_current_team()
     agents = client.get_team_agents(team_id)
+    if is_json_output():
+        output_json(agents or [])
+        return
 
     if not agents:
         console.print("[yellow]No agents found.[/yellow]")
