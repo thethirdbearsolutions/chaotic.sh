@@ -6,7 +6,7 @@ no teams), and filter pass-through on assignee path.
 """
 import pytest
 import pytest_asyncio
-from app.models.issue import Issue, IssueStatus, IssuePriority
+from app.models.issue import Issue, IssueStatus, IssuePriority, Label
 from app.models.sprint import Sprint, SprintStatus
 from app.models.team import Team, TeamMember, TeamRole
 from app.models.project import Project
@@ -338,3 +338,86 @@ class TestNoScopeError:
         )
         assert response.status_code == 400
         assert "Must provide" in response.json()["detail"]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Label team validation (CHT-296)
+# ─────────────────────────────────────────────────────────────────────
+
+class TestLabelTeamValidation:
+    """Tests that label_ids on create/update are validated for team membership."""
+
+    @pytest_asyncio.fixture
+    async def other_team_label(self, db_session, other_team):
+        """Create a label on the other team."""
+        from app.models.issue import Label
+        label = Label(team_id=other_team.id, name="Foreign", color="#ff0000")
+        db_session.add(label)
+        await db_session.commit()
+        await db_session.refresh(label)
+        return label
+
+    @pytest.mark.asyncio
+    async def test_create_with_nonexistent_label_fails(
+        self, client, auth_headers, test_project
+    ):
+        """Creating issue with nonexistent label_id returns 400."""
+        response = await client.post(
+            f"/api/issues?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"title": "Test", "label_ids": ["nonexistent-label-id"]},
+        )
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_create_with_other_team_label_fails(
+        self, client, auth_headers, test_project, other_team_label
+    ):
+        """Creating issue with label from another team returns 400."""
+        response = await client.post(
+            f"/api/issues?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"title": "Test", "label_ids": [other_team_label.id]},
+        )
+        assert response.status_code == 400
+        assert "does not belong" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_create_with_own_team_label_succeeds(
+        self, client, auth_headers, test_project, test_label
+    ):
+        """Creating issue with label from own team succeeds."""
+        response = await client.post(
+            f"/api/issues?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"title": "Test", "label_ids": [test_label.id]},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data["labels"]) == 1
+        assert data["labels"][0]["id"] == test_label.id
+
+    @pytest.mark.asyncio
+    async def test_update_with_other_team_label_fails(
+        self, client, auth_headers, test_project, test_user, other_team_label, db_session
+    ):
+        """Updating issue with label from another team returns 400."""
+        test_project.issue_count += 1
+        issue = Issue(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{test_project.issue_count}",
+            number=test_project.issue_count,
+            title="Existing Issue",
+            creator_id=test_user.id,
+        )
+        db_session.add(issue)
+        await db_session.commit()
+
+        response = await client.patch(
+            f"/api/issues/{issue.id}",
+            headers=auth_headers,
+            json={"label_ids": [other_team_label.id]},
+        )
+        assert response.status_code == 400
+        assert "does not belong" in response.json()["detail"].lower()

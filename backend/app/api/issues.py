@@ -100,6 +100,29 @@ async def _validate_sprint(db, sprint_id: str | None, project_id: str) -> None:
         )
 
 
+async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
+    """Validate that all labels exist and belong to the team (CHT-296)."""
+    if not label_ids:
+        return
+    from sqlalchemy import select
+    from app.models.issue import Label
+    result = await db.execute(select(Label).where(Label.id.in_(label_ids)))
+    labels = list(result.scalars().all())
+    if len(labels) != len(label_ids):
+        found = {l.id for l in labels}
+        missing = set(label_ids) - found
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Labels not found: {missing}",
+        )
+    for label in labels:
+        if label.team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Label does not belong to this team",
+            )
+
+
 def issue_to_response(issue: Issue) -> IssueResponse:
     """Convert Issue model to IssueResponse with creator_name."""
     return IssueResponse(
@@ -152,9 +175,10 @@ async def create_issue(
             detail="Not authorized to access this project",
         )
 
-    # Validate assignee and sprint (CHT-293, CHT-294)
+    # Validate assignee, sprint, and labels (CHT-293, CHT-294, CHT-296)
     await _validate_assignee(db, issue_in.assignee_id, project.team_id)
     await _validate_sprint(db, issue_in.sprint_id, project_id)
+    await _validate_labels(db, issue_in.label_ids, project.team_id)
 
     # Check if this is a human user (not an agent)
     is_human_request = not current_user.is_agent
@@ -627,11 +651,13 @@ async def update_issue(
             detail="Not authorized to access this project",
         )
 
-    # Validate assignee and sprint if provided (CHT-293, CHT-294)
+    # Validate assignee, sprint, labels if provided (CHT-293, CHT-294, CHT-296)
     if issue_in.assignee_id is not None:
         await _validate_assignee(db, issue_in.assignee_id, project.team_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(db, issue_in.sprint_id, issue.project_id)
+    if issue_in.label_ids is not None:
+        await _validate_labels(db, issue_in.label_ids, project.team_id)
 
     # Check if this is a human user (not an agent)
     # Human users can use either JWT or API key auth
