@@ -2488,6 +2488,13 @@ def epic_list(status, limit):
         chaotic epic list
         chaotic epic list --status in_progress
     """
+    if status:
+        valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
+        statuses = [s.strip().lower() for s in status.split(",")]
+        for s in statuses:
+            if s not in valid_statuses:
+                raise click.BadParameter(f"Invalid status: {s}. Must be one of: {', '.join(valid_statuses)}")
+
     project_id = get_current_project()
     epics = client.get_issues(project_id=project_id, issue_type="epic", status=status, limit=limit)
 
@@ -2549,6 +2556,7 @@ def epic_show(identifier):
 
     if issue.get('issue_type') != 'epic':
         console.print(f"[yellow]{identifier} is not an epic (type: {issue.get('issue_type', 'task')}). Use 'chaotic issue show' instead.[/yellow]")
+        return
 
     # JSON output
     if is_json_output():

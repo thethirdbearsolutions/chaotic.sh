@@ -156,6 +156,15 @@ class TestEpicList:
         assert len(data) == 1
         assert data[0]['sub_issues'] == [{"id": "s1", "status": "done"}]
 
+    def test_list_epics_invalid_status(self, cli_runner):
+        """epic list rejects invalid status values."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'invalid'])
+
+        assert result.exit_code != 0
+        assert 'Invalid status' in result.output
+
     def test_list_epics_with_status_filter(self, cli_runner, mock_epic):
         """epic list --status filters correctly."""
         from cli.main import cli, client
@@ -203,8 +212,8 @@ class TestEpicShow:
         assert 'No sub-issues yet' in result.output
         assert '--parent CHT-50' in result.output
 
-    def test_show_non_epic_warns(self, cli_runner):
-        """epic show warns if issue is not an epic."""
+    def test_show_non_epic_warns_and_returns(self, cli_runner):
+        """epic show warns and returns early if issue is not an epic."""
         from cli.main import cli, client
 
         non_epic = {"id": "issue-1", "identifier": "CHT-100", "title": "Bug fix",
@@ -216,6 +225,8 @@ class TestEpicShow:
 
         assert result.exit_code == 0
         assert 'not an epic' in result.output
+        assert 'Sub-issues' not in result.output
+        client.get_sub_issues.assert_not_called()
 
     def test_show_epic_json(self, cli_runner, mock_epic, mock_sub_issues):
         """epic show --json includes sub_issues and comments."""
