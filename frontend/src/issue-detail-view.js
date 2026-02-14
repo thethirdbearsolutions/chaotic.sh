@@ -176,11 +176,15 @@ export function formatActivityText(activity) {
         case 'doc_commented':
             return 'Commented on document';
         // Ritual activities (CHT-673)
-        case 'ritual_attested':
-            if (activity.field_name) {
-                return `Attested to <strong>${activity.field_name}</strong>`;
-            }
-            return 'Attested to ritual';
+        case 'ritual_attested': {
+            const ritualName = activity.field_name || 'ritual';
+            const notePreview = activity.new_value
+                ? deps.escapeHtml(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
+                : '';
+            return notePreview
+                ? `<span class="activity-attestation-link" title="${notePreview}">Attested to <strong>${ritualName}</strong></span>`
+                : `Attested to <strong>${ritualName}</strong>`;
+        }
         case 'updated':
             // Generic update - show field if available
             if (activity.field_name) {

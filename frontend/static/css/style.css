@@ -2318,6 +2318,14 @@ input[type="checkbox"] {
     text-decoration: underline;
 }
 
+.activity-attestation-link {
+    cursor: help;
+}
+
+.activity-attestation-link:hover {
+    text-decoration: underline;
+}
+
 .activity-issue-link {
     color: var(--accent-color);
     text-decoration: none;
