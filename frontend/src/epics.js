@@ -3,7 +3,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 import { navigateToIssueByIdentifier } from './router.js';
 
 /**
@@ -28,7 +28,8 @@ export async function loadEpics() {
             return;
         }
 
-        // Fetch sub-issues for each epic to compute progress
+        // Fetch sub-issues for each epic to compute progress.
+        // N+1 queries by design — no batch endpoint exists (same as CLI epic list).
         const epicsWithProgress = await Promise.all(
             epics.map(async (epic) => {
                 let subIssues = [];
@@ -43,12 +44,13 @@ export async function loadEpics() {
 
         renderEpics(epicsWithProgress, listEl);
     } catch (e) {
-        listEl.innerHTML = `<div class="empty-state">Failed to load epics: ${escapeHtml(e.message)}</div>`;
+        listEl.innerHTML = `<div class="empty-state">Failed to load epics: ${escapeHtml(e.message || String(e))}</div>`;
     }
 }
 
 /**
  * Render the epics table with progress bars.
+ * Uses data attributes + event delegation instead of inline onclick to avoid XSS.
  */
 export function renderEpics(epics, container) {
     const rows = epics.map(epic => {
@@ -65,7 +67,7 @@ export function renderEpics(epics, container) {
         const estimate = epic.estimate != null ? `${epic.estimate}pts` : '-';
 
         return `
-            <tr class="epic-row" onclick="navigateToIssueByIdentifier('${escapeHtml(epic.identifier)}')" style="cursor: pointer;">
+            <tr class="epic-row" data-identifier="${escapeAttr(epic.identifier)}" style="cursor: pointer;">
                 <td class="epic-identifier">${escapeHtml(epic.identifier)}</td>
                 <td class="epic-title">${escapeHtml(epic.title)}</td>
                 <td class="epic-progress">
@@ -98,7 +100,12 @@ export function renderEpics(epics, container) {
             </tbody>
         </table>
     `;
-}
 
-// Export to window for onclick handlers
-window.navigateToIssueByIdentifier = navigateToIssueByIdentifier;
+    // Event delegation for row clicks
+    container.addEventListener('click', (e) => {
+        const row = e.target.closest('.epic-row');
+        if (row && row.dataset.identifier) {
+            navigateToIssueByIdentifier(row.dataset.identifier);
+        }
+    });
+}

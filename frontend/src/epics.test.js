@@ -18,11 +18,13 @@ vi.mock('./router.js', () => ({
 
 // Mock the utils module
 vi.mock('./utils.js', () => ({
-    escapeHtml: (s) => s,
+    escapeHtml: (s) => s != null ? String(s) : '',
+    escapeAttr: (s) => s != null ? String(s) : '',
 }));
 
 import { loadEpics, renderEpics } from './epics.js';
 import { api } from './api.js';
+import { navigateToIssueByIdentifier } from './router.js';
 
 function setupDom() {
     document.body.innerHTML = '<div id="epics-list"></div>';
@@ -193,5 +195,31 @@ describe('renderEpics', () => {
         }], container);
 
         expect(container.querySelector('.epic-estimate').textContent).toBe('-');
+    });
+
+    it('navigates to epic on row click via event delegation', () => {
+        const container = document.getElementById('epics-list');
+        renderEpics([{
+            id: 'e1', identifier: 'CHT-10', title: 'Clickable Epic', status: 'todo', estimate: 5,
+            subIssues: [],
+        }], container);
+
+        const row = container.querySelector('.epic-row');
+        expect(row.dataset.identifier).toBe('CHT-10');
+        row.click();
+        expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-10');
+    });
+
+    it('uses data-identifier attribute instead of inline onclick', () => {
+        const container = document.getElementById('epics-list');
+        renderEpics([{
+            id: 'e1', identifier: 'CHT-10', title: 'Safe Epic', status: 'todo', estimate: 5,
+            subIssues: [],
+        }], container);
+
+        const row = container.querySelector('.epic-row');
+        // No inline onclick — uses data attribute + event delegation
+        expect(row.getAttribute('onclick')).toBeNull();
+        expect(row.dataset.identifier).toBe('CHT-10');
     });
 });
