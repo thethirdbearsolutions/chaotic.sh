@@ -246,6 +246,24 @@ describe('Markdown rendering security', () => {
       expect(result).toContain('after');
     });
 
+    it('preserves text content inside textarea tags (CHT-829)', () => {
+      const text = 'form with <textarea>user input</textarea> here';
+      const result = renderCommentContent(text);
+
+      expect(result).not.toContain('<textarea>');
+      expect(result).toContain('user input');
+      expect(result).toContain('here');
+    });
+
+    it('preserves text content inside xmp tags (CHT-829)', () => {
+      const text = 'legacy <xmp>preformatted</xmp> format';
+      const result = renderCommentContent(text);
+
+      expect(result).not.toContain('<xmp>');
+      expect(result).toContain('preformatted');
+      expect(result).toContain('format');
+    });
+
     it('prevents XSS via crafted issue references with HTML injection', () => {
       const malicious = 'CHT-123<img src=x onerror=alert("XSS")>';
       const result = renderCommentContent(malicious);

@@ -241,6 +241,8 @@ function renderMarkdown(content) {
             // children as raw text, not DOM nodes (CHT-829)
             const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
                 (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+            // FORCE_BODY: treat content as body context so raw-text elements
+            // like <title> can't be created even if escaping is bypassed
             return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
         } catch (e) {
             console.error('Markdown parsing error:', e);
