@@ -147,8 +147,8 @@ class RitualAttestation(Base):
     )
 
     # Attestation details
-    attested_by: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
+    attested_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     attested_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -165,7 +165,7 @@ class RitualAttestation(Base):
     ritual: Mapped["Ritual"] = relationship("Ritual", back_populates="attestations")
     sprint: Mapped["Sprint | None"] = relationship("Sprint")
     issue: Mapped["Issue | None"] = relationship("Issue")
-    attester: Mapped["User"] = relationship("User", foreign_keys=[attested_by])
+    attester: Mapped["User | None"] = relationship("User", foreign_keys=[attested_by])
     approver: Mapped["User | None"] = relationship("User", foreign_keys=[approved_by])
 
     # Ensure exactly one of sprint_id or issue_id is set (CHT-134)
