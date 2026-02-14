@@ -369,7 +369,7 @@ export function renderIssueRow(issue) {
                 </button>
                 <span class="issue-identifier">${issue.identifier}</span>
                 <span class="issue-type-badge type-${issue.issue_type || 'task'}">${deps.formatIssueType(issue.issue_type)}</span>
-                <span class="issue-title" onclick="viewIssue('${deps.escapeJsString(issue.id)}')">${deps.escapeHtml(issue.title)}</span>
+                <a class="issue-title" href="/issue/${encodeURIComponent(issue.identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${deps.escapeJsString(issue.id)}'); }">${deps.escapeHtml(issue.title)}</a>
             </div>
             <div class="issue-row-right">
                 ${issue.labels && issue.labels.length > 0 ? `

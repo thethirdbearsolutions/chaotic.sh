@@ -194,3 +194,29 @@ export function escapeJsString(text) {
         .replace(/</g, '\\x3c')
         .replace(/>/g, '\\x3e');
 }
+
+/**
+ * Check if a click event should open in a new tab (CHT-308).
+ * Returns true for cmd+click, ctrl+click, middle-click, or shift+click.
+ */
+export function shouldOpenInNewTab(event) {
+    return event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1;
+}
+
+/**
+ * Handle a SPA navigation click, supporting modifier keys for new-tab behavior.
+ * If the user cmd+clicks (or ctrl/shift/middle clicks), opens the URL in a new tab.
+ * Otherwise, calls the SPA navigation callback.
+ *
+ * @param {Event} event - The click event
+ * @param {string} url - The URL path (e.g., '/issue/CHT-1')
+ * @param {Function} spaCallback - Function to call for in-app navigation
+ */
+export function handleSpaClick(event, url, spaCallback) {
+    if (shouldOpenInNewTab(event)) {
+        window.open(url, '_blank');
+        return;
+    }
+    event.preventDefault();
+    spaCallback();
+}

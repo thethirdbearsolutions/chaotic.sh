@@ -644,7 +644,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     ${parentIssue ? `
                     <div class="parent-issue-link">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                        Sub-issue of <a href="#" onclick="viewIssue('${deps.escapeJsString(parentIssue.id)}'); return false;">${parentIssue.identifier}: ${deps.escapeHtml(parentIssue.title)}</a>
+                        Sub-issue of <a href="/issue/${encodeURIComponent(parentIssue.identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${deps.escapeJsString(parentIssue.id)}'); }">${parentIssue.identifier}: ${deps.escapeHtml(parentIssue.title)}</a>
                     </div>
                     ` : ''}
 
@@ -667,7 +667,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             ${subIssues.length === 0 ? `
                                 <div class="sub-issues-empty">No sub-issues</div>
                             ` : subIssues.map(subIssue => `
-                                <div class="sub-issue-item" onclick="viewIssue('${deps.escapeJsString(subIssue.id)}')">
+                                <div class="sub-issue-item" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${deps.escapeJsString(subIssue.id)}'); } else { window.open('/issue/${encodeURIComponent(subIssue.identifier)}', '_blank'); }">
                                     <span class="sub-issue-status">${deps.getStatusIcon(subIssue.status)}</span>
                                     <span class="sub-issue-id">${subIssue.identifier}</span>
                                     <span class="sub-issue-title">${deps.escapeHtml(subIssue.title)}</span>
@@ -696,7 +696,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item blocked-by">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                                             <span class="relation-status">${deps.getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="#" onclick="viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); return false;" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${deps.escapeHtml(rel.related_issue_title)}</span>
                                             <button class="relation-delete" onclick="deleteRelation('${deps.escapeJsString(issue.id)}', '${deps.escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -712,7 +712,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item blocks">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                                             <span class="relation-status">${deps.getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="#" onclick="viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); return false;" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${deps.escapeHtml(rel.related_issue_title)}</span>
                                             <button class="relation-delete" onclick="deleteRelation('${deps.escapeJsString(issue.id)}', '${deps.escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -728,7 +728,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item relates-to">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                                             <span class="relation-status">${deps.getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="#" onclick="viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); return false;" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${deps.escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${deps.escapeHtml(rel.related_issue_title)}</span>
                                             <button class="relation-delete" onclick="deleteRelation('${deps.escapeJsString(issue.id)}', '${deps.escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

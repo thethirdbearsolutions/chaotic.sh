@@ -161,7 +161,7 @@ export function renderBoard() {
                         <div class="kanban-card" draggable="true" data-id="${deps.escapeAttr(issue.id)}"
                              ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)"
                              ondragover="handleCardDragOver(event)" ondragleave="handleCardDragLeave(event)" ondrop="handleCardDrop(event)"
-                             onclick="viewIssue('${deps.escapeJsString(issue.id)}')">
+                             onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${deps.escapeJsString(issue.id)}'); } else { window.open('/issue/${encodeURIComponent(issue.identifier)}', '_blank'); }">
                             <div class="kanban-card-title">${deps.escapeHtml(issue.title)}</div>
                             <div class="kanban-card-meta">
                                 <span class="kanban-card-identifier">${issue.identifier}</span>

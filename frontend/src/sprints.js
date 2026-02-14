@@ -107,7 +107,7 @@ export function renderSprints() {
 
         html += `
             <div class="sprint-card sprint-now ${now.limbo ? 'sprint-limbo' : ''} ${arrears ? 'sprint-arrears' : ''}"
-                 onclick="viewSprint('${escapeJsString(now.id)}')" style="cursor: pointer;">
+                 onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(now.id)}'); } else { window.open('/sprint/${now.id}', '_blank'); }" style="cursor: pointer;">
                 <div class="sprint-card-header">
                     <div class="sprint-card-label">NOW</div>
                     ${now.limbo ? '<span class="badge badge-limbo">IN LIMBO</span>' : ''}
@@ -138,7 +138,7 @@ export function renderSprints() {
             : 'No budget set';
 
         html += `
-            <div class="sprint-card sprint-next" onclick="viewSprint('${escapeJsString(next.id)}')" style="cursor: pointer;">
+            <div class="sprint-card sprint-next" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(next.id)}'); } else { window.open('/sprint/${next.id}', '_blank'); }" style="cursor: pointer;">
                 <div class="sprint-card-header">
                     <div class="sprint-card-label">NEXT</div>
                 </div>
@@ -158,7 +158,7 @@ export function renderSprints() {
                 <summary>Completed Sprints (${completed.length})</summary>
                 <div class="sprint-history-list">
                     ${completed.map(s => `
-                        <div class="sprint-history-item" onclick="viewSprint('${escapeJsString(s.id)}')" style="cursor: pointer;">
+                        <div class="sprint-history-item" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(s.id)}'); } else { window.open('/sprint/${s.id}', '_blank'); }" style="cursor: pointer;">
                             <span class="sprint-history-name">${escapeHtml(s.name)}</span>
                             <span class="sprint-history-budget">${s.points_spent || 0}${s.budget ? ` / ${s.budget}` : ''} pts</span>
                         </div>
@@ -405,7 +405,7 @@ function renderSprintIssueRow(issue) {
     const statusClass = `status-dot-${safeStatus}`;
 
     return `
-        <div class="sprint-issue-row" onclick="viewIssue('${escapeJsString(issue.id)}')">
+        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${escapeJsString(issue.id)}'); } else { window.open('/issue/${encodeURIComponent(issue.identifier)}', '_blank'); }">
             <span class="status-dot ${statusClass}"></span>
             <span class="sprint-issue-identifier">${escapeHtml(issue.identifier)}</span>
             <span class="sprint-issue-title">${escapeHtml(issue.title)}</span>
