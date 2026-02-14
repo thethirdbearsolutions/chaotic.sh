@@ -313,6 +313,43 @@ def config():
     pass
 
 
+@config.command("show")
+@json_option
+def config_show():
+    """Show current configuration."""
+    profile = get_effective_profile()
+    api_url = get_api_url()
+    local_cfg = find_local_config()
+    has_token = bool(get_token())
+    has_key = bool(get_api_key())
+    team_id = get_current_team()
+    project_id = get_current_project()
+
+    if is_json_output():
+        output_json({
+            "profile": profile,
+            "api_url": api_url,
+            "local_config": str(local_cfg) if local_cfg else None,
+            "has_token": has_token,
+            "has_api_key": has_key,
+            "team_id": team_id,
+            "project_id": project_id,
+        })
+        return
+
+    console.print(f"[bold]Configuration[/bold]\n")
+    console.print(f"  [dim]Profile:[/dim]      {profile}")
+    console.print(f"  [dim]API URL:[/dim]      {api_url}")
+    if local_cfg:
+        console.print(f"  [dim]Local config:[/dim] {local_cfg}")
+    else:
+        console.print(f"  [dim]Local config:[/dim] [dim](none)[/dim]")
+    console.print(f"  [dim]Auth token:[/dim]  {'✓' if has_token else '✗'}")
+    console.print(f"  [dim]API key:[/dim]     {'✓' if has_key else '✗'}")
+    console.print(f"  [dim]Team ID:[/dim]     {team_id or '[dim](not set)[/dim]'}")
+    console.print(f"  [dim]Project ID:[/dim]  {project_id or '[dim](not set)[/dim]'}")
+
+
 @config.command("set-url")
 @click.argument("url")
 def config_set_url(url):
