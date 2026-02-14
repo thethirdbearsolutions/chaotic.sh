@@ -2,6 +2,8 @@
  * Issue tooltip module - shows preview microcard on hover over issue links
  */
 
+import { escapeHtml } from './utils.js';
+
 // Cache for fetched issues to avoid repeated API calls
 const issueCache = new Map();
 const CACHE_TTL = 60000; // 1 minute
@@ -247,16 +249,6 @@ function formatStatus(status) {
  */
 function formatPriority(priority) {
     return (priority || 'no_priority').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
 }
 
 /**

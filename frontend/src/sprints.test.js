@@ -38,6 +38,8 @@ vi.mock('./url-helpers.js', () => ({
 vi.mock('./utils.js', () => ({
     formatTimeAgo: vi.fn(s => s || ''),
     escapeJsString: vi.fn(s => s || ''),
+    escapeHtml: vi.fn(s => s || ''),
+    escapeAttr: vi.fn(s => s || ''),
 }));
 
 import { api } from './api.js';

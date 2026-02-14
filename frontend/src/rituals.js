@@ -2,6 +2,8 @@
  * Rituals module - condition builder UI components
  */
 
+import { escapeHtml, escapeAttr } from './utils.js';
+
 // Supported fields and their valid operators
 const FIELD_OPERATORS = {
     estimate: ['gte', 'lte', 'eq', 'isnull'],
@@ -220,25 +222,6 @@ function collectConditions() {
 
     clearConditionError();
     return Object.keys(conditions).length > 0 ? conditions : null;
-}
-
-// Use escapeHtml from window (exported by app.js)
-function escapeHtml(str) {
-    if (typeof window.escapeHtml === 'function') {
-        return window.escapeHtml(str);
-    }
-    // Fallback if not yet loaded
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
-// Use escapeAttr from window (for attribute contexts that need quote escaping)
-function escapeAttr(str) {
-    if (typeof window.escapeAttr === 'function') {
-        return window.escapeAttr(str);
-    }
-    return escapeHtml(str);
 }
 
 // Export to window for onclick handlers and app.js usage

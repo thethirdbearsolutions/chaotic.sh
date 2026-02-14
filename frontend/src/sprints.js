@@ -9,7 +9,7 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getProjects, getEstimateScaleHint, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
-import { formatTimeAgo, escapeJsString } from './utils.js';
+import { formatTimeAgo, escapeJsString, escapeHtml, escapeAttr } from './utils.js';
 
 // State
 let sprints = [];
@@ -823,22 +823,8 @@ export function updateSprintCacheForProject(projectId, sprintList) {
 }
 
 // ============================================================================
-// Utility functions (would ideally be shared)
+// Utility functions
 // ============================================================================
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Escape for use inside HTML attribute values
-function escapeAttr(text) {
-    if (!text) return '';
-    return escapeHtml(text).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-}
-
 
 function formatDate(dateStr) {
     if (!dateStr) return '';
