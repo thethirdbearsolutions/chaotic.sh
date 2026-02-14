@@ -76,19 +76,24 @@ class Client:
         if not pending:
             return "Ticket has pending rituals."
 
-        first = pending[0]
-        if isinstance(first, dict):
-            name = first.get("name", "unknown")
-            prompt = first.get("prompt", "")
-            prompt_line = f"\n  {prompt}" if prompt else ""
-            msg = f"Pending ritual: {name}{prompt_line}"
-        else:
-            # Fallback for old format (just names)
-            name = first
-            msg = f"Pending ritual: {name}"
+        lines = []
+        for r in pending:
+            if isinstance(r, dict):
+                name = r.get("name", "unknown")
+                prompt = r.get("prompt", "")
+                lines.append(f"Pending ritual: {name}")
+                if prompt:
+                    lines.append(f"  {prompt}")
+                lines.append(
+                    f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
+                )
+            else:
+                lines.append(f"Pending ritual: {r}")
+                lines.append(
+                    f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
+                )
 
-        msg += f"\n\nAfter completing the ritual, run: chaotic ritual attest {name} --ticket {issue_id}"
-        return msg
+        return "\n".join(lines)
 
     # Auth
     def signup(self, name: str, email: str, password: str) -> dict:
