@@ -520,6 +520,7 @@ export async function viewProjectSettings(projectId) {
   // Populate Rules tab
   document.getElementById('ps-estimate-scale').value = project.estimate_scale || 'fibonacci';
   document.getElementById('ps-default-sprint-budget').value = project.default_sprint_budget || '';
+  document.getElementById('ps-unestimated-handling').value = project.unestimated_handling || 'default_one_point';
   document.getElementById('ps-human-rituals-required').checked = project.human_rituals_required === true;
   document.getElementById('ps-require-estimate-on-claim').checked = project.require_estimate_on_claim === true;
 
@@ -632,6 +633,7 @@ export async function saveProjectSettingsRules() {
   const data = {
     estimate_scale: document.getElementById('ps-estimate-scale').value,
     default_sprint_budget: defaultSprintBudget,
+    unestimated_handling: document.getElementById('ps-unestimated-handling').value,
     human_rituals_required: document.getElementById('ps-human-rituals-required').checked,
     require_estimate_on_claim: document.getElementById('ps-require-estimate-on-claim').checked,
   };

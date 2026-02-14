@@ -611,6 +611,14 @@
                                         <small class="form-hint">Point budget for new sprints. Existing planned sprints keep their current budget.</small>
                                     </div>
                                     <div class="form-group">
+                                        <label for="ps-unestimated-handling">Unestimated Tickets</label>
+                                        <select id="ps-unestimated-handling">
+                                            <option value="default_one_point">Count as 1 point</option>
+                                            <option value="block_until_estimated">Block completion until estimated</option>
+                                        </select>
+                                        <small class="form-hint">How unestimated tickets are handled when completed</small>
+                                    </div>
+                                    <div class="form-group">
                                         <label class="checkbox-label">
                                             <input type="checkbox" id="ps-human-rituals-required">
                                             Require humans to complete rituals

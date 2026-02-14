@@ -1487,6 +1487,7 @@ def project_show(identifier):
     scale = p.get('estimate_scale', 'fibonacci').replace('_', ' ').title()
     budget = p.get('default_sprint_budget')
     budget_str = str(budget) if budget is not None else "Unlimited"
+    unest = p.get('unestimated_handling', 'default_one_point').replace('_', ' ').title()
     is_current = " (current)" if project_id == get_current_project() else ""
     console.print(Panel(
         f"[bold]{p['name']}[/bold]{is_current}\n"
@@ -1494,7 +1495,8 @@ def project_show(identifier):
         f"Description: {p.get('description') or 'None'}\n"
         f"Issues: {p['issue_count']}\n"
         f"Estimate Scale: {scale}\n"
-        f"Default Sprint Budget: {budget_str}",
+        f"Default Sprint Budget: {budget_str}\n"
+        f"Unestimated Handling: {unest}",
         title="Project Details"
     ))
 
@@ -1508,9 +1510,12 @@ def project_show(identifier):
               help="Estimation scale for issues")
 @click.option("--default-sprint-budget", type=int, help="Default budget for new sprints")
 @click.option("--no-default-sprint-budget", is_flag=True, help="Remove default sprint budget")
+@click.option("--unestimated-handling",
+              type=click.Choice(["default_one_point", "block_until_estimated"], case_sensitive=False),
+              help="How unestimated tickets are handled on completion")
 @require_project
 @handle_error
-def project_update(name, description, color, estimate_scale, default_sprint_budget, no_default_sprint_budget):
+def project_update(name, description, color, estimate_scale, default_sprint_budget, no_default_sprint_budget, unestimated_handling):
     """Update the current project."""
     data = {}
     if name:
@@ -1525,6 +1530,8 @@ def project_update(name, description, color, estimate_scale, default_sprint_budg
         data["default_sprint_budget"] = None
     elif default_sprint_budget is not None:
         data["default_sprint_budget"] = default_sprint_budget
+    if unestimated_handling:
+        data["unestimated_handling"] = unestimated_handling
 
     if not data:
         console.print("[yellow]No updates provided.[/yellow]")

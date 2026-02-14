@@ -549,6 +549,7 @@ describe('viewProjectSettings', () => {
         <input type="color" id="ps-color">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -669,6 +670,7 @@ describe('saveProjectSettingsGeneral', () => {
         <input type="color" id="ps-color" value="#00ff00">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -730,6 +732,7 @@ describe('showCreateProjectRitualModal', () => {
         <input type="color" id="ps-color" value="#6366f1">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -795,6 +798,7 @@ describe('handleCreateProjectRitual', () => {
         <input type="color" id="ps-color" value="#6366f1">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -859,6 +863,7 @@ describe('showEditProjectRitualModal', () => {
         <input type="color" id="ps-color" value="#6366f1">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -925,6 +930,7 @@ describe('deleteProjectRitual', () => {
         <input type="color" id="ps-color" value="#6366f1">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
@@ -978,6 +984,7 @@ describe('ritual XSS prevention', () => {
         <input type="color" id="ps-color" value="#6366f1">
         <select id="ps-estimate-scale"></select>
         <input type="number" id="ps-default-sprint-budget">
+        <select id="ps-unestimated-handling"></select>
         <input type="checkbox" id="ps-human-rituals-required">
         <input type="checkbox" id="ps-require-estimate-on-claim">
         <button class="settings-tab active" data-tab="general"></button>
