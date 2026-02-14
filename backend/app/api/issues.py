@@ -47,9 +47,57 @@ from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
 from app.models.issue import Issue, IssueStatus, IssuePriority, IssueType, ActivityType
+from app.models.user import User
 from app.websocket import broadcast_issue_event, broadcast_comment_event
 
 router = APIRouter()
+
+
+async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
+    """Validate that assignee exists and belongs to the project's team (CHT-293)."""
+    if not assignee_id:
+        return
+    from sqlalchemy import select
+    result = await db.execute(select(User).where(User.id == assignee_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assignee not found",
+        )
+    # Agents: check team scope; humans: check team membership
+    if user.is_agent:
+        if user.agent_team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assignee (agent) is not scoped to this project's team",
+            )
+    else:
+        team_service = TeamService(db)
+        member = await team_service.get_member(team_id, assignee_id)
+        if not member:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assignee is not a member of this project's team",
+            )
+
+
+async def _validate_sprint(db, sprint_id: str | None, project_id: str) -> None:
+    """Validate that sprint exists and belongs to the project (CHT-294)."""
+    if not sprint_id:
+        return
+    sprint_service = SprintService(db)
+    sprint = await sprint_service.get_by_id(sprint_id)
+    if not sprint:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sprint not found",
+        )
+    if sprint.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sprint does not belong to this project",
+        )
 
 
 def issue_to_response(issue: Issue) -> IssueResponse:
@@ -103,6 +151,10 @@ async def create_issue(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
         )
+
+    # Validate assignee and sprint (CHT-293, CHT-294)
+    await _validate_assignee(db, issue_in.assignee_id, project.team_id)
+    await _validate_sprint(db, issue_in.sprint_id, project_id)
 
     # Check if this is a human user (not an agent)
     is_human_request = not current_user.is_agent
@@ -574,6 +626,12 @@ async def update_issue(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
         )
+
+    # Validate assignee and sprint if provided (CHT-293, CHT-294)
+    if issue_in.assignee_id is not None:
+        await _validate_assignee(db, issue_in.assignee_id, project.team_id)
+    if issue_in.sprint_id is not None:
+        await _validate_sprint(db, issue_in.sprint_id, issue.project_id)
 
     # Check if this is a human user (not an agent)
     # Human users can use either JWT or API key auth
