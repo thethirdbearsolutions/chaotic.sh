@@ -168,7 +168,12 @@ export function renderSprints() {
         `;
     }
 
-    list.innerHTML = html || '<div class="empty-state"><p>Loading sprints...</p></div>';
+    list.innerHTML = html || `
+        <div class="empty-state">
+            <h3>No sprints yet</h3>
+            <p>Sprints are created automatically when you close the current one, or you can create one from the project settings.</p>
+        </div>
+    `;
 }
 
 function renderSprintBurndown(sprint) {

@@ -127,7 +127,7 @@ export function renderDashboardActivity() {
     if (!container) return;
 
     if (!dashboardActivities.length) {
-        container.innerHTML = `<div class="activity-empty">No activity yet</div>`;
+        container.innerHTML = `<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>`;
         return;
     }
 

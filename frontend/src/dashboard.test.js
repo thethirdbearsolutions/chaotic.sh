@@ -267,7 +267,7 @@ describe('dashboard module', () => {
             renderDashboardActivity();
 
             const container = document.getElementById('dashboard-activity-list');
-            expect(container.innerHTML).toContain('No activity yet');
+            expect(container.innerHTML).toContain('No recent activity');
         });
 
         it('renders issue link when issue_identifier present', () => {

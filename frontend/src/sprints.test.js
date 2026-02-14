@@ -233,7 +233,7 @@ describe('renderSprints', () => {
         renderSprints();
 
         const html = document.getElementById('sprints-list').innerHTML;
-        expect(html).toContain('Loading sprints...');
+        expect(html).toContain('No sprints yet');
     });
 });
 

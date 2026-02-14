@@ -829,7 +829,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <span class="activity-text">Loading activity...</span>
                 </div>
             </div>
-        `);try{Ys=await $.getTeamActivities(e.id,0,10),yd()}catch{t&&(t.innerHTML='<div class="activity-empty">Failed to load activity</div>')}}function yd(){const e=document.getElementById("dashboard-activity-list");if(e){if(!Ys.length){e.innerHTML='<div class="activity-empty">No activity yet</div>';return}e.innerHTML=Ys.map(t=>{let n="";if(t.issue_identifier)n=` on <a href="#" class="activity-issue-link" onclick="navigateToIssueByIdentifier('${E(t.issue_identifier)}'); return false;"><strong>${g(t.issue_identifier)}</strong></a>`;else if(t.document_id&&t.document_title){const s=t.document_icon||"📄";n=` <a href="#" class="activity-doc-link" onclick="viewDocument('${E(t.document_id)}'); return false;"><strong>${s} ${g(t.document_title)}</strong></a>`}else t.document_title&&(n=` <strong>${t.document_icon||"📄"} ${g(t.document_title)}</strong>`);return`
+        `);try{Ys=await $.getTeamActivities(e.id,0,10),yd()}catch{t&&(t.innerHTML='<div class="activity-empty">Failed to load activity</div>')}}function yd(){const e=document.getElementById("dashboard-activity-list");if(e){if(!Ys.length){e.innerHTML='<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>';return}e.innerHTML=Ys.map(t=>{let n="";if(t.issue_identifier)n=` on <a href="#" class="activity-issue-link" onclick="navigateToIssueByIdentifier('${E(t.issue_identifier)}'); return false;"><strong>${g(t.issue_identifier)}</strong></a>`;else if(t.document_id&&t.document_title){const s=t.document_icon||"📄";n=` <a href="#" class="activity-doc-link" onclick="viewDocument('${E(t.document_id)}'); return false;"><strong>${s} ${g(t.document_title)}</strong></a>`}else t.document_title&&(n=` <strong>${t.document_icon||"📄"} ${g(t.document_title)}</strong>`);return`
         <div class="activity-item">
             <div class="activity-icon">${Ne.getActivityIcon(t.activity_type)}</div>
             <div class="activity-content">
@@ -1038,7 +1038,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     `).join("")}
                 </div>
             </details>
-        `),e.innerHTML=i||'<div class="empty-state"><p>Loading sprints...</p></div>'}function Rd(e){const t=e.start_date&&e.end_date,n=e.budget!==null&&e.budget!==void 0;if(!t||!n)return`
+        `),e.innerHTML=i||`
+        <div class="empty-state">
+            <h3>No sprints yet</h3>
+            <p>Sprints are created automatically when you close the current one, or you can create one from the project settings.</p>
+        </div>
+    `}function Rd(e){const t=e.start_date&&e.end_date,n=e.budget!==null&&e.budget!==void 0;if(!t||!n)return`
             <div class="sprint-burndown-card">
                 <div class="sprint-burndown-header">
                     <h4>Burndown</h4>
