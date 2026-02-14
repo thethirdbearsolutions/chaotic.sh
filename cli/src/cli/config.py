@@ -231,10 +231,12 @@ def save_global_config(config: dict):
     """
     ensure_global_config_dir()
     config_file = get_global_config_file()
-    with open(config_file, "w") as f:
+    # Use os.open with restricted permissions to create file atomically
+    # with 0o600 perms, avoiding a window where the file exists with
+    # default permissions (CHT-164).
+    fd = os.open(config_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(config, f, indent=2)
-    # Restrict permissions - config may contain API keys
-    os.chmod(config_file, 0o600)
 
 
 def load_local_config() -> dict:
@@ -262,14 +264,21 @@ def save_local_config(config: dict):
     already a directory).
     """
     config_path = get_local_config_path()
-    if config_path.exists() and config_path.is_dir():
+    if config_path.is_dir():
         # Path conflicts with global config dir — save to global instead
         save_global_config({**load_global_config(), **config})
         return
-    with open(config_path, "w") as f:
+    # Use O_WRONLY|O_CREAT|O_TRUNC with restricted permissions to avoid
+    # TOCTOU race between checking path type and opening for write (CHT-164).
+    # This atomically creates the file with 0o600 permissions.
+    try:
+        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except (IsADirectoryError, OSError):
+        # Race: path became a directory or symlink between check and open
+        save_global_config({**load_global_config(), **config})
+        return
+    with os.fdopen(fd, "w") as f:
         json.dump(config, f, indent=2)
-    # Restrict permissions - config may contain API keys
-    os.chmod(config_path, 0o600)
 
 
 def load_config() -> dict:
