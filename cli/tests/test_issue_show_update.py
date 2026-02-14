@@ -146,6 +146,77 @@ class TestIssueShowSingle:
         assert 'Issue not found' in result.output
 
 
+class TestIssueShowParentSubIssues:
+    """Tests for parent and sub-issue display in issue show (CHT-823)."""
+
+    def test_show_parent_info(self, cli_runner, mock_issue):
+        """issue show displays parent issue when parent_id is set."""
+        from cli.main import cli, client
+
+        mock_issue['parent_id'] = 'parent-uuid'
+        parent_issue = {
+            "id": "parent-uuid",
+            "identifier": "CHT-50",
+            "title": "CLI Epic support",
+        }
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_issue = MagicMock(return_value=parent_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0
+        assert 'CHT-50' in result.output
+        assert 'CLI Epic support' in result.output
+        client.get_issue.assert_called_once_with('parent-uuid')
+
+    def test_show_sub_issue_summary(self, cli_runner, mock_issue):
+        """issue show displays sub-issue count when children exist."""
+        from cli.main import cli, client
+
+        sub_issues = [
+            {"id": "sub-1", "status": "done"},
+            {"id": "sub-2", "status": "in_progress"},
+            {"id": "sub-3", "status": "done"},
+            {"id": "sub-4", "status": "todo"},
+            {"id": "sub-5", "status": "canceled"},
+        ]
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=sub_issues)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0
+        assert '3/5 done' in result.output  # 2 done + 1 canceled = 3
+
+    def test_show_no_sub_issues_hides_section(self, cli_runner, mock_issue):
+        """issue show hides sub-issue section when no children."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_issue_documents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0
+        assert 'Sub-issues' not in result.output
+
+
 class TestIssueShowMulti:
     """Tests for issue show with multiple identifiers."""
 
