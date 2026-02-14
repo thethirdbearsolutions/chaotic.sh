@@ -1,6 +1,7 @@
 """Budget transaction schemas."""
 from datetime import datetime
 from pydantic import BaseModel
+from app.utils import DateTimeUTC
 
 
 class BudgetTransactionResponse(BaseModel):
@@ -11,7 +12,7 @@ class BudgetTransactionResponse(BaseModel):
     user_id: str | None
     points: int
     tokens: int | None  # Token cost (if tracked)
-    created_at: datetime
+    created_at: DateTimeUTC
     # Denormalized fields for historical accuracy
     issue_identifier: str
     issue_title: str

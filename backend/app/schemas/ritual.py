@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.ritual import RitualTrigger, ApprovalMode, SelectionMode
+from app.utils import DateTimeUTC
 import re
 
 # Supported condition fields and operators
@@ -73,7 +74,7 @@ class RitualGroupResponse(BaseModel):
     name: str
     selection_mode: SelectionMode
     last_selected_ritual_id: str | None = None
-    created_at: datetime
+    created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -178,8 +179,8 @@ class RitualResponse(BaseModel):
     weight: float = 1.0
     percentage: float | None = None
     is_active: bool = True
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -209,11 +210,11 @@ class RitualAttestationResponse(BaseModel):
     issue_id: str | None  # For ticket-close rituals
     attested_by: str
     attested_by_name: str | None = None  # User's display name
-    attested_at: datetime
+    attested_at: DateTimeUTC
     note: str | None
     approved_by: str | None
     approved_by_name: str | None = None  # Approver's display name
-    approved_at: datetime | None
+    approved_at: DateTimeUTC | None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -256,8 +257,8 @@ class CompletedRitualResponse(BaseModel):
     trigger: RitualTrigger
     approval_mode: ApprovalMode
     conditions: dict | None = None  # Django-style conditions
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
     attestation: RitualAttestationResponse
 
     @field_validator("conditions", mode="before")

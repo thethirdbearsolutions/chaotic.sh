@@ -2,6 +2,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.utils import DateTimeUTC
 
 
 class IssueCreate(BaseModel):
@@ -54,10 +55,10 @@ class IssueResponse(BaseModel):
     creator_name: str | None = None
     sprint_id: str | None
     parent_id: str | None
-    due_date: datetime | None
-    completed_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
+    due_date: DateTimeUTC | None
+    completed_at: DateTimeUTC | None
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
     labels: list["LabelResponse"] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -83,8 +84,8 @@ class IssueCommentResponse(BaseModel):
     author_id: str
     author_name: str | None = None
     content: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -113,7 +114,7 @@ class LabelResponse(BaseModel):
     name: str
     color: str
     description: str | None
-    created_at: datetime
+    created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -131,7 +132,7 @@ class IssueActivityResponse(BaseModel):
     old_value: str | None
     new_value: str | None
     sprint_name: str | None = None  # For moved_to_sprint activities
-    created_at: datetime
+    created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -162,7 +163,7 @@ class IssueActivityFeedResponse(BaseModel):
     old_value: str | None = None
     new_value: str | None = None
     sprint_name: str | None = None  # For moved_to_sprint activities
-    created_at: datetime
+    created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -181,7 +182,7 @@ class IssueRelationResponse(BaseModel):
     issue_id: str
     related_issue_id: str
     relation_type: IssueRelationType
-    created_at: datetime
+    created_at: DateTimeUTC
     # Include basic info about the related issue
     related_issue_identifier: str | None = None
     related_issue_title: str | None = None

@@ -1,6 +1,7 @@
 """User schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from app.utils import DateTimeUTC
 
 
 class UserCreate(BaseModel):
@@ -27,8 +28,8 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     is_active: bool
     is_agent: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 

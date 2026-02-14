@@ -1,6 +1,7 @@
 """Agent schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
+from app.utils import DateTimeUTC
 
 
 class AgentCreate(BaseModel):
@@ -28,8 +29,8 @@ class AgentResponse(BaseModel):
     parent_user_name: str | None = None
     agent_team_id: str
     agent_project_id: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,6 +45,6 @@ class AgentCreated(BaseModel):
     agent_project_id: str | None
     api_key: str  # Full API key - only returned at creation time
     api_key_id: str
-    created_at: datetime
+    created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

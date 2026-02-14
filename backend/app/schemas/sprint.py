@@ -2,6 +2,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.models.sprint import SprintStatus
+from app.utils import DateTimeUTC
 
 
 class SprintCreate(BaseModel):
@@ -36,14 +37,14 @@ class SprintResponse(BaseModel):
     name: str
     description: str | None
     status: SprintStatus
-    start_date: datetime | None
-    end_date: datetime | None
+    start_date: DateTimeUTC | None
+    end_date: DateTimeUTC | None
     budget: int | None
     points_spent: int
     token_budget: int | None
     tokens_spent: int
     limbo: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

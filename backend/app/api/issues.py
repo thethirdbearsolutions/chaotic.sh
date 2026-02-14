@@ -3,22 +3,9 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Query
 from app.api.deps import DbSession, CurrentUser, check_user_project_access, check_user_team_access
+from app.utils import ensure_utc
 
 logger = logging.getLogger(__name__)
-
-
-def ensure_utc(dt: datetime | None) -> datetime | None:
-    """Ensure datetime is timezone-aware (UTC) for proper JSON serialization.
-
-    SQLite stores naive datetimes. When serialized to JSON without timezone info,
-    JavaScript interprets them as local time instead of UTC, causing incorrect
-    relative time calculations.
-    """
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
 from app.schemas.issue import (
     IssueCreate,
     IssueUpdate,

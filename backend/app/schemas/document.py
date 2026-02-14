@@ -2,6 +2,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.issue import LabelResponse
+from app.utils import DateTimeUTC
 
 
 class DocumentCreate(BaseModel):
@@ -36,8 +37,8 @@ class DocumentResponse(BaseModel):
     title: str
     content: str | None
     icon: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
     labels: list[LabelResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -63,7 +64,7 @@ class DocumentCommentResponse(BaseModel):
     author_id: str
     author_name: str | None = None
     content: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

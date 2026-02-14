@@ -2,6 +2,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.models.project import EstimateScale, UnestimatedHandling
+from app.utils import DateTimeUTC
 
 
 class ProjectCreate(BaseModel):
@@ -52,7 +53,7 @@ class ProjectResponse(BaseModel):
     default_sprint_budget: int | None
     human_rituals_required: bool
     require_estimate_on_claim: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

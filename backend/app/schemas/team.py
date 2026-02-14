@@ -2,6 +2,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.models.team import TeamRole, InvitationStatus
+from app.utils import DateTimeUTC
 
 
 class TeamCreate(BaseModel):
@@ -28,8 +29,8 @@ class TeamResponse(BaseModel):
     key: str
     description: str | None
     logo_url: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,7 +42,7 @@ class TeamMemberResponse(BaseModel):
     user_id: str
     team_id: str
     role: TeamRole
-    joined_at: datetime
+    joined_at: DateTimeUTC
     user_name: str | None = None
     user_email: str | None = None
 
@@ -63,7 +64,7 @@ class TeamInvitationResponse(BaseModel):
     email: str
     role: TeamRole
     status: InvitationStatus
-    created_at: datetime
-    expires_at: datetime
+    created_at: DateTimeUTC
+    expires_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
