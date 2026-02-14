@@ -3103,12 +3103,12 @@ def sprint_current():
     print_sprint_panel(result, title="Current Sprint")
 
 
-# 'status' as alias for 'current'
-@sprint.command("status", hidden=True)
+@sprint.command("status")
+@json_option
 @require_project
 @handle_error
 def sprint_status():
-    """Show the current sprint (alias for 'current')."""
+    """Show current sprint status (alias for 'current')."""
     sprint_current.callback()
 
 
