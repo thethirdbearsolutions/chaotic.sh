@@ -206,26 +206,10 @@ import {
 } from './router.js';
 import { connectWebSocket } from './ws.js';
 
-// State - now managed by state.js module
-// Local aliases for backward compatibility during migration
-// currentUser is now managed by state.js (getCurrentUser/setCurrentUser)
-// currentTeam is managed via window.currentTeam (set by teams.js)
 window.currentTeam = null;
-// currentView local alias removed — use getCurrentView() from state.js
-// issues is now managed by state.js (getIssues/setIssues)
-// issue-list.js module uses getIssues() dependency to access this array
-// myIssues is now managed by dashboard.js module
-// boardIssues, BOARD_STATUSES, draggingIssueId are now in board.js module
-// sprints state is now in sprints.js module
-let assignees = []; // Will be removed - use getAssignees()
-let labels = []; // Will be removed - use getLabels()
+let assignees = [];
+let labels = [];
 let createIssueLabelIds = [];
-// dashboardActivities is now managed by dashboard.js module
-// ticketRitualsCollapsed and currentTicketRituals are now in issue-detail-view.js module
-// limboStatus is now in sprints.js module
-// searchDebounceTimer is now managed by state.js (getSearchDebounceTimer/setSearchDebounceTimer)
-// sprintCache and sprintCacheLoadedProjects are now in sprints.js module
-// websocket is now managed by ws.js + state.js (getWebsocket/setWebsocket)
 
 // Markdown rendering helper with XSS protection
 function renderMarkdown(content) {
@@ -311,8 +295,6 @@ const ISSUE_TEMPLATES = [
 `,
     },
 ];
-
-// Issues view functions (filter bar, filter state, issue loading) are now in issues-view.js module
 
 // Configure router (CHT-782)
 configureRouter({
@@ -491,8 +473,6 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
-// Auth functions are now in auth.js and attached to window
-
 // App initialization
 async function initApp() {
     showMainScreen();
@@ -528,10 +508,6 @@ window.buildAssignees = buildAssignees;
 window.updateAssigneeFilter = updateAssigneeFilter;
 window.loadLabels = loadLabels;
 window.resetOnboarding = resetOnboarding;
-
-// updateUserInfo is now imported from auth.js
-
-// WebSocket is now in ws.js (connectWebSocket, handleWebSocketMessage)
 
 // viewDocumentByPath helper (used by router detail route config)
 async function viewDocumentByPath(docId) {
@@ -647,13 +623,6 @@ function updateAssigneeFilter() {
         assigneeFilter.value = currentSelection;
     }
 }
-
-// updateSprintFilter and updateSprintBudgetBar are now in issues-view.js module
-
-// Dashboard functions are now in dashboard.js module
-
-// GATE Approvals
-// pendingGates is now in state.js module
 
 async function loadGateApprovals() {
     if (!window.currentTeam) return;
@@ -836,20 +805,6 @@ function renderApprovalIssue(approvalIssue) {
     `;
 }
 
-// Gate approval modal moved to gate-approvals.js
-// completeGateFromList is exported to window from that module
-
-// loadIssues, debounceSearch, filterIssues, onProjectFilterChange, updateGroupBy, getGroupByValue
-// are now in issues-view.js module
-
-// ensureSprintCacheForIssues and invalidateSprintCache are now in sprints.js
-// Issue list functions (renderIssues, renderIssueRow, toggleGroup, getPriorityIcon, getStatusIcon)
-// are now in issue-list.js module
-// Inline dropdown functions (showInlineDropdown, updateIssueField, toggleIssueLabel, etc.)
-// are now in inline-dropdown.js module
-
-// formatStatus and formatPriority are now imported from utils.js
-
 function formatIssueType(issueType) {
     const labels = {
         task: 'Task',
@@ -878,9 +833,6 @@ function renderAvatar(assignee, sizeClass = 'avatar-small') {
     }
     return `<div class="${sizeClass}">${name.charAt(0).toUpperCase()}</div>`;
 }
-
-// viewIssue, viewIssueByPath, getActivityIcon, formatActivityActor, formatActivityText,
-// renderCommentContent, processTextNodes, addIssueLinksAndMentions are now in issue-detail-view.js module
 
 function getMemberHandle(member) {
     if (member.name) {
@@ -974,8 +926,6 @@ async function handleAddComment(event, issueId) {
     return false;
 }
 
-// handleDescriptionClick is now in issue-detail-view.js module
-
 // Edit description from detail view
 async function editDescription(issueId) {
     const issue = window.currentDetailIssue || await api.getIssue(issueId);
@@ -1017,8 +967,6 @@ function updateDescriptionPreview() {
         ? renderDescriptionContent(value)
         : '<span class="text-muted">Nothing to preview.</span>';
 }
-
-// renderDescriptionContent, addIssueLinks are now in issue-detail-view.js module
 
 function setDescriptionEditorMode(mode) {
     const writeTab = document.getElementById('edit-description-tab-write');
@@ -1778,11 +1726,6 @@ async function deleteIssue(issueId) {
     }
 }
 
-// Kanban Board functions are now in board.js module
-
-// Sprints - core functions (updateSprintProjectFilter, loadSprints, renderSprints, etc.) are in sprints.js
-// Note: Sprints are managed via cadence system (current/next) - no manual creation or start needed
-
 // Labels
 async function loadLabels() {
     if (!window.currentTeam) return;
@@ -1792,10 +1735,6 @@ async function loadLabels() {
         console.error('Failed to load labels:', e);
     }
 }
-
-// API Keys - now in api-keys.js module
-
-// Rituals - now in rituals-view.js module
 
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
@@ -2092,8 +2031,6 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// escapeHtml is now imported from utils.js
-
 // Format ISO timestamp to relative time (e.g., "2 hours ago")
 function formatRelativeTime(isoString) {
     if (!isoString) return '';
@@ -2116,10 +2053,6 @@ function formatRelativeTime(isoString) {
     if (diffDays < 7) return `${diffDays}d ago`;
     return date.toLocaleDateString();
 }
-
-// escapeAttr and sanitizeColor are now imported from utils.js
-
-// navigateToIssueByIdentifier is now in router.js
 
 // ============================================
 // QUICK CREATE (with optimistic UI)
@@ -2195,8 +2128,6 @@ async function handleQuickCreate(event) {
 // KEYBOARD LIST NAVIGATION (j/k like Vim)
 // ============================================
 
-// selectedIssueIndex is now in state.js module
-
 function updateKeyboardSelection(newIndex) {
     const items = document.querySelectorAll('#issues-list .list-item');
     if (items.length === 0) return;
@@ -2254,8 +2185,6 @@ document.addEventListener('keydown', (e) => {
             break;
     }
 });
-
-// Selection reset on issue reload is now handled inside issues-view.js loadIssues()
 
 // ============================================================================
 // Window attachments for HTML event handlers
