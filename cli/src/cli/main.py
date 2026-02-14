@@ -4285,6 +4285,23 @@ def doc_unlink(document_id, issue_identifier):
     console.print(f"[green]Document unlinked from {issue_identifier}.[/green]")
 
 
+@doc.command("open")
+@click.argument("document_id")
+@require_auth
+@handle_error
+def doc_open(document_id):
+    """Open document in browser.
+
+    DOCUMENT_ID can be a full ID, title, or a prefix.
+    """
+    team_id = get_current_team()
+    document_id = resolve_document_id(document_id, team_id)
+    web_url = get_web_url()
+    url = f"{web_url}/document/{document_id}"
+    console.print(f"[dim]Opening {url}...[/dim]")
+    webbrowser.open(url)
+
+
 # Label commands
 @cli.group()
 def label():
