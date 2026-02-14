@@ -1000,10 +1000,11 @@ export function updateFilterChips() {
     // Type chip
     const typeFilter = document.getElementById('issue-type-filter');
     if (typeFilter?.value) {
+        const selectedOption = typeFilter.options[typeFilter.selectedIndex];
         chips.push({
             category: 'type',
             label: 'Type',
-            value: typeFilter.value.charAt(0).toUpperCase() + typeFilter.value.slice(1),
+            value: selectedOption ? selectedOption.text : typeFilter.value,
             clearFn: 'clearTypeFilter()'
         });
     }

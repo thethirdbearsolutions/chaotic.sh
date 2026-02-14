@@ -340,6 +340,8 @@ describe('issues-view', () => {
             expect(container.innerHTML).toContain('Task');
             expect(container.innerHTML).toContain('Bug');
             expect(container.innerHTML).toContain('Feature');
+            expect(container.innerHTML).toContain('Tech Debt');
+            expect(container.innerHTML).toContain('Epic');
         });
 
         it('renders assignee options with team members', () => {
