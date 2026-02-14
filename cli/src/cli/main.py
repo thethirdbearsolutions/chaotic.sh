@@ -1741,6 +1741,7 @@ def issue_search(query, search_all):
 @click.option("--estimate", type=int)
 @click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to not assign, or sprint ID)")
 @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
+@click.option("--epic", help="Epic identifier (e.g., PRJ-123) - shorthand for --parent with an epic")
 @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
 @click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
 @click.option("--relates-to", "relates_to", multiple=True, help="Related issue identifier(s) (can be used multiple times)")
@@ -1748,8 +1749,8 @@ def issue_search(query, search_all):
 @json_option
 @require_team
 @handle_error
-def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, labels, blocked_by, relates_to, project_key):
-    """Create a new issue (or sub-issue with --parent)."""
+def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, epic, labels, blocked_by, relates_to, project_key):
+    """Create a new issue (or sub-issue with --parent/--epic)."""
     # Resolve title from positional arg or --title option
     title = (title or title_opt or "").strip()
     if not title:
@@ -1767,9 +1768,14 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
     data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
     if estimate:
         data["estimate"] = estimate
+    if parent and epic:
+        raise click.UsageError("Cannot use both --parent and --epic")
     if parent:
         parent_issue = client.get_issue_by_identifier(parent)
         data["parent_id"] = parent_issue["id"]
+    elif epic:
+        epic_issue = client.get_issue_by_identifier(epic)
+        data["parent_id"] = epic_issue["id"]
     if labels:
         # Resolve label names to IDs
         team_id = get_current_team()
@@ -1795,6 +1801,8 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
 
     if parent:
         console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
+    elif epic:
+        console.print(f"[green]Issue created: {result['identifier']} - {result['title']} (epic: {epic})[/green]")
     else:
         console.print(f"[green]Issue created: {result['identifier']} - {result['title']}[/green]")
 
