@@ -107,6 +107,7 @@ import {
     updateRitualProjectFilter,
     loadRitualsView,
     onRitualsProjectChange,
+    switchRitualsTab,
     approveRitual,
     completeGateRitual,
     renderTicketRitualActions,
@@ -2401,6 +2402,7 @@ Object.assign(window, {
     // Rituals top-level view
     loadRitualsView,
     onRitualsProjectChange,
+    switchRitualsTab,
 
     // Rituals (pending rituals approval)
     approveRitual,

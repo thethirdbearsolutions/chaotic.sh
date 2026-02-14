@@ -499,6 +499,11 @@
                             </select>
                         </div>
                     </div>
+                    <div id="rituals-tabs" class="settings-tabs hidden">
+                        <button class="settings-tab active" data-tab="sprint" onclick="switchRitualsTab('sprint')">Sprint Rituals</button>
+                        <button class="settings-tab" data-tab="close" onclick="switchRitualsTab('close')">Ticket Close</button>
+                        <button class="settings-tab" data-tab="claim" onclick="switchRitualsTab('claim')">Ticket Claim</button>
+                    </div>
                     <div id="rituals-content">
                         <div class="empty-state">Select a project to view and manage rituals.</div>
                     </div>

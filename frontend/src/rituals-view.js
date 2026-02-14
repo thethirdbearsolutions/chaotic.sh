@@ -71,6 +71,7 @@ export async function onRitualsProjectChange() {
     const container = document.getElementById('rituals-content');
 
     if (!projectId) {
+        document.getElementById('rituals-tabs').classList.add('hidden');
         container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
         return;
     }
@@ -89,7 +90,7 @@ export async function onRitualsProjectChange() {
 }
 
 /**
- * Render the rituals view with sprint, close, and claim ritual sections.
+ * Render the rituals view with tabbed sprint, close, and claim ritual sections.
  */
 export function renderRitualsView() {
     const container = document.getElementById('rituals-content');
@@ -99,32 +100,36 @@ export function renderRitualsView() {
     const closeRituals = rituals.filter(r => r.trigger === 'ticket_close');
     const claimRituals = rituals.filter(r => r.trigger === 'ticket_claim');
 
+    // Show the tabs bar
+    document.getElementById('rituals-tabs').classList.remove('hidden');
+
     container.innerHTML = `
-        <div class="rituals-view-sections">
+        <div id="rituals-tab-sprint" class="settings-tab-content">
             <section class="settings-section">
                 <div class="settings-section-header">
                     <div>
-                        <h3>Sprint Rituals</h3>
                         <p class="settings-description">Required when closing a sprint</p>
                     </div>
                     <button class="btn btn-primary" onclick="showCreateProjectRitualModal('every_sprint')">+ Create Ritual</button>
                 </div>
                 <div id="rv-sprint-rituals-list" class="rituals-list"></div>
             </section>
+        </div>
+        <div id="rituals-tab-close" class="settings-tab-content hidden">
             <section class="settings-section">
                 <div class="settings-section-header">
                     <div>
-                        <h3>Ticket Close Rituals</h3>
                         <p class="settings-description">Required when closing a ticket</p>
                     </div>
                     <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_close')">+ Create Ritual</button>
                 </div>
                 <div id="rv-close-rituals-list" class="rituals-list"></div>
             </section>
+        </div>
+        <div id="rituals-tab-claim" class="settings-tab-content hidden">
             <section class="settings-section">
                 <div class="settings-section-header">
                     <div>
-                        <h3>Ticket Claim Rituals</h3>
                         <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
                     </div>
                     <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_claim')">+ Create Ritual</button>
@@ -138,6 +143,18 @@ export function renderRitualsView() {
     renderRitualList('rv-sprint-rituals-list', sprintRituals, 'sprint');
     renderRitualList('rv-close-rituals-list', closeRituals, 'close');
     renderRitualList('rv-claim-rituals-list', claimRituals, 'claim');
+}
+
+/**
+ * Switch between ritual tabs (sprint, close, claim).
+ */
+export function switchRitualsTab(tabName) {
+    const tabs = document.getElementById('rituals-tabs');
+    tabs.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    tabs.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+
+    document.querySelectorAll('#rituals-content > .settings-tab-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById(`rituals-tab-${tabName}`).classList.remove('hidden');
 }
 
 // ========================================

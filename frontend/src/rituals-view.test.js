@@ -165,6 +165,7 @@ describe('rituals-view', () => {
         it('shows empty state when no project selected', async () => {
             document.body.innerHTML = `
                 <select id="rituals-project-filter"><option value="">Select</option></select>
+                <div id="rituals-tabs" class="settings-tabs hidden"></div>
                 <div id="rituals-content"></div>
             `;
 
@@ -209,7 +210,7 @@ describe('rituals-view', () => {
     // ========================================
     describe('renderRitualsView', () => {
         it('renders sprint, close, and claim sections', () => {
-            document.body.innerHTML = '<div id="rituals-content"></div>';
+            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
             getProjectRituals.mockReturnValue([
                 { id: 'r1', trigger: 'every_sprint', name: 'Sprint Review' },
                 { id: 'r2', trigger: 'ticket_close', name: 'QA Check' },
@@ -219,14 +220,16 @@ describe('rituals-view', () => {
             renderRitualsView();
 
             const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('Sprint Rituals');
-            expect(content.innerHTML).toContain('Ticket Close Rituals');
-            expect(content.innerHTML).toContain('Ticket Claim Rituals');
+            expect(content.innerHTML).toContain('closing a sprint');
+            expect(content.innerHTML).toContain('closing a ticket');
+            expect(content.innerHTML).toContain('claiming a ticket');
             expect(renderRitualList).toHaveBeenCalledTimes(3);
+            // Tabs should be visible
+            expect(document.getElementById('rituals-tabs').classList.contains('hidden')).toBe(false);
         });
 
         it('handles rituals with no trigger as sprint rituals', () => {
-            document.body.innerHTML = '<div id="rituals-content"></div>';
+            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
             getProjectRituals.mockReturnValue([
                 { id: 'r1', name: 'No Trigger Ritual' },
             ]);
@@ -242,15 +245,15 @@ describe('rituals-view', () => {
         });
 
         it('renders sections with empty rituals', () => {
-            document.body.innerHTML = '<div id="rituals-content"></div>';
+            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
             getProjectRituals.mockReturnValue([]);
 
             renderRitualsView();
 
             const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('Sprint Rituals');
-            expect(content.innerHTML).toContain('Ticket Close Rituals');
-            expect(content.innerHTML).toContain('Ticket Claim Rituals');
+            expect(content.innerHTML).toContain('closing a sprint');
+            expect(content.innerHTML).toContain('closing a ticket');
+            expect(content.innerHTML).toContain('claiming a ticket');
             expect(renderRitualList).toHaveBeenCalledWith('rv-sprint-rituals-list', [], 'sprint');
             expect(renderRitualList).toHaveBeenCalledWith('rv-close-rituals-list', [], 'close');
             expect(renderRitualList).toHaveBeenCalledWith('rv-claim-rituals-list', [], 'claim');
