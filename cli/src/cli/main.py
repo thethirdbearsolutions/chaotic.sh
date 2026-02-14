@@ -1697,6 +1697,7 @@ def issue_search(query, search_all):
 @click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
 @click.option("--relates-to", "relates_to", multiple=True, help="Related issue identifier(s) (can be used multiple times)")
 @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
+@json_option
 @require_team
 @handle_error
 def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, labels, blocked_by, relates_to, project_key):
@@ -1739,6 +1740,11 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
         else:
             data["sprint_id"] = resolve_sprint_id(sprint, project_id)
     result = client.create_issue(project_id, title, **data)
+
+    if is_json_output():
+        output_json(result)
+        return
+
     if parent:
         console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
     else:
