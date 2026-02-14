@@ -6,7 +6,7 @@
 // Dropdown options
 export const STATUS_OPTIONS = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
 export const PRIORITY_OPTIONS = ['no_priority', 'urgent', 'high', 'medium', 'low'];
-export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs'];
+export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
 
 // Module state
 let createIssueLabelIds = [];

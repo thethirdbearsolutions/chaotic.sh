@@ -6,7 +6,7 @@
 // Status order for grouping
 export const STATUS_ORDER = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
 export const PRIORITY_ORDER = ['urgent', 'high', 'medium', 'low', 'no_priority'];
-export const ISSUE_TYPE_ORDER = ['task', 'bug', 'feature', 'chore', 'docs'];
+export const ISSUE_TYPE_ORDER = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
 
 // Dependencies injected from app.js
 let deps = {
