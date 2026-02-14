@@ -75,7 +75,7 @@ async function handleGateApproval(event, ritualId, issueId, ritualName) {
             window.loadGateApprovals();
         }
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to complete gate ritual: ${e.message}`, 'error');
     }
 }
 
@@ -131,7 +131,7 @@ async function handleReviewApproval(event, ritualId, issueId, ritualName) {
             window.loadGateApprovals();
         }
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to approve review ritual: ${e.message}`, 'error');
     }
 }
 

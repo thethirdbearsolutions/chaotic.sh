@@ -326,7 +326,7 @@ export async function handleInvite(event) {
     closeModal();
     showToast('Invitation sent!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to send invitation: ${e.message}`, 'error');
   }
   return false;
 }
@@ -343,7 +343,7 @@ export async function removeMember(userId) {
     await loadTeamMembers();
     showToast('Member removed!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to remove member: ${e.message}`, 'error');
   }
 }
 
@@ -357,7 +357,7 @@ export async function deleteInvitation(invitationId) {
     await loadTeamInvitations();
     showToast('Invitation canceled!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to cancel invitation: ${e.message}`, 'error');
   }
 }
 
@@ -436,7 +436,7 @@ export async function handleCreateTeam(event) {
     closeModal();
     showToast('Team created!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to create team: ${e.message}`, 'error');
   }
   return false;
 }
@@ -465,7 +465,7 @@ export async function handleUpdateTeam(event) {
     closeModal();
     showToast('Team updated!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to update team: ${e.message}`, 'error');
   }
   return false;
 }

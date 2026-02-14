@@ -921,7 +921,7 @@ async function handleAddComment(event, issueId) {
         await viewIssue(issueId);
         showToast('Comment added!', 'success');
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to add comment: ${e.message}`, 'error');
     }
     return false;
 }
@@ -1003,7 +1003,7 @@ async function handleUpdateDescription(event, issueId) {
         // Refresh the issue detail view
         viewIssue(issueId, false);
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to update description: ${e.message}`, 'error');
     }
     return false;
 }
@@ -1220,7 +1220,7 @@ async function handleCreateSubIssue(parentId, projectId) {
         // Refresh the parent issue detail view
         viewIssue(parentId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to create sub-issue: ${e.message}`, 'error');
     }
 }
 
@@ -1326,7 +1326,7 @@ async function handleAddRelation(event, issueId) {
         showToast('Relation added', 'success');
         viewIssue(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to add relation: ${e.message}`, 'error');
     }
     return false;
 }
@@ -1337,7 +1337,7 @@ async function deleteRelation(issueId, relationId) {
         showToast('Relation removed', 'success');
         viewIssue(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to remove relation: ${e.message}`, 'error');
     }
 }
 
@@ -1572,7 +1572,7 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
             viewIssue(issue.id);
         }
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to create issue: ${e.message}`, 'error');
     } finally {
         if (btnCreate) btnCreate.disabled = false;
         if (btnCreateAndNew) btnCreateAndNew.disabled = false;
@@ -1672,7 +1672,7 @@ async function showEditIssueModal(issueId) {
         `;
         showModal();
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to load issue: ${e.message}`, 'error');
     }
 }
 
@@ -1707,7 +1707,7 @@ async function handleUpdateIssue(event, issueId) {
         await viewIssue(issueId);
         showToast('Issue updated!', 'success');
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to update issue: ${e.message}`, 'error');
     }
     return false;
 }
@@ -1722,7 +1722,7 @@ async function deleteIssue(issueId) {
         navigateTo('issues');
         showToast('Issue deleted!', 'success');
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to delete issue: ${e.message}`, 'error');
     }
 }
 
@@ -2116,7 +2116,7 @@ async function handleQuickCreate(event) {
         // Remove optimistic on error
         setIssues(getIssues().filter(i => i.id !== tempId));
         renderIssues();
-        showToast(e.message, 'error');
+        showToast(`Failed to create issue: ${e.message}`, 'error');
     } finally {
         input.disabled = false;
         input.placeholder = originalPlaceholder;

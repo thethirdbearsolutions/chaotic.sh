@@ -97,7 +97,7 @@ describe('handleGateApproval', () => {
 
         await handleGateApproval(event, 'r1', 'i1', 'Test');
 
-        expect(showToast).toHaveBeenCalledWith('fail', 'error');
+        expect(showToast).toHaveBeenCalledWith('Failed to complete gate ritual: fail', 'error');
     });
 });
 
@@ -139,7 +139,7 @@ describe('handleReviewApproval', () => {
 
         await handleReviewApproval(event, 'r1', 'i1', 'Review');
 
-        expect(showToast).toHaveBeenCalledWith('unauthorized', 'error');
+        expect(showToast).toHaveBeenCalledWith('Failed to approve review ritual: unauthorized', 'error');
     });
 });
 

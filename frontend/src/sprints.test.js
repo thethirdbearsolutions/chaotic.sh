@@ -370,7 +370,7 @@ describe('handleUpdateBudget', () => {
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
 
-        expect(showToast).toHaveBeenCalledWith('forbidden', 'error');
+        expect(showToast).toHaveBeenCalledWith('Failed to update budget: forbidden', 'error');
     });
 });
 
@@ -408,7 +408,7 @@ describe('completeSprint', () => {
 
         await completeSprint('s1');
 
-        expect(showToast).toHaveBeenCalledWith('cannot close', 'error');
+        expect(showToast).toHaveBeenCalledWith('Failed to complete sprint: cannot close', 'error');
     });
 });
 

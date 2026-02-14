@@ -79,7 +79,7 @@ export async function handleLogin(event) {
     }
     showToast('Welcome back!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Login failed: ${e.message}`, 'error');
   }
   return false;
 }
@@ -104,7 +104,7 @@ export async function handleSignup(event) {
     }
     showToast('Account created successfully!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Signup failed: ${e.message}`, 'error');
   }
   return false;
 }

@@ -530,7 +530,7 @@ export async function handleUpdateBudget(event, sprintId, projectId) {
                          scope === 'default' ? ' (and set as project default)' : '';
         showToast(`Budget updated${scopeMsg}!`, 'success');
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to update budget: ${e.message}`, 'error');
     }
     return false;
 }
@@ -604,7 +604,7 @@ export async function completeSprint(sprintId) {
             showToast('Sprint completed!', 'success');
         }
     } catch (e) {
-        showToast(e.message, 'error');
+        showToast(`Failed to complete sprint: ${e.message}`, 'error');
     }
 }
 

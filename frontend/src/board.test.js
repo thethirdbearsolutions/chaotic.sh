@@ -96,7 +96,7 @@ describe('board', () => {
 
             await loadBoard('project-123');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('API Error', 'error');
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load board: API Error', 'error');
         });
     });
 
@@ -238,7 +238,7 @@ describe('board', () => {
 
             await handleDrop(mockEvent);
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Update failed', 'error');
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to update status: Update failed', 'error');
             // Issue should be reverted to original status
             expect(getBoardIssues().find(i => i.id === '1').status).toBe('todo');
         });

@@ -131,7 +131,7 @@ export async function loadBoard(projectIdParam) {
         boardIssues = await deps.api.getIssues({ project_id: projectId });
         renderBoard();
     } catch (e) {
-        deps.showToast(e.message, 'error');
+        deps.showToast(`Failed to load board: ${e.message}`, 'error');
     }
 }
 
@@ -231,7 +231,7 @@ export async function handleDrop(e) {
         // Revert on error
         issue.status = oldStatus;
         renderBoard();
-        deps.showToast(e.message, 'error');
+        deps.showToast(`Failed to update status: ${e.message}`, 'error');
     }
 }
 
@@ -263,7 +263,7 @@ export async function handleCardDrop(e) {
     } catch (e) {
         issue.status = oldStatus;
         renderBoard();
-        deps.showToast(e.message, 'error');
+        deps.showToast(`Failed to update status: ${e.message}`, 'error');
     }
 }
 

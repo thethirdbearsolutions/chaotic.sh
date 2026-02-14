@@ -230,7 +230,7 @@ describe('issue-detail-view', () => {
 
             await viewIssue('issue-1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('API Error', 'error');
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load issue: API Error', 'error');
         });
     });
 

@@ -360,7 +360,7 @@ export async function handleCreateProject(event) {
     closeModal();
     showToast('Project created!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to create project: ${e.message}`, 'error');
   }
   return false;
 }
@@ -452,7 +452,7 @@ export async function handleUpdateProject(event, projectId) {
     closeModal();
     showToast('Project updated!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to update project: ${e.message}`, 'error');
   }
   return false;
 }
@@ -477,7 +477,7 @@ export async function confirmDeleteProject(projectId) {
       closeModal();
       showToast('Project deleted', 'success');
     } catch (e) {
-      showToast(e.message, 'error');
+      showToast(`Failed to delete project: ${e.message}`, 'error');
     }
   }
 }
@@ -641,7 +641,7 @@ export async function saveProjectSettingsRules() {
     await loadProjects(); // Refresh project list
     showToast('Settings saved', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to save settings: ${e.message}`, 'error');
   }
 }
 
@@ -927,7 +927,7 @@ export async function handleCreateProjectRitual(event) {
     closeModal();
     showToast('Ritual created!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to create ritual: ${e.message}`, 'error');
   }
   return false;
 }
@@ -1074,7 +1074,7 @@ export async function handleUpdateProjectRitual(event, ritualId) {
     closeModal();
     showToast('Ritual updated!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to update ritual: ${e.message}`, 'error');
   }
   return false;
 }
@@ -1092,7 +1092,7 @@ export async function deleteProjectRitual(ritualId, ritualName) {
     await loadProjectSettingsRituals();
     showToast('Ritual deleted', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showToast(`Failed to delete ritual: ${e.message}`, 'error');
   }
 }
 

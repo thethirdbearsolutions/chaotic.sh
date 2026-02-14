@@ -245,7 +245,7 @@ describe('handleLogin', () => {
     api.login.mockRejectedValue(new Error('Invalid credentials'));
 
     await handleLogin(event);
-    expect(showToast).toHaveBeenCalledWith('Invalid credentials', 'error');
+    expect(showToast).toHaveBeenCalledWith('Login failed: Invalid credentials', 'error');
   });
 
   it('does not set currentUser on error', async () => {
@@ -381,7 +381,7 @@ describe('handleSignup', () => {
     api.signup.mockRejectedValue(new Error('Email already exists'));
 
     await handleSignup(event);
-    expect(showToast).toHaveBeenCalledWith('Email already exists', 'error');
+    expect(showToast).toHaveBeenCalledWith('Signup failed: Email already exists', 'error');
   });
 
   it('does not login if signup fails', async () => {

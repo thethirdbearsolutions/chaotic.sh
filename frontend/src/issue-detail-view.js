@@ -918,6 +918,6 @@ export async function viewIssue(issueId, pushHistory = true) {
         loadTicketRituals(issue.id);
         deps.setupMentionAutocomplete();
     } catch (e) {
-        deps.showToast(e.message, 'error');
+        deps.showToast(`Failed to load issue: ${e.message}`, 'error');
     }
 }
