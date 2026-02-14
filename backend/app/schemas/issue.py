@@ -29,7 +29,7 @@ class IssueUpdate(BaseModel):
     status: IssueStatus | None = None
     priority: IssuePriority | None = None
     issue_type: IssueType | None = None
-    estimate: int | None = None
+    estimate: int | None = Field(None, ge=0, le=100)
     assignee_id: str | None = None
     sprint_id: str | None = None
     parent_id: str | None = None

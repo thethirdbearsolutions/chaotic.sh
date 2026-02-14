@@ -110,6 +110,29 @@ async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
             )
 
 
+async def _validate_parent(db, parent_id: str | None, project_id: str, issue_id: str | None = None) -> None:
+    """Validate that parent issue exists and belongs to the project (CHT-295)."""
+    if not parent_id:
+        return
+    if issue_id and parent_id == issue_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An issue cannot be its own parent",
+        )
+    issue_service = IssueService(db)
+    parent = await issue_service.get_by_id(parent_id)
+    if not parent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parent issue not found",
+        )
+    if parent.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parent issue does not belong to this project",
+        )
+
+
 def issue_to_response(issue: Issue) -> IssueResponse:
     """Convert Issue model to IssueResponse with creator_name."""
     return IssueResponse(
@@ -162,10 +185,11 @@ async def create_issue(
             detail="Not authorized to access this project",
         )
 
-    # Validate assignee, sprint, and labels (CHT-293, CHT-294, CHT-296)
+    # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
     await _validate_assignee(db, issue_in.assignee_id, project.team_id)
     await _validate_sprint(db, issue_in.sprint_id, project_id)
     await _validate_labels(db, issue_in.label_ids, project.team_id)
+    await _validate_parent(db, issue_in.parent_id, project_id)
 
     # Check if this is a human user (not an agent)
     is_human_request = not current_user.is_agent
@@ -638,13 +662,15 @@ async def update_issue(
             detail="Not authorized to access this project",
         )
 
-    # Validate assignee, sprint, labels if provided (CHT-293, CHT-294, CHT-296)
+    # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
         await _validate_assignee(db, issue_in.assignee_id, project.team_id)
     if issue_in.sprint_id is not None:
         await _validate_sprint(db, issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
         await _validate_labels(db, issue_in.label_ids, project.team_id)
+    if issue_in.parent_id is not None:
+        await _validate_parent(db, issue_in.parent_id, issue.project_id, issue_id=issue_id)
 
     # Check if this is a human user (not an agent)
     # Human users can use either JWT or API key auth
