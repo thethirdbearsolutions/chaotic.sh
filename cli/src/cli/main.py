@@ -37,6 +37,21 @@ def is_json_output() -> bool:
     return False
 
 
+def is_yes_mode() -> bool:
+    """Check if --yes flag was passed (skip confirmations)."""
+    ctx = click.get_current_context(silent=True)
+    if ctx and ctx.obj:
+        return ctx.obj.get('yes', False)
+    return False
+
+
+def confirm_action(prompt: str, **kwargs) -> bool:
+    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436)."""
+    if is_yes_mode():
+        return True
+    return click.confirm(prompt, **kwargs)
+
+
 def json_option(f):
     """Add --json flag to a subcommand so it works after the subcommand name.
 
@@ -280,12 +295,18 @@ def resolve_assignee_id(assignee_value: str) -> str:
     is_flag=True,
     help='Output as JSON instead of formatted text.'
 )
+@click.option(
+    '--yes', '-y',
+    is_flag=True,
+    help='Skip confirmation prompts (for scripts/automation).'
+)
 @click.pass_context
-def cli(ctx, profile, json_output):
+def cli(ctx, profile, json_output, yes):
     """Chaotic - Issue tracking CLI for modern teams."""
-    # Store json flag in context for subcommands
+    # Store flags in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj['json'] = json_output
+    ctx.obj['yes'] = yes
 
     # Set profile before any config loading happens
     if profile:
@@ -921,7 +942,6 @@ def auth_keys_create(name):
 
 @auth_keys.command("revoke")
 @click.argument("key_id")
-@click.confirmation_option(prompt="Are you sure you want to revoke this API key?")
 @require_auth
 @handle_error
 def auth_keys_revoke(key_id):
@@ -929,6 +949,8 @@ def auth_keys_revoke(key_id):
 
     KEY_ID can be the full key ID or a prefix (e.g., the first 8 characters).
     """
+    if not confirm_action("Are you sure you want to revoke this API key?"):
+        raise SystemExit(0)
     keys = client.list_api_keys()
     key = None
     for k in keys:
@@ -2212,11 +2234,12 @@ def issue_comment(identifier, content, note):
 
 @issue.command("delete")
 @click.argument("identifier")
-@click.confirmation_option(prompt="Are you sure you want to delete this issue?")
 @require_auth
 @handle_error
 def issue_delete(identifier):
     """Delete an issue."""
+    if not confirm_action("Are you sure you want to delete this issue?"):
+        raise SystemExit(0)
     issue = client.get_issue_by_identifier(identifier)
     client.delete_issue(issue["id"])
     console.print(f"[green]Issue {identifier} deleted.[/green]")
@@ -3570,7 +3593,7 @@ def ritual_create(name, ritual_prompt, mode, trigger, note_required, group, weig
     status = client.get_limbo_status(project_id)
     if status["in_limbo"]:
         console.print("[yellow]Warning: Project is in limbo. This ritual will be added to the pending rituals list.[/yellow]")
-        if not click.confirm("Continue creating ritual?"):
+        if not confirm_action("Continue creating ritual?"):
             raise SystemExit(0)
 
     # Resolve group name to ID if provided
@@ -3704,7 +3727,7 @@ def ritual_delete(ritual_name, yes):
         raise SystemExit(1)
 
     if not yes:
-        if not click.confirm(f"Delete ritual '{ritual_name}'?"):
+        if not confirm_action(f"Delete ritual '{ritual_name}'?"):
             console.print("[yellow]Cancelled.[/yellow]")
             raise SystemExit(0)
 
@@ -3925,7 +3948,7 @@ def ritual_force_clear(yes):
 
     if not yes:
         console.print(f"[yellow]Warning: This will skip {pending_count} pending ritual(s).[/yellow]")
-        if not click.confirm("Are you sure you want to force-clear limbo?"):
+        if not confirm_action("Are you sure you want to force-clear limbo?"):
             console.print("[dim]Cancelled.[/dim]")
             return
 
@@ -4069,7 +4092,7 @@ def ritual_group_delete(name, yes):
         raise SystemExit(1)
 
     if not yes:
-        if not click.confirm(f"Delete ritual group '{name}'? (rituals will be ungrouped)"):
+        if not confirm_action(f"Delete ritual group '{name}'? (rituals will be ungrouped)"):
             console.print("[dim]Cancelled.[/dim]")
             return
 
@@ -4318,7 +4341,6 @@ def doc_update(document_id, title, content, icon, project, sprint, no_sprint, is
 
 @doc.command("delete")
 @click.argument("document_id")
-@click.confirmation_option(prompt="Are you sure you want to delete this document?")
 @require_auth
 @handle_error
 def doc_delete(document_id):
@@ -4326,6 +4348,8 @@ def doc_delete(document_id):
 
     DOCUMENT_ID can be a full ID, title, or a prefix.
     """
+    if not confirm_action("Are you sure you want to delete this document?"):
+        raise SystemExit(0)
     team_id = get_current_team()
     document_id = resolve_document_id(document_id, team_id)
 
@@ -4440,7 +4464,6 @@ def label_create(name, color, description):
 
 @label.command("delete")
 @click.argument("label_id")
-@click.confirmation_option(prompt="Are you sure you want to delete this label?")
 @require_auth
 @handle_error
 def label_delete(label_id):
@@ -4448,6 +4471,8 @@ def label_delete(label_id):
 
     LABEL_ID can be a full ID, name, or a prefix.
     """
+    if not confirm_action("Are you sure you want to delete this label?"):
+        raise SystemExit(0)
     team_id = get_current_team()
     label_id = resolve_label_id(label_id, team_id)
 
@@ -4546,7 +4571,6 @@ def agent_list():
 
 @agent.command("delete")
 @click.argument("agent_id")
-@click.confirmation_option(prompt="Are you sure you want to delete this agent? This will revoke all its API keys.")
 @require_team
 @handle_error
 def agent_delete(agent_id):
@@ -4554,6 +4578,8 @@ def agent_delete(agent_id):
 
     AGENT_ID can be the full agent ID or a prefix (e.g., the first 8 characters).
     """
+    if not confirm_action("Are you sure you want to delete this agent? This will revoke all its API keys."):
+        raise SystemExit(0)
     # Try to find the agent by prefix if not a full ID
     team_id = get_current_team()
     agents = client.get_team_agents(team_id)

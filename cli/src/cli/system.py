@@ -25,6 +25,14 @@ from rich.console import Console
 from .config import GLOBAL_CONFIG_DIR, DEFAULT_PORT, set_api_url
 
 
+def _confirm_action(prompt: str, **kwargs) -> bool:
+    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436)."""
+    ctx = click.get_current_context(silent=True)
+    if ctx and ctx.obj and ctx.obj.get('yes'):
+        return True
+    return _confirm_action(prompt, **kwargs)
+
+
 def validate_repo_url(url: str) -> bool:
     """Validate git repository URL to prevent command injection."""
     # Allow https:// and git@ URLs, reject anything suspicious
@@ -696,7 +704,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
         console.print(f"[bold]Database:[/bold] {DATABASE_PATH}")
         console.print(f"[bold]Host:[/bold] {host}")
         console.print(f"[bold]Port:[/bold] {port}")
-        if not click.confirm("\nProceed with installation?"):
+        if not _confirm_action("\nProceed with installation?"):
             console.print("[yellow]Installation cancelled.[/yellow]")
             raise SystemExit(0)
 
@@ -992,7 +1000,7 @@ def system_reconfigure(host, port, yes):
     console.print()
 
     if not yes:
-        if not click.confirm("Apply these changes?"):
+        if not _confirm_action("Apply these changes?"):
             console.print("[yellow]Reconfigure cancelled.[/yellow]")
             raise SystemExit(0)
 
@@ -1138,7 +1146,7 @@ def system_upgrade(target_version, no_backup, yes):
 
     # Confirm upgrade
     if not yes:
-        if not click.confirm(f"\nUpgrade from {current_version} to {target_version}?"):
+        if not _confirm_action(f"\nUpgrade from {current_version} to {target_version}?"):
             console.print("[yellow]Upgrade cancelled.[/yellow]")
             raise SystemExit(0)
 
@@ -1318,7 +1326,7 @@ def system_backup(list_mode, restore_timestamp):
     if is_service_running():
         console.print("[yellow]Warning: Server is running. For a consistent backup, stop the server first:[/yellow]")
         console.print("  chaotic system stop && chaotic system backup && chaotic system start")
-        if not click.confirm("Create backup anyway?"):
+        if not _confirm_action("Create backup anyway?"):
             raise SystemExit(0)
 
     console.print("Creating backup...")
