@@ -404,7 +404,15 @@ def is_service_running() -> bool:
                 ["launchctl", "list", LAUNCHD_LABEL],
                 check=False,
             )
-            return result.returncode == 0
+            if result.returncode != 0:
+                return False
+            # launchctl list <label> outputs "PID\tStatus\tLabel"
+            # PID is "-" when loaded but not running
+            stdout = (result.stdout or "").strip()
+            if not stdout:
+                return False
+            pid_field = stdout.split("\t")[0].strip('"')
+            return pid_field != "-" and pid_field.isdigit()
         else:
             return False
     except subprocess.CalledProcessError:
