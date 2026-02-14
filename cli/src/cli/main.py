@@ -1685,10 +1685,12 @@ def issue_search(query, search_all):
 @click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to not assign, or sprint ID)")
 @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
 @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
+@click.option("--blocked-by", "blocked_by", multiple=True, help="Issue identifier(s) that block this issue (can be used multiple times)")
+@click.option("--relates-to", "relates_to", multiple=True, help="Related issue identifier(s) (can be used multiple times)")
 @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
 @require_team
 @handle_error
-def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, labels, project_key):
+def issue_create(title, title_opt, description, status, priority, issue_type, estimate, sprint, parent, labels, blocked_by, relates_to, project_key):
     """Create a new issue (or sub-issue with --parent)."""
     # Resolve title from positional arg or --title option
     title = (title or title_opt or "").strip()
@@ -1732,6 +1734,16 @@ def issue_create(title, title_opt, description, status, priority, issue_type, es
         console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
     else:
         console.print(f"[green]Issue created: {result['identifier']} - {result['title']}[/green]")
+
+    # Create relations if specified
+    for blocker_id in blocked_by:
+        blocker = client.get_issue_by_identifier(blocker_id)
+        client.create_relation(blocker["id"], result["id"], "blocks")
+        console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
+    for related_id in relates_to:
+        related = client.get_issue_by_identifier(related_id)
+        client.create_relation(result["id"], related["id"], "relates_to")
+        console.print(f"[dim]  Related to {related_id}[/dim]")
 
 
 @issue.command("show")
@@ -1929,12 +1941,14 @@ def issue_get(identifier):
 @click.option("--no-parent", "clear_parent", is_flag=True, help="Detach from parent issue")
 @click.option("--label", "-l", "add_labels", multiple=True, help="Add label(s) to issue (can be used multiple times)")
 @click.option("--remove-label", "remove_labels", multiple=True, help="Remove label(s) from issue (can be used multiple times)")
+@click.option("--blocked-by", "blocked_by", multiple=True, help="Add blocked-by relation(s) (can be used multiple times)")
+@click.option("--relates-to", "relates_to", multiple=True, help="Add relates-to relation(s) (can be used multiple times)")
 @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
               help="Auto-attest all pending ticket rituals (requires --note)")
 @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)")
 @require_auth
 @handle_error
-def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, parent, clear_parent, add_labels, remove_labels, unceremonious, note):
+def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
     """Update an issue."""
     issue = client.get_issue_by_identifier(identifier)
 
@@ -2032,7 +2046,20 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
                 raise click.ClickException("No project context. Set a project with 'chaotic project use <id>' or specify a sprint ID directly.")
             data["sprint_id"] = resolve_sprint_id(sprint, project_id)
 
-    if not data and not labels_modified:
+    # Create relations if specified (CHT-843, CHT-844)
+    relations_modified = False
+    for blocker_id in blocked_by:
+        blocker = client.get_issue_by_identifier(blocker_id)
+        client.create_relation(blocker["id"], issue["id"], "blocks")
+        console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
+        relations_modified = True
+    for related_id in relates_to:
+        related = client.get_issue_by_identifier(related_id)
+        client.create_relation(issue["id"], related["id"], "relates_to")
+        console.print(f"[dim]  Related to {related_id}[/dim]")
+        relations_modified = True
+
+    if not data and not labels_modified and not relations_modified:
         console.print("[yellow]No updates provided.[/yellow]")
         return
 
