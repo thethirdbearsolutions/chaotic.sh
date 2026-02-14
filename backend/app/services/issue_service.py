@@ -2,7 +2,7 @@
 import re
 import random
 from datetime import datetime, timezone
-from sqlalchemy import select, func, case, update
+from sqlalchemy import select, func, case, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -1140,23 +1140,44 @@ class IssueService:
             return []
         source_identifier, source_team_id = source_row
 
-        created = []
-        for identifier in identifiers:
-            if identifier == source_identifier:
-                continue
+        # Filter out self-references and cap to avoid abuse
+        identifiers.discard(source_identifier)
+        if not identifiers:
+            return []
+        identifiers = set(list(identifiers)[:50])
 
-            target = await self.get_by_identifier(identifier, team_id=source_team_id)
-            if not target:
-                continue
+        # Batch lookup: resolve all identifiers in one query (CHT-800)
+        targets_result = await self.db.execute(
+            select(Issue)
+            .join(Project, Issue.project_id == Project.id)
+            .where(Issue.identifier.in_(identifiers))
+            .where(Project.team_id == source_team_id)
+        )
+        targets = {t.identifier: t for t in targets_result.scalars().all()}
+        if not targets:
+            return []
 
-            # Check if a relation already exists in either direction
-            existing = await self.db.execute(
-                select(IssueRelation).where(
-                    ((IssueRelation.issue_id == issue_id) & (IssueRelation.related_issue_id == target.id))
-                    | ((IssueRelation.issue_id == target.id) & (IssueRelation.related_issue_id == issue_id))
+        target_ids = [t.id for t in targets.values()]
+
+        # Batch check: find all existing relations in one query
+        existing_result = await self.db.execute(
+            select(IssueRelation.issue_id, IssueRelation.related_issue_id).where(
+                or_(
+                    (IssueRelation.issue_id == issue_id) & (IssueRelation.related_issue_id.in_(target_ids)),
+                    (IssueRelation.related_issue_id == issue_id) & (IssueRelation.issue_id.in_(target_ids)),
                 )
             )
-            if existing.scalar_one_or_none():
+        )
+        existing_pairs = set()
+        for row in existing_result.all():
+            existing_pairs.add(frozenset((row[0], row[1])))
+
+        created = []
+        for identifier in identifiers:
+            target = targets.get(identifier)
+            if not target:
+                continue
+            if frozenset((issue_id, target.id)) in existing_pairs:
                 continue
 
             relation = IssueRelation(
