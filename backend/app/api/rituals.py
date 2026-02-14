@@ -605,6 +605,13 @@ async def approve_issue_attestation(
             detail="Only admins can approve attestations",
         )
 
+    # Agents cannot approve attestations (CHT-547)
+    if current_user.is_agent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agents cannot approve attestations. A human admin must approve.",
+        )
+
     # Check ritual belongs to this project
     if ritual.project_id != issue.project_id:
         raise HTTPException(
@@ -1073,6 +1080,13 @@ async def approve_attestation(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can approve attestations",
+        )
+
+    # Agents cannot approve attestations (CHT-547)
+    if current_user.is_agent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agents cannot approve attestations. A human admin must approve.",
         )
 
     # Check project is in limbo
