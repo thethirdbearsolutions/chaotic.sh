@@ -168,7 +168,9 @@ describe('Markdown rendering security', () => {
             gfm: true,
           });
           const rawHtml = marked.parse(content);
-          return DOMPurify.sanitize(rawHtml);
+          const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
+              (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+          return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
         } catch (e) {
           console.error('Markdown parsing error:', e);
         }
@@ -223,6 +225,43 @@ describe('Markdown rendering security', () => {
       const result = renderCommentContent(malicious);
 
       expect(result).not.toContain('onclick');
+    });
+
+    it('preserves text content inside stripped HTML tags like title (CHT-829)', () => {
+      const text = 'epic create <title> and more text';
+      const result = renderCommentContent(text);
+
+      // <title> tag should be stripped but text around it preserved
+      expect(result).not.toContain('<title>');
+      expect(result).toContain('epic create');
+      expect(result).toContain('and more text');
+    });
+
+    it('preserves text content inside stripped style tags (CHT-829)', () => {
+      const text = 'before <style>body{color:red}</style> after';
+      const result = renderCommentContent(text);
+
+      expect(result).not.toContain('<style>');
+      expect(result).toContain('before');
+      expect(result).toContain('after');
+    });
+
+    it('preserves text content inside textarea tags (CHT-829)', () => {
+      const text = 'form with <textarea>user input</textarea> here';
+      const result = renderCommentContent(text);
+
+      expect(result).not.toContain('<textarea>');
+      expect(result).toContain('user input');
+      expect(result).toContain('here');
+    });
+
+    it('preserves text content inside xmp tags (CHT-829)', () => {
+      const text = 'legacy <xmp>preformatted</xmp> format';
+      const result = renderCommentContent(text);
+
+      expect(result).not.toContain('<xmp>');
+      expect(result).toContain('preformatted');
+      expect(result).toContain('format');
     });
 
     it('prevents XSS via crafted issue references with HTML injection', () => {
