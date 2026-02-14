@@ -4044,7 +4044,7 @@ def doc_list(search, project, sprint, show_all):
 
 
 @doc.command("create")
-@click.argument("title", required=False)
+@click.argument("title_words", nargs=-1)
 @click.option("--title", "title_opt", help="Document title (alternative to positional argument)")
 @click.option("--content", default="")
 @click.option("--icon", default="")
@@ -4054,13 +4054,14 @@ def doc_list(search, project, sprint, show_all):
 @json_option
 @require_team
 @handle_error
-def doc_create(title, title_opt, content, icon, project, sprint, is_global):
+def doc_create(title_words, title_opt, content, icon, project, sprint, is_global):
     """Create a new document.
 
-    TITLE can be provided as a positional argument or with --title.
+    TITLE can be provided as positional argument(s) or with --title.
+    Multiple words are joined: `doc create Sprint 24 Report` → "Sprint 24 Report"
     """
     # Allow --title as alternative to positional argument
-    title = title or title_opt
+    title = " ".join(title_words) if title_words else title_opt
     if not title:
         raise click.UsageError("Missing title. Provide as argument or with --title.")
     project_id = None
