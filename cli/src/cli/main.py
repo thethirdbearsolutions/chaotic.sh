@@ -1167,7 +1167,13 @@ def status():
         }
         if result["authenticated"]:
             try:
-                result["user"] = client.get_me()
+                user = client.get_me()
+                result["user"] = user
+                if user.get("is_agent"):
+                    try:
+                        result["agent"] = client.get_agent(user["id"])
+                    except Exception:
+                        pass
             except Exception as e:
                 result["user_error"] = str(e)
         if result["team_id"]:
@@ -1196,11 +1202,20 @@ def status():
 
     console.print(f"[bold]Current Context[/bold] {config_type}\n")
 
-    # Auth status
+    # Auth status (CHT-478)
     if get_token() or get_api_key():
         try:
             user = client.get_me()
-            console.print(f"  [green]✓[/green] Logged in as: [bold]{user['name']}[/bold] ({user['email']})")
+            if user.get("is_agent"):
+                console.print(f"  [green]✓[/green] Acting as: [bold]{user['name']}[/bold] [dim](agent)[/dim]")
+                try:
+                    agent_info = client.get_agent(user["id"])
+                    parent_name = agent_info.get("parent_user_name", "unknown")
+                    console.print(f"    [dim]↳ Parent: {parent_name}[/dim]")
+                except Exception:
+                    pass
+            else:
+                console.print(f"  [green]✓[/green] Logged in as: [bold]{user['name']}[/bold] ({user['email']})")
         except Exception:
             console.print("  [yellow]![/yellow] Auth token set but unable to verify")
     else:
