@@ -135,6 +135,7 @@ class RitualUpdate(BaseModel):
     group_id: str | None = None  # Optional group membership (use "" to remove from group)
     weight: float | None = Field(default=None, ge=0)  # Weight for random selection
     percentage: float | None = Field(default=None, ge=0, le=100)  # For PERCENTAGE mode
+    is_active: bool | None = None  # Set to True to restore a soft-deleted ritual
 
     @field_validator("name")
     @classmethod

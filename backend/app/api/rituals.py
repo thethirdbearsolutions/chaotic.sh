@@ -68,6 +68,7 @@ async def list_rituals(
     project_id: str,
     db: DbSession,
     current_user: CurrentUser,
+    include_inactive: bool = False,
 ):
     """List rituals for a project."""
     project_service = ProjectService(db)
@@ -86,7 +87,7 @@ async def list_rituals(
             detail="Not a member of this team",
         )
 
-    rituals = await ritual_service.list_by_project(project_id)
+    rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
     return rituals
 
 
@@ -876,7 +877,8 @@ async def update_ritual(
     project_service = ProjectService(db)
     team_service = TeamService(db)
 
-    ritual = await ritual_service.get_by_id(ritual_id)
+    # include_inactive so we can restore soft-deleted rituals
+    ritual = await ritual_service.get_by_id(ritual_id, include_inactive=True)
     if not ritual:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

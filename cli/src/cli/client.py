@@ -347,8 +347,11 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}/labels/{label_id}")
 
     # Rituals
-    def get_rituals(self, project_id: str) -> list:
-        return self._request("GET", f"/rituals?project_id={project_id}")
+    def get_rituals(self, project_id: str, include_inactive: bool = False) -> list:
+        url = f"/rituals?project_id={project_id}"
+        if include_inactive:
+            url += "&include_inactive=true"
+        return self._request("GET", url)
 
     def get_pending_gates(self, project_id: str) -> list:
         return self._request("GET", f"/rituals/pending-gates?project_id={project_id}")

@@ -3303,7 +3303,8 @@ def _format_ritual_line(r):
     group_tag = ""
     if r.get("group_name"):
         group_tag = f" [dim][group: {r['group_name']}][/dim]"
-    return f"  • {r['name']} {mode}{note_tag}{group_tag}"
+    deleted_tag = " [red][deleted][/red]" if not r.get("is_active", True) else ""
+    return f"  • {r['name']} {mode}{note_tag}{group_tag}{deleted_tag}"
 
 
 def _print_ritual_prompt(prompt):
@@ -3315,9 +3316,10 @@ def _print_ritual_prompt(prompt):
 @ritual.command("list")
 @click.option("--pending", is_flag=True, help="Show only pending/incomplete rituals")
 @click.option("--ticket", "ticket_id", help="Show pending rituals for a specific ticket (e.g., CHT-123)")
+@click.option("--deleted", is_flag=True, help="Include deleted (inactive) rituals")
 @require_project
 @handle_error
-def ritual_list(pending, ticket_id):
+def ritual_list(pending, ticket_id, deleted):
     """List rituals and show limbo status."""
     project_id = get_current_project()
 
@@ -3374,7 +3376,7 @@ def ritual_list(pending, ticket_id):
             console.print(f"  [green]✓[/green] {r['name']}")
 
     # Always show all configured rituals grouped by trigger type
-    rituals = client.get_rituals(project_id)
+    rituals = client.get_rituals(project_id, include_inactive=deleted)
     if rituals:
         sprint_rituals = [r for r in rituals if r.get("trigger", "every_sprint") == "every_sprint"]
         ticket_close_rituals = [r for r in rituals if r.get("trigger") == "ticket_close"]
@@ -3656,6 +3658,36 @@ def ritual_delete(ritual_name, yes):
 
     client.delete_ritual(ritual["id"])
     console.print(f"[green]Ritual '{ritual_name}' deleted.[/green]")
+
+
+@ritual.command("restore")
+@click.argument("ritual_name")
+@require_project
+@handle_error
+def ritual_restore(ritual_name):
+    """Restore a deleted (inactive) ritual.
+
+    RITUAL_NAME is the name of the ritual to restore.
+
+    Use 'chaotic ritual list --deleted' to see deleted rituals.
+    """
+    project_id = get_current_project()
+
+    # Search including inactive rituals
+    rituals = client.get_rituals(project_id, include_inactive=True)
+    ritual = next((r for r in rituals if r["name"] == ritual_name), None)
+
+    if not ritual:
+        console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+        console.print("Run `chaotic ritual list --deleted` to see deleted rituals.")
+        raise SystemExit(1)
+
+    if ritual.get("is_active", True):
+        console.print(f"[yellow]Ritual '{ritual_name}' is already active.[/yellow]")
+        return
+
+    client.update_ritual(ritual["id"], is_active=True)
+    console.print(f"[green]Ritual '{ritual_name}' restored.[/green]")
 
 
 @ritual.command("status")
