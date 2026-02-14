@@ -1247,6 +1247,36 @@ def status():
             pass  # Don't fail status if gate check fails
 
 
+@cli.command("whoami")
+@handle_error
+def whoami():
+    """Show current authenticated identity."""
+    from .config import get_global_config_file
+
+    if not (get_token() or get_api_key()):
+        console.print("[red]Not authenticated.[/red] Run `chaotic login` or set an API key.")
+        raise SystemExit(1)
+
+    user = client.get_me()
+
+    console.print(f"[bold]User:[/bold] {user['name']}")
+    console.print(f"[bold]Email:[/bold] {user['email']}")
+    console.print(f"[bold]Type:[/bold] {'Agent' if user.get('is_agent') else 'Human'}")
+
+    api_key = get_api_key()
+    if api_key:
+        console.print(f"[bold]API Key:[/bold] {api_key[:12]}...")
+    elif get_token():
+        console.print("[bold]Auth:[/bold] JWT token")
+
+    profile = get_effective_profile()
+    if profile != "default":
+        console.print(f"[bold]Profile:[/bold] {profile}")
+
+    config_file = get_global_config_file()
+    console.print(f"[bold]Config:[/bold] {config_file}")
+
+
 @cli.command("budget")
 @require_project
 @handle_error
