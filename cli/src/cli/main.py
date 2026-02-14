@@ -1865,6 +1865,8 @@ def issue_get(identifier):
 @click.option("--type", "issue_type", type=click.Choice(["task", "bug", "feature", "chore", "docs", "tech_debt"], case_sensitive=False), help="Issue type")
 @click.option("--estimate", type=int)
 @click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to unassign, or sprint ID)")
+@click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
+@click.option("--no-parent", "clear_parent", is_flag=True, help="Detach from parent issue")
 @click.option("--label", "-l", "add_labels", multiple=True, help="Add label(s) to issue (can be used multiple times)")
 @click.option("--remove-label", "remove_labels", multiple=True, help="Remove label(s) from issue (can be used multiple times)")
 @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
@@ -1872,7 +1874,7 @@ def issue_get(identifier):
 @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)")
 @require_auth
 @handle_error
-def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, add_labels, remove_labels, unceremonious, note):
+def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, parent, clear_parent, add_labels, remove_labels, unceremonious, note):
     """Update an issue."""
     issue = client.get_issue_by_identifier(identifier)
 
@@ -1937,6 +1939,10 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
             console.print(f"[dim]Removed label: {label_name}[/dim]")
             labels_modified = True
 
+    # Validate parent flags before building update data
+    if parent and clear_parent:
+        raise click.ClickException("Cannot use --parent and --no-parent together.")
+
     data = {}
     if title is not None:
         data["title"] = title
@@ -1950,6 +1956,13 @@ def issue_update(identifier, title, description, status, priority, issue_type, e
         data["issue_type"] = issue_type
     if estimate is not None:
         data["estimate"] = estimate
+    if parent:
+        parent_issue = client.get_issue_by_identifier(parent)
+        if parent_issue["id"] == issue["id"]:
+            raise click.ClickException("An issue cannot be its own parent.")
+        data["parent_id"] = parent_issue["id"]
+    if clear_parent:
+        data["parent_id"] = None
     if sprint is not None:
         if sprint.lower() == "none" or sprint == "":
             data["sprint_id"] = None
