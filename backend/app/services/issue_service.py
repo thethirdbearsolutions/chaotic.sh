@@ -611,34 +611,33 @@ class IssueService:
                     activities.append(activity)
 
         # Check if status change requires limbo/arrears/ticket ritual checks
-        # Block completing, canceling, or claiming issues when sprint is in limbo or arrears
         if "status" in update_data:
             new_status = update_data["status"]
-            blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
-            if new_status in blocked_statuses and issue.status != new_status:
-                await self._check_sprint_limbo(issue.project_id)
-                await self._check_sprint_arrears(issue.project_id)
 
+            # Check ticket-level rituals FIRST — these give more actionable errors
+            # than sprint-level limbo/arrears (CHT-145)
             if new_status == IssueStatus.IN_PROGRESS and issue.status != IssueStatus.IN_PROGRESS:
                 project = await self.db.get(Project, issue.project_id)
                 # Only enforce estimate requirement for agents, not humans.
-                # When is_human_request is False (indicating an agent), and require_estimate_on_claim
-                # is enabled, we block claiming tickets without an estimate.
                 if project and project.require_estimate_on_claim and not is_human_request:
                     estimate_value = update_data.get("estimate", issue.estimate)
                     if estimate_value is None:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
-
-            # Check ticket-claim rituals when claiming a ticket (→ in_progress)
-            if new_status == IssueStatus.IN_PROGRESS and issue.status != IssueStatus.IN_PROGRESS:
+                # Check ticket-claim rituals when claiming a ticket (→ in_progress)
                 await self._check_claim_rituals(issue, user_id, is_human_request)
 
             # Check ticket-close rituals when completing a ticket (DONE only)
             # Canceled tickets skip ritual checks (CHT-171)
             if new_status == IssueStatus.DONE and issue.status != IssueStatus.DONE:
                 await self._check_ticket_rituals(issue, user_id, is_human_request)
+
+            # Block completing, canceling, or claiming issues when sprint is in limbo or arrears
+            blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
+            if new_status in blocked_statuses and issue.status != new_status:
+                await self._check_sprint_limbo(issue.project_id)
+                await self._check_sprint_arrears(issue.project_id)
 
             # Handle completion - only deduct if transitioning TO done (not already done)
             if new_status == IssueStatus.DONE and issue.status != IssueStatus.DONE:
