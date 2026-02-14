@@ -585,3 +585,91 @@ class TestSprintUpdate:
 
         assert result.exit_code != 0
         assert 'No current sprint' in result.output
+
+
+class TestSprintAdd:
+    """Tests for chaotic sprint add (CHT-830)."""
+
+    def test_add_single_issue(self, cli_runner):
+        """sprint add adds a single issue to current sprint."""
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "issue-1", "identifier": "CHT-10"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'add', 'CHT-10'])
+
+        assert result.exit_code == 0
+        assert 'Added CHT-10 to current sprint' in result.output
+        client.update_issue.assert_called_once_with("issue-1", sprint_id="sprint-1")
+
+    def test_add_multiple_issues(self, cli_runner):
+        """sprint add adds multiple issues at once."""
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "issue-1", "identifier": "CHT-10"},
+            {"id": "issue-2", "identifier": "CHT-11"},
+        ])
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'add', 'CHT-10', 'CHT-11'])
+
+        assert result.exit_code == 0
+        assert 'Added CHT-10' in result.output
+        assert 'Added CHT-11' in result.output
+        assert client.update_issue.call_count == 2
+
+    def test_add_no_identifiers_shows_usage(self, cli_runner):
+        """sprint add with no identifiers shows usage."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['sprint', 'add'])
+
+        assert result.exit_code != 0
+
+    def test_add_no_project_errors(self, cli_runner):
+        """sprint add without a project selected shows error."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value=None):
+            result = cli_runner.invoke(cli, ['sprint', 'add', 'CHT-10'])
+
+        assert result.exit_code != 0
+        assert 'No project selected' in result.output
+
+
+class TestSprintRemove:
+    """Tests for chaotic sprint remove (CHT-830)."""
+
+    def test_remove_single_issue(self, cli_runner):
+        """sprint remove removes an issue from its sprint."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "issue-1", "identifier": "CHT-10"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'remove', 'CHT-10'])
+
+        assert result.exit_code == 0
+        assert 'Removed CHT-10 from sprint' in result.output
+        client.update_issue.assert_called_once_with("issue-1", sprint_id=None)
+
+    def test_remove_multiple_issues(self, cli_runner):
+        """sprint remove removes multiple issues."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "issue-1", "identifier": "CHT-10"},
+            {"id": "issue-2", "identifier": "CHT-11"},
+        ])
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'remove', 'CHT-10', 'CHT-11'])
+
+        assert result.exit_code == 0
+        assert 'Removed CHT-10' in result.output
+        assert 'Removed CHT-11' in result.output
+        assert client.update_issue.call_count == 2

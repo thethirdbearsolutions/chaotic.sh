@@ -3064,6 +3064,51 @@ def sprint_update(sprint_id, name, description, budget, no_budget):
     console.print(f"[green]Sprint '{result['name']}' updated.[/green]")
 
 
+@sprint.command("add")
+@click.argument("identifiers", nargs=-1, required=True)
+@require_auth
+@handle_error
+def sprint_add(identifiers):
+    """Add issues to the current sprint.
+
+    IDENTIFIERS are issue identifiers (e.g., CHT-123 CHT-456).
+
+    \b
+    Examples:
+        chaotic sprint add CHT-123
+        chaotic sprint add CHT-123 CHT-456 CHT-789
+    """
+    project_id = get_current_project()
+    if not project_id:
+        raise click.ClickException("No project selected. Run 'chaotic project use <project_id>' first.")
+    sprint_id = resolve_sprint_id("current", project_id)
+
+    for identifier in identifiers:
+        issue = client.get_issue_by_identifier(identifier)
+        client.update_issue(issue["id"], sprint_id=sprint_id)
+        console.print(f"[green]Added {issue['identifier']} to current sprint.[/green]")
+
+
+@sprint.command("remove")
+@click.argument("identifiers", nargs=-1, required=True)
+@require_auth
+@handle_error
+def sprint_remove(identifiers):
+    """Remove issues from their sprint.
+
+    IDENTIFIERS are issue identifiers (e.g., CHT-123 CHT-456).
+
+    \b
+    Examples:
+        chaotic sprint remove CHT-123
+        chaotic sprint remove CHT-123 CHT-456
+    """
+    for identifier in identifiers:
+        issue = client.get_issue_by_identifier(identifier)
+        client.update_issue(issue["id"], sprint_id=None)
+        console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
+
+
 # Ritual commands
 @cli.group()
 def ritual():
