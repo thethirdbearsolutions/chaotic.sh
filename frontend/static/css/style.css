@@ -6208,3 +6208,90 @@ input[type="checkbox"] {
     color: var(--accent-color);
 }
 
+/* Epics view (CHT-831) */
+.epic-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.epic-table th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.epic-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 14px;
+}
+
+.epic-row:hover {
+    background: var(--bg-secondary);
+}
+
+.epic-identifier {
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    width: 80px;
+}
+
+.epic-title {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.epic-progress {
+    width: 180px;
+}
+
+.epic-progress-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.epic-progress-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.epic-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #3b82f6;
+    transition: width 0.3s ease;
+}
+
+.epic-progress-fill.epic-progress-complete {
+    background: #22c55e;
+}
+
+.epic-progress-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.epic-estimate {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    width: 60px;
+}
+
+.epic-status {
+    width: 100px;
+}
+

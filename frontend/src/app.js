@@ -58,6 +58,7 @@ import {
     getGroupByValue,
 } from './issues-view.js';
 import { completeGateFromList } from './gate-approvals.js';
+import { loadEpics } from './epics.js';
 import { createKeyboardHandler } from './keyboard.js';
 import {
     getTeams,
@@ -392,6 +393,9 @@ registerViews({
             }
             loadIssues();
         });
+    },
+    'epics': () => {
+        loadEpics();
     },
     'board': () => {
         updateBoardProjectFilter();

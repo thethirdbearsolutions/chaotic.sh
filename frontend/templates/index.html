@@ -122,6 +122,12 @@
                         </svg>
                         Sprints
                     </a>
+                    <a href="#" class="nav-item" data-view="epics" onclick="navigateTo('epics')">
+                        <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
+                        </svg>
+                        Epics
+                    </a>
                     <a href="#" class="nav-item" data-view="board" onclick="navigateTo('board')">
                         <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
@@ -409,6 +415,13 @@
                         </div>
                     </div>
                     <div id="kanban-board" class="kanban-board"></div>
+                </div>
+
+                <div id="epics-view" class="view hidden">
+                    <div class="view-header">
+                        <h2>Epics</h2>
+                    </div>
+                    <div id="epics-list" class="list"></div>
                 </div>
 
                 <div id="projects-view" class="view hidden">
