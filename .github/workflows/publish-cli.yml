@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
+  test-backend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,8 +31,51 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+  test-cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -v
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
   build:
-    needs: test
+    needs: [test-backend, test-cli, test-frontend]
     runs-on: ubuntu-latest
     defaults:
       run:
