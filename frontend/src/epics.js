@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
-import { navigateToIssueByIdentifier } from './router.js';
+import { navigateToEpicByIdentifier } from './router.js';
 import { getProjects, loadProjects, getSavedProjectId, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 
@@ -148,7 +148,7 @@ export function renderEpics(epics, container) {
     container.addEventListener('click', (e) => {
         const row = e.target.closest('.epic-row');
         if (row && row.dataset.identifier) {
-            navigateToIssueByIdentifier(row.dataset.identifier);
+            navigateToEpicByIdentifier(row.dataset.identifier);
         }
     });
 }
