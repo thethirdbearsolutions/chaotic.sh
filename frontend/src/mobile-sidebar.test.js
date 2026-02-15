@@ -84,21 +84,24 @@ describe('Mobile sidebar focus management (CHT-883)', () => {
     });
 
     it('does not move focus when closeSidebar called on already-closed sidebar', () => {
-        document.getElementById('hamburger-btn').focus();
-        const before = document.activeElement;
+        // Focus a sidebar link (not hamburger) to verify the guard actually prevents focus change
+        const firstLink = document.querySelector('.sidebar a');
+        firstLink.focus();
         window.closeSidebar();
         // Should not change focus since sidebar wasn't open
-        expect(document.activeElement).toBe(before);
+        expect(document.activeElement).toBe(firstLink);
     });
 
-    it('Escape key closes sidebar and returns focus', () => {
+    it('redirects focus into sidebar when Tab pressed from outside', () => {
         document.body.classList.add('sidebar-open');
-        document.getElementById('hamburger-btn').setAttribute('aria-expanded', 'true');
+        // Focus is on hamburger (outside sidebar)
+        document.getElementById('hamburger-btn').focus();
 
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        document.dispatchEvent(event);
 
-        expect(document.body.classList.contains('sidebar-open')).toBe(false);
-        expect(document.activeElement).toBe(document.getElementById('hamburger-btn'));
+        // Should redirect focus to first sidebar element
+        expect(document.activeElement).toBe(document.querySelector('.sidebar a'));
     });
 
     it('traps focus forward at last element', () => {
@@ -134,11 +137,4 @@ describe('Mobile sidebar focus management (CHT-883)', () => {
         expect(event.defaultPrevented).toBe(false);
     });
 
-    it('Escape does nothing when sidebar is closed', () => {
-        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
-        document.dispatchEvent(event);
-
-        // No crash, sidebar still closed
-        expect(document.body.classList.contains('sidebar-open')).toBe(false);
-    });
 });

@@ -235,7 +235,7 @@ function toggleSidebar() {
         // Opening: focus first focusable element in sidebar
         const sidebar = document.querySelector('.sidebar');
         if (sidebar) {
-            const firstFocusable = sidebar.querySelector('a, button, [tabindex]:not([tabindex="-1"])');
+            const firstFocusable = sidebar.querySelector(FOCUSABLE_SELECTOR);
             if (firstFocusable) firstFocusable.focus();
         }
     }
@@ -251,25 +251,30 @@ function closeSidebar() {
     }
 }
 
+// Shared focusable-element selector for sidebar focus trap (CHT-883)
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 // Focus trap for mobile sidebar (CHT-883)
+// Escape is handled by keyboard.js which already calls closeSidebar()
 document.addEventListener('keydown', (e) => {
     if (!document.body.classList.contains('sidebar-open')) return;
-
-    if (e.key === 'Escape') {
-        closeSidebar();
-        return;
-    }
-
     if (e.key !== 'Tab') return;
 
     const sidebar = document.querySelector('.sidebar');
     if (!sidebar) return;
 
-    const focusable = sidebar.querySelectorAll('a, button, [tabindex]:not([tabindex="-1"])');
+    const focusable = sidebar.querySelectorAll(FOCUSABLE_SELECTOR);
     if (focusable.length === 0) return;
 
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+
+    // If focus is outside the sidebar, redirect into it
+    if (!sidebar.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+        return;
+    }
 
     if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
