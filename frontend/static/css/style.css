@@ -3753,22 +3753,18 @@ input[type="checkbox"] {
         padding: 16px;
     }
 
-    .view-header h2 {
-        font-size: 1.25rem;
-    }
-
     .view-header {
         gap: 0.75rem;
         margin-bottom: 1rem;
     }
 
+    .view-header h2 {
+        font-size: 1.25rem;
+    }
+
     .epic-table th,
     .epic-table td {
         padding: 8px 10px;
-    }
-
-    .epic-estimate {
-        display: none;
     }
 }
 
@@ -3788,9 +3784,10 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 768px) {
-    /* Hide labels and date on narrow screens */
+    /* Hide less critical columns on narrow screens */
     .issue-labels,
-    .issue-date {
+    .issue-date,
+    .epic-estimate {
         display: none;
     }
 
@@ -3957,11 +3954,10 @@ input[type="checkbox"] {
         font-size: 1.125rem;
     }
 
-    /* Full-width modals */
+    /* Full-screen modals on phone */
     .modal {
         max-width: 100%;
         max-height: 100vh;
-        height: 100%;
         border-radius: 0;
         margin: 0;
     }
@@ -4016,11 +4012,17 @@ input[type="checkbox"] {
     .filter-menu-category {
         min-height: 44px;
         padding: 10px 12px;
-        font-size: 13px;
     }
 
     /* Inputs: font-size 16px prevents iOS Safari zoom on focus */
-    input, textarea, select {
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    input[type="url"],
+    input[type="search"],
+    textarea,
+    select {
         padding: 0.875rem;
         font-size: 1rem;
     }
@@ -4065,11 +4067,6 @@ input[type="checkbox"] {
     .sprint-badge {
         font-size: 12px;
         padding: 3px 8px;
-    }
-
-    /* Filter bottom-sheet */
-    .filter-menu-options {
-        max-height: 60vh;
     }
 
     /* Settings */
