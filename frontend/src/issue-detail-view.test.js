@@ -14,6 +14,16 @@ import {
     toggleTicketRituals,
     getTicketRitualsCollapsed,
     setTicketRitualsCollapsed,
+    handleAddComment,
+    editDescription,
+    setDescriptionEditorMode,
+    handleUpdateDescription,
+    showAddRelationModal,
+    searchIssuesToRelate,
+    selectIssueForRelation,
+    clearSelectedRelation,
+    handleAddRelation,
+    deleteRelation,
 } from './issue-detail-view.js';
 
 describe('issue-detail-view', () => {
@@ -34,6 +44,11 @@ describe('issue-detail-view', () => {
             getRelations: vi.fn().mockResolvedValue([]),
             getTicketRitualsStatus: vi.fn().mockResolvedValue({ pending_rituals: [], completed_rituals: [] }),
             getSprints: vi.fn().mockResolvedValue([]),
+            createComment: vi.fn().mockResolvedValue({}),
+            updateIssue: vi.fn().mockResolvedValue({}),
+            searchIssues: vi.fn().mockResolvedValue([]),
+            createRelation: vi.fn().mockResolvedValue({}),
+            deleteRelation: vi.fn().mockResolvedValue({}),
         };
 
         // Mock dependencies
@@ -59,6 +74,9 @@ describe('issue-detail-view', () => {
             sanitizeColor: vi.fn((c) => c || '#888'),
             showDetailDropdown: vi.fn(),
             setupMentionAutocomplete: vi.fn(),
+            showModal: vi.fn(),
+            closeModal: vi.fn(),
+            escapeJsString: vi.fn((text) => text || ''),
         };
 
         setDependencies(mockDeps);
@@ -72,7 +90,11 @@ describe('issue-detail-view', () => {
             <div id="ticket-rituals-section" class="hidden">
                 <div class="ticket-rituals-content collapsed"></div>
             </div>
+            <div id="modal-title"></div>
+            <div id="modal-content"></div>
+            <textarea id="new-comment"></textarea>
         `;
+        window.currentTeam = { id: 'team-1' };
     });
 
     describe('getActivityIcon', () => {
@@ -294,6 +316,232 @@ describe('issue-detail-view', () => {
             toggleTicketRituals();
 
             expect(content.classList.contains('collapsed')).toBe(false);
+        });
+    });
+
+    // ========================================================================
+    // Extracted functions (CHT-666)
+    // ========================================================================
+
+    describe('handleAddComment', () => {
+        it('creates comment and refreshes issue', async () => {
+            const mockIssue = { id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' };
+            mockApi.getIssue.mockResolvedValue(mockIssue);
+            mockApi.createComment.mockResolvedValue({});
+            document.getElementById('new-comment').value = 'Hello world';
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockApi.createComment).toHaveBeenCalledWith('i1', 'Hello world');
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Comment added!', 'success');
+        });
+
+        it('shows error toast on failure', async () => {
+            mockApi.createComment.mockRejectedValue(new Error('forbidden'));
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to add comment: forbidden', 'error');
+        });
+    });
+
+    describe('editDescription', () => {
+        it('opens description edit modal', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Current desc' };
+
+            await editDescription('i1');
+
+            expect(mockDeps.showModal).toHaveBeenCalled();
+            expect(document.getElementById('modal-title').textContent).toBe('Edit Description');
+            const textarea = document.getElementById('edit-description');
+            expect(textarea).toBeTruthy();
+            expect(textarea.value).toBe('Current desc');
+        });
+
+        it('falls back to API when no cached issue', async () => {
+            window.currentDetailIssue = null;
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', description: 'API desc' });
+
+            await editDescription('i1');
+
+            expect(mockApi.getIssue).toHaveBeenCalledWith('i1');
+            expect(document.getElementById('edit-description').value).toBe('API desc');
+        });
+    });
+
+    describe('setDescriptionEditorMode', () => {
+        beforeEach(async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Test' };
+            await editDescription('i1');
+        });
+
+        it('switches to preview mode', () => {
+            setDescriptionEditorMode('preview');
+
+            const textarea = document.getElementById('edit-description');
+            const preview = document.getElementById('edit-description-preview');
+            expect(textarea.style.display).toBe('none');
+            expect(preview.style.display).toBe('block');
+        });
+
+        it('switches back to write mode', () => {
+            setDescriptionEditorMode('preview');
+            setDescriptionEditorMode('write');
+
+            const textarea = document.getElementById('edit-description');
+            const preview = document.getElementById('edit-description-preview');
+            expect(textarea.style.display).toBe('block');
+            expect(preview.style.display).toBe('none');
+        });
+    });
+
+    describe('handleUpdateDescription', () => {
+        it('updates description and closes modal', async () => {
+            // Set up the description edit modal
+            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+            await editDescription('i1');
+            document.getElementById('edit-description').value = 'New description';
+
+            // Mock viewIssue to prevent full render
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium', description: 'New description' });
+
+            await handleUpdateDescription({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockApi.updateIssue).toHaveBeenCalledWith('i1', { description: 'New description' });
+            expect(mockDeps.closeModal).toHaveBeenCalled();
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Description updated', 'success');
+        });
+
+        it('shows error on failure', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+            await editDescription('i1');
+            mockApi.updateIssue.mockRejectedValue(new Error('failed'));
+
+            await handleUpdateDescription({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to update description: failed', 'error');
+        });
+    });
+
+    describe('showAddRelationModal', () => {
+        it('opens relation modal with search', () => {
+            showAddRelationModal('i1');
+
+            expect(mockDeps.showModal).toHaveBeenCalled();
+            expect(document.getElementById('modal-title').textContent).toBe('Add Relation');
+            expect(document.getElementById('relation-type')).toBeTruthy();
+            expect(document.getElementById('relation-issue-search')).toBeTruthy();
+        });
+    });
+
+    describe('searchIssuesToRelate', () => {
+        it('searches and renders results', async () => {
+            mockApi.searchIssues.mockResolvedValue([
+                { id: 'i2', identifier: 'CHT-2', title: 'Other Issue' },
+            ]);
+            showAddRelationModal('i1');
+
+            await searchIssuesToRelate('other', 'i1');
+
+            const results = document.getElementById('relation-search-results');
+            expect(results.innerHTML).toContain('CHT-2');
+            expect(results.innerHTML).toContain('Other Issue');
+        });
+
+        it('filters out current issue from results', async () => {
+            mockApi.searchIssues.mockResolvedValue([
+                { id: 'i1', identifier: 'CHT-1', title: 'Self' },
+                { id: 'i2', identifier: 'CHT-2', title: 'Other' },
+            ]);
+            showAddRelationModal('i1');
+
+            await searchIssuesToRelate('test', 'i1');
+
+            const results = document.getElementById('relation-search-results');
+            expect(results.innerHTML).not.toContain('CHT-1');
+            expect(results.innerHTML).toContain('CHT-2');
+        });
+
+        it('shows empty state for short queries', async () => {
+            showAddRelationModal('i1');
+
+            await searchIssuesToRelate('a', 'i1');
+
+            const results = document.getElementById('relation-search-results');
+            expect(results.innerHTML).toContain('Enter a search term');
+        });
+    });
+
+    describe('selectIssueForRelation / clearSelectedRelation', () => {
+        beforeEach(() => {
+            showAddRelationModal('i1');
+        });
+
+        it('selects an issue and enables submit', () => {
+            selectIssueForRelation('i2', 'CHT-2', 'Selected Issue');
+
+            expect(document.getElementById('selected-related-issue-id').value).toBe('i2');
+            expect(document.getElementById('add-relation-btn').disabled).toBe(false);
+        });
+
+        it('clears selection and disables submit', () => {
+            selectIssueForRelation('i2', 'CHT-2', 'Selected Issue');
+            clearSelectedRelation();
+
+            expect(document.getElementById('selected-related-issue-id').value).toBe('');
+            expect(document.getElementById('add-relation-btn').disabled).toBe(true);
+        });
+    });
+
+    describe('handleAddRelation', () => {
+        it('creates relation and shows success', async () => {
+            showAddRelationModal('i1');
+            selectIssueForRelation('i2', 'CHT-2', 'Other');
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+
+            await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockApi.createRelation).toHaveBeenCalledWith('i1', 'i2', 'blocks');
+            expect(mockDeps.closeModal).toHaveBeenCalled();
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Relation added', 'success');
+        });
+
+        it('reverses direction for blocked_by', async () => {
+            showAddRelationModal('i1');
+            document.getElementById('relation-type').value = 'blocked_by';
+            selectIssueForRelation('i2', 'CHT-2', 'Other');
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+
+            await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockApi.createRelation).toHaveBeenCalledWith('i2', 'i1', 'blocks');
+        });
+
+        it('shows error when no issue selected', async () => {
+            showAddRelationModal('i1');
+
+            await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
+
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Please select an issue', 'error');
+        });
+    });
+
+    describe('deleteRelation', () => {
+        it('deletes relation and refreshes', async () => {
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+
+            await deleteRelation('i1', 'r1');
+
+            expect(mockApi.deleteRelation).toHaveBeenCalledWith('i1', 'r1');
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Relation removed', 'success');
+        });
+
+        it('shows error on failure', async () => {
+            mockApi.deleteRelation.mockRejectedValue(new Error('not found'));
+
+            await deleteRelation('i1', 'r1');
+
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to remove relation: not found', 'error');
         });
     });
 });
