@@ -24,7 +24,8 @@ export function closeModal() {
  * @returns {boolean}
  */
 export function isModalOpen() {
-  return !document.getElementById('modal-overlay').classList.contains('hidden');
+  const overlay = document.getElementById('modal-overlay');
+  return overlay ? !overlay.classList.contains('hidden') : false;
 }
 
 /**
