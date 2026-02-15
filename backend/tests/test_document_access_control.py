@@ -11,6 +11,7 @@ from app.models.project import Project
 from app.models.document import Document, DocumentComment
 from app.models.issue import Issue
 from app.models.issue import Label
+from app.models.user import User
 from app.utils.security import get_password_hash, create_access_token
 
 
@@ -27,7 +28,7 @@ async def other_team(db_session):
 @pytest_asyncio.fixture
 async def other_user(db_session, other_team):
     """User on other_team (not test_user's team)."""
-    user = __import__("app.models.user", fromlist=["User"]).User(
+    user = User(
         email="other@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Other User",
@@ -236,30 +237,49 @@ class TestDocumentProjectAccessControl:
         )
         assert response.status_code == 403
 
+    async def test_delete_document_unauthorized(
+        self, client, other_auth_headers, project_document
+    ):
+        """DELETE /documents/{id} denies non-team-member."""
+        response = await client.delete(
+            f"/api/documents/{project_document.id}",
+            headers=other_auth_headers,
+        )
+        # Should be 403 — non-member cannot delete
+        assert response.status_code in (403, 404)
+
+    async def test_get_document_unauthenticated(self, client, project_document):
+        """GET /documents/{id} returns 401 without auth headers."""
+        response = await client.get(
+            f"/api/documents/{project_document.id}",
+        )
+        assert response.status_code == 401
+
 
 @pytest.mark.asyncio
 class TestDocumentListAccessControl:
     """Test access control on document listing with project/sprint filters."""
 
-    async def test_list_documents_by_project_unauthorized(
+    async def test_list_documents_by_project_non_member(
         self, client, other_auth_headers, test_team, test_project
     ):
-        """GET /documents?project_id=... returns 403 when user lacks project access."""
+        """GET /documents?project_id=... returns 403 for non-team-member."""
         response = await client.get(
             f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
             headers=other_auth_headers,
         )
-        # User is not on test_team so team-level check fails first
+        # Team-level check rejects before project-level check is reached
         assert response.status_code == 403
 
-    async def test_list_documents_by_sprint_unauthorized(
+    async def test_list_documents_by_sprint_non_member(
         self, client, other_auth_headers, test_team, test_sprint
     ):
-        """GET /documents?sprint_id=... returns 403 when user lacks sprint's project access."""
+        """GET /documents?sprint_id=... returns 403 for non-team-member."""
         response = await client.get(
             f"/api/documents?team_id={test_team.id}&sprint_id={test_sprint.id}",
             headers=other_auth_headers,
         )
+        # Team-level check rejects before sprint-level check is reached
         assert response.status_code == 403
 
 

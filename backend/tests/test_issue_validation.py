@@ -193,3 +193,45 @@ class TestParentValidation:
         )
         assert response.status_code == 400
         assert "cannot be its own parent" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+class TestUpdateIssueValidation:
+    """Test validation on the update (PATCH) path."""
+
+    async def test_update_issue_with_cross_project_sprint(
+        self, client, auth_headers, test_issue, test_project, db_session, second_project
+    ):
+        """Updating issue with sprint from different project returns 400."""
+        sprint = Sprint(
+            project_id=second_project.id,
+            name="Wrong Sprint",
+        )
+        db_session.add(sprint)
+        await db_session.commit()
+        await db_session.refresh(sprint)
+
+        response = await client.patch(
+            f"/api/issues/{test_issue.id}?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"sprint_id": sprint.id},
+        )
+        assert response.status_code == 400
+        assert "Sprint does not belong to this project" in response.json()["detail"]
+
+    async def test_update_issue_with_non_member_assignee(
+        self, client, auth_headers, test_issue, test_project, non_member_user
+    ):
+        """Updating issue with assignee not on team returns 400."""
+        response = await client.patch(
+            f"/api/issues/{test_issue.id}?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"assignee_id": non_member_user.id},
+        )
+        assert response.status_code == 400
+        assert "Assignee is not a member" in response.json()["detail"]
+
+    async def test_get_issue_unauthenticated(self, client, test_issue):
+        """GET /issues/{id} returns 401 without auth headers."""
+        response = await client.get(f"/api/issues/{test_issue.id}")
+        assert response.status_code == 401

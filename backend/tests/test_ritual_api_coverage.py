@@ -79,7 +79,6 @@ class TestRitualGroupCRUD:
         data = response.json()
         assert data["name"] == "Test Group"
         assert data["selection_mode"] == "random_one"
-        return data["id"]
 
     async def test_create_ritual_group_non_admin(
         self, client, non_admin_headers, test_project
@@ -322,6 +321,34 @@ class TestRitualCRUD:
         )
         assert response.status_code == 403
 
+    async def test_update_ritual(
+        self, client, auth_headers, test_ritual
+    ):
+        """PATCH /rituals/{id} updates the ritual."""
+        response = await client.patch(
+            f"/api/rituals/{test_ritual.id}",
+            headers=auth_headers,
+            json={"prompt": "Updated prompt"},
+        )
+        assert response.status_code == 200
+        assert response.json()["prompt"] == "Updated prompt"
+
+    async def test_update_ritual_non_admin(
+        self, client, non_admin_headers, test_ritual
+    ):
+        """PATCH /rituals/{id} returns 403 for non-admin."""
+        response = await client.patch(
+            f"/api/rituals/{test_ritual.id}",
+            headers=non_admin_headers,
+            json={"prompt": "Hacked"},
+        )
+        assert response.status_code == 403
+
+    async def test_get_ritual_unauthenticated(self, client, test_ritual):
+        """GET /rituals/{id} returns 401 without auth headers."""
+        response = await client.get(f"/api/rituals/{test_ritual.id}")
+        assert response.status_code == 401
+
 
 @pytest.mark.asyncio
 class TestRitualAttestationFlow:
@@ -369,6 +396,42 @@ class TestRitualAttestationFlow:
             json={"note": "Should fail"},
         )
         assert response.status_code == 404
+
+    async def test_attest_ritual_cross_team_denied(
+        self, client, db_session, test_project, test_issue, other_team
+    ):
+        """POST /rituals/{id}/attest-issue/{id} returns 403 for non-team-member."""
+        # Create user on other_team
+        other_user = User(
+            email="attest-other@example.com",
+            hashed_password=get_password_hash("test"),
+            name="Attest Other",
+        )
+        db_session.add(other_user)
+        await db_session.flush()
+        member = TeamMember(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
+        db_session.add(member)
+        await db_session.commit()
+        token = create_access_token(data={"sub": other_user.id})
+        other_headers = {"Authorization": f"Bearer {token}"}
+
+        ticket_ritual = Ritual(
+            project_id=test_project.id,
+            name="cross-team-ritual",
+            prompt="Cross team test",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ticket_ritual)
+        await db_session.commit()
+        await db_session.refresh(ticket_ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ticket_ritual.id}/attest-issue/{test_issue.id}",
+            headers=other_headers,
+            json={"note": "Should be denied"},
+        )
+        assert response.status_code == 403
 
 
 @pytest.mark.asyncio
