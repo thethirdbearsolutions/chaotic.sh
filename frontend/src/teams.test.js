@@ -140,6 +140,19 @@ describe('selectTeam', () => {
     expect(document.getElementById('team-description-text').textContent).toBe('Test desc');
   });
 
+  it('updates mobile team name when element exists (CHT-869)', async () => {
+    document.body.innerHTML += '<span id="mobile-team-name">Chaotic</span>';
+    const team = { id: 'team-1', name: 'My Team', description: '' };
+    await selectTeam(team);
+    expect(document.getElementById('mobile-team-name').textContent).toBe('My Team');
+  });
+
+  it('does not error when mobile-team-name element is missing', async () => {
+    const team = { id: 'team-1', name: 'My Team', description: '' };
+    await selectTeam(team);
+    expect(document.getElementById('mobile-team-name')).toBeNull();
+  });
+
   it('closes the dropdown', async () => {
     const dropdown = document.getElementById('team-dropdown');
     dropdown.classList.remove('hidden');

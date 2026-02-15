@@ -221,6 +221,15 @@ let assignees = [];
 let labels = [];
 let createIssueLabelIds = [];
 
+// Mobile sidebar toggle (CHT-869)
+function toggleSidebar() {
+    document.body.classList.toggle('sidebar-open');
+}
+
+function closeSidebar() {
+    document.body.classList.remove('sidebar-open');
+}
+
 // Markdown rendering helper with XSS protection
 function renderMarkdown(content) {
     if (!content) return '';
@@ -313,6 +322,7 @@ configureRouter({
         window._onRitualsChanged = null;
         window.currentDetailIssue = null;
         window.currentDetailSprints = null;
+        closeSidebar();
     },
     detailRoute: (parts) => {
         if (parts[0] === 'issue' && parts[1]) {
@@ -2008,6 +2018,8 @@ Object.assign(window, {
     navigateTo,
     handleRoute,
     closeModal,
+    toggleSidebar,
+    closeSidebar,
 
     // URL helpers (for testing)
     getProjectFromUrl,
