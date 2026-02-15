@@ -3855,7 +3855,7 @@ input[type="checkbox"] {
         width: 100%;
     }
 
-    /* Filter dropdown: full-width on mobile */
+    /* Filter dropdown: bottom-sheet on mobile */
     .filter-menu-dropdown {
         position: fixed;
         top: auto;
@@ -3867,6 +3867,14 @@ input[type="checkbox"] {
         border-radius: 12px 12px 0 0;
         flex-direction: column;
         z-index: 300;
+    }
+
+    .filter-menu-dropdown::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: -1;
     }
 
     .filter-menu-categories {
