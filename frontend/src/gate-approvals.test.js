@@ -21,6 +21,19 @@ vi.mock('./utils.js', () => ({
     escapeJsString: vi.fn(s => s || ''),
 }));
 
+vi.mock('marked', () => ({
+    marked: {
+        setOptions: vi.fn(),
+        parse: vi.fn(s => `<p>${s}</p>`),
+    },
+}));
+
+vi.mock('dompurify', () => ({
+    default: {
+        sanitize: vi.fn(s => s),
+    },
+}));
+
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import {
@@ -117,6 +130,21 @@ describe('showReviewApprovalModal', () => {
         expect(document.getElementById('modal-content').innerHTML).toContain('Alice');
         expect(document.getElementById('review-approval-form')).toBeTruthy();
         expect(showModal).toHaveBeenCalled();
+    });
+});
+
+describe('showReviewApprovalModal - markdown rendering', () => {
+    it('renders attestation note as markdown, not escaped HTML', () => {
+        showReviewApprovalModal('r1', 'i1', 'Code Review', 'Review', 'CHT-2', 'Feature', 'Alice', '2026-01-01', '**bold** note');
+        const content = document.getElementById('modal-content').innerHTML;
+        // renderMarkdown wraps in <p> tags via mocked marked.parse
+        expect(content).toContain('<p>**bold** note</p>');
+    });
+
+    it('handles null attestation note gracefully', () => {
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-2', 'Feature', 'Alice', '2026-01-01', null);
+        const content = document.getElementById('modal-content').innerHTML;
+        expect(content).not.toContain('Attestation note');
     });
 });
 

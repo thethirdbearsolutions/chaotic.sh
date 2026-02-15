@@ -2,9 +2,26 @@
  * Gate Approvals module - modal for approving GATE rituals
  */
 
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { escapeHtml, escapeJsString } from './utils.js';
+
+
+/**
+ * Render markdown content safely using marked + DOMPurify.
+ */
+function renderMarkdown(content) {
+    if (!content) return '';
+    try {
+        marked.setOptions({ breaks: true, gfm: true });
+        const rawHtml = marked.parse(content);
+        return DOMPurify.sanitize(rawHtml, { FORCE_BODY: true });
+    } catch {
+        return escapeHtml(content);
+    }
+}
 
 
 /**
@@ -104,7 +121,7 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
             <div class="gate-approval-ritual">
                 <div class="gate-approval-prompt">${escapeHtml(ritualPrompt)}</div>
                 ${attestedBy ? `<div class="gate-approval-requested">Attested by <strong>${escapeHtml(attestedBy)}</strong>${attestedAt ? ` ${formatRelativeTime(attestedAt)}` : ''}</div>` : ''}
-                ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${escapeHtml(attestationNote)}</div>` : ''}
+                ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${renderMarkdown(attestationNote)}</div>` : ''}
             </div>
             <form id="review-approval-form">
                 <button type="submit" class="btn btn-primary">Approve Attestation</button>
