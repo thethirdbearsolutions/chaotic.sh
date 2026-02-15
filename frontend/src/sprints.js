@@ -846,6 +846,9 @@ export async function ensureSprintCacheForIssues(projectIds) {
 export function invalidateSprintCache() {
     sprintCache = {};
     sprintCacheLoadedProjects = new Set();
+    currentSprintIssues = [];
+    currentSprintTransactions = [];
+    currentSprintDocuments = [];
 }
 
 export function updateSprintCacheForProject(projectId, sprintList) {
