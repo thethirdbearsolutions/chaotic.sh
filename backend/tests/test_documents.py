@@ -932,12 +932,14 @@ class TestProjectDocumentAccessControl:
     async def test_delete_project_document_cross_team_denied(
         self, client, cross_team_headers, project_document
     ):
-        """DELETE /documents/{id} returns 403 for cross-team user on project doc."""
+        """DELETE /documents/{id} returns 403 for cross-team user (author/admin check)."""
         response = await client.delete(
             f"/api/documents/{project_document.id}",
             headers=cross_team_headers,
         )
+        # Note: delete_document uses author/admin check, not project-access check
         assert response.status_code == 403
+        assert "author or admin" in response.json()["detail"].lower()
 
     async def test_get_project_document_issues_cross_team_denied(
         self, client, cross_team_headers, project_document
