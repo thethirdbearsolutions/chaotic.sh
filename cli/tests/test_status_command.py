@@ -3,6 +3,7 @@
 Tests cover: status with/without auth, team, project, agent user,
 custom profile, local config, pending gates, JSON output.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -171,7 +172,7 @@ class TestStatus:
         assert 'design-review' in result.output
 
     def test_status_json(self, cli_runner):
-        """status --json outputs structured JSON."""
+        """status --json outputs valid structured JSON."""
         from cli.main import cli, client
 
         client.get_me = MagicMock(return_value={
@@ -187,8 +188,10 @@ class TestStatus:
             result = cli_runner.invoke(cli, ['status', '--json'])
 
         assert result.exit_code == 0
-        assert 'authenticated' in result.output
-        assert 'profile' in result.output
+        data = json.loads(result.output)
+        assert data['authenticated'] is True
+        assert data['profile'] == 'default'
+        assert data['user']['name'] == 'Alice'
 
     def test_status_json_with_team_error(self, cli_runner):
         """status --json includes team_error on failure."""

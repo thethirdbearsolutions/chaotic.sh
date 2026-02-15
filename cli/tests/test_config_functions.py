@@ -11,7 +11,12 @@ from unittest.mock import patch, MagicMock
 
 
 class TestProfileManagement:
-    """Tests for profile get/set functions."""
+    """Tests for profile get/set functions.
+
+    Note: These tests call real config functions (not mocked) and use try/finally
+    to restore state. They interact with the real module-level profile variable.
+    The CHAOTIC_PROFILE env var is handled by patching os.environ where needed.
+    """
 
     def test_set_and_get_profile(self):
         """set_profile/get_profile round-trips."""
@@ -354,11 +359,12 @@ class TestListProfiles:
     """Tests for list_profiles function."""
 
     def test_lists_json_files(self, tmp_path):
-        """list_profiles finds all .json files in config dir."""
+        """list_profiles finds profile .json files, excluding server.json (non-profile config)."""
         from cli.config import list_profiles
         (tmp_path / "claude.json").write_text("{}")
         (tmp_path / "codex.json").write_text("{}")
-        (tmp_path / "server.json").write_text("{}")  # Should be excluded
+        # server.json is excluded because list_profiles filters out known non-profile config files
+        (tmp_path / "server.json").write_text("{}")
 
         with patch("cli.config.get_chaotic_home", return_value=tmp_path):
             profiles = list_profiles()

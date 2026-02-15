@@ -2,6 +2,7 @@
 
 Tests cover: team list, create, use, show, members, invite, accept-invite.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -62,7 +63,7 @@ class TestTeamList:
         assert '✓' in result.output
 
     def test_team_list_json(self, cli_runner, mock_team):
-        """team list --json outputs JSON."""
+        """team list --json outputs valid JSON."""
         from cli.main import cli, client
 
         client.get_teams = MagicMock(return_value=[mock_team])
@@ -70,7 +71,9 @@ class TestTeamList:
         result = cli_runner.invoke(cli, ['team', 'list', '--json'])
 
         assert result.exit_code == 0
-        assert 'Chaotic Team' in result.output
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data[0]['name'] == 'Chaotic Team'
 
 
 class TestTeamCreate:

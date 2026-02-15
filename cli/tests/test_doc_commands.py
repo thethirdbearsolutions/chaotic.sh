@@ -2,6 +2,7 @@
 
 Tests cover: doc list, create, show, comment, update, delete, link, unlink, open.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -62,7 +63,9 @@ class TestDocList:
         result = cli_runner.invoke(cli, ['doc', 'list', '--json'])
 
         assert result.exit_code == 0
-        assert 'Sprint Report' in result.output
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data[0]['title'] == 'Sprint Report'
 
     def test_doc_list_search(self, cli_runner):
         """doc list --search passes search to API."""
@@ -75,7 +78,7 @@ class TestDocList:
         assert result.exit_code == 0
         client.get_documents.assert_called_once()
         call_kwargs = client.get_documents.call_args
-        assert call_kwargs[1].get('search') == 'report' or 'report' in str(call_kwargs)
+        assert call_kwargs[1].get('search') == 'report'
 
     def test_doc_list_all_flag(self, cli_runner):
         """doc list --all shows all docs not just current project."""
@@ -88,7 +91,8 @@ class TestDocList:
         assert result.exit_code == 0
         # With --all, project_id should be None
         call_args = client.get_documents.call_args
-        assert call_args[1].get('project_id') is None or call_args[0][1] is None
+        # With --all, project_id kwarg should be None
+        assert call_args[1].get('project_id') is None
 
 
 class TestDocCreate:
