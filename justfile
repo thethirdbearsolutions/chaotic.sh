@@ -35,9 +35,23 @@ test-backend:
 # Run backend tests (alias)
 test: test-backend
 
+# Run all test suites with coverage
+cov-all: cov-backend cov-frontend cov-cli
+
 # Run backend tests with coverage
-test-cov:
-    cd backend && uv run pytest --cov=app --cov-report=html
+cov-backend:
+    cd backend && uv run pytest --cov=app --cov-report=term-missing
+
+# Run frontend tests with coverage
+cov-frontend:
+    cd frontend && npm run test:coverage
+
+# Run CLI tests with coverage
+cov-cli:
+    cd cli && uv run pytest --cov=cli --cov-report=term-missing
+
+# Run backend tests with coverage (alias)
+test-cov: cov-backend
 
 # Install/reinstall CLI globally (editable)
 install-cli:
