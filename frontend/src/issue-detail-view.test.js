@@ -164,6 +164,61 @@ describe('issue-detail-view', () => {
             const activity = { activity_type: 'updated', field_name: 'title' };
             expect(formatActivityText(activity)).toContain('Updated title');
         });
+
+        it('escapes sprint_name in moved_to_sprint (XSS)', () => {
+            const xss = '<img src=x onerror=alert(1)>';
+            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;img&gt;' : (text || ''));
+            const activity = { activity_type: 'moved_to_sprint', sprint_name: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;img&gt;');
+            expect(result).not.toContain(xss);
+        });
+
+        it('escapes sprint_name in removed_from_sprint (XSS)', () => {
+            const xss = '<script>alert(1)</script>';
+            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
+            const activity = { activity_type: 'removed_from_sprint', sprint_name: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;script&gt;');
+            expect(result).not.toContain(xss);
+        });
+
+        it('escapes field_name in ritual_attested (XSS)', () => {
+            const xss = '<img src=x onerror=alert(1)>';
+            mockDeps.escapeHtml.mockImplementation((text) => {
+                if (text === xss) return '&lt;img&gt;';
+                return text || '';
+            });
+            const activity = { activity_type: 'ritual_attested', field_name: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;img&gt;');
+            expect(result).not.toContain(xss);
+        });
+
+        it('escapes unknown field_name in updated activity (XSS)', () => {
+            const xss = '<script>evil()</script>';
+            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
+            const activity = { activity_type: 'updated', field_name: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;script&gt;');
+            expect(result).not.toContain(xss);
+        });
+
+        it('does not escape known field_name in updated activity', () => {
+            const activity = { activity_type: 'updated', field_name: 'status' };
+            const result = formatActivityText(activity);
+            expect(result).toBe('Updated status');
+            // escapeHtml should not have been called with 'status' since it's in fieldLabels
+        });
+
+        it('escapes unknown field_name in default/unknown activity type (XSS)', () => {
+            const xss = '"><script>alert(1)</script>';
+            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&quot;&gt;&lt;script&gt;' : (text || ''));
+            const activity = { activity_type: 'some_future_type', field_name: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&quot;&gt;&lt;script&gt;');
+            expect(result).not.toContain(xss);
+        });
     });
 
     describe('renderCommentContent', () => {

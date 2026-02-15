@@ -158,12 +158,12 @@ export function formatActivityText(activity) {
             return `Removed assignee`;
         case 'moved_to_sprint':
             if (activity.sprint_name) {
-                return `Moved to sprint <strong>${activity.sprint_name}</strong>`;
+                return `Moved to sprint <strong>${deps.escapeHtml(activity.sprint_name)}</strong>`;
             }
             return `Moved to sprint`;
         case 'removed_from_sprint':
             if (activity.sprint_name) {
-                return `Removed from sprint <strong>${activity.sprint_name}</strong>`;
+                return `Removed from sprint <strong>${deps.escapeHtml(activity.sprint_name)}</strong>`;
             }
             return `Removed from sprint`;
         // Document activities (CHT-639)
@@ -177,7 +177,7 @@ export function formatActivityText(activity) {
             return 'Commented on document';
         // Ritual activities (CHT-673)
         case 'ritual_attested': {
-            const ritualName = activity.field_name || 'ritual';
+            const ritualName = deps.escapeHtml(activity.field_name || 'ritual');
             const notePreview = activity.new_value
                 ? deps.escapeHtml(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
                 : '';
@@ -188,14 +188,14 @@ export function formatActivityText(activity) {
         case 'updated':
             // Generic update - show field if available
             if (activity.field_name) {
-                const field = fieldLabels[activity.field_name] || activity.field_name;
+                const field = fieldLabels[activity.field_name] || deps.escapeHtml(activity.field_name);
                 return `Updated ${field}`;
             }
             return 'Updated issue';
         default:
             // Fallback for unknown activity types
             if (activity.field_name) {
-                const field = fieldLabels[activity.field_name] || activity.field_name;
+                const field = fieldLabels[activity.field_name] || deps.escapeHtml(activity.field_name);
                 return `Updated ${field}`;
             }
             return 'Updated issue';
