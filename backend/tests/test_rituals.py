@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
 from app.models.sprint import Sprint, SprintStatus
 from app.models.issue import Issue
+from app.models.project import Project
+from app.models.ticket_limbo import TicketLimbo, LimboType
 from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.schemas.ritual import RitualCreate, RitualUpdate
@@ -5869,3 +5871,598 @@ class TestOrphanedLimboCleanup:
         # The issue should still appear in pending gates despite cleanup failure
         issue_ids = [i["issue_id"] for i in data]
         assert issue.id in issue_ids
+
+
+@pytest.mark.asyncio
+class TestGetIssuesWithPendingApprovals:
+    """Tests for get_issues_with_pending_approvals (CHT-885)."""
+
+    async def test_empty_when_no_pending(self, db_session, test_project):
+        """Returns empty list when no pending approvals exist."""
+        service = RitualService(db_session)
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert result == []
+
+    async def test_empty_for_nonexistent_project(self, db_session):
+        """Returns empty list for nonexistent project ID."""
+        service = RitualService(db_session)
+        result = await service.get_issues_with_pending_approvals("nonexistent-id")
+        assert result == []
+
+    async def test_returns_gate_ritual_from_limbo(self, db_session, test_project, test_issue, test_user):
+        """Returns issues with pending GATE ritual limbo records."""
+        service = RitualService(db_session)
+
+        # Create a GATE ritual
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-test",
+            prompt="Approve this gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create a limbo record
+        limbo = TicketLimbo(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE,
+            requested_by_id=test_user.id,
+        )
+        db_session.add(limbo)
+        await db_session.commit()
+
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert len(result) == 1
+        assert result[0]["issue_id"] == test_issue.id
+        assert result[0]["identifier"] == test_issue.identifier
+        assert result[0]["project_name"] == test_project.name
+        assert len(result[0]["pending_approvals"]) == 1
+        approval = result[0]["pending_approvals"][0]
+        assert approval["ritual_name"] == "gate-test"
+        assert approval["approval_mode"] == "gate"
+        assert approval["limbo_type"] == "close"
+        assert approval["requested_by_name"] == test_user.name
+
+    async def test_returns_review_ritual_pending_approval(self, db_session, test_project, test_issue, test_user):
+        """Returns issues with pending REVIEW attestations (unapproved)."""
+        service = RitualService(db_session)
+
+        # Create a REVIEW ritual
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="review-test",
+            prompt="Review this",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create an unapproved attestation
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            note="Needs review",
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert len(result) == 1
+        assert result[0]["issue_id"] == test_issue.id
+        assert len(result[0]["pending_approvals"]) == 1
+        approval = result[0]["pending_approvals"][0]
+        assert approval["ritual_name"] == "review-test"
+        assert approval["approval_mode"] == "review"
+        assert approval["requested_by_name"] == test_user.name
+        assert approval["attestation_note"] == "Needs review"
+
+    async def test_excludes_approved_review_attestations(self, db_session, test_project, test_issue, test_user):
+        """Already-approved REVIEW attestations should not appear."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="review-approved",
+            prompt="Already approved",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create an APPROVED attestation
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            approved_by=test_user.id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert result == []
+
+    async def test_combines_gate_and_review_for_same_issue(self, db_session, test_project, test_issue, test_user):
+        """An issue can have both GATE and REVIEW pending approvals."""
+        service = RitualService(db_session)
+
+        # GATE ritual
+        gate_ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-combo",
+            prompt="Gate it",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(gate_ritual)
+        await db_session.flush()
+
+        limbo = TicketLimbo(
+            ritual_id=gate_ritual.id,
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE,
+            requested_by_id=test_user.id,
+        )
+        db_session.add(limbo)
+
+        # REVIEW ritual
+        review_ritual = Ritual(
+            project_id=test_project.id,
+            name="review-combo",
+            prompt="Review it",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(review_ritual)
+        await db_session.flush()
+
+        attestation = RitualAttestation(
+            ritual_id=review_ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert len(result) == 1
+        assert len(result[0]["pending_approvals"]) == 2
+
+        modes = {a["approval_mode"] for a in result[0]["pending_approvals"]}
+        assert modes == {"gate", "review"}
+
+    async def test_excludes_done_issues(self, db_session, test_project, test_user):
+        """Pending approvals for DONE issues should not appear."""
+        from app.models.issue import IssueStatus
+        service = RitualService(db_session)
+
+        # Create a done issue
+        test_project.issue_count += 1
+        done_issue = Issue(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{test_project.issue_count}",
+            number=test_project.issue_count,
+            title="Done Issue",
+            status=IssueStatus.DONE,
+            creator_id=test_user.id,
+        )
+        db_session.add(done_issue)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="review-done",
+            prompt="Review it",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=done_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        result = await service.get_issues_with_pending_approvals(test_project.id)
+        assert result == []
+
+
+@pytest.mark.asyncio
+class TestGateCompletionEdgeCases:
+    """Tests for complete_gate_ritual_for_issue edge cases (CHT-885)."""
+
+    async def test_rejects_done_issue_for_ticket_close(self, db_session, test_project, test_user):
+        """TICKET_CLOSE rituals cannot be completed for already-done issues."""
+        from app.models.issue import IssueStatus
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-close",
+            prompt="Gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+
+        test_project.issue_count += 1
+        done_issue = Issue(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{test_project.issue_count}",
+            number=test_project.issue_count,
+            title="Already Done",
+            status=IssueStatus.DONE,
+            creator_id=test_user.id,
+        )
+        db_session.add(done_issue)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        with pytest.raises(ValueError, match="already done"):
+            await service.complete_gate_ritual_for_issue(
+                ritual=ritual,
+                issue_id=done_issue.id,
+                user_id=test_user.id,
+            )
+
+    async def test_rejects_in_progress_issue_for_ticket_claim(self, db_session, test_project, test_user):
+        """TICKET_CLAIM rituals cannot be completed for in-progress issues."""
+        from app.models.issue import IssueStatus
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-claim",
+            prompt="Gate",
+            trigger=RitualTrigger.TICKET_CLAIM,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+
+        test_project.issue_count += 1
+        in_progress_issue = Issue(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{test_project.issue_count}",
+            number=test_project.issue_count,
+            title="In Progress",
+            status=IssueStatus.IN_PROGRESS,
+            creator_id=test_user.id,
+        )
+        db_session.add(in_progress_issue)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        with pytest.raises(ValueError, match="TICKET_CLAIM"):
+            await service.complete_gate_ritual_for_issue(
+                ritual=ritual,
+                issue_id=in_progress_issue.id,
+                user_id=test_user.id,
+            )
+
+    async def test_rejects_wrong_trigger_type(self, db_session, test_project, test_issue, test_user):
+        """EVERY_SPRINT trigger rituals cannot use complete_gate_ritual_for_issue."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="sprint-ritual",
+            prompt="Sprint",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        with pytest.raises(ValueError, match="not a ticket-level ritual"):
+            await service.complete_gate_ritual_for_issue(
+                ritual=ritual,
+                issue_id=test_issue.id,
+                user_id=test_user.id,
+            )
+
+    async def test_rejects_wrong_project(self, db_session, test_project, test_team, test_issue, test_user):
+        """Ritual must belong to the same project as the issue."""
+        service = RitualService(db_session)
+
+        # Create a second project
+        other_project = Project(
+            team_id=test_team.id,
+            name="Other Project",
+            key="OTHER",
+            color="#000000",
+        )
+        db_session.add(other_project)
+        await db_session.flush()
+
+        ritual = Ritual(
+            project_id=other_project.id,
+            name="wrong-project-gate",
+            prompt="Gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        with pytest.raises(ValueError, match="does not belong to the same project"):
+            await service.complete_gate_ritual_for_issue(
+                ritual=ritual,
+                issue_id=test_issue.id,
+                user_id=test_user.id,
+            )
+
+    async def test_returns_existing_if_already_completed(self, db_session, test_project, test_issue, test_user):
+        """If attestation already exists, return it instead of creating duplicate."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-idempotent",
+            prompt="Gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create an existing attestation
+        existing = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            approved_by=test_user.id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        result = await service.complete_gate_ritual_for_issue(
+            ritual=ritual,
+            issue_id=test_issue.id,
+            user_id=test_user.id,
+        )
+        assert result.id == existing.id
+
+
+@pytest.mark.asyncio
+class TestCleanupOrphanedTicketLimbo:
+    """Tests for _cleanup_orphaned_ticket_limbo (CHT-885)."""
+
+    async def test_clears_orphaned_limbo_with_approved_attestation(self, db_session, test_project, test_issue, test_user):
+        """Limbo records where attestation already approved should be cleared."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="orphan-test",
+            prompt="Test",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create limbo record (simulating failed clear)
+        limbo = TicketLimbo(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE,
+            requested_by_id=test_user.id,
+        )
+        db_session.add(limbo)
+
+        # Create approved attestation
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            approved_by=test_user.id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
+        assert cleared == 1
+
+        # Verify limbo is now cleared
+        await db_session.refresh(limbo)
+        assert limbo.cleared_at is not None
+
+    async def test_does_not_clear_limbo_without_attestation(self, db_session, test_project, test_issue, test_user):
+        """Limbo records without an approved attestation should NOT be cleared."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="no-orphan",
+            prompt="Test",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        limbo = TicketLimbo(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE,
+            requested_by_id=test_user.id,
+        )
+        db_session.add(limbo)
+        await db_session.commit()
+
+        cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
+        assert cleared == 0
+
+    async def test_returns_zero_with_no_limbo(self, db_session, test_project):
+        """Returns 0 when there are no limbo records."""
+        service = RitualService(db_session)
+        cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
+        assert cleared == 0
+
+    async def test_clears_multiple_orphaned_records(self, db_session, test_project, test_user):
+        """Multiple orphaned limbo records are all cleared in one pass."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="multi-orphan",
+            prompt="Test",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        limbos = []
+        for i in range(3):
+            test_project.issue_count += 1
+            issue = Issue(
+                project_id=test_project.id,
+                identifier=f"{test_project.key}-{test_project.issue_count}",
+                number=test_project.issue_count,
+                title=f"Multi Orphan {i}",
+                creator_id=test_user.id,
+            )
+            db_session.add(issue)
+            await db_session.flush()
+
+            limbo = TicketLimbo(
+                ritual_id=ritual.id,
+                issue_id=issue.id,
+                limbo_type=LimboType.CLOSE,
+                requested_by_id=test_user.id,
+            )
+            db_session.add(limbo)
+            limbos.append(limbo)
+
+            attestation = RitualAttestation(
+                ritual_id=ritual.id,
+                issue_id=issue.id,
+                attested_by=test_user.id,
+                attested_at=datetime.now(timezone.utc),
+                approved_by=test_user.id,
+                approved_at=datetime.now(timezone.utc),
+            )
+            db_session.add(attestation)
+
+        await db_session.commit()
+
+        cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
+        assert cleared == 3
+
+        for limbo in limbos:
+            await db_session.refresh(limbo)
+            assert limbo.cleared_at is not None
+
+    async def test_skips_already_cleared_limbo(self, db_session, test_project, test_issue, test_user):
+        """Already-cleared limbo records should not be re-processed."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="cleared-limbo",
+            prompt="Test",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        limbo = TicketLimbo(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE,
+            requested_by_id=test_user.id,
+            cleared_at=datetime.now(timezone.utc),
+            cleared_by_id=test_user.id,
+        )
+        db_session.add(limbo)
+        await db_session.commit()
+
+        cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
+        assert cleared == 0
+
+
+@pytest.mark.asyncio
+class TestDefensiveLimboHandling:
+    """Tests for defensive error handling in gate/review completion (CHT-885)."""
+
+    async def test_gate_completion_succeeds_even_if_limbo_clear_fails(self, db_session, test_project, test_issue, test_user):
+        """complete_gate_ritual_for_issue should still return attestation if _clear_ticket_limbo fails."""
+        from unittest.mock import AsyncMock, patch
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-limbo-fail",
+            prompt="Gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        with patch.object(service, '_clear_ticket_limbo', new_callable=AsyncMock, side_effect=Exception("DB error")):
+            result = await service.complete_gate_ritual_for_issue(
+                ritual=ritual,
+                issue_id=test_issue.id,
+                user_id=test_user.id,
+            )
+
+        assert result is not None
+        assert result.ritual_id == ritual.id
+        assert result.approved_at is not None
+
+    async def test_approve_for_issue_succeeds_even_if_limbo_clear_fails(self, db_session, test_project, test_issue, test_user):
+        """approve_for_issue should still return attestation if _clear_ticket_limbo fails."""
+        from unittest.mock import AsyncMock, patch
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="review-limbo-fail",
+            prompt="Review",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            issue_id=test_issue.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+        await db_session.refresh(attestation)
+
+        with patch.object(service, '_clear_ticket_limbo', new_callable=AsyncMock, side_effect=Exception("DB error")):
+            result = await service.approve_for_issue(attestation, test_user.id)
+
+        assert result is not None
+        assert result.approved_at is not None
+        assert result.approved_by == test_user.id
