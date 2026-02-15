@@ -468,12 +468,21 @@ async def attest_ritual_for_issue(
             user_id=current_user.id,
             note=attestation_in.note,
         )
-        return attestation
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+    try:
+        await broadcast_attestation_event(
+            project.team_id, "attested",
+            {"ritual_id": ritual_id, "issue_id": issue_id},
+        )
+    except Exception:
+        pass  # Don't break API response if broadcast fails
+
+    return attestation
 
 
 @router.post("/{ritual_id}/complete-issue/{issue_id}", response_model=RitualAttestationResponse)
@@ -561,10 +570,13 @@ async def complete_gate_ritual_for_issue(
         note=attestation_in.note,
     )
 
-    await broadcast_attestation_event(
-        project.team_id, "completed",
-        {"ritual_id": ritual_id, "issue_id": issue_id},
-    )
+    try:
+        await broadcast_attestation_event(
+            project.team_id, "completed",
+            {"ritual_id": ritual_id, "issue_id": issue_id},
+        )
+    except Exception:
+        pass  # Don't break API response if broadcast fails
 
     return attestation
 
@@ -658,10 +670,13 @@ async def approve_issue_attestation(
 
     attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
 
-    await broadcast_attestation_event(
-        project.team_id, "approved",
-        {"ritual_id": ritual_id, "issue_id": issue_id},
-    )
+    try:
+        await broadcast_attestation_event(
+            project.team_id, "approved",
+            {"ritual_id": ritual_id, "issue_id": issue_id},
+        )
+    except Exception:
+        pass  # Don't break API response if broadcast fails
 
     return attestation
 
