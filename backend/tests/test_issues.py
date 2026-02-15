@@ -3273,7 +3273,7 @@ async def test_batch_update_missing_issues(
         "/api/issues/batch-update",
         headers=auth_headers,
         json={
-            "issue_ids": ["nonexistent-id"],
+            "issue_ids": ["00000000-0000-0000-0000-000000000000"],
             "updates": {"priority": "high"},
         },
     )
@@ -3286,11 +3286,10 @@ async def test_remove_label_cross_team(
     client, auth_headers, test_issue, test_label, db_session, test_project
 ):
     """DELETE /issues/{id}/labels/{id} with cross-team label returns 400."""
-    from app.models.team import Team as TeamModel
     from app.models import Label
 
     # Create a label on a different team
-    other_team = TeamModel(name="Label Other Team", key="LOT", description="Other")
+    other_team = Team(name="Label Other Team", key="LOT", description="Other")
     db_session.add(other_team)
     await db_session.flush()
     other_label = Label(
@@ -3312,7 +3311,7 @@ async def test_remove_label_cross_team(
 
 @pytest.mark.asyncio
 async def test_create_relation_cross_team_denied(
-    client, auth_headers, cross_team_headers_issues, test_issue, test_project, db_session, test_user
+    client, cross_team_headers_issues, test_issue, test_project, db_session, test_user
 ):
     """POST /issues/{id}/relations returns 403 for cross-team user."""
     from app.models import Issue
