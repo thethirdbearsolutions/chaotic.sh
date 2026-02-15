@@ -3734,6 +3734,40 @@ input[type="checkbox"] {
     margin-top: 4px;
 }
 
+/* Tablet adjustments */
+@media (max-width: 1024px) {
+    :root {
+        --sidebar-width: 200px;
+    }
+
+    .main-content {
+        padding: 1rem;
+    }
+
+    .kanban-column {
+        flex: 0 0 240px;
+    }
+
+    .settings-content {
+        max-width: 100%;
+        padding: 16px;
+    }
+
+    .view-header {
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+
+    .view-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .epic-table th,
+    .epic-table td {
+        padding: 8px 10px;
+    }
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     .issue-detail-layout {
@@ -3750,9 +3784,10 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 768px) {
-    /* Hide labels and date on narrow screens */
+    /* Hide less critical columns on narrow screens */
     .issue-labels,
-    .issue-date {
+    .issue-date,
+    .epic-estimate {
         display: none;
     }
 
@@ -3905,6 +3940,156 @@ input[type="checkbox"] {
     .filter-menu-options {
         min-height: 0;
         max-height: 50vh;
+    }
+}
+
+/* Phone-specific refinements */
+@media (max-width: 640px) {
+    .main-content {
+        padding: 0.5rem;
+        padding-top: 0;
+    }
+
+    .view-header h2 {
+        font-size: 1.125rem;
+    }
+
+    /* Full-screen modals on phone */
+    .modal {
+        max-width: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+        margin: 0;
+    }
+
+    .modal-overlay {
+        align-items: stretch;
+    }
+
+    .modal-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .modal-body {
+        padding: 1rem;
+    }
+
+    /* Onboarding */
+    .onboarding-container {
+        padding: 24px 20px;
+        border-radius: 8px;
+    }
+
+    .onboarding-overlay {
+        padding: 12px;
+    }
+
+    .onboarding-step h2 {
+        font-size: 18px;
+    }
+
+    /* Touch targets: 44px minimum (WCAG 2.5.8) */
+    .hamburger-btn {
+        width: 44px;
+        height: 44px;
+    }
+
+    .btn {
+        min-height: 44px;
+        padding: 0.625rem 1rem;
+    }
+
+    .btn-small {
+        min-height: 36px;
+        padding: 0.375rem 0.625rem;
+        font-size: 0.8125rem;
+    }
+
+    .nav-item {
+        min-height: 44px;
+    }
+
+    .filter-menu-category {
+        min-height: 44px;
+        padding: 10px 12px;
+    }
+
+    /* Inputs: font-size 16px prevents iOS Safari zoom on focus */
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    input[type="url"],
+    input[type="search"],
+    textarea,
+    select {
+        padding: 0.875rem;
+        font-size: 1rem;
+    }
+
+    /* Kanban: narrower columns for phone landscape */
+    .kanban-column {
+        flex: 0 0 220px;
+    }
+
+    .kanban-card {
+        padding: 10px;
+    }
+
+    .kanban-column-header {
+        padding: 10px 12px;
+    }
+
+    /* Issue rows */
+    .issue-row {
+        padding: 0 12px;
+    }
+
+    /* Create issue modal */
+    .create-issue-body {
+        padding: 16px;
+    }
+
+    .create-issue-title-input {
+        font-size: 18px;
+    }
+
+    .create-issue-header {
+        padding: 12px 16px;
+    }
+
+    /* Search box */
+    .search-box {
+        min-width: 0;
+    }
+
+    /* Sprint badge */
+    .sprint-badge {
+        font-size: 12px;
+        padding: 3px 8px;
+    }
+
+    /* Settings */
+    .settings-content {
+        padding: 12px;
+    }
+
+    .settings-tab {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+
+    /* Prevent overflow on very narrow screens */
+    .view-actions {
+        gap: 0.25rem;
+    }
+
+    .filter-bar-primary {
+        gap: 4px;
+    }
+
+    .issue-row-right {
+        gap: 2px;
     }
 }
 
