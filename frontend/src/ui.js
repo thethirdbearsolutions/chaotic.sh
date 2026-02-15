@@ -16,6 +16,7 @@ export function showModal() {
  * Hide the modal overlay
  */
 export function closeModal() {
+  closeAllDropdowns();
   document.getElementById('modal-overlay').classList.add('hidden');
 }
 
@@ -97,14 +98,15 @@ export function registerDropdownClickOutside(dropdown, options = {}) {
       return;
     }
     closeAllDropdowns();
-    document.removeEventListener('click', handler);
+    document.removeEventListener('click', handler, true);
   };
 
-  // Use setTimeout to avoid the current click event triggering the handler
-  setTimeout(() => document.addEventListener('click', handler), 0);
+  // Use capture phase so clicks inside modals (which stopPropagation on bubble)
+  // are still detected. Use setTimeout to avoid the current click triggering it.
+  setTimeout(() => document.addEventListener('click', handler, true), 0);
 
   // Return cleanup function
-  return () => document.removeEventListener('click', handler);
+  return () => document.removeEventListener('click', handler, true);
 }
 
 // Attach to window for backward compatibility with HTML handlers
