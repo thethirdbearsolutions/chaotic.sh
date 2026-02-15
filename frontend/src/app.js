@@ -224,14 +224,61 @@ function updateSidebarAria() {
 }
 
 function toggleSidebar() {
+    const wasOpen = document.body.classList.contains('sidebar-open');
     document.body.classList.toggle('sidebar-open');
     updateSidebarAria();
+    if (wasOpen) {
+        // Closing: return focus to hamburger button
+        const btn = document.getElementById('hamburger-btn');
+        if (btn) btn.focus();
+    } else {
+        // Opening: focus first focusable element in sidebar
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            const firstFocusable = sidebar.querySelector('a, button, [tabindex]:not([tabindex="-1"])');
+            if (firstFocusable) firstFocusable.focus();
+        }
+    }
 }
 
 function closeSidebar() {
+    const wasOpen = document.body.classList.contains('sidebar-open');
     document.body.classList.remove('sidebar-open');
     updateSidebarAria();
+    if (wasOpen) {
+        const btn = document.getElementById('hamburger-btn');
+        if (btn) btn.focus();
+    }
 }
+
+// Focus trap for mobile sidebar (CHT-883)
+document.addEventListener('keydown', (e) => {
+    if (!document.body.classList.contains('sidebar-open')) return;
+
+    if (e.key === 'Escape') {
+        closeSidebar();
+        return;
+    }
+
+    if (e.key !== 'Tab') return;
+
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    const focusable = sidebar.querySelectorAll('a, button, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+    }
+});
 
 // Clean up sidebar-open class when resizing past mobile breakpoint
 window.addEventListener('resize', () => {
