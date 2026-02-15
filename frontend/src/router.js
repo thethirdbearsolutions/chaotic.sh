@@ -17,6 +17,7 @@ let onDetailRoute = null;
 let onDetailPopstate = null;
 let onRestoreProject = null;
 let onIssueNavigate = null;
+let onEpicNavigate = null;
 let initialized = false;
 
 /**
@@ -31,6 +32,7 @@ export function resetRouter() {
     onDetailPopstate = null;
     onRestoreProject = null;
     onIssueNavigate = null;
+    onEpicNavigate = null;
     initialized = false;
 }
 
@@ -51,12 +53,13 @@ export function registerViews(handlers) {
  * @param {Function} [opts.restoreProject] - Restores project selection from URL
  * @param {Function} [opts.issueNavigate] - (identifier) => void, navigates to issue
  */
-export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate } = {}) {
+export function configureRouter({ beforeNavigate, detailRoute, detailPopstate, restoreProject, issueNavigate, epicNavigate } = {}) {
     if (beforeNavigate) onBeforeNavigate = beforeNavigate;
     if (detailRoute) onDetailRoute = detailRoute;
     if (detailPopstate) onDetailPopstate = detailPopstate;
     if (restoreProject) onRestoreProject = restoreProject;
     if (issueNavigate) onIssueNavigate = issueNavigate;
+    if (epicNavigate) onEpicNavigate = epicNavigate;
 }
 
 /**
@@ -155,6 +158,14 @@ export function handleRoute() {
 export function navigateToIssueByIdentifier(identifier) {
     history.pushState({ view: 'issue', identifier }, '', `/issue/${identifier}`);
     if (onIssueNavigate) onIssueNavigate(identifier);
+}
+
+/**
+ * Navigate to an epic by its identifier (e.g., "CHT-123").
+ */
+export function navigateToEpicByIdentifier(identifier) {
+    history.pushState({ view: 'epic', identifier }, '', `/epic/${identifier}`);
+    if (onEpicNavigate) onEpicNavigate(identifier);
 }
 
 /**

@@ -22,6 +22,7 @@ import {
     navigateTo,
     handleRoute,
     navigateToIssueByIdentifier,
+    navigateToEpicByIdentifier,
     initRouter,
     resetRouter,
 } from './router.js';
@@ -335,6 +336,24 @@ describe('router', () => {
             configureRouter({ issueNavigate });
             navigateToIssueByIdentifier('WEB-7');
             expect(issueNavigate).toHaveBeenCalledWith('WEB-7');
+        });
+    });
+
+    describe('navigateToEpicByIdentifier', () => {
+        it('pushes history state with identifier', () => {
+            navigateToEpicByIdentifier('CHT-42');
+            expect(pushStateSpy).toHaveBeenCalledWith(
+                { view: 'epic', identifier: 'CHT-42' },
+                '',
+                '/epic/CHT-42'
+            );
+        });
+
+        it('calls the epicNavigate callback', () => {
+            const epicNavigate = vi.fn();
+            configureRouter({ epicNavigate });
+            navigateToEpicByIdentifier('WEB-7');
+            expect(epicNavigate).toHaveBeenCalledWith('WEB-7');
         });
     });
 

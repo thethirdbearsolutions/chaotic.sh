@@ -54,6 +54,11 @@ import {
 } from './issues-view.js';
 import { completeGateFromList, approveReviewFromList } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
+import {
+    setDependencies as setEpicDetailViewDependencies,
+    viewEpicByPath,
+    viewEpic,
+} from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler } from './keyboard.js';
 import {
     getTeams,
@@ -330,6 +335,10 @@ configureRouter({
         closeSidebar();
     },
     detailRoute: (parts) => {
+        if (parts[0] === 'epic' && parts[1]) {
+            viewEpicByPath(parts[1]);
+            return true;
+        }
         if (parts[0] === 'issue' && parts[1]) {
             viewIssueByPath(parts[1]);
             return true;
@@ -349,6 +358,7 @@ configureRouter({
         return false;
     },
     detailPopstate: (state) => {
+        if (state.epicId) { viewEpic(state.epicId, false); return true; }
         if (state.issueId) { viewIssue(state.issueId, false); return true; }
         if (state.identifier) { viewIssueByPath(state.identifier); return true; }
         if (state.documentId) { viewDocument(state.documentId, false); return true; }
@@ -362,6 +372,7 @@ configureRouter({
         }
     },
     issueNavigate: (identifier) => viewIssueByPath(identifier),
+    epicNavigate: (identifier) => viewEpicByPath(identifier),
 });
 
 registerViews({
@@ -508,6 +519,8 @@ window.initApp = initApp;
 // Export issue-detail-view functions to window for inline onclick handlers
 window.viewIssue = viewIssue;
 window.viewIssueByPath = viewIssueByPath;
+window.viewEpic = viewEpic;
+window.viewEpicByPath = viewEpicByPath;
 window.handleDescriptionClick = handleDescriptionClick;
 window.toggleTicketRituals = toggleTicketRituals;
 window.toggleSection = toggleSection;
@@ -1785,6 +1798,30 @@ setIssueDetailViewDependencies({
     showDetailDropdown,
     setupMentionAutocomplete,
     renderTicketRitualActions,
+});
+
+// ============================================
+// EPIC DETAIL VIEW (logic in epic-detail-view.js)
+// ============================================
+
+setEpicDetailViewDependencies({
+    api,
+    getCurrentView,
+    showToast,
+    navigateTo,
+    getProjects,
+    getAssigneeById,
+    formatAssigneeName,
+    formatStatus,
+    formatPriority,
+    formatEstimate,
+    formatTimeAgo,
+    getStatusIcon,
+    getPriorityIcon,
+    escapeHtml,
+    escapeAttr,
+    escapeJsString,
+    sanitizeColor,
 });
 
 // ============================================

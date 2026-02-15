@@ -13,7 +13,7 @@ vi.mock('./api.js', () => ({
 
 // Mock the router module
 vi.mock('./router.js', () => ({
-    navigateToIssueByIdentifier: vi.fn(),
+    navigateToEpicByIdentifier: vi.fn(),
 }));
 
 // Mock the utils module
@@ -24,7 +24,7 @@ vi.mock('./utils.js', () => ({
 
 import { loadEpics, renderEpics } from './epics.js';
 import { api } from './api.js';
-import { navigateToIssueByIdentifier } from './router.js';
+import { navigateToEpicByIdentifier } from './router.js';
 
 function setupDom() {
     document.body.innerHTML = '<div id="epics-list"></div>';
@@ -208,7 +208,7 @@ describe('renderEpics', () => {
         const row = container.querySelector('.epic-row');
         expect(row.dataset.identifier).toBe('CHT-10');
         row.click();
-        expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-10');
+        expect(navigateToEpicByIdentifier).toHaveBeenCalledWith('CHT-10');
     });
 
     it('uses data-identifier attribute instead of inline onclick', () => {
