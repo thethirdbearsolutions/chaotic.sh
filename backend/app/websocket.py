@@ -89,3 +89,12 @@ async def broadcast_relation_event(team_id: str, event_type: str, relation_data:
         "entity": "relation",
         "data": relation_data
     })
+
+
+async def broadcast_attestation_event(team_id: str, event_type: str, attestation_data: dict):
+    """Broadcast an attestation event to all team members (CHT-881)."""
+    await manager.broadcast_to_team(team_id, {
+        "type": event_type,
+        "entity": "attestation",
+        "data": attestation_data
+    })

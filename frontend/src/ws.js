@@ -221,6 +221,15 @@ export function handleWebSocketMessage(message) {
                 viewIssue(currentIssueId, false);
             }
         }
+    } else if (entity === 'attestation') {
+        // Attestation completed/approved (CHT-881) - refresh gate approvals
+        if (getCurrentView() === 'gate-approvals' && typeof window.loadGateApprovals === 'function') {
+            window.loadGateApprovals();
+        }
+        // Also refresh issue detail if viewing the affected issue
+        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+            viewIssue(data.issue_id, false);
+        }
     } else if (entity === 'activity') {
         // Activity event (CHT-359) - reload dashboard activity
         // TODO: In the future, prepend data directly instead of refetching
