@@ -4205,11 +4205,11 @@ def doc_create(title_words, title_opt, content, icon, project, sprint, is_global
 
 @doc.command("show")
 @click.argument("document_id")
-@click.option("--comments", is_flag=True, help="Show document comments")
+@click.option("--no-comments", is_flag=True, help="Hide document comments")
 @json_option
 @require_auth
 @handle_error
-def doc_show(document_id, comments):
+def doc_show(document_id, no_comments):
     """Show document content.
 
     DOCUMENT_ID can be a full ID, title, or a prefix.
@@ -4217,6 +4217,7 @@ def doc_show(document_id, comments):
     team_id = get_current_team()
     document_id = resolve_document_id(document_id, team_id)
 
+    comments = not no_comments
     d = client.get_document(document_id)
     if is_json_output():
         if comments:

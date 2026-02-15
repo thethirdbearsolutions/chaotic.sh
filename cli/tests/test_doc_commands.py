@@ -196,29 +196,33 @@ class TestDocShow:
 
         client.get_document = MagicMock(return_value=mock_document)
         client.get_document_issues = MagicMock(return_value=[])
+        client.get_document_comments = MagicMock(return_value=[
+            {"author_name": "Bob", "content": "Looks good!", "created_at": "2026-02-15T14:00:00"},
+        ])
 
         with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
             result = cli_runner.invoke(cli, ['doc', 'show', 'doc-uuid-123'])
 
         assert result.exit_code == 0
         assert 'Sprint Report' in result.output
+        # Comments show by default
+        assert 'Bob' in result.output
+        assert 'Looks good!' in result.output
 
-    def test_doc_show_with_comments(self, cli_runner, mock_document):
-        """doc show --comments displays comments."""
+    def test_doc_show_no_comments(self, cli_runner, mock_document):
+        """doc show --no-comments hides comments."""
         from cli.main import cli, client
 
         client.get_document = MagicMock(return_value=mock_document)
         client.get_document_issues = MagicMock(return_value=[])
-        client.get_document_comments = MagicMock(return_value=[
-            {"author_name": "Bob", "content": "Looks good!", "created_at": "2026-02-15T14:00:00"},
-        ])
 
         with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
-            result = cli_runner.invoke(cli, ['doc', 'show', 'doc-uuid-123', '--comments'])
+            result = cli_runner.invoke(cli, ['doc', 'show', 'doc-uuid-123', '--no-comments'])
 
         assert result.exit_code == 0
-        assert 'Bob' in result.output
-        assert 'Looks good!' in result.output
+        assert 'Sprint Report' in result.output
+        client.get_document_comments = MagicMock()
+        client.get_document_comments.assert_not_called()
 
     def test_doc_show_with_linked_issues(self, cli_runner, mock_document):
         """doc show displays linked issues."""
@@ -228,6 +232,7 @@ class TestDocShow:
         client.get_document_issues = MagicMock(return_value=[
             {"identifier": "CHT-100", "title": "Linked issue", "status": "in_progress"},
         ])
+        client.get_document_comments = MagicMock(return_value=[])
 
         with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
             result = cli_runner.invoke(cli, ['doc', 'show', 'doc-uuid-123'])
