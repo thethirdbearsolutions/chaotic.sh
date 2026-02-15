@@ -6,9 +6,7 @@ ritual CRUD access control. All via HTTP client.
 import datetime
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 from app.models.team import Team, TeamMember, TeamRole
-from app.models.project import Project
 from app.models.user import User
 from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
 from app.models import Sprint
@@ -597,6 +595,8 @@ class TestLimboWithCompletedRituals:
         completed = data["completed_rituals"][0]
         assert completed["name"] == "sprint-ritual"
         assert completed["attestation"] is not None
+        assert completed["attestation"]["note"] == "Done"
+        assert completed["attestation"]["approved_at"] is not None
 
 
 @pytest.mark.asyncio
