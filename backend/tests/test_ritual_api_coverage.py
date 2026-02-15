@@ -3,12 +3,15 @@
 Covers uncovered lines in rituals.py: group management, attestation flows,
 ritual CRUD access control. All via HTTP client.
 """
+import datetime
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from app.models.team import Team, TeamMember, TeamRole
 from app.models.project import Project
 from app.models.user import User
-from app.models.ritual import Ritual, RitualTrigger, ApprovalMode
+from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
+from app.models import Sprint
 from app.utils.security import get_password_hash, create_access_token
 
 
@@ -471,3 +474,315 @@ class TestLimboStatus:
         )
         assert response.status_code == 200
         assert isinstance(response.json(), list)
+
+
+@pytest_asyncio.fixture
+async def agent_user(db_session, test_team):
+    """Agent user on test_team (admin)."""
+    user = User(
+        email="agent@example.com",
+        hashed_password=get_password_hash("testpassword123"),
+        name="Agent User",
+        is_agent=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    member = TeamMember(team_id=test_team.id, user_id=user.id, role=TeamRole.OWNER)
+    db_session.add(member)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def agent_headers(agent_user):
+    """Auth headers for agent user."""
+    token = create_access_token(data={"sub": agent_user.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def limbo_sprint(db_session, test_project):
+    """Sprint in limbo state for test_project."""
+    sprint = Sprint(
+        project_id=test_project.id,
+        name="Limbo Sprint",
+        description="Sprint in limbo",
+        limbo=True,
+    )
+    db_session.add(sprint)
+    await db_session.commit()
+    await db_session.refresh(sprint)
+    return sprint
+
+
+@pytest.mark.asyncio
+class TestPendingApprovalsEdgeCases:
+    """Test pending-approvals endpoint edge cases (lines 221, 227)."""
+
+    async def test_pending_approvals_project_not_found(
+        self, client, auth_headers
+    ):
+        """GET /rituals/pending-approvals returns 404 for nonexistent project."""
+        response = await client.get(
+            "/api/rituals/pending-approvals?project_id=nonexistent",
+            headers=auth_headers,
+        )
+        assert response.status_code == 404
+        assert "Project not found" in response.json()["detail"]
+
+    async def test_pending_approvals_non_member(
+        self, client, db_session, test_project, other_team
+    ):
+        """GET /rituals/pending-approvals returns 403 for non-team-member."""
+        other_user = User(
+            email="pending-other@example.com",
+            hashed_password=get_password_hash("test"),
+            name="Other User",
+        )
+        db_session.add(other_user)
+        await db_session.flush()
+        member = TeamMember(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
+        db_session.add(member)
+        await db_session.commit()
+        token = create_access_token(data={"sub": other_user.id})
+        other_headers = {"Authorization": f"Bearer {token}"}
+
+        response = await client.get(
+            f"/api/rituals/pending-approvals?project_id={test_project.id}",
+            headers=other_headers,
+        )
+        assert response.status_code == 403
+        assert "Not a member" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+class TestLimboWithCompletedRituals:
+    """Test limbo status with completed rituals (lines 150-153)."""
+
+    async def test_limbo_shows_completed_rituals(
+        self, client, auth_headers, db_session, test_project, test_user, limbo_sprint
+    ):
+        """GET /rituals/limbo includes completed ritual attestation details."""
+        # Create an EVERY_SPRINT ritual
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="sprint-ritual",
+            prompt="Do the thing",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create an attestation for this ritual+sprint (marking it completed)
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            sprint_id=limbo_sprint.id,
+            attested_by=test_user.id,
+            note="Done",
+            approved_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        response = await client.get(
+            f"/api/rituals/limbo?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["in_limbo"] is True
+        assert len(data["completed_rituals"]) >= 1
+        completed = data["completed_rituals"][0]
+        assert completed["name"] == "sprint-ritual"
+        assert completed["attestation"] is not None
+
+
+@pytest.mark.asyncio
+class TestAttestIssueEdgeCases:
+    """Test attest-issue endpoint edge cases (lines 471-472)."""
+
+    async def test_attest_wrong_trigger_type(
+        self, client, auth_headers, db_session, test_project, test_issue
+    ):
+        """POST attest-issue with EVERY_SPRINT ritual returns 400."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="sprint-only",
+            prompt="Sprint ritual",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 400
+        assert "not a ticket-level ritual" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+class TestSprintLevelAttestEdgeCases:
+    """Test sprint-level attest endpoint edge cases (lines 1044, 1071-1072)."""
+
+    async def test_attest_wrong_trigger_type(
+        self, client, auth_headers, db_session, test_project, limbo_sprint
+    ):
+        """POST /{ritual_id}/attest with TICKET_CLOSE ritual returns 400."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="ticket-ritual",
+            prompt="Ticket ritual",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 400
+        assert "not a sprint-level ritual" in response.json()["detail"]
+
+    async def test_attest_not_in_limbo(
+        self, client, auth_headers, db_session, test_project
+    ):
+        """POST /{ritual_id}/attest without limbo returns 400."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="no-limbo-ritual",
+            prompt="No limbo",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 400
+        assert "not in limbo" in response.json()["detail"]
+
+    async def test_attest_gate_ritual_rejected(
+        self, client, auth_headers, db_session, test_project, limbo_sprint
+    ):
+        """POST /{ritual_id}/attest with GATE ritual returns 403."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="gate-ritual",
+            prompt="Gate",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 403
+        assert "gate mode" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+class TestAgentApprovalDenied:
+    """Test agent cannot approve attestations (line 1115)."""
+
+    async def test_agent_cannot_approve(
+        self, client, agent_headers, agent_user, db_session, test_project, limbo_sprint
+    ):
+        """POST /{ritual_id}/approve by agent returns 403."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="review-ritual",
+            prompt="Review this",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create an unapproved attestation
+        attestation = RitualAttestation(
+            ritual_id=ritual.id,
+            sprint_id=limbo_sprint.id,
+            attested_by=agent_user.id,
+            note="Needs approval",
+        )
+        db_session.add(attestation)
+        await db_session.commit()
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/approve?project_id={test_project.id}",
+            headers=agent_headers,
+        )
+        assert response.status_code == 403
+        assert "Agents cannot approve" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+class TestCompleteGateEdgeCases:
+    """Test complete_gate_ritual edge cases (line 1208)."""
+
+    async def test_complete_gate_wrong_trigger(
+        self, client, auth_headers, db_session, test_project, limbo_sprint
+    ):
+        """POST /{ritual_id}/complete with TICKET_CLOSE ritual returns 400."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="ticket-gate",
+            prompt="Wrong trigger",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/complete?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 400
+        assert "not a sprint-level ritual" in response.json()["detail"]
+
+    async def test_complete_gate_non_gate_ritual(
+        self, client, auth_headers, db_session, test_project, limbo_sprint
+    ):
+        """POST /{ritual_id}/complete with AUTO ritual returns 400."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="auto-ritual",
+            prompt="Not gate",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.commit()
+        await db_session.refresh(ritual)
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/complete?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"note": "Should fail"},
+        )
+        assert response.status_code == 400
+        assert "not a GATE mode ritual" in response.json()["detail"]
