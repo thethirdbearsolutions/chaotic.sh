@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event
+from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event
 
 
 @pytest.fixture
@@ -170,4 +170,17 @@ class TestBroadcastHelpers:
             "type": "created",
             "entity": "activity",
             "data": {"id": "a1"},
+        })
+
+    @pytest.mark.asyncio
+    async def test_broadcast_relation_event(self, monkeypatch):
+        mock_broadcast = AsyncMock()
+        monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
+
+        await broadcast_relation_event("team-1", "created", {"source_issue_id": "i1", "target_issue_id": "i2"})
+
+        mock_broadcast.assert_awaited_once_with("team-1", {
+            "type": "created",
+            "entity": "relation",
+            "data": {"source_issue_id": "i1", "target_issue_id": "i2"},
         })

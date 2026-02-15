@@ -35,7 +35,7 @@ from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
 from app.models.issue import Issue, IssueStatus, IssuePriority, IssueType, ActivityType
 from app.models.user import User
-from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event
+from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event, broadcast_relation_event
 
 router = APIRouter()
 
@@ -1212,6 +1212,11 @@ async def create_relation(
         )
 
     relation = await issue_service.create_relation(issue_id, relation_in)
+    await broadcast_relation_event(
+        project.team_id,
+        "created",
+        {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id},
+    )
     return {
         "id": relation.id,
         "issue_id": relation.issue_id,
@@ -1292,7 +1297,9 @@ async def delete_relation(
             detail="Relation not found for this issue",
         )
 
+    relation_data = {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id}
     await issue_service.delete_relation(relation)
+    await broadcast_relation_event(project.team_id, "deleted", relation_data)
 
 
 @router.get("/{issue_id}/documents", response_model=list[DocumentResponse])

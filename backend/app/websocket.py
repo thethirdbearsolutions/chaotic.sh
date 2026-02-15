@@ -80,3 +80,12 @@ async def broadcast_activity_event(team_id: str, event_type: str, activity_data:
         "entity": "activity",
         "data": activity_data
     })
+
+
+async def broadcast_relation_event(team_id: str, event_type: str, relation_data: dict):
+    """Broadcast a relation event to all team members (CHT-875)."""
+    await manager.broadcast_to_team(team_id, {
+        "type": event_type,
+        "entity": "relation",
+        "data": relation_data
+    })

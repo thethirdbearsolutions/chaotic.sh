@@ -301,6 +301,8 @@ configureRouter({
     beforeNavigate: () => {
         clearProjectSettingsState();
         window._onRitualsChanged = null;
+        window.currentDetailIssue = null;
+        window.currentDetailSprints = null;
     },
     detailRoute: (parts) => {
         if (parts[0] === 'issue' && parts[1]) {
