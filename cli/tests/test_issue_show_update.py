@@ -216,6 +216,27 @@ class TestIssueShowParentSubIssues:
         assert result.exit_code == 0
         assert 'Sub-issues' not in result.output
 
+    def test_show_linked_documents(self, cli_runner, mock_issue):
+        """issue show displays linked documents."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_comments = MagicMock(return_value=[])
+        client.get_sub_issues = MagicMock(return_value=[])
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [], "completed_rituals": [],
+        })
+        client.get_issue_documents = MagicMock(return_value=[
+            {"title": "Design Doc", "icon": "📐"},
+            {"title": "API Spec", "icon": None},
+        ])
+
+        result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100'])
+
+        assert result.exit_code == 0
+        assert 'Linked Documents' in result.output
+        assert 'Design Doc' in result.output
+        assert 'API Spec' in result.output
 
     def test_show_parent_api_failure_graceful(self, cli_runner, mock_issue):
         """issue show handles parent API failure gracefully."""
@@ -599,3 +620,132 @@ class TestIssueUpdateParent:
         assert result.exit_code != 0
         assert 'Issue not found' in result.output
         client.update_issue.assert_not_called()
+
+
+class TestIssueUpdateRelations:
+    """Tests for issue update --blocked-by and --relates-to (CHT-887)."""
+
+    def test_blocked_by_creates_relation(self, cli_runner, mock_issue):
+        """issue update --blocked-by CHT-50 creates blocks relation."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            mock_issue,
+            {"id": "blocker-uuid-50", "identifier": "CHT-50"},
+        ])
+        client.create_relation = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--blocked-by', 'CHT-50'])
+
+        assert result.exit_code == 0
+        client.create_relation.assert_called_once_with('blocker-uuid-50', 'issue-uuid-123', 'blocks')
+        assert 'Blocked by' in result.output
+
+    def test_relates_to_creates_relation(self, cli_runner, mock_issue):
+        """issue update --relates-to CHT-60 creates relates_to relation."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            mock_issue,
+            {"id": "related-uuid-60", "identifier": "CHT-60"},
+        ])
+        client.create_relation = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-100', '--relates-to', 'CHT-60'])
+
+        assert result.exit_code == 0
+        client.create_relation.assert_called_once_with('issue-uuid-123', 'related-uuid-60', 'relates_to')
+        assert 'Related to' in result.output
+
+
+class TestIssueUpdateRituals:
+    """Tests for issue update --unceremoniously-attest-all-rituals (CHT-887)."""
+
+    def test_unceremonious_attests_rituals(self, cli_runner, mock_issue):
+        """--unceremoniously-attest-all-rituals attests pending auto rituals."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "r1", "name": "run-tests", "approval_mode": "auto"},
+            ],
+        })
+        client.attest_ritual_for_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100',
+            '--unceremoniously-attest-all-rituals', '--note', 'Trivial fix',
+        ])
+
+        assert result.exit_code == 0
+        client.attest_ritual_for_issue.assert_called_once_with('r1', 'issue-uuid-123', 'Trivial fix')
+        assert 'run-tests' in result.output
+
+    def test_unceremonious_skips_gate_rituals(self, cli_runner, mock_issue):
+        """--unceremoniously-attest-all-rituals skips GATE mode rituals."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "r1", "name": "run-tests", "approval_mode": "auto"},
+                {"id": "r2", "name": "design-review", "approval_mode": "gate"},
+            ],
+        })
+        client.attest_ritual_for_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100',
+            '--unceremoniously-attest-all-rituals', '--note', 'Skip',
+        ])
+
+        assert result.exit_code == 0
+        client.attest_ritual_for_issue.assert_called_once_with('r1', 'issue-uuid-123', 'Skip')
+        assert 'GATE' in result.output
+
+    def test_unceremonious_requires_note(self, cli_runner, mock_issue):
+        """--unceremoniously-attest-all-rituals without --note errors."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100',
+            '--unceremoniously-attest-all-rituals',
+        ])
+
+        assert result.exit_code != 0
+        assert '--note' in result.output
+
+    def test_note_without_unceremonious_warns(self, cli_runner, mock_issue):
+        """--note without --unceremoniously shows warning."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--status', 'done', '--note', 'Some note',
+        ])
+
+        assert result.exit_code == 0
+        assert 'no effect' in result.output.lower()
+
+
+class TestIssueUpdateJson:
+    """Tests for issue update --json output (CHT-887)."""
+
+    def test_update_json_output(self, cli_runner, mock_issue):
+        """issue update --json re-fetches and outputs updated issue."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--status', 'done', '--json',
+        ])
+
+        assert result.exit_code == 0
+        assert 'CHT-100' in result.output
