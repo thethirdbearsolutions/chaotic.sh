@@ -3,6 +3,8 @@
  * Shows a multi-step wizard when user has no teams after login.
  */
 
+/* global api */
+
 let onboardingOverlay = null;
 let currentStep = 0;
 let createdTeam = null;

@@ -11,9 +11,6 @@ import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
 import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import {
     toggleMultiSelect,
-    getSelectedStatuses,
-    getSelectedPriorities,
-    getSelectedLabels,
     updateStatusFilter,
     clearStatusFilter,
     updatePriorityFilter,
@@ -22,11 +19,9 @@ import {
     clearLabelFilter,
     updateLabelFilterLabel,
     populateLabelFilter,
-    syncFiltersToUrl,
     loadFiltersFromUrl,
     toggleFilterMenu,
     toggleDisplayMenu,
-    closeAllFilterMenus,
     showFilterCategoryOptions,
     setProjectFilter,
     clearProjectFilter,
@@ -57,8 +52,8 @@ import {
     updateGroupBy,
     getGroupByValue,
 } from './issues-view.js';
-import { completeGateFromList } from './gate-approvals.js';
-import { loadEpics, updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
+import { completeGateFromList, approveReviewFromList } from './gate-approvals.js';
+import { updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler } from './keyboard.js';
 import {
     getTeams,
@@ -100,7 +95,6 @@ import {
     completeSprint,
     loadLimboStatus,
     showLimboDetailsModal,
-    ensureSprintCacheForIssues,
     updateSprintCacheForProject,
 } from './sprints.js';
 import {
@@ -175,7 +169,6 @@ import {
     getActivityIcon,
     formatActivityActor,
     formatActivityText,
-    renderDescriptionContent,
     handleDescriptionClick,
     toggleSection,
     toggleTicketRituals,
@@ -194,8 +187,6 @@ import {
 } from './issue-detail-view.js';
 import {
     getCurrentView,
-    getActiveFilterCategory,
-    setActiveFilterCategory,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
     getPendingGates,

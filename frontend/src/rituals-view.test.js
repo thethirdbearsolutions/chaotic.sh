@@ -1,7 +1,7 @@
 /**
  * Tests for rituals-view.js module (CHT-784)
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all dependencies
 vi.mock('./utils.js', () => ({

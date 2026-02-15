@@ -2,7 +2,7 @@
  * Rituals module - condition builder UI components
  */
 
-import { escapeHtml, escapeAttr } from './utils.js';
+import { escapeAttr } from './utils.js';
 
 // Supported fields and their valid operators
 const FIELD_OPERATORS = {

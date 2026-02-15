@@ -46,13 +46,12 @@ vi.mock('./utils.js', () => ({
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { setGlobalProjectSelection } from './projects.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { updateUrlWithProject } from './url-helpers.js';
 import {
     getSprints,
     setSprints,
     getSprintCache,
     getLimboStatus,
-    updateSprintProjectFilter,
     onSprintProjectChange,
     loadSprints,
     renderSprints,

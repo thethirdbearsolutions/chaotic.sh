@@ -47,10 +47,10 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, getSearchDebounceTimer, setSearchDebounceTimer } from './state.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer } from './state.js';
 import { getProjects, setGlobalProjectSelection } from './projects.js';
 import { getMembers } from './teams.js';
-import { ensureSprintCacheForIssues, updateSprintProjectFilter } from './sprints.js';
+import { updateSprintProjectFilter } from './sprints.js';
 import { updateBoardProjectFilter } from './board.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
@@ -60,38 +60,15 @@ import {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
-    updateStatusFilter,
-    clearStatusFilter,
-    updatePriorityFilter,
-    clearPriorityFilter,
-    updateLabelFilter,
-    clearLabelFilter,
-    updateLabelFilterLabel,
     populateLabelFilter,
     syncFiltersToUrl,
     loadFiltersFromUrl,
     FILTER_CATEGORIES,
-    toggleFilterMenu,
-    toggleDisplayMenu,
     closeAllFilterMenus,
     getFilterCategoryCount,
     getTotalFilterCount,
     renderFilterMenuCategories,
     showFilterCategoryOptions,
-    setProjectFilter,
-    clearProjectFilter,
-    toggleStatusOption,
-    clearStatusFilterNew,
-    togglePriorityOption,
-    clearPriorityFilterNew,
-    setTypeFilter,
-    clearTypeFilter,
-    setAssigneeFilter,
-    clearAssigneeFilter,
-    setSprintFilter,
-    clearSprintFilter,
-    toggleLabelOption,
-    clearLabelFilterNew,
     setSort,
     setGroupBy,
     updateFilterChips,
@@ -104,7 +81,6 @@ import {
     debounceSearch,
     filterIssues,
     onProjectFilterChange,
-    updateGroupBy,
     getGroupByValue,
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
