@@ -24,6 +24,24 @@ def _client():
 
 # ── Display helpers ──────────────────────────────────────────────────────────
 
+def format_ritual_line(r):
+    """Format a ritual display line with mode, group, and note info."""
+    mode = f"[dim]({r['approval_mode']})[/dim]"
+    note_tag = "" if r.get("note_required", True) else " [dim][no note req][/dim]"
+    group_tag = ""
+    if r.get("group_name"):
+        group_tag = f" [dim][group: {r['group_name']}][/dim]"
+    deleted_tag = " [red][deleted][/red]" if not r.get("is_active", True) else ""
+    return f"  \u2022 {r['name']} {mode}{note_tag}{group_tag}{deleted_tag}"
+
+
+def print_ritual_prompt(prompt):
+    """Print ritual prompt with markdown rendering."""
+    from rich.markdown import Markdown
+    from rich.padding import Padding
+    console.print(Padding(Markdown(prompt), (0, 0, 0, 6)))
+
+
 def get_status_color(status: str) -> str:
     """Get Rich color for issue status."""
     return {
