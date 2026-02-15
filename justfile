@@ -25,10 +25,15 @@ serve:
 serve-prod:
     cd backend && uv run uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
 
+# Run all test suites (backend, frontend, CLI)
+test-all: test-backend test-frontend test-cli
+
 # Run backend tests
-test:
-    cd backend && uv sync --extra dev
+test-backend:
     cd backend && uv run pytest
+
+# Run backend tests (alias)
+test: test-backend
 
 # Run backend tests with coverage
 test-cov:
@@ -51,8 +56,11 @@ fe-build:
     cd frontend && npm run build
 
 # Run frontend tests
-fe-test:
+test-frontend:
     cd frontend && npm test
+
+# Run frontend tests (alias)
+fe-test: test-frontend
 
 # Run frontend dev server (with hot reload)
 fe-dev:
@@ -80,8 +88,11 @@ cli-publish: cli-build
     cd cli && uv publish --token ${PYPI_TOKEN}
 
 # Run CLI tests
-cli-test:
+test-cli:
     cd cli && uv run pytest
+
+# Run CLI tests (alias)
+cli-test: test-cli
 
 # Clean up Python cache files
 clean:
