@@ -43,6 +43,8 @@ export function createKeyboardHandler(actions) {
             e.preventDefault();
             if (modalOpen) {
                 actions.closeModal();
+            } else if (document.body.classList.contains('sidebar-open') && actions.closeSidebar) {
+                actions.closeSidebar();
             } else {
                 actions.closeDropdowns();
             }

@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=54">
+    <link rel="stylesheet" href="/static/css/style.css?v=55">
     <!-- Fallback for when JS is disabled: show auth screen -->
     <noscript>
         <style>#auth-screen { display: block !important; }</style>
@@ -165,8 +165,22 @@
                 </div>
             </aside>
 
+            <!-- Mobile sidebar backdrop -->
+            <div class="sidebar-backdrop" onclick="closeSidebar()"></div>
+
             <!-- Main content -->
             <main class="main-content">
+                <!-- Mobile header -->
+                <div class="mobile-header">
+                    <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle sidebar" aria-expanded="false">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
+                    <span class="mobile-header-title" id="mobile-team-name">Chaotic</span>
+                </div>
                 <!-- Dashboard view (My Issues) -->
                 <div id="my-issues-view" class="view">
                     <div class="view-header">
@@ -692,6 +706,6 @@
         <div id="toast-container"></div>
     </div>
 
-    <script src="/static/js/app.bundle.js?v=9"></script>
+    <script src="/static/js/app.bundle.js?v=10"></script>
 </body>
 </html>

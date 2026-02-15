@@ -20,6 +20,7 @@ describe('Keyboard Handler', () => {
     beforeEach(() => {
         actions = {
             closeModal: vi.fn(),
+            closeSidebar: vi.fn(),
             navigateTo: vi.fn(),
             showCreateIssueModal: vi.fn(),
             showKeyboardShortcutsHelp: vi.fn(),
@@ -97,6 +98,27 @@ describe('Keyboard Handler', () => {
             expect(actions.closeDropdowns).toHaveBeenCalled();
             expect(actions.closeModal).not.toHaveBeenCalled();
             expect(event.preventDefault).toHaveBeenCalled();
+        });
+
+        it('closes sidebar when sidebar is open and no modal (CHT-869)', () => {
+            actions.isModalOpen.mockReturnValue(false);
+            document.body.classList.add('sidebar-open');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(actions.closeSidebar).toHaveBeenCalled();
+            expect(actions.closeDropdowns).not.toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+            document.body.classList.remove('sidebar-open');
+        });
+
+        it('prefers modal over sidebar when both are open (CHT-869)', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            document.body.classList.add('sidebar-open');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(actions.closeModal).toHaveBeenCalled();
+            expect(actions.closeSidebar).not.toHaveBeenCalled();
+            document.body.classList.remove('sidebar-open');
         });
     });
 

@@ -221,6 +221,29 @@ let assignees = [];
 let labels = [];
 let createIssueLabelIds = [];
 
+// Mobile sidebar toggle (CHT-869)
+function updateSidebarAria() {
+    const btn = document.getElementById('hamburger-btn');
+    if (btn) btn.setAttribute('aria-expanded', String(document.body.classList.contains('sidebar-open')));
+}
+
+function toggleSidebar() {
+    document.body.classList.toggle('sidebar-open');
+    updateSidebarAria();
+}
+
+function closeSidebar() {
+    document.body.classList.remove('sidebar-open');
+    updateSidebarAria();
+}
+
+// Clean up sidebar-open class when resizing past mobile breakpoint
+window.addEventListener('resize', () => {
+    if (window.innerWidth > 768 && document.body.classList.contains('sidebar-open')) {
+        closeSidebar();
+    }
+});
+
 // Markdown rendering helper with XSS protection
 function renderMarkdown(content) {
     if (!content) return '';
@@ -313,6 +336,7 @@ configureRouter({
         window._onRitualsChanged = null;
         window.currentDetailIssue = null;
         window.currentDetailSprints = null;
+        closeSidebar();
     },
     detailRoute: (parts) => {
         if (parts[0] === 'issue' && parts[1]) {
@@ -1541,6 +1565,7 @@ async function loadLabels() {
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
+    closeSidebar,
     navigateTo,
     showCreateIssueModal,
     showKeyboardShortcutsHelp,
@@ -2008,6 +2033,8 @@ Object.assign(window, {
     navigateTo,
     handleRoute,
     closeModal,
+    toggleSidebar,
+    closeSidebar,
 
     // URL helpers (for testing)
     getProjectFromUrl,

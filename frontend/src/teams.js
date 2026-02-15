@@ -76,6 +76,8 @@ export function renderTeamList() {
 export async function selectTeam(team, isInitialLoad = false) {
   window.currentTeam = team;
   document.getElementById('current-team-name').textContent = team.name;
+  const mobileTeamName = document.getElementById('mobile-team-name');
+  if (mobileTeamName) mobileTeamName.textContent = team.name;
   const teamDescription = document.getElementById('team-description-text');
   if (teamDescription) {
     teamDescription.textContent = team.description || 'No description';
