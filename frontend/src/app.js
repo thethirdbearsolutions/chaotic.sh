@@ -59,7 +59,7 @@ import {
 } from './issues-view.js';
 import { completeGateFromList } from './gate-approvals.js';
 import { loadEpics, updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
-import { createKeyboardHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler } from './keyboard.js';
 import {
     getTeams,
     getMembers,
@@ -494,20 +494,6 @@ function initIssueLinkHandler() {
         }
     });
 }
-
-// Global keyboard shortcut: Cmd+Enter (or Ctrl+Enter) to submit forms
-document.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        const activeElement = document.activeElement;
-        const form = activeElement?.closest('form');
-        if (form) {
-            event.preventDefault();
-            // Trigger the form's submit event (works with onsubmit handlers)
-            const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
-            form.dispatchEvent(submitEvent);
-        }
-    }
-});
 
 // App initialization
 async function initApp() {
@@ -1827,36 +1813,15 @@ window.showModal = function() {
     }, 50);
 };
 
-// Cmd+Enter to submit forms in modals
-document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        const modalOpen = !document.getElementById('modal-overlay').classList.contains('hidden');
-        if (modalOpen) {
-            const form = document.querySelector('#modal-content form');
-            if (form) {
-                e.preventDefault();
-                form.dispatchEvent(new Event('submit', { cancelable: true }));
-            } else {
-                // Handle non-form modals (e.g., create issue modal)
-                const primaryBtn = document.querySelector('#modal-content .btn-primary');
-                if (primaryBtn && !primaryBtn.disabled) {
-                    e.preventDefault();
-                    primaryBtn.click();
-                }
-            }
-        }
-    }
-
-    // Cmd+K to open command palette
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        if (isCommandPaletteOpen()) {
-            closeCommandPalette();
-        } else {
-            openCommandPalette();
-        }
-    }
-});
+// Cmd+Enter (submit forms/modals) and Cmd+K (command palette) - logic in keyboard.js
+document.addEventListener('keydown', createModifierKeyHandler({
+    isModalOpen: () => !document.getElementById('modal-overlay').classList.contains('hidden'),
+    getModalForm: () => document.querySelector('#modal-content form'),
+    getModalPrimaryBtn: () => document.querySelector('#modal-content .btn-primary'),
+    isCommandPaletteOpen,
+    openCommandPalette,
+    closeCommandPalette,
+}));
 
 // Format ISO timestamp to relative time (e.g., "2 hours ago")
 function formatRelativeTime(isoString) {
@@ -1951,67 +1916,16 @@ async function handleQuickCreate(event) {
     }
 }
 
-// ============================================
-// KEYBOARD LIST NAVIGATION (j/k like Vim)
-// ============================================
-
-function updateKeyboardSelection(newIndex) {
-    const items = document.querySelectorAll('#issues-list .list-item');
-    if (items.length === 0) return;
-
-    // Clamp index
-    newIndex = Math.max(0, Math.min(items.length - 1, newIndex));
-
-    // Remove old selection
-    items.forEach(item => item.classList.remove('keyboard-selected'));
-
-    // Add new selection
-    setSelectedIssueIndex(newIndex);
-    items[newIndex].classList.add('keyboard-selected');
-    items[newIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-
-// Extend keyboard shortcuts for j/k navigation
-document.addEventListener('keydown', (e) => {
-    // Only work in issues view and when not in input
-    if (getCurrentView() !== 'issues') return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (!document.getElementById('modal-overlay').classList.contains('hidden')) return;
-    if (isCommandPaletteOpen()) return;
-
-    const items = document.querySelectorAll('#issues-list .list-item');
-    if (items.length === 0) return;
-
-    const selectedIssueIndex = getSelectedIssueIndex();
-    switch (e.key) {
-        case 'j':
-            e.preventDefault();
-            updateKeyboardSelection(selectedIssueIndex + 1);
-            break;
-        case 'k':
-            e.preventDefault();
-            updateKeyboardSelection(selectedIssueIndex - 1);
-            break;
-        case 'Enter':
-            if (selectedIssueIndex >= 0 && items[selectedIssueIndex]) {
-                e.preventDefault();
-                const issueId = items[selectedIssueIndex].dataset.id;
-                if (issueId && !issueId.startsWith('temp-')) {
-                    viewIssue(issueId);
-                }
-            }
-            break;
-        case 'e':
-            if (selectedIssueIndex >= 0 && items[selectedIssueIndex]) {
-                e.preventDefault();
-                const issueId = items[selectedIssueIndex].dataset.id;
-                if (issueId && !issueId.startsWith('temp-')) {
-                    showEditIssueModal(issueId);
-                }
-            }
-            break;
-    }
-});
+// j/k/Enter/e list navigation - logic in keyboard.js
+document.addEventListener('keydown', createListNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedIssueIndex,
+    setSelectedIndex: setSelectedIssueIndex,
+    viewIssue,
+    showEditIssueModal,
+    isModalOpen: () => !document.getElementById('modal-overlay').classList.contains('hidden'),
+    isCommandPaletteOpen,
+}));
 
 // ============================================================================
 // Window attachments for HTML event handlers

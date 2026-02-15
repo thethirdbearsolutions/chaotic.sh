@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createKeyboardHandler } from './keyboard.js';
+import {
+    createKeyboardHandler,
+    createModifierKeyHandler,
+    createListNavigationHandler,
+    updateKeyboardSelection,
+} from './keyboard.js';
 
 function makeEvent(key, overrides = {}) {
     return {
@@ -268,6 +273,386 @@ describe('Keyboard Handler', () => {
             expect(actions.focusSearch).not.toHaveBeenCalled();
             expect(actions.closeModal).not.toHaveBeenCalled();
             expect(actions.closeDropdowns).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// Modifier Key Handler (Cmd+Enter, Cmd+K) - CHT-710
+// ============================================================================
+
+describe('Modifier Key Handler (Cmd+Enter, Cmd+K)', () => {
+    let actions;
+    let handler;
+
+    beforeEach(() => {
+        actions = {
+            isModalOpen: vi.fn().mockReturnValue(false),
+            getModalForm: vi.fn().mockReturnValue(null),
+            getModalPrimaryBtn: vi.fn().mockReturnValue(null),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+            openCommandPalette: vi.fn(),
+            closeCommandPalette: vi.fn(),
+        };
+        handler = createModifierKeyHandler(actions);
+    });
+
+    describe('ignores non-modifier events', () => {
+        it('does nothing without metaKey or ctrlKey', () => {
+            handler(makeEvent('Enter'));
+            handler(makeEvent('k'));
+            expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Cmd+Enter', () => {
+        it('submits modal form when modal is open and has a form', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            const form = document.createElement('form');
+            const submitSpy = vi.fn();
+            form.addEventListener('submit', submitSpy);
+            actions.getModalForm.mockReturnValue(form);
+
+            const event = makeEvent('Enter', { metaKey: true });
+            handler(event);
+
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(submitSpy).toHaveBeenCalled();
+        });
+
+        it('clicks primary button when modal has no form', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.getModalForm.mockReturnValue(null);
+            const btn = document.createElement('button');
+            btn.click = vi.fn();
+            actions.getModalPrimaryBtn.mockReturnValue(btn);
+
+            const event = makeEvent('Enter', { metaKey: true });
+            handler(event);
+
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(btn.click).toHaveBeenCalled();
+        });
+
+        it('does not click disabled primary button', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.getModalForm.mockReturnValue(null);
+            const btn = document.createElement('button');
+            btn.disabled = true;
+            btn.click = vi.fn();
+            actions.getModalPrimaryBtn.mockReturnValue(btn);
+
+            const event = makeEvent('Enter', { metaKey: true });
+            handler(event);
+
+            expect(btn.click).not.toHaveBeenCalled();
+        });
+
+        it('submits closest form from active element when no modal', () => {
+            const form = document.createElement('form');
+            const input = document.createElement('input');
+            form.appendChild(input);
+            document.body.appendChild(form);
+            input.focus();
+
+            const submitSpy = vi.fn();
+            form.addEventListener('submit', submitSpy);
+
+            const event = makeEvent('Enter', { ctrlKey: true });
+            handler(event);
+
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(submitSpy).toHaveBeenCalled();
+
+            document.body.removeChild(form);
+        });
+
+        it('does nothing when no modal and no form in focus', () => {
+            const event = makeEvent('Enter', { metaKey: true });
+            handler(event);
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('works with ctrlKey (Windows/Linux)', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            const form = document.createElement('form');
+            const submitSpy = vi.fn();
+            form.addEventListener('submit', submitSpy);
+            actions.getModalForm.mockReturnValue(form);
+
+            const event = makeEvent('Enter', { ctrlKey: true });
+            handler(event);
+
+            expect(submitSpy).toHaveBeenCalled();
+        });
+    });
+
+    describe('Cmd+K', () => {
+        it('opens command palette when closed', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(false);
+            const event = makeEvent('k', { metaKey: true });
+            handler(event);
+
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.openCommandPalette).toHaveBeenCalled();
+            expect(actions.closeCommandPalette).not.toHaveBeenCalled();
+        });
+
+        it('closes command palette when open', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            const event = makeEvent('k', { metaKey: true });
+            handler(event);
+
+            expect(actions.closeCommandPalette).toHaveBeenCalled();
+            expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+
+        it('works with ctrlKey', () => {
+            const event = makeEvent('k', { ctrlKey: true });
+            handler(event);
+            expect(actions.openCommandPalette).toHaveBeenCalled();
+        });
+
+        it('ignores k without modifier', () => {
+            const event = makeEvent('k');
+            handler(event);
+            expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('other modifier combos', () => {
+        it('ignores Cmd+other keys', () => {
+            handler(makeEvent('a', { metaKey: true }));
+            expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// updateKeyboardSelection - CHT-710
+// ============================================================================
+
+describe('updateKeyboardSelection', () => {
+    let setIndex;
+
+    beforeEach(() => {
+        setIndex = vi.fn();
+        // jsdom doesn't implement scrollIntoView
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="issues-list">
+                <div class="list-item" data-id="issue-1">Issue 1</div>
+                <div class="list-item" data-id="issue-2">Issue 2</div>
+                <div class="list-item" data-id="issue-3">Issue 3</div>
+            </div>
+        `;
+    });
+
+    it('selects the given index', () => {
+        updateKeyboardSelection(1, setIndex);
+        expect(setIndex).toHaveBeenCalledWith(1);
+        const items = document.querySelectorAll('.list-item');
+        expect(items[1].classList.contains('keyboard-selected')).toBe(true);
+        expect(items[0].classList.contains('keyboard-selected')).toBe(false);
+    });
+
+    it('clamps to 0 for negative index', () => {
+        updateKeyboardSelection(-5, setIndex);
+        expect(setIndex).toHaveBeenCalledWith(0);
+        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(true);
+    });
+
+    it('clamps to last index for overflow', () => {
+        updateKeyboardSelection(100, setIndex);
+        expect(setIndex).toHaveBeenCalledWith(2);
+        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+    });
+
+    it('removes previous selection', () => {
+        document.querySelectorAll('.list-item')[0].classList.add('keyboard-selected');
+        updateKeyboardSelection(2, setIndex);
+        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(false);
+        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+    });
+
+    it('does nothing when no list items exist', () => {
+        document.body.innerHTML = '<div id="issues-list"></div>';
+        updateKeyboardSelection(0, setIndex);
+        expect(setIndex).not.toHaveBeenCalled();
+    });
+
+    it('scrolls selected item into view', () => {
+        const scrollSpy = vi.fn();
+        document.querySelectorAll('.list-item')[1].scrollIntoView = scrollSpy;
+        updateKeyboardSelection(1, setIndex);
+        expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
+    });
+
+    it('supports custom selector', () => {
+        document.body.innerHTML = `
+            <div id="custom-list">
+                <div class="custom-item">A</div>
+                <div class="custom-item">B</div>
+            </div>
+        `;
+        updateKeyboardSelection(1, setIndex, '#custom-list .custom-item');
+        expect(setIndex).toHaveBeenCalledWith(1);
+        expect(document.querySelectorAll('.custom-item')[1].classList.contains('keyboard-selected')).toBe(true);
+    });
+});
+
+// ============================================================================
+// List Navigation Handler (j/k/Enter/e) - CHT-710
+// ============================================================================
+
+describe('List Navigation Handler', () => {
+    let actions;
+    let handler;
+
+    beforeEach(() => {
+        actions = {
+            getCurrentView: vi.fn().mockReturnValue('issues'),
+            getSelectedIndex: vi.fn().mockReturnValue(0),
+            setSelectedIndex: vi.fn(),
+            viewIssue: vi.fn(),
+            showEditIssueModal: vi.fn(),
+            isModalOpen: vi.fn().mockReturnValue(false),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+        };
+        handler = createListNavigationHandler(actions);
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="issues-list">
+                <div class="list-item" data-id="issue-1">Issue 1</div>
+                <div class="list-item" data-id="issue-2">Issue 2</div>
+                <div class="list-item" data-id="issue-3">Issue 3</div>
+            </div>
+        `;
+    });
+
+    describe('guard conditions', () => {
+        it('ignores when not in issues view', () => {
+            actions.getCurrentView.mockReturnValue('projects');
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on INPUT', () => {
+            handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on TEXTAREA', () => {
+            handler(makeEvent('j', { target: { tagName: 'TEXTAREA' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on SELECT', () => {
+            handler(makeEvent('j', { target: { tagName: 'SELECT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when command palette is open', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when no list items', () => {
+            document.body.innerHTML = '<div id="issues-list"></div>';
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('j/k navigation', () => {
+        it('j moves selection down', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('k moves selection up', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('k');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('j clamps at bottom', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(2);
+        });
+
+        it('k clamps at top', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('k'));
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(0);
+        });
+    });
+
+    describe('Enter to view issue', () => {
+        it('opens issue when selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.viewIssue).toHaveBeenCalledWith('issue-2');
+        });
+
+        it('does nothing when no item selected (index -1)', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Enter'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+
+        it('skips temp items', () => {
+            document.querySelector('.list-item').dataset.id = 'temp-123';
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('Enter'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('e to edit issue', () => {
+        it('opens edit modal when selected', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('e');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.showEditIssueModal).toHaveBeenCalledWith('issue-1');
+        });
+
+        it('does nothing when no item selected', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('e'));
+            expect(actions.showEditIssueModal).not.toHaveBeenCalled();
+        });
+
+        it('skips temp items', () => {
+            document.querySelector('.list-item').dataset.id = 'temp-456';
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('e'));
+            expect(actions.showEditIssueModal).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('unrecognized keys', () => {
+        it('does not act on other keys', () => {
+            handler(makeEvent('x'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+            expect(actions.showEditIssueModal).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
     });
 });
