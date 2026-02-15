@@ -125,10 +125,14 @@ export function createModifierKeyHandler(actions) {
         if (!(e.metaKey || e.ctrlKey)) return;
 
         if (e.key === 'Enter') {
+            // Consolidates two old handlers: modal-specific submit and global form
+            // submit. The old code had both fire on Cmd+Enter, causing double-submit
+            // in modals. Now we route to exactly one path.
             if (actions.isModalOpen()) {
                 const form = actions.getModalForm();
                 if (form) {
                     e.preventDefault();
+                    // Modal forms don't need bubbles (dispatched directly on the form)
                     form.dispatchEvent(new Event('submit', { cancelable: true }));
                 } else {
                     const primaryBtn = actions.getModalPrimaryBtn();
@@ -138,7 +142,8 @@ export function createModifierKeyHandler(actions) {
                     }
                 }
             } else {
-                // Global form submit: find the closest form from the active element
+                // Global form submit: find the closest form from the active element.
+                // Uses bubbles:true so parent handlers can observe the event.
                 const form = document.activeElement?.closest('form');
                 if (form) {
                     e.preventDefault();

@@ -616,6 +616,12 @@ describe('List Navigation Handler', () => {
             expect(actions.viewIssue).not.toHaveBeenCalled();
         });
 
+        it('does nothing when selectedIndex exceeds list length', () => {
+            actions.getSelectedIndex.mockReturnValue(99);
+            handler(makeEvent('Enter'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+
         it('skips temp items', () => {
             document.querySelector('.list-item').dataset.id = 'temp-123';
             actions.getSelectedIndex.mockReturnValue(0);
@@ -642,6 +648,12 @@ describe('List Navigation Handler', () => {
         it('skips temp items', () => {
             document.querySelector('.list-item').dataset.id = 'temp-456';
             actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('e'));
+            expect(actions.showEditIssueModal).not.toHaveBeenCalled();
+        });
+
+        it('does nothing when selectedIndex exceeds list length', () => {
+            actions.getSelectedIndex.mockReturnValue(99);
             handler(makeEvent('e'));
             expect(actions.showEditIssueModal).not.toHaveBeenCalled();
         });
