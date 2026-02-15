@@ -18,6 +18,7 @@ let sprintCacheLoadedProjects = new Set();
 let limboStatus = null;
 let currentSprintDetail = null; // For sprint detail view
 let currentSprintIssues = []; // Issues in current sprint detail
+let currentSprintDocuments = []; // Documents in current sprint detail
 let currentSprintTransactions = []; // Budget transactions for current sprint
 
 // Getters/setters for state access from other modules
@@ -251,13 +252,16 @@ export async function viewSprint(sprintId, pushHistory = true) {
 
         currentSprintDetail = sprint;
 
-        // Fetch issues and transactions for this sprint in parallel
-        const [issues, transactions] = await Promise.all([
+        // Fetch issues, transactions, and documents for this sprint in parallel
+        const teamId = window.currentTeam?.id;
+        const [issues, transactions, documents] = await Promise.all([
             api.getIssues({ sprint_id: sprintId, limit: 500 }),
-            api.getSprintTransactions(sprintId).catch(() => []) // Don't fail if transactions fail
+            api.getSprintTransactions(sprintId).catch(() => []),
+            teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(() => []) : [],
         ]);
         currentSprintIssues = issues;
         currentSprintTransactions = transactions;
+        currentSprintDocuments = documents;
 
         // Update URL and history
         if (pushHistory) {
@@ -395,6 +399,15 @@ function renderSprintDetail() {
                 <h3>Budget Ledger</h3>
                 ${renderBudgetLedger()}
             </div>
+
+            ${currentSprintDocuments.length > 0 ? `
+            <div class="sprint-detail-section">
+                <h3>Documents (${currentSprintDocuments.length})</h3>
+                <div class="sprint-issues-list">
+                    ${currentSprintDocuments.map(doc => renderSprintDocumentRow(doc)).join('')}
+                </div>
+            </div>
+            ` : ''}
         </div>
     `;
 }
@@ -417,6 +430,19 @@ function renderSprintIssueRow(issue) {
             <span class="sprint-issue-meta">
                 ${safePriority ? `<span class="badge ${priorityClass}">${formatPriority(safePriority)}</span>` : ''}
                 ${issue.estimate ? `<span class="badge badge-estimate">${issue.estimate}pt</span>` : ''}
+            </span>
+        </div>
+    `;
+}
+
+function renderSprintDocumentRow(doc) {
+    const icon = escapeHtml(doc.icon) || '📄';
+    return `
+        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewDocument('${escapeJsString(doc.id)}'); } else { window.open('/document/${escapeJsString(encodeURIComponent(doc.id))}', '_blank'); }">
+            <span class="sprint-issue-identifier">${icon}</span>
+            <span class="sprint-issue-title">${escapeHtml(doc.title || 'Untitled')}</span>
+            <span class="sprint-issue-meta">
+                <span class="text-muted">${formatTimeAgo(doc.created_at)}</span>
             </span>
         </div>
     `;

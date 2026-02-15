@@ -511,6 +511,8 @@ window.updateAssigneeFilter = updateAssigneeFilter;
 window.loadLabels = loadLabels;
 window.resetOnboarding = resetOnboarding;
 
+window.viewDocument = viewDocument;
+
 // viewDocumentByPath helper (used by router detail route config)
 async function viewDocumentByPath(docId) {
     try {

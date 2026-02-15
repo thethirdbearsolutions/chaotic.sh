@@ -15,6 +15,7 @@ vi.mock('./api.js', () => ({
         updateProject: vi.fn(),
         getLimboStatus: vi.fn(),
         getRituals: vi.fn(),
+        getDocuments: vi.fn(),
     },
 }));
 
@@ -81,7 +82,9 @@ beforeEach(() => {
     `;
     window.navigateTo = vi.fn();
     window.viewIssue = vi.fn();
+    window.viewDocument = vi.fn();
     window.renderMarkdown = vi.fn(s => s);
+    window.currentTeam = { id: 'team-1', name: 'Test Team' };
     // Reset module state
     setSprints([]);
     invalidateSprintCache();
@@ -261,6 +264,7 @@ describe('viewSprint', () => {
             { id: 'i1', identifier: 'CHT-1', title: 'Issue 1', status: 'todo', estimate: 3 },
         ]);
         api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
 
         await viewSprint('s1');
 
@@ -286,6 +290,123 @@ describe('viewSprint', () => {
 
         expect(showToast).toHaveBeenCalledWith('Failed to load sprint', 'error');
     });
+
+    it('renders documents section when documents exist', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([
+            { id: 'doc-1', title: 'Sprint Report', icon: '📝', created_at: '2026-01-01' },
+            { id: 'doc-2', title: 'Retrospective', icon: '📄', created_at: '2026-01-02' },
+        ]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('Documents (2)');
+        expect(detailView.innerHTML).toContain('Sprint Report');
+        expect(detailView.innerHTML).toContain('Retrospective');
+    });
+
+    it('hides documents section when no documents', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).not.toContain('Documents (');
+    });
+
+    it('fetches documents with team and project context', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        expect(api.getDocuments).toHaveBeenCalledWith('team-1', 'p1', null, 's1');
+    });
+
+    it('handles document fetch failure gracefully', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockRejectedValue(new Error('forbidden'));
+
+        await viewSprint('s1');
+
+        // Should still render without documents
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView).toBeTruthy();
+        expect(detailView.innerHTML).toContain('Sprint 1');
+        expect(detailView.innerHTML).not.toContain('Documents (');
+    });
+
+    it('renders document icon from document data', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([
+            { id: 'doc-1', title: 'My Doc', icon: '🎯', created_at: '2026-01-01' },
+        ]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('🎯');
+    });
+
+    it('uses default icon when document has no icon', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([
+            { id: 'doc-1', title: 'No Icon Doc', created_at: '2026-01-01' },
+        ]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('📄');
+    });
+
+    it('skips document fetch when currentTeam is null', async () => {
+        window.currentTeam = null;
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        expect(api.getDocuments).not.toHaveBeenCalled();
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView).toBeTruthy();
+    });
 });
 
 describe('viewSprintByPath', () => {
@@ -303,6 +424,7 @@ describe('viewSprintByPath', () => {
         });
         api.getIssues.mockResolvedValue([]);
         api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
 
         await viewSprintByPath('12345678-1234-1234-1234-123456789abc');
 
