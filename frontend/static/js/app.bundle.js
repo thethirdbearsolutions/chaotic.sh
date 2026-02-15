@@ -1676,14 +1676,21 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             <div class="ticket-rituals-pending">
                 <p class="ticket-rituals-warning">${l}</p>
                 ${n.map(d=>`
-                    <div class="ticket-ritual-item pending">
+                    <div class="ticket-ritual-item pending${d.attestation?" attested":""}">
                         <div class="ticket-ritual-info">
-                            <span class="ticket-ritual-status">○</span>
+                            <span class="ticket-ritual-status">${d.attestation?"⏳":"○"}</span>
                             <span class="ticket-ritual-name">${h.escapeHtml(d.name)}</span>
                             <span class="badge badge-trigger-${d.trigger||"ticket_close"}">${d.trigger==="ticket_claim"?"claim":"close"}</span>
                             <span class="badge badge-ritual-${d.approval_mode||"auto"}">${d.approval_mode||"auto"}</span>
                         </div>
                         <div class="ticket-ritual-prompt markdown-body">${d.prompt?h.renderMarkdown(d.prompt):""}</div>
+                        ${d.attestation?`
+                            <div class="ticket-ritual-attestation">
+                                <span class="attestation-by">Attested by ${h.escapeHtml(d.attestation.attested_by_name||"Unknown")}</span>
+                                <span class="attestation-time">${h.formatTimeAgo(d.attestation.attested_at)}</span>
+                                ${d.attestation.note?`<div class="attestation-note markdown-body">${h.renderMarkdown(d.attestation.note)}</div>`:""}
+                            </div>
+                        `:""}
                         <div class="ticket-ritual-actions">
                             ${h.renderTicketRitualActions(d,e)}
                         </div>

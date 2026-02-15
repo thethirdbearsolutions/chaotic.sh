@@ -5313,6 +5313,26 @@ input[type="checkbox"] {
     font-size: 13px;
 }
 
+.ticket-ritual-attestation .attestation-by {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.ticket-ritual-attestation .attestation-time {
+    color: var(--text-tertiary);
+    margin-left: 8px;
+    font-size: 12px;
+}
+
+.ticket-ritual-attestation .attestation-note {
+    margin-top: 6px;
+    color: var(--text-secondary);
+}
+
+.ticket-ritual-item.pending.attested {
+    border-left: 3px solid var(--warning-color, #f59e0b);
+}
+
 .ticket-ritual-note {
     color: var(--text-secondary);
     white-space: pre-wrap;

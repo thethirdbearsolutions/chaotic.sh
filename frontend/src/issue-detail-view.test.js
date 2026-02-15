@@ -24,6 +24,7 @@ import {
     clearSelectedRelation,
     handleAddRelation,
     deleteRelation,
+    loadTicketRituals,
 } from './issue-detail-view.js';
 
 describe('issue-detail-view', () => {
@@ -345,6 +346,59 @@ describe('issue-detail-view', () => {
             await viewIssue('issue-1');
 
             expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load issue: API Error', 'error');
+        });
+
+        it('renders attestation info for pending rituals (CHT-901)', async () => {
+            mockApi.getTicketRitualsStatus.mockResolvedValue({
+                pending_rituals: [{
+                    id: 'r1',
+                    name: 'Code Review',
+                    prompt: 'Review the code',
+                    trigger: 'ticket_close',
+                    approval_mode: 'review',
+                    attestation: {
+                        id: 'att-1',
+                        attested_by_name: 'Alice',
+                        attested_at: '2026-02-15T10:00:00Z',
+                        note: 'All files reviewed',
+                    },
+                }],
+                completed_rituals: [],
+            });
+
+            await viewIssue('issue-1');
+            // loadTicketRituals is fire-and-forget in viewIssue, call directly
+            await loadTicketRituals('issue-1');
+
+            // Rituals render into the first ticket-rituals-section found by getElementById
+            const ritualsHtml = document.getElementById('ticket-rituals-section').innerHTML;
+            expect(ritualsHtml).toContain('Attested by');
+            expect(ritualsHtml).toContain('Alice');
+            expect(ritualsHtml).toContain('All files reviewed');
+            // Pending ritual with attestation shows hourglass icon
+            expect(ritualsHtml).toContain('⏳');
+        });
+
+        it('renders pending rituals without attestation (CHT-901)', async () => {
+            mockApi.getTicketRitualsStatus.mockResolvedValue({
+                pending_rituals: [{
+                    id: 'r1',
+                    name: 'Run Tests',
+                    prompt: 'Run the test suite',
+                    trigger: 'ticket_close',
+                    approval_mode: 'gate',
+                }],
+                completed_rituals: [],
+            });
+
+            await viewIssue('issue-1');
+            await loadTicketRituals('issue-1');
+
+            const ritualsHtml = document.getElementById('ticket-rituals-section').innerHTML;
+            expect(ritualsHtml).toContain('Run Tests');
+            expect(ritualsHtml).not.toContain('Attested by');
+            // Non-attested pending ritual shows circle icon
+            expect(ritualsHtml).toContain('○');
         });
     });
 

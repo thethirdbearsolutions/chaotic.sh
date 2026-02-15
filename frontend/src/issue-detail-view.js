@@ -517,14 +517,21 @@ export function renderTicketRituals(issueId) {
             <div class="ticket-rituals-pending">
                 <p class="ticket-rituals-warning">${warningMessage}</p>
                 ${pending_rituals.map(r => `
-                    <div class="ticket-ritual-item pending">
+                    <div class="ticket-ritual-item pending${r.attestation ? ' attested' : ''}">
                         <div class="ticket-ritual-info">
-                            <span class="ticket-ritual-status">○</span>
+                            <span class="ticket-ritual-status">${r.attestation ? '⏳' : '○'}</span>
                             <span class="ticket-ritual-name">${deps.escapeHtml(r.name)}</span>
                             <span class="badge badge-trigger-${r.trigger || 'ticket_close'}">${r.trigger === 'ticket_claim' ? 'claim' : 'close'}</span>
                             <span class="badge badge-ritual-${r.approval_mode || 'auto'}">${r.approval_mode || 'auto'}</span>
                         </div>
                         <div class="ticket-ritual-prompt markdown-body">${r.prompt ? deps.renderMarkdown(r.prompt) : ''}</div>
+                        ${r.attestation ? `
+                            <div class="ticket-ritual-attestation">
+                                <span class="attestation-by">Attested by ${deps.escapeHtml(r.attestation.attested_by_name || 'Unknown')}</span>
+                                <span class="attestation-time">${deps.formatTimeAgo(r.attestation.attested_at)}</span>
+                                ${r.attestation.note ? `<div class="attestation-note markdown-body">${deps.renderMarkdown(r.attestation.note)}</div>` : ''}
+                            </div>
+                        ` : ''}
                         <div class="ticket-ritual-actions">
                             ${deps.renderTicketRitualActions(r, issueId)}
                         </div>
