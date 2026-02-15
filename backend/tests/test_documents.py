@@ -1,6 +1,10 @@
 """Tests for document API endpoints."""
 import pytest
+import pytest_asyncio
 from app.models.document import Document, DocumentComment
+from app.models.team import Team, TeamMember, TeamRole
+from app.models.user import User
+from app.utils.security import get_password_hash, create_access_token
 
 
 @pytest.mark.asyncio
@@ -813,3 +817,218 @@ class TestDocumentComments:
         )
         assert response.status_code == 403
         assert "Only the author" in response.json()["detail"]
+
+
+# ============================================================================
+# Project-linked document access control tests (CHT-857)
+# Covers project_id access check branches in get, update, delete, comments, etc.
+# ============================================================================
+
+
+@pytest_asyncio.fixture
+async def other_team_for_docs(db_session):
+    """Team that test_user is NOT a member of."""
+    team = Team(name="Docs Other Team", key="DOT", description="Other team")
+    db_session.add(team)
+    await db_session.commit()
+    await db_session.refresh(team)
+    return team
+
+
+@pytest_asyncio.fixture
+async def cross_team_user(db_session, other_team_for_docs):
+    """User on other_team (not test_team)."""
+    user = User(
+        email="docs-cross@example.com",
+        hashed_password=get_password_hash("test"),
+        name="Cross Team User",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    member = TeamMember(
+        team_id=other_team_for_docs.id, user_id=user.id, role=TeamRole.OWNER
+    )
+    db_session.add(member)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def cross_team_headers(cross_team_user):
+    """Auth headers for cross-team user."""
+    token = create_access_token(data={"sub": cross_team_user.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def project_document(db_session, test_team, test_project, test_user):
+    """Document linked to a project (not just team-level)."""
+    doc = Document(
+        team_id=test_team.id,
+        author_id=test_user.id,
+        project_id=test_project.id,
+        title="Project Document",
+        content="Content linked to project",
+    )
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+    return doc
+
+
+@pytest_asyncio.fixture
+async def agent_user_for_docs(db_session, test_team, test_user):
+    """Agent user scoped to test_team."""
+    user = User(
+        email="docs-agent@example.com",
+        hashed_password=get_password_hash("test"),
+        name="Docs Agent",
+        is_agent=True,
+        parent_user_id=test_user.id,
+        agent_team_id=test_team.id,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def agent_headers_for_docs(agent_user_for_docs):
+    """Auth headers for agent user."""
+    token = create_access_token(data={"sub": agent_user_for_docs.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+class TestProjectDocumentAccessControl:
+    """Test access control for project-linked documents (CHT-857).
+
+    Covers the project_id branch in get/update/delete/comments endpoints.
+    """
+
+    async def test_get_project_document_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """GET /documents/{id} returns 403 for cross-team user on project doc."""
+        response = await client.get(
+            f"/api/documents/{project_document.id}",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_update_project_document_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """PATCH /documents/{id} returns 403 for cross-team user on project doc."""
+        response = await client.patch(
+            f"/api/documents/{project_document.id}",
+            headers=cross_team_headers,
+            json={"title": "Hacked"},
+        )
+        assert response.status_code == 403
+
+    async def test_delete_project_document_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """DELETE /documents/{id} returns 403 for cross-team user on project doc."""
+        response = await client.delete(
+            f"/api/documents/{project_document.id}",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_get_project_document_issues_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """GET /documents/{id}/issues returns 403 for cross-team user."""
+        response = await client.get(
+            f"/api/documents/{project_document.id}/issues",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_get_project_document_labels_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """GET /documents/{id}/labels returns 403 for cross-team user."""
+        response = await client.get(
+            f"/api/documents/{project_document.id}/labels",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_get_project_document_comments_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """GET /documents/{id}/comments returns 403 for cross-team user."""
+        response = await client.get(
+            f"/api/documents/{project_document.id}/comments",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_create_comment_on_project_document_cross_team_denied(
+        self, client, cross_team_headers, project_document
+    ):
+        """POST /documents/{id}/comments returns 403 for cross-team user."""
+        response = await client.post(
+            f"/api/documents/{project_document.id}/comments",
+            headers=cross_team_headers,
+            json={"content": "Unauthorized comment"},
+        )
+        assert response.status_code == 403
+
+    async def test_delete_comment_on_project_document_cross_team_denied(
+        self, client, auth_headers, cross_team_headers, project_document, db_session, test_user
+    ):
+        """DELETE /documents/{id}/comments/{id} returns 403 for cross-team user."""
+        # Create a comment first
+        comment = DocumentComment(
+            document_id=project_document.id,
+            author_id=test_user.id,
+            content="Test comment",
+        )
+        db_session.add(comment)
+        await db_session.commit()
+        await db_session.refresh(comment)
+
+        response = await client.delete(
+            f"/api/documents/{project_document.id}/comments/{comment.id}",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
+
+    async def test_agent_must_include_icon(
+        self, client, agent_headers_for_docs, test_team
+    ):
+        """POST /documents by agent without icon returns 400."""
+        response = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=agent_headers_for_docs,
+            json={"title": "Agent Doc", "content": "No icon"},
+        )
+        assert response.status_code == 400
+        assert "emoji icon" in response.json()["detail"]
+
+    async def test_agent_with_icon_succeeds(
+        self, client, agent_headers_for_docs, test_team
+    ):
+        """POST /documents by agent with icon succeeds."""
+        response = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=agent_headers_for_docs,
+            json={"title": "Agent Doc", "content": "With icon", "icon": "📝"},
+        )
+        assert response.status_code == 201
+
+    async def test_list_documents_project_filter_cross_team_denied(
+        self, client, cross_team_headers, test_team, test_project
+    ):
+        """GET /documents?project_id= returns 403 for cross-team user."""
+        response = await client.get(
+            f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
+            headers=cross_team_headers,
+        )
+        assert response.status_code == 403
