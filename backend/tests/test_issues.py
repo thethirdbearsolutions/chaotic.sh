@@ -1,6 +1,10 @@
 """Tests for issue endpoints."""
 import pytest
+import pytest_asyncio
 from app.models.issue import IssueStatus, IssuePriority
+from app.models.team import Team, TeamMember, TeamRole
+from app.models.user import User
+from app.utils.security import get_password_hash, create_access_token
 
 
 @pytest.mark.asyncio
@@ -3131,3 +3135,215 @@ async def test_ticket_rituals_error_multiple_rituals(
     assert len(detail["pending_rituals"]) == 2
     names = {r["name"] for r in detail["pending_rituals"]}
     assert names == {"code-review", "test-coverage"}
+
+
+# ============================================================================
+# Cross-team access control and edge case tests (CHT-858)
+# ============================================================================
+
+
+@pytest_asyncio.fixture
+async def other_team_for_issues(db_session):
+    """Team that test_user is NOT a member of."""
+    team = Team(name="Issues Other Team", key="IOT", description="Other team")
+    db_session.add(team)
+    await db_session.commit()
+    await db_session.refresh(team)
+    return team
+
+
+@pytest_asyncio.fixture
+async def cross_team_user_issues(db_session, other_team_for_issues):
+    """User on other_team (not test_team)."""
+    user = User(
+        email="issues-cross@example.com",
+        hashed_password=get_password_hash("test"),
+        name="Cross Team User",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    member = TeamMember(
+        team_id=other_team_for_issues.id, user_id=user.id, role=TeamRole.OWNER
+    )
+    db_session.add(member)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def cross_team_headers_issues(cross_team_user_issues):
+    """Auth headers for cross-team user."""
+    token = create_access_token(data={"sub": cross_team_user_issues.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+async def test_get_issue_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """GET /issues/{id} returns 403 for cross-team user."""
+    response = await client.get(
+        f"/api/issues/{test_issue.id}",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_update_issue_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """PATCH /issues/{id} returns 403 for cross-team user."""
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=cross_team_headers_issues,
+        json={"title": "Hacked"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_delete_issue_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """DELETE /issues/{id} returns 403 for cross-team user."""
+    response = await client.delete(
+        f"/api/issues/{test_issue.id}",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_activities_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """GET /issues/{id}/activities returns 403 for cross-team user."""
+    response = await client.get(
+        f"/api/issues/{test_issue.id}/activities",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_comment_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """POST /issues/{id}/comments returns 403 for cross-team user."""
+    response = await client.post(
+        f"/api/issues/{test_issue.id}/comments",
+        headers=cross_team_headers_issues,
+        json={"content": "Unauthorized comment"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_comments_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """GET /issues/{id}/comments returns 403 for cross-team user."""
+    response = await client.get(
+        f"/api/issues/{test_issue.id}/comments",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_search_cross_team_denied(
+    client, cross_team_headers_issues, test_team
+):
+    """GET /issues/search returns 403 for cross-team user."""
+    response = await client.get(
+        f"/api/issues/search?team_id={test_team.id}&q=test",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_batch_update_missing_issues(
+    client, auth_headers, test_project
+):
+    """POST /issues/batch-update with nonexistent issue IDs returns 404."""
+    response = await client.post(
+        "/api/issues/batch-update",
+        headers=auth_headers,
+        json={
+            "issue_ids": ["00000000-0000-0000-0000-000000000000"],
+            "updates": {"priority": "high"},
+        },
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_remove_label_cross_team(
+    client, auth_headers, test_issue, test_label, db_session, test_project
+):
+    """DELETE /issues/{id}/labels/{id} with cross-team label returns 400."""
+    from app.models import Label
+
+    # Create a label on a different team
+    other_team = Team(name="Label Other Team", key="LOT", description="Other")
+    db_session.add(other_team)
+    await db_session.flush()
+    other_label = Label(
+        team_id=other_team.id,
+        name="Other Label",
+        color="#000000",
+    )
+    db_session.add(other_label)
+    await db_session.commit()
+    await db_session.refresh(other_label)
+
+    response = await client.delete(
+        f"/api/issues/{test_issue.id}/labels/{other_label.id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+    assert "does not belong" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_relation_cross_team_denied(
+    client, cross_team_headers_issues, test_issue, test_project, db_session, test_user
+):
+    """POST /issues/{id}/relations returns 403 for cross-team user."""
+    from app.models import Issue
+
+    # Create a second issue so related_issue_id is valid
+    test_project.issue_count += 1
+    issue2 = Issue(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-{test_project.issue_count}",
+        number=test_project.issue_count,
+        title="Related Issue",
+        creator_id=test_user.id,
+    )
+    db_session.add(issue2)
+    await db_session.commit()
+    await db_session.refresh(issue2)
+
+    response = await client.post(
+        f"/api/issues/{test_issue.id}/relations",
+        headers=cross_team_headers_issues,
+        json={"related_issue_id": issue2.id, "relation_type": "blocks"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_relations_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """GET /issues/{id}/relations returns 403 for cross-team user."""
+    response = await client.get(
+        f"/api/issues/{test_issue.id}/relations",
+        headers=cross_team_headers_issues,
+    )
+    assert response.status_code == 403
