@@ -3854,6 +3854,50 @@ input[type="checkbox"] {
     .search-box {
         width: 100%;
     }
+
+    /* Filter dropdown: full-width on mobile */
+    .filter-menu-dropdown {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        min-width: 0;
+        max-height: 70vh;
+        border-radius: 12px 12px 0 0;
+        flex-direction: column;
+        z-index: 300;
+    }
+
+    .filter-menu-categories {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        flex-wrap: wrap;
+        padding: 6px;
+        gap: 4px;
+    }
+
+    .filter-menu-category {
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+    }
+
+    .filter-menu-category.active {
+        background: var(--accent-color);
+        color: #fff;
+    }
+
+    .filter-menu-category-arrow {
+        display: none;
+    }
+
+    .filter-menu-options {
+        min-height: 0;
+        max-height: 50vh;
+    }
 }
 
 /* Text utilities */
