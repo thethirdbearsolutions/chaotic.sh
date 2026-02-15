@@ -20,6 +20,14 @@ export function closeModal() {
 }
 
 /**
+ * Check if a modal is currently open
+ * @returns {boolean}
+ */
+export function isModalOpen() {
+  return !document.getElementById('modal-overlay').classList.contains('hidden');
+}
+
+/**
  * Show a toast notification
  * @param {string} message - Message to display
  * @param {'success'|'error'|'info'} type - Toast type
