@@ -931,3 +931,247 @@ export async function viewIssue(issueId, pushHistory = true) {
         deps.showToast(`Failed to load issue: ${e.message}`, 'error');
     }
 }
+
+
+// ============================================================================
+// Issue Detail Actions (CHT-666)
+// Extracted from app.js: comments, description editing, relations
+// ============================================================================
+
+/**
+ * Add a comment to an issue.
+ */
+export async function handleAddComment(event, issueId) {
+    event.preventDefault();
+    const content = document.getElementById('new-comment').value;
+
+    try {
+        await deps.api.createComment(issueId, content);
+        await viewIssue(issueId);
+        deps.showToast('Comment added!', 'success');
+    } catch (e) {
+        deps.showToast(`Failed to add comment: ${e.message}`, 'error');
+    }
+    return false;
+}
+
+/**
+ * Open description edit modal.
+ */
+export async function editDescription(issueId) {
+    const issue = window.currentDetailIssue || await deps.api.getIssue(issueId);
+
+    document.getElementById('modal-title').textContent = 'Edit Description';
+    document.getElementById('modal-content').innerHTML = `
+        <form onsubmit="return handleUpdateDescription(event, '${deps.escapeJsString(issueId)}')">
+            <div class="form-group description-editor">
+                <div class="editor-tabs">
+                    <button type="button" class="editor-tab active" id="edit-description-tab-write" onclick="setDescriptionEditorMode('write')">Write</button>
+                    <button type="button" class="editor-tab" id="edit-description-tab-preview" onclick="setDescriptionEditorMode('preview')">Preview</button>
+                </div>
+                <textarea id="edit-description" rows="10" placeholder="Add a description...">${deps.escapeHtml(issue.description || '')}</textarea>
+                <div id="edit-description-preview" class="markdown-body editor-preview" style="display: none;"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    `;
+    deps.showModal();
+    const textarea = document.getElementById('edit-description');
+    textarea.addEventListener('input', () => {
+        const preview = document.getElementById('edit-description-preview');
+        if (preview && preview.style.display !== 'none') {
+            updateDescriptionPreview();
+        }
+    });
+    textarea.focus();
+}
+
+function updateDescriptionPreview() {
+    const textarea = document.getElementById('edit-description');
+    const preview = document.getElementById('edit-description-preview');
+    if (!textarea || !preview) return;
+    const value = textarea.value.trim();
+    preview.innerHTML = value
+        ? renderDescriptionContent(value)
+        : '<span class="text-muted">Nothing to preview.</span>';
+}
+
+/**
+ * Switch description editor between write and preview modes.
+ */
+export function setDescriptionEditorMode(mode) {
+    const writeTab = document.getElementById('edit-description-tab-write');
+    const previewTab = document.getElementById('edit-description-tab-preview');
+    const textarea = document.getElementById('edit-description');
+    const preview = document.getElementById('edit-description-preview');
+    if (!writeTab || !previewTab || !textarea || !preview) return;
+
+    const isPreview = mode === 'preview';
+    writeTab.classList.toggle('active', !isPreview);
+    previewTab.classList.toggle('active', isPreview);
+    textarea.style.display = isPreview ? 'none' : 'block';
+    preview.style.display = isPreview ? 'block' : 'none';
+
+    if (isPreview) {
+        updateDescriptionPreview();
+    } else {
+        textarea.focus();
+    }
+}
+
+/**
+ * Save updated description.
+ */
+export async function handleUpdateDescription(event, issueId) {
+    event.preventDefault();
+
+    try {
+        const descEl = document.getElementById('edit-description');
+        if (!descEl) {
+            throw new Error('Description field not found');
+        }
+        const description = descEl.value;
+        await deps.api.updateIssue(issueId, { description });
+        deps.closeModal();
+        deps.showToast('Description updated', 'success');
+        viewIssue(issueId, false);
+    } catch (e) {
+        deps.showToast(`Failed to update description: ${e.message}`, 'error');
+    }
+    return false;
+}
+
+/**
+ * Show modal to add a relation to an issue.
+ */
+export function showAddRelationModal(issueId) {
+    document.getElementById('modal-title').textContent = 'Add Relation';
+    document.getElementById('modal-content').innerHTML = `
+        <form onsubmit="return handleAddRelation(event, '${deps.escapeJsString(issueId)}')">
+            <div class="form-group">
+                <label for="relation-type">Relation Type</label>
+                <select id="relation-type" required>
+                    <option value="blocks">Blocks</option>
+                    <option value="blocked_by">Blocked by</option>
+                    <option value="relates_to">Relates to</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="relation-issue-search">Search Issues</label>
+                <input type="text" id="relation-issue-search" placeholder="Search by title or ID..." oninput="searchIssuesToRelate(this.value, '${deps.escapeJsString(issueId)}')">
+                <input type="hidden" id="selected-related-issue-id">
+            </div>
+            <div id="relation-search-results" class="link-results">
+                <p class="empty-state-small">Enter a search term to find issues</p>
+            </div>
+            <div id="selected-issue-display" class="selected-issue-display" style="display: none;">
+                <span class="selected-issue-label">Selected:</span>
+                <span id="selected-issue-info"></span>
+                <button type="button" class="btn btn-danger btn-tiny" onclick="clearSelectedRelation()">×</button>
+            </div>
+            <button type="submit" class="btn btn-primary" id="add-relation-btn" disabled>Add Relation</button>
+        </form>
+    `;
+    deps.showModal();
+    document.getElementById('relation-issue-search').focus();
+}
+
+/**
+ * Search for issues to add as a relation.
+ */
+export async function searchIssuesToRelate(query, currentIssueId) {
+    const resultsDiv = document.getElementById('relation-search-results');
+    if (!query || query.length < 2) {
+        resultsDiv.innerHTML = '<p class="empty-state-small">Enter a search term to find issues</p>';
+        return;
+    }
+
+    try {
+        const teamId = window.currentTeam?.id;
+        const issues = await deps.api.searchIssues(teamId, query);
+        const filteredIssues = issues.filter(issue => issue.id !== currentIssueId);
+
+        if (filteredIssues.length === 0) {
+            resultsDiv.innerHTML = '<p class="empty-state-small">No issues found</p>';
+            return;
+        }
+
+        resultsDiv.innerHTML = filteredIssues.map(issue => `
+            <div class="link-result-item" onclick="selectIssueForRelation('${deps.escapeJsString(issue.id)}', '${deps.escapeJsString(issue.identifier)}', '${deps.escapeJsString(issue.title)}')">
+                <span class="link-result-id">${deps.escapeHtml(issue.identifier)}</span>
+                <span class="link-result-title">${deps.escapeHtml(issue.title)}</span>
+            </div>
+        `).join('');
+    } catch {
+        resultsDiv.innerHTML = '<p class="empty-state-small error">Error searching issues</p>';
+    }
+}
+
+/**
+ * Select an issue from relation search results.
+ */
+export function selectIssueForRelation(issueId, identifier, title) {
+    document.getElementById('selected-related-issue-id').value = issueId;
+    document.getElementById('selected-issue-info').textContent = `${identifier}: ${title}`;
+    document.getElementById('selected-issue-display').style.display = 'flex';
+    document.getElementById('relation-search-results').style.display = 'none';
+    document.getElementById('relation-issue-search').value = identifier;
+    document.getElementById('add-relation-btn').disabled = false;
+}
+
+/**
+ * Clear the selected relation issue.
+ */
+export function clearSelectedRelation() {
+    document.getElementById('selected-related-issue-id').value = '';
+    document.getElementById('selected-issue-display').style.display = 'none';
+    document.getElementById('relation-search-results').style.display = 'block';
+    document.getElementById('relation-issue-search').value = '';
+    document.getElementById('add-relation-btn').disabled = true;
+    document.getElementById('relation-issue-search').focus();
+}
+
+/**
+ * Add a relation between two issues.
+ */
+export async function handleAddRelation(event, issueId) {
+    event.preventDefault();
+    const relationType = document.getElementById('relation-type').value;
+    const relatedIssueId = document.getElementById('selected-related-issue-id').value;
+
+    if (!relatedIssueId) {
+        deps.showToast('Please select an issue', 'error');
+        return false;
+    }
+
+    try {
+        if (relationType === 'blocked_by') {
+            await deps.api.createRelation(relatedIssueId, issueId, 'blocks');
+        } else {
+            await deps.api.createRelation(issueId, relatedIssueId, relationType);
+        }
+
+        deps.closeModal();
+        deps.showToast('Relation added', 'success');
+        viewIssue(issueId);
+    } catch (e) {
+        deps.showToast(`Failed to add relation: ${e.message}`, 'error');
+    }
+    return false;
+}
+
+/**
+ * Delete a relation from an issue.
+ */
+export async function deleteRelation(issueId, relationId) {
+    try {
+        await deps.api.deleteRelation(issueId, relationId);
+        deps.showToast('Relation removed', 'success');
+        viewIssue(issueId);
+    } catch (e) {
+        deps.showToast(`Failed to remove relation: ${e.message}`, 'error');
+    }
+}
