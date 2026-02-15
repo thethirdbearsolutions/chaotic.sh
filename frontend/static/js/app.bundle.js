@@ -1150,10 +1150,10 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 ${e.estimate?`<span class="badge badge-estimate">${e.estimate}pt</span>`:""}
             </span>
         </div>
-    `}function Hd(e){const t=e.icon||"📄";return`
-        <div class="sprint-issue-row" onclick="viewDocument('${E(e.id)}')">
+    `}function Hd(e){const t=g(e.icon)||"📄";return`
+        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewDocument('${E(e.id)}'); } else { window.open('/document/${encodeURIComponent(e.id)}', '_blank'); }">
             <span class="sprint-issue-identifier">${t}</span>
-            <span class="sprint-issue-title">${g(e.title)}</span>
+            <span class="sprint-issue-title">${g(e.title||"Untitled")}</span>
             <span class="sprint-issue-meta">
                 <span class="text-muted">${Xt(e.created_at)}</span>
             </span>

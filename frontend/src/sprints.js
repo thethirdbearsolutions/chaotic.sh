@@ -436,11 +436,11 @@ function renderSprintIssueRow(issue) {
 }
 
 function renderSprintDocumentRow(doc) {
-    const icon = doc.icon || '📄';
+    const icon = escapeHtml(doc.icon) || '📄';
     return `
-        <div class="sprint-issue-row" onclick="viewDocument('${escapeJsString(doc.id)}')">
+        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewDocument('${escapeJsString(doc.id)}'); } else { window.open('/document/${encodeURIComponent(doc.id)}', '_blank'); }">
             <span class="sprint-issue-identifier">${icon}</span>
-            <span class="sprint-issue-title">${escapeHtml(doc.title)}</span>
+            <span class="sprint-issue-title">${escapeHtml(doc.title || 'Untitled')}</span>
             <span class="sprint-issue-meta">
                 <span class="text-muted">${formatTimeAgo(doc.created_at)}</span>
             </span>

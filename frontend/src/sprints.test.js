@@ -374,6 +374,39 @@ describe('viewSprint', () => {
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView.innerHTML).toContain('🎯');
     });
+
+    it('uses default icon when document has no icon', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([
+            { id: 'doc-1', title: 'No Icon Doc', created_at: '2026-01-01' },
+        ]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('📄');
+    });
+
+    it('skips document fetch when currentTeam is null', async () => {
+        window.currentTeam = null;
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        expect(api.getDocuments).not.toHaveBeenCalled();
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView).toBeTruthy();
+    });
 });
 
 describe('viewSprintByPath', () => {
