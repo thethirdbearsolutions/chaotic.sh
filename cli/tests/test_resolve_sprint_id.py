@@ -172,6 +172,62 @@ class TestResolveSprintIdNameMatch:
         assert result == "id-2"
 
 
+class TestResolveSprintIdSubstringMatch:
+    """Tests for sprint name substring matching."""
+
+    def test_substring_match_single(self, sample_sprints):
+        """Test that unique substring match returns the ID."""
+        from cli.main import resolve_sprint_id, client
+
+        client.get_sprints = MagicMock(return_value=sample_sprints)
+
+        # "Sprint 3" is the only sprint with "3" in its name
+        result = resolve_sprint_id("3", "project-123")
+
+        assert result == "def67890-1111-2222-3333-444444444444"
+
+    def test_substring_match_case_insensitive(self):
+        """Test that substring matching is case-insensitive."""
+        from cli.main import resolve_sprint_id, client
+
+        sprints = [
+            {"id": "id-1", "name": "Housekeeping & Plumbing", "status": "active"},
+        ]
+        client.get_sprints = MagicMock(return_value=sprints)
+
+        assert resolve_sprint_id("housekeeping", "project-123") == "id-1"
+        assert resolve_sprint_id("PLUMBING", "project-123") == "id-1"
+
+    def test_substring_match_ambiguous_raises_error(self):
+        """Test that multiple substring matches raises error."""
+        from cli.main import resolve_sprint_id, client
+
+        sprints = [
+            {"id": "id-1", "name": "Sprint Alpha", "status": "active"},
+            {"id": "id-2", "name": "Sprint Beta", "status": "completed"},
+        ]
+        client.get_sprints = MagicMock(return_value=sprints)
+
+        with pytest.raises(click.ClickException) as exc_info:
+            resolve_sprint_id("Sprint", "project-123")
+
+        assert "Ambiguous sprint name substring" in str(exc_info.value)
+
+    def test_exact_name_takes_precedence_over_substring(self):
+        """Test that exact name match wins over substring match."""
+        from cli.main import resolve_sprint_id, client
+
+        sprints = [
+            {"id": "id-1", "name": "Sprint", "status": "active"},
+            {"id": "id-2", "name": "Sprint Extended", "status": "completed"},
+        ]
+        client.get_sprints = MagicMock(return_value=sprints)
+
+        # "Sprint" is an exact match for id-1
+        result = resolve_sprint_id("Sprint", "project-123")
+        assert result == "id-1"
+
+
 class TestResolveSprintIdPrefixMatch:
     """Tests for UUID prefix matching."""
 
@@ -264,11 +320,11 @@ class TestResolveSprintIdResolutionOrder:
 class TestResolveSprintIdEdgeCases:
     """Tests for edge case inputs."""
 
-    def test_empty_string_matches_all_prefixes(self, sample_sprints):
-        """Test that empty string input matches all sprints as prefix.
+    def test_empty_string_matches_all_substrings(self, sample_sprints):
+        """Test that empty string input matches all sprints as substring.
 
-        Empty string is a prefix of every ID, so with multiple sprints
-        it raises an ambiguous prefix error.
+        Empty string is a substring of every name, so with multiple sprints
+        it raises an ambiguous substring error.
         """
         from cli.main import resolve_sprint_id, client
 
@@ -277,7 +333,7 @@ class TestResolveSprintIdEdgeCases:
         with pytest.raises(click.ClickException) as exc_info:
             resolve_sprint_id("", "project-123")
 
-        assert "Ambiguous sprint ID prefix" in str(exc_info.value)
+        assert "Ambiguous sprint name substring" in str(exc_info.value)
 
     def test_whitespace_not_trimmed(self, sample_sprints):
         """Test that whitespace is not automatically trimmed.

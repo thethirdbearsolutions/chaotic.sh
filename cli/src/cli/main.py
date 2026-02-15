@@ -1618,7 +1618,7 @@ def issue():
 @issue.command("list")
 @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
 @click.option("--priority", help="Filter by priority (urgent, high, medium, low, no_priority). Comma-separated for multiple.")
-@click.option("--sprint", help="Filter by sprint ('current' for active sprint, or sprint ID)")
+@click.option("--sprint", help="Filter by sprint (name, 'current', 'next', or ID)")
 @click.option("--no-sprint", "no_sprint", is_flag=True, help="Show only issues not assigned to any sprint")
 @click.option("--epic", help="Filter by epic/parent issue (e.g., CHT-12)")
 @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
@@ -1813,7 +1813,7 @@ def issue_search(query, search_all):
 @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
 @click.option("--type", "issue_type", default="task", type=click.Choice(["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"], case_sensitive=False), help="Issue type")
 @click.option("--estimate", type=int)
-@click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to not assign, or sprint ID)")
+@click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
 @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
 @click.option("--epic", help="Epic identifier (e.g., PRJ-123) - shorthand for --parent with an epic")
 @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
@@ -2081,7 +2081,7 @@ def issue_get(identifier):
 @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
 @click.option("--type", "issue_type", type=click.Choice(["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"], case_sensitive=False), help="Issue type")
 @click.option("--estimate", type=int)
-@click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to unassign, or sprint ID)")
+@click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
 @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
 @click.option("--no-parent", "clear_parent", is_flag=True, help="Detach from parent issue")
 @click.option("--label", "-l", "add_labels", multiple=True, help="Add label(s) to issue (can be used multiple times)")
@@ -2646,7 +2646,7 @@ def epic():
 @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
 @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
 @click.option("--estimate", type=int)
-@click.option("--sprint", help="Set sprint ('current' for active sprint, 'none' to not assign, or sprint ID)")
+@click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
 @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
 @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
 @require_team
@@ -2896,8 +2896,9 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     1. "current" → active sprint ID
     2. "next" → planned sprint ID
     3. Full UUID → passed through
-    4. Sprint name → matched case-insensitively
-    5. UUID prefix → matched against project sprints
+    4. Sprint name → exact match, case-insensitive
+    5. Sprint name → substring match, case-insensitive
+    6. UUID prefix → matched against project sprints
 
     Raises ClickException on ambiguity or not found.
     """
@@ -2929,6 +2930,14 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     if len(name_matches) > 1:
         names = "\n".join(f"  {s['id']}  ({s['name']})" for s in name_matches)
         raise click.ClickException(f"Ambiguous sprint name '{sprint_value}'. Matches:\n{names}")
+
+    # Try substring match on name (case-insensitive)
+    substr_matches = [s for s in sprints if sprint_value.lower() in (s.get("name") or "").lower()]
+    if len(substr_matches) == 1:
+        return substr_matches[0]["id"]
+    if len(substr_matches) > 1:
+        names = "\n".join(f"  {s['id']}  ({s['name']})" for s in substr_matches)
+        raise click.ClickException(f"Ambiguous sprint name substring '{sprint_value}'. Matches:\n{names}")
 
     # Try UUID prefix match
     prefix_matches = [s for s in sprints if s["id"].startswith(sprint_value)]
@@ -4110,7 +4119,7 @@ def doc():
 @doc.command("list")
 @click.option("--search", help="Search documents by title")
 @click.option("--project", help="Filter by project (ID, key, or name)")
-@click.option("--sprint", help="Filter by sprint (ID, name, or 'current')")
+@click.option("--sprint", help="Filter by sprint (name, 'current', 'next', or ID)")
 @click.option("--all", "show_all", is_flag=True, help="Show all docs (not just current project)")
 @json_option
 @require_team
@@ -4299,7 +4308,7 @@ def doc_comment(document_id, content):
 @click.option("--content")
 @click.option("--icon")
 @click.option("--project", help="Move to project (ID, key, or name)")
-@click.option("--sprint", help="Attach to sprint (ID, name, or 'current')")
+@click.option("--sprint", help="Attach to sprint (name, 'current', 'next', or ID)")
 @click.option("--no-sprint", "no_sprint", is_flag=True, help="Remove from sprint")
 @click.option("--global", "is_global", is_flag=True, help="Make global (remove from project)")
 @require_auth
