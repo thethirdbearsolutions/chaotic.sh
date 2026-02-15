@@ -94,6 +94,11 @@ class TestTicketRitualsErrorParsing:
         assert "Get code review approval" in error_msg
         # Should include attest command hint
         assert "chaotic ritual attest code-review --ticket CHT-123" in error_msg
+        # Should NOT show second ritual — only first is revealed (CHT-900)
+        assert "test-pass" not in error_msg
+        assert "Ensure all tests pass" not in error_msg
+        # Should hint that more rituals are pending
+        assert "1 more ritual(s) pending" in error_msg
 
     def test_parses_old_string_format_for_backward_compatibility(self, mock_client_request):
         """Test backward compatibility: pending_rituals as list of strings."""

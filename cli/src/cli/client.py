@@ -76,22 +76,27 @@ class Client:
         if not pending:
             return "Ticket has pending rituals."
 
+        # Only show the first pending ritual — subsequent ones are revealed
+        # after the first is attested, to avoid overwhelming the user.
+        r = pending[0]
         lines = []
-        for r in pending:
-            if isinstance(r, dict):
-                name = r.get("name", "unknown")
-                prompt = r.get("prompt", "")
-                lines.append(f"Pending ritual: {name}")
-                if prompt:
-                    lines.append(f"  {prompt}")
-                lines.append(
-                    f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
-                )
-            else:
-                lines.append(f"Pending ritual: {r}")
-                lines.append(
-                    f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
-                )
+        if isinstance(r, dict):
+            name = r.get("name", "unknown")
+            prompt = r.get("prompt", "")
+            lines.append(f"Pending ritual: {name}")
+            if prompt:
+                lines.append(f"  {prompt}")
+            lines.append(
+                f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
+            )
+        else:
+            lines.append(f"Pending ritual: {r}")
+            lines.append(
+                f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
+            )
+
+        if len(pending) > 1:
+            lines.append(f"\n({len(pending) - 1} more ritual(s) pending after this one)")
 
         return "\n".join(lines)
 
