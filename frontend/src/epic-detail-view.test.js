@@ -229,6 +229,26 @@ describe('epic-detail-view', () => {
             pushSpy.mockRestore();
         });
 
+        it('redirects to issue detail view if not an epic', async () => {
+            window.viewIssue = vi.fn();
+            mockApi.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
+            await viewEpic('issue-1');
+
+            expect(window.viewIssue).toHaveBeenCalledWith('issue-1', true);
+            // Should not render epic content
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).not.toContain('Progress');
+            delete window.viewIssue;
+        });
+
+        it('falls back to epics navigation if not epic and no viewIssue', async () => {
+            delete window.viewIssue;
+            mockApi.getIssue.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
+            await viewEpic('issue-1');
+
+            expect(mockDeps.navigateTo).toHaveBeenCalledWith('epics', false);
+        });
+
         it('shows toast on error', async () => {
             mockApi.getIssue.mockRejectedValue(new Error('Not found'));
             await viewEpic('epic-1');
@@ -303,6 +323,15 @@ describe('epic-detail-view', () => {
 
             // Has a dash, so treated as identifier
             expect(mockApi.getIssueByIdentifier).toHaveBeenCalledWith('epic-uuid-123');
+        });
+
+        it('redirects to issue detail if not an epic', async () => {
+            window.viewIssue = vi.fn();
+            mockApi.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'task' }));
+            await viewEpicByPath('CHT-101');
+
+            expect(window.viewIssue).toHaveBeenCalledWith('epic-1', false);
+            delete window.viewIssue;
         });
 
         it('navigates to epics on not found', async () => {

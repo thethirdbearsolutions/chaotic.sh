@@ -52,6 +52,15 @@ export async function viewEpicByPath(identifier) {
             issue = await deps.api.getIssue(identifier);
         }
         if (issue) {
+            if (issue.issue_type !== 'epic') {
+                // Not an epic — redirect to issue detail view
+                if (window.viewIssue) {
+                    window.viewIssue(issue.id, false);
+                } else {
+                    deps.navigateTo('epics', false);
+                }
+                return;
+            }
             await viewEpic(issue.id, false);
         } else {
             deps.navigateTo('epics', false);
@@ -74,6 +83,16 @@ export async function viewEpic(epicId, pushHistory = true) {
             deps.api.getActivities(epicId),
             deps.api.getComments(epicId),
         ]);
+
+        // Validate this is actually an epic
+        if (epic.issue_type !== 'epic') {
+            if (window.viewIssue) {
+                window.viewIssue(epicId, pushHistory);
+            } else {
+                deps.navigateTo('epics', false);
+            }
+            return;
+        }
 
         // Update URL
         if (pushHistory) {
