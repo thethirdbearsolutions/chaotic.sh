@@ -219,6 +219,43 @@ describe('issue-detail-view', () => {
             expect(result).toContain('&quot;&gt;&lt;script&gt;');
             expect(result).not.toContain(xss);
         });
+
+        it('uses escapeAttr for comment preview title attribute (CHT-894)', () => {
+            const xss = '" onmouseover="alert(1)';
+            mockDeps.escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onmouseover=&quot;alert(1)' : (text || ''));
+            const activity = { activity_type: 'commented', new_value: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('title="&quot; onmouseover=&quot;alert(1)');
+            expect(mockDeps.escapeAttr).toHaveBeenCalled();
+        });
+
+        it('uses escapeAttr for ritual_attested note preview title (CHT-894)', () => {
+            const xss = '" onclick="alert(1)';
+            mockDeps.escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onclick=&quot;alert(1)' : (text || ''));
+            mockDeps.escapeHtml.mockImplementation((text) => text || '');
+            const activity = { activity_type: 'ritual_attested', field_name: 'test-ritual', new_value: xss };
+            const result = formatActivityText(activity);
+            expect(result).toContain('title="&quot; onclick=&quot;alert(1)');
+            expect(mockDeps.escapeAttr).toHaveBeenCalled();
+        });
+
+        it('escapes formatStatus output in status_changed (CHT-895)', () => {
+            mockDeps.formatStatus.mockImplementation(() => '<img src=x>');
+            mockDeps.escapeHtml.mockImplementation((text) => text === '<img src=x>' ? '&lt;img src=x&gt;' : (text || ''));
+            const activity = { activity_type: 'status_changed', old_value: 'todo', new_value: 'done' };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;img src=x&gt;');
+            expect(result).not.toContain('<img src=x>');
+        });
+
+        it('escapes formatPriority output in priority_changed (CHT-895)', () => {
+            mockDeps.formatPriority.mockImplementation(() => '<script>x</script>');
+            mockDeps.escapeHtml.mockImplementation((text) => text === '<script>x</script>' ? '&lt;script&gt;' : (text || ''));
+            const activity = { activity_type: 'priority_changed', old_value: 'low', new_value: 'high' };
+            const result = formatActivityText(activity);
+            expect(result).toContain('&lt;script&gt;');
+            expect(result).not.toContain('<script>x</script>');
+        });
     });
 
     describe('renderCommentContent', () => {

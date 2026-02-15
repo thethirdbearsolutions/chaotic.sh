@@ -144,14 +144,17 @@ export function formatActivityText(activity) {
             const preview = activity.new_value
                 ? deps.escapeHtml(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
                 : '';
+            const attrPreview = activity.new_value
+                ? deps.escapeAttr(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
+                : '';
             return preview
-                ? `<a href="#comments-section" class="activity-comment-link" title="${preview}" onclick="event.preventDefault(); document.getElementById('comments-section')?.scrollIntoView({behavior: 'smooth'})">Added a comment</a>`
+                ? `<a href="#comments-section" class="activity-comment-link" title="${attrPreview}" onclick="event.preventDefault(); document.getElementById('comments-section')?.scrollIntoView({behavior: 'smooth'})">Added a comment</a>`
                 : 'Added a comment';
         }
         case 'status_changed':
-            return `Changed status from <strong>${deps.formatStatus(cleanValue(activity.old_value))}</strong> to <strong>${deps.formatStatus(cleanValue(activity.new_value))}</strong>`;
+            return `Changed status from <strong>${deps.escapeHtml(deps.formatStatus(cleanValue(activity.old_value)))}</strong> to <strong>${deps.escapeHtml(deps.formatStatus(cleanValue(activity.new_value)))}</strong>`;
         case 'priority_changed':
-            return `Changed priority from <strong>${deps.formatPriority(cleanValue(activity.old_value))}</strong> to <strong>${deps.formatPriority(cleanValue(activity.new_value))}</strong>`;
+            return `Changed priority from <strong>${deps.escapeHtml(deps.formatPriority(cleanValue(activity.old_value)))}</strong> to <strong>${deps.escapeHtml(deps.formatPriority(cleanValue(activity.new_value)))}</strong>`;
         case 'assigned':
             return `Assigned to someone`;
         case 'unassigned':
@@ -179,7 +182,7 @@ export function formatActivityText(activity) {
         case 'ritual_attested': {
             const ritualName = deps.escapeHtml(activity.field_name || 'ritual');
             const notePreview = activity.new_value
-                ? deps.escapeHtml(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
+                ? deps.escapeAttr(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
                 : '';
             return notePreview
                 ? `<span class="activity-attestation-link" title="${notePreview}">Attested to <strong>${ritualName}</strong></span>`
