@@ -4,7 +4,7 @@
 
 /* global api, marked, DOMPurify -- provided via window by main.js entry point */
 
-import { showModal, closeModal, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
+import { showModal, closeModal, isModalOpen, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
 import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
@@ -1555,7 +1555,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     navigateTo,
     showCreateIssueModal,
     showKeyboardShortcutsHelp,
-    isModalOpen: () => !document.getElementById('modal-overlay').classList.contains('hidden'),
+    isModalOpen,
     focusSearch: () => {
         navigateTo('issues');
         setTimeout(() => document.getElementById('issue-search')?.focus(), 100);
@@ -1815,7 +1815,7 @@ window.showModal = function() {
 
 // Cmd+Enter (submit forms/modals) and Cmd+K (command palette) - logic in keyboard.js
 document.addEventListener('keydown', createModifierKeyHandler({
-    isModalOpen: () => !document.getElementById('modal-overlay').classList.contains('hidden'),
+    isModalOpen,
     getModalForm: () => document.querySelector('#modal-content form'),
     getModalPrimaryBtn: () => document.querySelector('#modal-content .btn-primary'),
     isCommandPaletteOpen,
@@ -1923,7 +1923,7 @@ document.addEventListener('keydown', createListNavigationHandler({
     setSelectedIndex: setSelectedIssueIndex,
     viewIssue,
     showEditIssueModal,
-    isModalOpen: () => !document.getElementById('modal-overlay').classList.contains('hidden'),
+    isModalOpen,
     isCommandPaletteOpen,
 }));
 

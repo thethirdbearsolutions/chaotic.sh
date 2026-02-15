@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   showModal,
   closeModal,
+  isModalOpen,
   showToast,
   closeAllDropdowns,
   setDropdownKeyHandler,
@@ -19,6 +20,18 @@ describe('showModal', () => {
     expect(
       document.getElementById('modal-overlay').classList.contains('hidden')
     ).toBe(false);
+  });
+});
+
+describe('isModalOpen', () => {
+  it('returns false when modal is hidden', () => {
+    document.body.innerHTML = '<div id="modal-overlay" class="hidden"></div>';
+    expect(isModalOpen()).toBe(false);
+  });
+
+  it('returns true when modal is visible', () => {
+    document.body.innerHTML = '<div id="modal-overlay"></div>';
+    expect(isModalOpen()).toBe(true);
   });
 });
 
