@@ -316,3 +316,18 @@ async def test_update_project_partial(client, auth_headers, test_project):
     data = response.json()
     assert data["description"] == "Updated description only"
     assert data["name"] == original_name
+
+
+# --- Service-level coverage tests (CHT-922) ---
+
+@pytest.mark.asyncio
+async def test_project_service_increment_issue_count(db_session, test_project):
+    """Test ProjectService.increment_issue_count (covers project_service.py L79-82)."""
+    from app.services.project_service import ProjectService
+
+    service = ProjectService(db_session)
+    original_count = test_project.issue_count
+    new_count = await service.increment_issue_count(test_project)
+
+    assert new_count == original_count + 1
+    assert test_project.issue_count == original_count + 1

@@ -655,3 +655,46 @@ async def test_create_invitation_for_existing_non_member(client, auth_headers, t
     assert data["email"] == test_user2.email
     assert data["role"] == "member"
     assert data["team_id"] == test_team.id
+
+
+# --- Service-level coverage tests (CHT-922) ---
+
+@pytest.mark.asyncio
+async def test_team_service_add_member(db_session, test_team, test_user2):
+    """Test TeamService.add_member directly (covers team_service.py L109-117)."""
+    from app.services.team_service import TeamService
+    from app.models.team import TeamMember, TeamRole
+
+    service = TeamService(db_session)
+    member = await service.add_member(test_team, test_user2, TeamRole.MEMBER)
+
+    assert isinstance(member, TeamMember)
+    assert member.team_id == test_team.id
+    assert member.user_id == test_user2.id
+    assert member.role == TeamRole.MEMBER
+
+
+@pytest.mark.asyncio
+async def test_team_service_decline_invitation(db_session, test_team, test_user):
+    """Test TeamService.decline_invitation directly (covers team_service.py L186-187)."""
+    from app.services.team_service import TeamService
+    from app.models.team import TeamInvitation, InvitationStatus
+    import secrets
+    from datetime import datetime, timedelta, timezone
+
+    service = TeamService(db_session)
+
+    invitation = TeamInvitation(
+        team_id=test_team.id,
+        email="decline@example.com",
+        role=TeamRole.MEMBER,
+        token=secrets.token_urlsafe(32),
+        invited_by_id=test_user.id,
+        status=InvitationStatus.PENDING,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+
+    await service.decline_invitation(invitation)
+    assert invitation.status == InvitationStatus.DECLINED

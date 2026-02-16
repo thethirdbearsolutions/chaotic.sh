@@ -1239,3 +1239,89 @@ class TestSprintModelProperties:
         """Sprint with token budget returns correct remaining."""
         sprint = Sprint(name="test", project_id="p1", token_budget=1000, tokens_spent=300)
         assert sprint.remaining_token_budget == 700
+
+
+# --- Sprint service-level coverage tests (CHT-922) ---
+
+@pytest.mark.asyncio
+async def test_sprint_service_close_non_active_raises(db_session, test_project):
+    """Closing a non-active sprint raises ValueError (covers sprint_service.py L127)."""
+    from app.services.sprint_service import SprintService
+
+    planned_sprint = Sprint(
+        project_id=test_project.id,
+        name="Planned Sprint",
+        status=SprintStatus.PLANNED,
+    )
+    db_session.add(planned_sprint)
+    await db_session.flush()
+
+    service = SprintService(db_session)
+    with pytest.raises(ValueError, match="Can only close an active sprint"):
+        await service.close_sprint(planned_sprint)
+
+
+@pytest.mark.asyncio
+async def test_sprint_service_close_creates_next_if_missing(db_session, test_project):
+    """Closing active sprint when no next sprint exists creates one (covers sprint_service.py L137-146)."""
+    from app.services.sprint_service import SprintService
+    from sqlalchemy import select, delete as sa_delete
+
+    # Remove any existing planned sprints so close_sprint has to create one
+    await db_session.execute(
+        sa_delete(Sprint).where(
+            Sprint.project_id == test_project.id,
+            Sprint.status == SprintStatus.PLANNED,
+        )
+    )
+    await db_session.flush()
+
+    # Create an active sprint with no next sprint
+    sprint = Sprint(
+        project_id=test_project.id,
+        name="Active Sprint",
+        status=SprintStatus.ACTIVE,
+        budget=20,
+    )
+    db_session.add(sprint)
+    await db_session.flush()
+
+    service = SprintService(db_session)
+    await service.close_sprint(sprint)
+
+    # Without rituals, sprint should be completed (not limbo)
+    assert sprint.status == SprintStatus.COMPLETED
+
+    # A new planned sprint should have been created
+    result = await db_session.execute(
+        select(Sprint).where(
+            Sprint.project_id == test_project.id,
+            Sprint.status == SprintStatus.PLANNED,
+        )
+    )
+    planned_sprints = list(result.scalars().all())
+    assert len(planned_sprints) >= 1
+
+
+@pytest.mark.asyncio
+async def test_sprint_service_delete(db_session, test_project):
+    """Test SprintService.delete (covers sprint_service.py L245-246)."""
+    from app.services.sprint_service import SprintService
+    from sqlalchemy import select
+
+    sprint = Sprint(
+        project_id=test_project.id,
+        name="To Delete",
+        status=SprintStatus.PLANNED,
+    )
+    db_session.add(sprint)
+    await db_session.flush()
+    sprint_id = sprint.id
+
+    service = SprintService(db_session)
+    await service.delete(sprint)
+
+    result = await db_session.execute(
+        select(Sprint).where(Sprint.id == sprint_id)
+    )
+    assert result.scalar_one_or_none() is None
