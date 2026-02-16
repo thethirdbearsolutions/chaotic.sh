@@ -1003,7 +1003,7 @@ async def test_is_ritual_pending_gate_mode(db_session):
 
 
 @pytest.mark.asyncio
-async def test_pending_gate_rituals_issue_not_found(db_session, test_project):
+async def test_pending_claim_rituals_issue_not_found(db_session, test_project):
     """get_pending_claim_rituals returns empty for non-existent issue (covers L623)."""
     from app.services.ritual_service import RitualService
 
@@ -1091,3 +1091,50 @@ async def test_apply_group_selection_no_active_rituals(db_session, test_project)
     result = await service._apply_group_selection([r1], sprint_id="s1")
     # Inactive rituals should be skipped, result should be empty
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_evaluate_conditions_malformed_json(db_session, test_project, test_user):
+    """_evaluate_conditions returns False for malformed JSON conditions (covers L486-488)."""
+    from app.services.ritual_service import RitualService
+    from app.models.issue import Issue
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    issue = Issue(
+        project_id=test_project.id, title="Test", identifier="TST-99",
+        number=99, creator_id=test_user.id,
+    )
+    db_session.add(issue)
+    await db_session.flush()
+    result = await db_session.execute(
+        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
+    )
+    issue = result.scalar_one()
+
+    ritual = Ritual(
+        project_id=test_project.id, name="bad-json", prompt="test",
+        trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.AUTO,
+        conditions="not-valid-json",
+    )
+    db_session.add(ritual)
+    await db_session.flush()
+
+    service = RitualService(db_session)
+    assert service._evaluate_conditions(ritual, issue) is False
+
+
+@pytest.mark.asyncio
+async def test_select_percentage_zero_excludes(db_session):
+    """_select_by_percentage excludes rituals with 0% chance (strengthens L410-411 test)."""
+    from app.services.ritual_service import RitualService
+
+    r1 = Ritual(
+        id="r-zero", project_id="p1", name="zero-pct", prompt="p",
+        trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
+        percentage=0.0,
+    )
+
+    service = RitualService(db_session)
+    result = service._select_by_percentage([r1], seed=None)
+    assert r1 not in result
