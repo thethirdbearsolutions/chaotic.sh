@@ -35,12 +35,13 @@ def register(cli):
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
     @click.option("--search", help="Search in title, description, and identifier.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
+    @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
     @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
     @_main().json_option
     @_main().require_project
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, search, limit, sort_by, order):
+    def issue_list(status, priority, sprint, no_sprint, epic, label, search, limit, skip, sort_by, order):
         """List issues in current project."""
         m = _main()
         # Validate status values if provided (CHT-502)
@@ -72,7 +73,7 @@ def register(cli):
             sprint_id = m.resolve_sprint_id(sprint, project_id)
         else:
             sprint_id = None
-        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search)
+        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search, skip=skip or None)
 
         # JSON output mode (CHT-170)
         if m.is_json_output():
@@ -108,6 +109,14 @@ def register(cli):
             )
 
         console.print(table)
+
+        # Truncation warning (CHT-946) + pagination hint (CHT-950)
+        if len(issues) >= limit:
+            next_skip = (skip or 0) + limit
+            console.print(f"\n[yellow]Showing {limit} issues (results may be truncated). Use --skip {next_skip} to see next page, or --limit to adjust.[/yellow]")
+
+        # Search tip (CHT-949)
+        console.print("\n[dim]Tip: Use 'chaotic issue search <query>' to search by title, description, or identifier.[/dim]")
 
     @issue.command("mine")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
@@ -175,10 +184,11 @@ def register(cli):
     @issue.command("search")
     @click.argument("query")
     @click.option("--all", "-a", "search_all", is_flag=True, help="Search all projects (ignore current project context)")
+    @click.option("--limit", "-n", type=int, default=50, help="Maximum number of results (default: 50)")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def issue_search(query, search_all):
+    def issue_search(query, search_all, limit):
         """Search issues.
 
         Searches issue titles, descriptions, and identifiers.
@@ -188,7 +198,7 @@ def register(cli):
         m = _main()
         project_id = None if search_all else m.get_current_project()
 
-        issues = _client().search_issues(m.get_current_team(), query, project_id)
+        issues = _client().search_issues(m.get_current_team(), query, project_id, limit=limit)
         if m.is_json_output():
             m.output_json(issues or [])
             return
@@ -215,6 +225,10 @@ def register(cli):
             )
 
         console.print(table)
+
+        # Truncation warning for search results (CHT-948)
+        if len(issues) >= limit:
+            console.print(f"\n[yellow]Showing {limit} results (may be truncated). Use --limit to see more.[/yellow]")
 
     @issue.command("create")
     @click.argument("title", required=False)

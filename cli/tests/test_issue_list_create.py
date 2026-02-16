@@ -134,6 +134,71 @@ class TestIssueList:
         call_kwargs = client.get_issues.call_args[1]
         assert call_kwargs.get('limit') == 10
 
+    def test_list_truncation_warning(self, cli_runner, sample_issues):
+        """issue list shows truncation warning when results hit limit (CHT-946)."""
+        from cli.main import cli, client
+
+        # Return exactly 2 issues with limit=2 to trigger warning
+        client.get_issues = MagicMock(return_value=sample_issues)
+        client.get_sprints = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '2'])
+
+        assert result.exit_code == 0
+        assert 'results may be truncated' in result.output
+        assert '--skip 2' in result.output
+
+    def test_list_no_truncation_warning_under_limit(self, cli_runner):
+        """issue list shows no truncation warning when results < limit."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[{
+            "identifier": "CHT-1", "title": "Only one", "status": "backlog",
+            "priority": "medium", "issue_type": "task", "estimate": None, "sprint_id": None,
+        }])
+        client.get_sprints = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
+
+        assert result.exit_code == 0
+        assert 'truncated' not in result.output
+
+    def test_list_search_tip(self, cli_runner, sample_issues):
+        """issue list always shows search tip (CHT-949)."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=sample_issues)
+        client.get_sprints = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list'])
+
+        assert result.exit_code == 0
+        assert 'chaotic issue search' in result.output
+
+    def test_list_skip_option(self, cli_runner):
+        """issue list --skip passes skip to client (CHT-950)."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--skip', '50'])
+
+        assert result.exit_code == 0
+        call_kwargs = client.get_issues.call_args[1]
+        assert call_kwargs.get('skip') == 50
+
+    def test_list_truncation_with_skip(self, cli_runner, sample_issues):
+        """Truncation warning accounts for --skip offset (CHT-950)."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=sample_issues)
+        client.get_sprints = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '2', '--skip', '50'])
+
+        assert result.exit_code == 0
+        assert '--skip 52' in result.output
+
 
 class TestIssueMine:
     """Tests for issue mine command."""
@@ -227,6 +292,43 @@ class TestIssueSearch:
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
+
+    def test_search_with_limit(self, cli_runner, sample_issues):
+        """issue search --limit passes limit to client (CHT-948)."""
+        from cli.main import cli, client
+
+        client.search_issues = MagicMock(return_value=sample_issues)
+
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--limit', '100'])
+
+        assert result.exit_code == 0
+        call_kwargs = client.search_issues.call_args[1]
+        assert call_kwargs.get('limit') == 100
+
+    def test_search_truncation_warning(self, cli_runner, sample_issues):
+        """issue search shows truncation warning when results hit limit (CHT-948)."""
+        from cli.main import cli, client
+
+        client.search_issues = MagicMock(return_value=sample_issues)
+
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--limit', '2'])
+
+        assert result.exit_code == 0
+        assert 'truncated' in result.output
+
+    def test_search_no_truncation_under_limit(self, cli_runner):
+        """issue search shows no truncation warning under limit."""
+        from cli.main import cli, client
+
+        client.search_issues = MagicMock(return_value=[{
+            "identifier": "CHT-1", "title": "One result", "status": "backlog",
+            "priority": "medium", "project_key": "CHT",
+        }])
+
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query'])
+
+        assert result.exit_code == 0
+        assert 'truncated' not in result.output
 
 
 class TestIssueCreate:

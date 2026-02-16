@@ -181,7 +181,7 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/issues?project_id={project_id}", data)
 
-    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None) -> list:
+    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None) -> list:
         params = {}
         if project_id:
             params["project_id"] = project_id
@@ -201,6 +201,8 @@ class Client:
             params["search"] = search
         if issue_type:
             params["issue_type"] = issue_type
+        if skip:
+            params["skip"] = skip
 
         # Build base query with urlencode for single params
         query = urlencode(params) if params else ""
@@ -231,10 +233,12 @@ class Client:
     def get_issue_by_identifier(self, identifier: str) -> dict:
         return self._request("GET", f"/issues/identifier/{identifier}")
 
-    def search_issues(self, team_id: str, query: str, project_id: str = None) -> list:
+    def search_issues(self, team_id: str, query: str, project_id: str = None, limit: int = None) -> list:
         url = f"/issues/search?team_id={team_id}&q={quote(query)}"
         if project_id:
             url += f"&project_id={project_id}"
+        if limit:
+            url += f"&limit={limit}"
         return self._request("GET", url)
 
     def update_issue(self, issue_id: str, **kwargs) -> dict:
