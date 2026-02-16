@@ -113,8 +113,9 @@ class TestInvitations:
         token = _run_async(_get_token())
 
         # Accept as the invited user
+        from conftest import TEST_BASE_URL
         from cli.client import Client
-        with patch('cli.client.get_api_url', return_value='http://127.0.0.1:19876/api'), \
+        with patch('cli.client.get_api_url', return_value=TEST_BASE_URL), \
              patch('cli.client.get_token', return_value=accept_token), \
              patch('cli.client.get_api_key', return_value=None):
             accept_client = Client()

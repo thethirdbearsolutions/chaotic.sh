@@ -115,6 +115,7 @@ class TestRitualWorkflows:
         # Approve (completes review)
         result = api_client.approve_ritual(ritual["id"], test_project["id"])
         assert result is not None
+        assert isinstance(result, dict)
 
     def test_complete_gate_ritual(self, api_client, test_project):
         """Complete a GATE mode ritual (human-only, no agent attest)."""
@@ -128,6 +129,7 @@ class TestRitualWorkflows:
             ritual["id"], test_project["id"], note="Gate passed"
         )
         assert result is not None
+        assert isinstance(result, dict)
 
     def test_attest_ritual_for_issue(self, api_client, test_project):
         """Attest a ticket-claim ritual against a specific issue."""
@@ -140,6 +142,7 @@ class TestRitualWorkflows:
             ritual["id"], issue["id"], note="Done for issue"
         )
         assert result is not None
+        assert isinstance(result, dict)
 
     def test_complete_gate_ritual_for_issue(self, api_client, test_project):
         """Complete a GATE mode ritual for a specific issue."""
@@ -152,6 +155,7 @@ class TestRitualWorkflows:
             ritual["id"], issue["id"], note="Gate cleared"
         )
         assert result is not None
+        assert isinstance(result, dict)
 
     def test_pending_issue_rituals_with_gate(self, api_client, test_project):
         """After creating a ticket-claim ritual, new issues should have it pending."""
@@ -174,7 +178,7 @@ class TestRitualWorkflows:
         status = api_client.get_limbo_status(test_project["id"])
         assert isinstance(status, dict)
         # Should be in limbo with pending rituals
-        assert status.get("in_limbo") is True or len(status.get("pending_rituals", [])) > 0
+        assert status.get("in_limbo") is True
 
 
 class TestRitualGroups:

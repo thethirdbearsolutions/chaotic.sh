@@ -293,8 +293,9 @@ async def accept_invitation(token: str, db: DbSession, current_user: CurrentUser
             detail="Invitation is for a different email",
         )
 
-    from datetime import datetime
-    if invitation.expires_at < datetime.utcnow():
+    from datetime import datetime, timezone
+    from app.utils import ensure_utc
+    if ensure_utc(invitation.expires_at) < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invitation has expired",

@@ -75,6 +75,7 @@ class TestDocumentFilterParams:
             test_team["id"], sprint_id=current["id"]
         )
         assert isinstance(docs, list)
+        assert len(docs) >= 1
 
     def test_get_documents_filter_project_and_search(self, api_client, test_team, test_project):
         api_client.create_document(
