@@ -1147,6 +1147,23 @@ def system_upgrade(target_version, no_backup, yes):
 
     console.print(f"Target version:  {target_version}")
 
+    # Show changelog between current and target
+    if current_commit:
+        try:
+            log_result = run_command(
+                ["git", "log", "--oneline", f"{current_commit}..{target_version}"],
+                cwd=SERVER_DIR,
+                check=False,
+            )
+            if log_result.returncode == 0 and log_result.stdout.strip():
+                commits = log_result.stdout.strip().splitlines()
+                console.print(f"\n[bold]Changelog[/bold] ({len(commits)} commit{'s' if len(commits) != 1 else ''}):")
+                for line in commits:
+                    console.print(f"  {line}")
+                console.print()
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # Non-critical, skip if git log fails
+
     # Check if already on target
     if current_version == target_version:
         console.print("\n[green]Already on the latest version.[/green]")
