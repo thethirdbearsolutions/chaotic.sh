@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chaotic-e2e"
+version = "0.0.1"
+description = "E2E contract tests for Chaotic"
+requires-python = ">=3.11"
+dependencies = [
+    "chaotic-cli",
+    "chaotic-backend",
+    "pytest>=7.0",
+    "greenlet>=3.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["chaotic_e2e"]
+
+[tool.uv.sources]
+chaotic-cli = { path = "../cli", editable = true }
+chaotic-backend = { path = "../backend", editable = true }
