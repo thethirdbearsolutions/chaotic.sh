@@ -678,7 +678,7 @@ async def test_team_service_add_member(db_session, test_team, test_user2):
 async def test_team_service_decline_invitation(db_session, test_team, test_user):
     """Test TeamService.decline_invitation directly (covers team_service.py L186-187)."""
     from app.services.team_service import TeamService
-    from app.models.team import TeamInvitation, InvitationStatus
+    from app.models.team import TeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 

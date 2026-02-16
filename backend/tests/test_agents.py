@@ -634,8 +634,8 @@ async def test_agent_service_list_by_parent(client, test_team, db_session, test_
 
     service = AgentService(db_session)
     agents = await service.list_by_parent(test_user.id)
-    assert len(agents) >= 1
-    assert any(a.name == "List Parent Bot" for a in agents)
+    assert len(agents) == 1
+    assert agents[0].name == "List Parent Bot"
 
 
 @pytest.mark.asyncio
@@ -654,4 +654,5 @@ async def test_agent_service_get_agent_api_keys(client, test_team, db_session, t
 
     service = AgentService(db_session)
     keys = await service.get_agent_api_keys(agent_id)
-    assert len(keys) >= 1
+    assert len(keys) == 1
+    assert keys[0].agent_user_id == agent_id
