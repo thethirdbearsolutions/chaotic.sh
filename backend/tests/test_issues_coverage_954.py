@@ -201,11 +201,10 @@ class TestCreateIssueErrorBranches:
             assert response.status_code == 409
             assert "arrears" in response.json()["detail"]["message"].lower()
 
-    async def test_create_issue_with_cross_references(
+    async def test_create_issue_with_description_refs(
         self, client, auth_headers, test_project
     ):
-        """Create issue with cross-references in description (line 248-250)."""
-        # Cross-refs to non-existent identifiers are silently ignored
+        """Create issue with identifiers in description exercises cross-ref path (line 248)."""
         response = await client.post(
             f"/api/issues?project_id={test_project.id}",
             headers=auth_headers,
@@ -215,6 +214,40 @@ class TestCreateIssueErrorBranches:
             },
         )
         assert response.status_code == 201
+
+    async def test_create_issue_cross_ref_exception_silenced(
+        self, client, auth_headers, test_project
+    ):
+        """Cross-reference exception is silenced on create (lines 249-250)."""
+        with patch("app.api.issues.IssueService") as MockService:
+            mock_svc = AsyncMock()
+            # create() needs to return a realistic issue for issue_to_response
+            from app.models.issue import IssuePriority, IssueType
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            mock_issue = Issue(
+                id="fake-id", project_id=test_project.id, identifier="PROJ-99",
+                number=99, title="Test", status=IssueStatus.BACKLOG,
+                priority=IssuePriority.NO_PRIORITY, issue_type=IssueType.TASK,
+                creator_id="user-1", created_at=now, updated_at=now,
+            )
+            mock_issue.labels = []
+            mock_issue.creator = None
+            mock_svc.create.return_value = mock_issue
+            mock_svc.create_cross_references.side_effect = Exception("DB error")
+            MockService.return_value = mock_svc
+
+            response = await client.post(
+                f"/api/issues?project_id={test_project.id}",
+                headers=auth_headers,
+                json={
+                    "title": "Test",
+                    "description": "refs PROJ-1",
+                },
+            )
+            # Should succeed (201) despite cross-reference failure
+            assert response.status_code == 201
+            mock_svc.create_cross_references.assert_called_once()
 
 
 # === api/issues.py: Update issue error branches ===

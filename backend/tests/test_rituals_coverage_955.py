@@ -373,24 +373,21 @@ class TestSprintAttestErrors:
         self, client, auth_headers, db_session, test_project, sprint_ritual
     ):
         """Sprint attest with ValueError → 400 (line 1119-1120)."""
-        from app.services.sprint_service import SprintService
-        sprint_svc = SprintService(db_session)
-        current, _ = await sprint_svc.ensure_sprints_exist(test_project.id)
+        mock_sprint = Sprint(id="limbo-sprint", project_id=test_project.id, name="S1")
+        with patch("app.api.rituals.RitualService") as MockRitualService:
+            mock_svc = AsyncMock()
+            mock_svc.get_by_id.return_value = sprint_ritual
+            mock_svc.check_limbo.return_value = (True, mock_sprint, [sprint_ritual])
+            mock_svc.attest.side_effect = ValueError("Already attested for this sprint")
+            MockRitualService.return_value = mock_svc
 
-        # Close sprint to trigger limbo
-        await client.post(
-            f"/api/sprints/{current.id}/close",
-            headers=auth_headers,
-        )
-
-        # Attest should work normally (or not if not in limbo)
-        response = await client.post(
-            f"/api/rituals/{sprint_ritual.id}/attest?project_id={test_project.id}",
-            headers=auth_headers,
-            json={"note": "Test attest"},
-        )
-        # Either succeeds (200) or fails with specific error
-        assert response.status_code in (200, 400, 404)
+            response = await client.post(
+                f"/api/rituals/{sprint_ritual.id}/attest?project_id={test_project.id}",
+                headers=auth_headers,
+                json={"note": "Test attest"},
+            )
+            assert response.status_code == 400
+            assert "Already attested" in response.json()["detail"]
 
 
 # === services/ritual_service.py: Create ritual validation branches ===
