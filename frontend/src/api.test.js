@@ -299,6 +299,45 @@ describe('ApiClient', () => {
 
       await expect(client.request('GET', '/test')).rejects.toThrow('An error occurred');
     });
+
+    it('extracts message from object detail (e.g. 409 limbo/arrears)', async () => {
+      const detail = {
+        message: 'Sprint is in limbo. Complete pending rituals to continue.',
+        sprint_id: 's-1',
+        pending_rituals: ['run-tests'],
+      };
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ detail }),
+      });
+
+      try {
+        await client.request('POST', '/test', {});
+        throw new Error('should have thrown');
+      } catch (e) {
+        expect(e.message).toBe('Sprint is in limbo. Complete pending rituals to continue.');
+        expect(e.status).toBe(409);
+        expect(e.detail).toEqual(detail);
+      }
+    });
+
+    it('attaches status and detail to all API errors', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({ detail: 'Forbidden' }),
+      });
+
+      try {
+        await client.request('GET', '/test');
+        throw new Error('should have thrown');
+      } catch (e) {
+        expect(e.message).toBe('Forbidden');
+        expect(e.status).toBe(403);
+        expect(e.detail).toBe('Forbidden');
+      }
+    });
   });
 
   describe('Auth Endpoints', () => {

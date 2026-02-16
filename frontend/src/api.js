@@ -70,8 +70,18 @@ export class ApiClient {
         }
 
         if (!response.ok) {
-            const detail = typeof result.detail === 'string' ? result.detail : 'An error occurred';
-            throw new Error(detail);
+            let detail;
+            if (typeof result.detail === 'string') {
+                detail = result.detail;
+            } else if (result.detail && typeof result.detail === 'object' && result.detail.message) {
+                detail = result.detail.message;
+            } else {
+                detail = 'An error occurred';
+            }
+            const error = new Error(detail);
+            error.status = response.status;
+            error.detail = result.detail;
+            throw error;
         }
 
         return result;
