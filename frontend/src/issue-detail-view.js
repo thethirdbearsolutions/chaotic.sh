@@ -6,6 +6,9 @@
 // Module state
 let ticketRitualsCollapsed = true;
 let currentTicketRituals = null;
+let detailNavPrevId = null;
+let detailNavNextId = null;
+let detailKeyHandler = null;
 
 // Dependencies injected from app.js
 let deps = {
@@ -35,6 +38,7 @@ let deps = {
     showDetailDropdown: () => {},
     setupMentionAutocomplete: () => {},
     renderTicketRitualActions: () => '',
+    getIssues: () => [],
 };
 
 /**
@@ -648,6 +652,13 @@ export async function viewIssue(issueId, pushHistory = true) {
         const assigneeName = assignee ? deps.formatAssigneeName(assignee) : null;
         const currentSprint = issue.sprint_id ? projectSprints.find(s => s.id === issue.sprint_id) : null;
 
+        // Compute prev/next navigation from current issue list
+        const issueList = deps.getIssues();
+        const currentIndex = issueList.findIndex(i => i.id === issue.id);
+        const prevIssue = currentIndex > 0 ? issueList[currentIndex - 1] : null;
+        const nextIssue = currentIndex >= 0 && currentIndex < issueList.length - 1 ? issueList[currentIndex + 1] : null;
+        const inList = currentIndex >= 0;
+
         detailView.querySelector('#issue-detail-content').innerHTML = `
             <div class="issue-detail-layout">
                 <div class="issue-detail-main">
@@ -656,6 +667,17 @@ export async function viewIssue(issueId, pushHistory = true) {
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Back
                         </button>
+                        ${inList ? `
+                        <div class="issue-nav-arrows">
+                            <button class="issue-nav-btn" ${prevIssue ? `onclick="viewIssue('${deps.escapeJsString(prevIssue.id)}')"` : 'disabled'} title="Previous issue">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="issue-nav-counter">${currentIndex + 1} / ${issueList.length}</span>
+                            <button class="issue-nav-btn" ${nextIssue ? `onclick="viewIssue('${deps.escapeJsString(nextIssue.id)}')"` : 'disabled'} title="Next issue">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                        </div>
+                        ` : ''}
                         <span class="issue-detail-breadcrumb">${project ? deps.escapeHtml(project.name) : 'Project'} › ${deps.escapeHtml(issue.identifier)}</span>
                     </div>
 
@@ -937,6 +959,26 @@ export async function viewIssue(issueId, pushHistory = true) {
         // Load ticket rituals (if any configured)
         loadTicketRituals(issue.id);
         deps.setupMentionAutocomplete();
+
+        // Set up prev/next keyboard navigation
+        detailNavPrevId = prevIssue ? prevIssue.id : null;
+        detailNavNextId = nextIssue ? nextIssue.id : null;
+        if (detailKeyHandler) {
+            document.removeEventListener('keydown', detailKeyHandler);
+        }
+        detailKeyHandler = (e) => {
+            if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+            if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+            if (e.key === 'ArrowLeft' && detailNavPrevId) {
+                e.preventDefault();
+                viewIssue(detailNavPrevId);
+            } else if (e.key === 'ArrowRight' && detailNavNextId) {
+                e.preventDefault();
+                viewIssue(detailNavNextId);
+            }
+        };
+        document.addEventListener('keydown', detailKeyHandler);
     } catch (e) {
         deps.showToast(`Failed to load issue: ${e.message}`, 'error');
     }
