@@ -67,10 +67,9 @@ class TestRitualPendingSprint:
         assert result.exit_code == 1
         assert 'sprint-report' in result.output
         assert 'chaotic ritual attest sprint-report' in result.output
-        # Should NOT mention other rituals or count
+        # Should NOT mention other rituals
         assert 'vent-spleen' not in result.output
         assert 'architecture-review' not in result.output
-        assert 'more ritual' not in result.output
 
     def test_skips_attested_shows_next_unattested(self, cli_runner):
         """When first ritual is attested, shows the next un-attested one."""
@@ -104,7 +103,7 @@ class TestRitualPendingSprint:
         assert 'chaotic ritual attest vent-spleen' in result.output
 
     def test_all_attested_pending_approval(self, cli_runner):
-        """When all attested but pending approval, shows first with ⏳."""
+        """When all attested but pending approval, shows first with ⏳ and exits 1."""
         from cli.main import cli, client
 
         client.get_limbo_status = MagicMock(return_value={
@@ -125,6 +124,29 @@ class TestRitualPendingSprint:
 
         assert result.exit_code == 1
         assert 'pending approval' in result.output
+
+    def test_approved_ritual_exits_zero(self, cli_runner):
+        """When ritual is approved, shows checkmark and exits 0."""
+        from cli.main import cli, client
+
+        client.get_limbo_status = MagicMock(return_value={
+            "in_limbo": True,
+            "pending_rituals": [
+                {
+                    "name": "sprint-report",
+                    "approval_mode": "review",
+                    "prompt": "Write a sprint report.",
+                    "attestation": {"approved_at": "2026-02-16T00:00:00Z"},
+                },
+            ],
+            "completed_rituals": [],
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project'):
+            result = cli_runner.invoke(cli, ['ritual', 'pending'])
+
+        assert result.exit_code == 0
+        assert 'approved' in result.output
 
 
 class TestRitualPendingTicket:
@@ -186,9 +208,38 @@ class TestRitualPendingTicket:
         assert 'design-review' in result.output
         assert 'CHT-856' in result.output
         assert 'chaotic ritual attest design-review --ticket CHT-856' in result.output
-        # Should NOT mention second ritual or count
+        # Should NOT mention second ritual
         assert 'work-on-branch' not in result.output
-        assert 'more ritual' not in result.output
+
+    def test_ticket_skips_attested_shows_next(self, cli_runner):
+        """When first ticket ritual is attested, shows the next un-attested one."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "issue-1"})
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {
+                    "name": "design-review",
+                    "approval_mode": "review",
+                    "prompt": "Write a design review.",
+                    "attestation": {"approved_at": None},
+                },
+                {
+                    "name": "work-on-branch",
+                    "approval_mode": "auto",
+                    "prompt": "Work on a branch.",
+                    "attestation": None,
+                },
+            ],
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project'):
+            result = cli_runner.invoke(cli, ['ritual', 'pending', 'CHT-856'])
+
+        assert result.exit_code == 1
+        # Should show work-on-branch (first un-attested), not design-review
+        assert 'work-on-branch' in result.output
+        assert 'chaotic ritual attest work-on-branch --ticket CHT-856' in result.output
 
     def test_ticket_attested_pending_approval(self, cli_runner):
         """Shows ⏳ when ticket ritual is attested but pending approval."""
@@ -211,3 +262,25 @@ class TestRitualPendingTicket:
 
         assert result.exit_code == 1
         assert 'pending approval' in result.output
+
+    def test_ticket_approved_exits_zero(self, cli_runner):
+        """When ticket ritual is approved, shows checkmark and exits 0."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "issue-1"})
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {
+                    "name": "design-review",
+                    "approval_mode": "gate",
+                    "prompt": "Write a design review.",
+                    "attestation": {"approved_at": "2026-02-16T00:00:00Z"},
+                },
+            ],
+        })
+
+        with patch('cli.main.get_current_project', return_value='test-project'):
+            result = cli_runner.invoke(cli, ['ritual', 'pending', 'CHT-856'])
+
+        assert result.exit_code == 0
+        assert 'approved' in result.output

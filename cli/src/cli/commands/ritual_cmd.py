@@ -145,44 +145,56 @@ def register(cli):
             if not rituals_list:
                 console.print(f"[green]No pending rituals for {ticket_id}.[/green]")
                 return
-            r = rituals_list[0]
+            # Find first un-attested ritual
+            r = None
+            for candidate in rituals_list:
+                if not candidate.get("attestation"):
+                    r = candidate
+                    break
+            if not r:
+                # All attested — show first (pending approval or approved)
+                r = rituals_list[0]
             mode = f"[dim]({r.get('approval_mode', 'auto')})[/dim]"
             if r.get("attestation"):
                 if r["attestation"].get("approved_at"):
                     console.print(f"[green]\u2713[/green] {r['name']} {mode} - approved")
+                    return
                 else:
                     console.print(f"[yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
+                    raise SystemExit(1)
             else:
                 console.print(f"\n[bold]Next pending ritual for {ticket_id}:[/bold] {r['name']} {mode}")
                 print_ritual_prompt(r['prompt'])
                 console.print(f"\n  [dim]Usage: chaotic ritual attest {r['name']} --ticket {ticket_id} --note \"your note here\"[/dim]")
-            raise SystemExit(1)
+                raise SystemExit(1)
         else:
             status = _client().get_limbo_status(project_id)
-            pending = status.get("pending_rituals", [])
-            if not pending:
+            pending_rituals = status.get("pending_rituals", [])
+            if not pending_rituals:
                 console.print("[green]No pending sprint rituals.[/green]")
                 return
             # Find first un-attested ritual
             next_r = None
-            for r in pending:
+            for r in pending_rituals:
                 if not r.get("attestation"):
                     next_r = r
                     break
             if not next_r:
-                # All attested but maybe pending approval
-                next_r = pending[0]
-            mode = f"[dim]({next_r['approval_mode']})[/dim]"
+                # All attested — show first (pending approval or approved)
+                next_r = pending_rituals[0]
+            mode = f"[dim]({next_r.get('approval_mode', 'auto')})[/dim]"
             if next_r.get("attestation"):
                 if next_r["attestation"].get("approved_at"):
                     console.print(f"[green]\u2713[/green] {next_r['name']} {mode} - approved")
+                    return
                 else:
                     console.print(f"[yellow]\u23f3[/yellow] {next_r['name']} {mode} - attested, pending approval")
+                    raise SystemExit(1)
             else:
                 console.print(f"\n[bold]Next pending ritual:[/bold] {next_r['name']} {mode}")
                 print_ritual_prompt(next_r['prompt'])
                 console.print(f"\n  [dim]Usage: chaotic ritual attest {next_r['name']} --note \"your note here\"[/dim]")
-            raise SystemExit(1)
+                raise SystemExit(1)
 
     @ritual.command("attest")
     @click.argument("ritual_name")
