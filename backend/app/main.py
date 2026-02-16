@@ -11,6 +11,7 @@ import os
 
 from app.config import get_settings
 from app.database import init_db
+from app.oxyde_db import init_oxyde, close_oxyde
 from app.api import api_router
 from app.websocket import manager
 from app.utils.security import decode_token
@@ -41,8 +42,10 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_db()
+    await init_oxyde()
     yield
     # Shutdown
+    await close_oxyde()
 
 
 app = FastAPI(
