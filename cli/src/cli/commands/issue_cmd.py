@@ -468,7 +468,7 @@ def register(cli):
         m = _main()
         iss = _client().get_issue_by_identifier(identifier)
         web_url = m.get_web_url()
-        url = f"{web_url}/#/issue/{iss['id']}"
+        url = f"{web_url}/#/issue/{iss['identifier']}"
         console.print(f"[dim]Opening {url}...[/dim]")
         m.webbrowser.open(url)
 
