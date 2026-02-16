@@ -788,6 +788,10 @@ textarea {
     overflow-y: auto;
 }
 
+.modal.modal-wide {
+    max-width: 700px;
+}
+
 .modal-header {
     display: flex;
     align-items: center;

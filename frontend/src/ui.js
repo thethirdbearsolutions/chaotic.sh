@@ -18,6 +18,7 @@ export function showModal() {
 export function closeModal() {
   closeAllDropdowns();
   document.getElementById('modal-overlay').classList.add('hidden');
+  document.querySelector('.modal')?.classList.remove('modal-wide');
 }
 
 /**
