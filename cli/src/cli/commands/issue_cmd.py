@@ -35,7 +35,7 @@ def register(cli):
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
     @click.option("--search", help="Search in title, description, and identifier.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
-    @click.option("--sort-by", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
+    @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
     @_main().json_option
     @_main().require_project
@@ -112,7 +112,7 @@ def register(cli):
     @issue.command("mine")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
-    @click.option("--sort-by", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
+    @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
     @_main().json_option
     @_main().require_team
