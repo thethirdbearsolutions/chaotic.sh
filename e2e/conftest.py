@@ -8,6 +8,7 @@ This is the contract test suite for the oxyde ORM port.
 """
 import sys
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -90,6 +91,7 @@ def test_server():
     server.start()
     yield server
     server.stop()
+    shutil.rmtree(_db_dir, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

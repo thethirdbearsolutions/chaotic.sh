@@ -2,7 +2,9 @@
 import httpx
 from cli.client import Client, APIError
 import pytest
-from conftest import TEST_PORT
+
+
+TEST_PORT = 19876
 
 
 class TestHarnessSmoke:

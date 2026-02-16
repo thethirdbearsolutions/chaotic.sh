@@ -53,11 +53,10 @@ class TestTeamMembers:
         assert isinstance(members, list)
         assert len(members) >= 1
 
-    def test_remove_member_self(self, api_client, test_team, test_user):
-        # Can't remove yourself as last admin - should fail or succeed depending on backend
-        # This tests the contract, not the business logic
-        members = api_client.get_team_members(test_team["id"])
-        assert len(members) >= 1
+    def test_remove_member_last_admin_fails(self, api_client, test_team, test_user):
+        # Removing yourself as the last admin should fail
+        with pytest.raises(APIError):
+            api_client.remove_member(test_team["id"], test_user.id)
 
 
 class TestInvitations:

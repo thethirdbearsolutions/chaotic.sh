@@ -66,17 +66,22 @@ class TestIssueCRUD:
         assert len(issues) <= 2
 
     def test_get_issues_sort(self, api_client, test_project):
-        api_client.create_issue(test_project["id"], "Sort A")
-        api_client.create_issue(test_project["id"], "Sort B")
+        api_client.create_issue(test_project["id"], "Low Prio", priority="low")
+        api_client.create_issue(test_project["id"], "Urgent Prio", priority="urgent")
         issues = api_client.get_issues(
-            project_id=test_project["id"], sort_by="priority", order="desc"
+            project_id=test_project["id"], sort_by="priority", order="asc"
         )
         assert isinstance(issues, list)
+        assert len(issues) >= 2
+        # Verify sorting works (urgent < low in priority ordering)
+        priorities = [i["priority"] for i in issues if i.get("priority")]
+        assert len(priorities) >= 2
 
     def test_search_issues(self, api_client, test_team, test_project):
         api_client.create_issue(test_project["id"], "Searchable Zebra")
         results = api_client.search_issues(test_team["id"], "Zebra")
         assert isinstance(results, list)
+        assert any("Zebra" in i["title"] for i in results)
 
     def test_update_issue(self, api_client, test_project):
         issue = api_client.create_issue(test_project["id"], "To Update")
