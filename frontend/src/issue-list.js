@@ -36,6 +36,21 @@ export function setDependencies(dependencies) {
 }
 
 /**
+ * Sum estimates for a list of issues. Null estimates count as 0.
+ */
+export function sumEstimates(issues) {
+    return issues.reduce((sum, i) => sum + (i.estimate || 0), 0);
+}
+
+/**
+ * Render a summary bar showing issue count and total points.
+ */
+function renderSummaryBar(issues) {
+    const total = sumEstimates(issues);
+    return `<div class="issue-list-summary">${issues.length} issues · ${total}pt</div>`;
+}
+
+/**
  * Render the issues list (main entry point)
  */
 export function renderIssues() {
@@ -69,8 +84,8 @@ export function renderIssues() {
     } else if (groupBy === 'sprint') {
         renderGroupedBySprint(list, issues);
     } else {
-        // No grouping - render flat list
-        list.innerHTML = issues.map(issue => renderIssueRow(issue)).join('');
+        // No grouping - render flat list with summary
+        list.innerHTML = renderSummaryBar(issues) + issues.map(issue => renderIssueRow(issue)).join('');
     }
 }
 
@@ -85,7 +100,7 @@ function renderGroupedByStatus(list, issues) {
         }
     });
 
-    let html = '';
+    let html = renderSummaryBar(issues);
     STATUS_ORDER.forEach(status => {
         const groupIssues = groups[status];
         if (groupIssues.length === 0) return;
@@ -99,6 +114,7 @@ function renderGroupedByStatus(list, issues) {
                     <span class="group-icon">${getStatusIcon(status)}</span>
                     <span class="group-title">${deps.formatStatus(status)}</span>
                     <span class="group-count">${groupIssues.length}</span>
+                    <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
@@ -121,7 +137,7 @@ function renderGroupedByPriority(list, issues) {
         }
     });
 
-    let html = '';
+    let html = renderSummaryBar(issues);
     PRIORITY_ORDER.forEach(priority => {
         const groupIssues = groups[priority];
         if (groupIssues.length === 0) return;
@@ -135,6 +151,7 @@ function renderGroupedByPriority(list, issues) {
                     <span class="group-icon">${getPriorityIcon(priority)}</span>
                     <span class="group-title">${deps.formatPriority(priority)}</span>
                     <span class="group-count">${groupIssues.length}</span>
+                    <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
@@ -157,7 +174,7 @@ function renderGroupedByType(list, issues) {
         }
     });
 
-    let html = '';
+    let html = renderSummaryBar(issues);
     ISSUE_TYPE_ORDER.forEach(issueType => {
         const groupIssues = groups[issueType];
         if (groupIssues.length === 0) return;
@@ -171,6 +188,7 @@ function renderGroupedByType(list, issues) {
                     <span class="group-icon"><span class="issue-type-badge type-${issueType}">${deps.formatIssueType(issueType)}</span></span>
                     <span class="group-title">${deps.formatIssueType(issueType)}</span>
                     <span class="group-count">${groupIssues.length}</span>
+                    <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
@@ -205,7 +223,7 @@ function renderGroupedByAssignee(list, issues) {
         }
     });
 
-    let html = '';
+    let html = renderSummaryBar(issues);
 
     // Render unassigned first
     if (groups[unassignedKey].length > 0) {
@@ -218,6 +236,7 @@ function renderGroupedByAssignee(list, issues) {
                     <span class="group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg></span>
                     <span class="group-title">Unassigned</span>
                     <span class="group-count">${groups[unassignedKey].length}</span>
+                    <span class="group-points">${sumEstimates(groups[unassignedKey])}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groups[unassignedKey].map(issue => renderIssueRow(issue)).join('')}
@@ -242,6 +261,7 @@ function renderGroupedByAssignee(list, issues) {
                     <span class="group-icon">${deps.renderAvatar(assignee, 'avatar-small')}</span>
                     <span class="group-title">${deps.escapeHtml(name)}${deps.escapeHtml(extra)}</span>
                     <span class="group-count">${groupIssues.length}</span>
+                    <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
@@ -283,7 +303,7 @@ function renderGroupedBySprint(list, issues) {
         return rankA - rankB;
     });
 
-    let html = '';
+    let html = renderSummaryBar(issues);
 
     // Render sprint groups
     sprintOrder.forEach(sprintId => {
@@ -304,6 +324,7 @@ function renderGroupedBySprint(list, issues) {
                     <span class="group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
                     <span class="group-title">${deps.escapeHtml(name)}${statusLabel}</span>
                     <span class="group-count">${groupIssues.length}</span>
+                    <span class="group-points">${sumEstimates(groupIssues)}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groupIssues.map(issue => renderIssueRow(issue)).join('')}
@@ -323,6 +344,7 @@ function renderGroupedBySprint(list, issues) {
                     <span class="group-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
                     <span class="group-title">No Sprint</span>
                     <span class="group-count">${groups[noSprintKey].length}</span>
+                    <span class="group-points">${sumEstimates(groups[noSprintKey])}pt</span>
                 </div>
                 <div class="issue-group-content">
                     ${groups[noSprintKey].map(issue => renderIssueRow(issue)).join('')}
