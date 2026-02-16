@@ -540,6 +540,31 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 403
         assert "Not a member" in response.json()["detail"]
 
+    async def test_agent_with_membership_cannot_create_team_agent(self, client, test_team, db_session, test_user):
+        """POST /teams/{team_id}/agents returns 403 for agent even with TeamMember record.
+
+        Covers agents.py L42-46: the is_agent check that fires after membership passes.
+        """
+        from app.models.team import TeamMember, TeamRole
+
+        service = AgentService(db_session)
+        agent, api_key, _ = await service.create(
+            AgentCreate(name="Member Bot"), test_user, test_team.id
+        )
+
+        # Manually give the agent a TeamMember record
+        member = TeamMember(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
+        db_session.add(member)
+        await db_session.commit()
+
+        response = await client.post(
+            f"/api/teams/{test_team.id}/agents",
+            json={"name": "Child Bot"},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert response.status_code == 403
+        assert "Agents cannot create other agents" in response.json()["detail"]
+
     async def test_agent_cannot_create_project_agent(self, client, test_team, test_project, db_session, test_user):
         """POST /projects/{project_id}/agents should return 403 when called by an agent.
 
@@ -563,3 +588,30 @@ class TestAgentAPIEndpoints:
         # Agent is rejected because get_member doesn't find a TeamMember record for agents
         assert response.status_code == 403
         assert "Not a member" in response.json()["detail"]
+
+    async def test_agent_with_membership_cannot_create_project_agent(
+        self, client, test_team, test_project, db_session, test_user
+    ):
+        """POST /projects/{project_id}/agents returns 403 for agent with TeamMember record.
+
+        Covers agents.py L99-103: the is_agent check for project-scoped agent creation.
+        """
+        from app.models.team import TeamMember, TeamRole
+
+        service = AgentService(db_session)
+        agent, api_key, _ = await service.create(
+            AgentCreate(name="Member Bot 2"), test_user, test_team.id
+        )
+
+        # Manually give the agent a TeamMember record
+        member = TeamMember(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
+        db_session.add(member)
+        await db_session.commit()
+
+        response = await client.post(
+            f"/api/projects/{test_project.id}/agents",
+            json={"name": "Child Bot"},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert response.status_code == 403
+        assert "Agents cannot create other agents" in response.json()["detail"]

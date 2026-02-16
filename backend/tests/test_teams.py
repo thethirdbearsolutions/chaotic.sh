@@ -636,3 +636,22 @@ async def test_delete_invitation_not_found(client, auth_headers, test_team):
         headers=auth_headers,
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_for_existing_non_member(client, auth_headers, test_team, test_user2):
+    """Test inviting an existing user who is not yet a team member succeeds.
+
+    Covers teams.py branch 251->257: existing_user exists but existing_member is None,
+    so the code falls through to create the invitation.
+    """
+    response = await client.post(
+        f"/api/teams/{test_team.id}/invitations",
+        headers=auth_headers,
+        json={"email": test_user2.email, "role": "member"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["email"] == test_user2.email
+    assert data["role"] == "member"
+    assert data["team_id"] == test_team.id
