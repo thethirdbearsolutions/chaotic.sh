@@ -99,6 +99,88 @@ class TestRitualAttestation:
         assert isinstance(pending, dict)
 
 
+class TestRitualWorkflows:
+    """CHT-964: Tests for ritual workflow state machine methods."""
+
+    def test_approve_ritual_after_attest(self, api_client, test_project):
+        """Create ritual with review approval → close sprint → attest → approve."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "review-ritual", "Needs review",
+            trigger="every_sprint", approval_mode="review",
+        )
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.close_sprint(current["id"])
+        # Attest (submits for review)
+        api_client.attest_ritual(ritual["id"], test_project["id"], note="Attested")
+        # Approve (completes review)
+        result = api_client.approve_ritual(ritual["id"], test_project["id"])
+        assert result is not None
+        assert isinstance(result, dict)
+
+    def test_complete_gate_ritual(self, api_client, test_project):
+        """Complete a GATE mode ritual (human-only, no agent attest)."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "gate-ritual", "Gate check",
+            trigger="every_sprint", approval_mode="gate",
+        )
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.close_sprint(current["id"])
+        result = api_client.complete_gate_ritual(
+            ritual["id"], test_project["id"], note="Gate passed"
+        )
+        assert result is not None
+        assert isinstance(result, dict)
+
+    def test_attest_ritual_for_issue(self, api_client, test_project):
+        """Attest a ticket-claim ritual against a specific issue."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "ticket-ritual", "Ticket gate",
+            trigger="ticket_claim", approval_mode="auto",
+        )
+        issue = api_client.create_issue(test_project["id"], "Gated Issue")
+        result = api_client.attest_ritual_for_issue(
+            ritual["id"], issue["id"], note="Done for issue"
+        )
+        assert result is not None
+        assert isinstance(result, dict)
+
+    def test_complete_gate_ritual_for_issue(self, api_client, test_project):
+        """Complete a GATE mode ritual for a specific issue."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "issue-gate", "Issue gate check",
+            trigger="ticket_claim", approval_mode="gate",
+        )
+        issue = api_client.create_issue(test_project["id"], "Gate Issue")
+        result = api_client.complete_gate_ritual_for_issue(
+            ritual["id"], issue["id"], note="Gate cleared"
+        )
+        assert result is not None
+        assert isinstance(result, dict)
+
+    def test_pending_issue_rituals_with_gate(self, api_client, test_project):
+        """After creating a ticket-claim ritual, new issues should have it pending."""
+        api_client.create_ritual(
+            test_project["id"], "claim-gate", "Must do before claim",
+            trigger="ticket_claim", approval_mode="auto",
+        )
+        issue = api_client.create_issue(test_project["id"], "Pending Gate Issue")
+        pending = api_client.get_pending_issue_rituals(issue["id"])
+        assert isinstance(pending, dict)
+
+    def test_limbo_status_after_sprint_close(self, api_client, test_project):
+        """After creating a sprint ritual and closing sprint, project enters limbo."""
+        api_client.create_ritual(
+            test_project["id"], "limbo-trigger", "Causes limbo",
+            trigger="every_sprint", approval_mode="review",
+        )
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.close_sprint(current["id"])
+        status = api_client.get_limbo_status(test_project["id"])
+        assert isinstance(status, dict)
+        # Should be in limbo with pending rituals
+        assert status.get("in_limbo") is True
+
+
 class TestRitualGroups:
     def test_create_ritual_group(self, api_client, test_project):
         group = api_client.create_ritual_group(

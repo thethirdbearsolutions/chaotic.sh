@@ -99,6 +99,56 @@ class TestIssueCRUD:
             unauthenticated_client.create_issue("fake-project", "No Auth")
 
 
+class TestIssueFilterParams:
+    """CHT-965: Tests for missing get_issues filter params."""
+
+    def test_get_issues_filter_sprint_id(self, api_client, test_project):
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.create_issue(
+            test_project["id"], "Sprint Issue", sprint_id=current["id"]
+        )
+        issues = api_client.get_issues(
+            project_id=test_project["id"], sprint_id=current["id"]
+        )
+        assert isinstance(issues, list)
+        assert len(issues) >= 1
+
+    def test_get_issues_filter_assignee_id(self, api_client, test_project, test_user):
+        issue = api_client.create_issue(test_project["id"], "Assigned Issue")
+        api_client.update_issue(issue["id"], assignee_id=test_user.id)
+        issues = api_client.get_issues(
+            project_id=test_project["id"], assignee_id=test_user.id
+        )
+        assert isinstance(issues, list)
+        assert all(i.get("assignee_id") == test_user.id for i in issues)
+
+    def test_get_issues_filter_issue_type(self, api_client, test_project):
+        api_client.create_issue(
+            test_project["id"], "Bug Issue", issue_type="bug"
+        )
+        bugs = api_client.get_issues(
+            project_id=test_project["id"], issue_type="bug"
+        )
+        assert isinstance(bugs, list)
+        assert all(i.get("issue_type") == "bug" for i in bugs)
+
+    def test_get_issues_skip(self, api_client, test_project):
+        for i in range(3):
+            api_client.create_issue(test_project["id"], f"Skip Issue {i}")
+        all_issues = api_client.get_issues(project_id=test_project["id"])
+        skipped = api_client.get_issues(project_id=test_project["id"], skip=1)
+        assert len(skipped) == len(all_issues) - 1
+
+    def test_get_issues_skip_and_limit(self, api_client, test_project):
+        for i in range(5):
+            api_client.create_issue(test_project["id"], f"Page Issue {i}")
+        page = api_client.get_issues(
+            project_id=test_project["id"], skip=2, limit=2
+        )
+        assert isinstance(page, list)
+        assert len(page) <= 2
+
+
 class TestSubIssues:
     def test_create_sub_issue(self, api_client, test_project):
         parent = api_client.create_issue(test_project["id"], "Parent")
