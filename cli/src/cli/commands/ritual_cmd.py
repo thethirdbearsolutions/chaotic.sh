@@ -122,6 +122,68 @@ def register(cli):
             console.print("[yellow]No rituals configured for this project.[/yellow]")
             console.print("[dim]Create rituals with 'chaotic ritual create'.[/dim]")
 
+    @ritual.command("pending")
+    @click.argument("ticket_id", required=False)
+    @_main().require_project
+    @_main().handle_error
+    def ritual_pending(ticket_id):
+        """Show the next ritual you need to complete.
+
+        Without arguments, shows the next pending sprint ritual (during limbo).
+        With a TICKET_ID argument, shows the next pending ticket ritual.
+        """
+        m = _main()
+        project_id = m.get_current_project()
+
+        if ticket_id:
+            issue = _client().get_issue_by_identifier(ticket_id)
+            if not issue:
+                console.print(f"[red]Issue '{ticket_id}' not found.[/red]")
+                raise SystemExit(1)
+            pending_rituals = _client().get_pending_issue_rituals(issue["id"])
+            rituals_list = pending_rituals.get("pending_rituals", [])
+            if not rituals_list:
+                console.print(f"[green]No pending rituals for {ticket_id}.[/green]")
+                return
+            r = rituals_list[0]
+            mode = f"[dim]({r.get('approval_mode', 'auto')})[/dim]"
+            if r.get("attestation"):
+                if r["attestation"].get("approved_at"):
+                    console.print(f"[green]\u2713[/green] {r['name']} {mode} - approved")
+                else:
+                    console.print(f"[yellow]\u23f3[/yellow] {r['name']} {mode} - attested, pending approval")
+            else:
+                console.print(f"\n[bold]Next pending ritual for {ticket_id}:[/bold] {r['name']} {mode}")
+                print_ritual_prompt(r['prompt'])
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {r['name']} --ticket {ticket_id} --note \"your note here\"[/dim]")
+            raise SystemExit(1)
+        else:
+            status = _client().get_limbo_status(project_id)
+            pending = status.get("pending_rituals", [])
+            if not pending:
+                console.print("[green]No pending sprint rituals.[/green]")
+                return
+            # Find first un-attested ritual
+            next_r = None
+            for r in pending:
+                if not r.get("attestation"):
+                    next_r = r
+                    break
+            if not next_r:
+                # All attested but maybe pending approval
+                next_r = pending[0]
+            mode = f"[dim]({next_r['approval_mode']})[/dim]"
+            if next_r.get("attestation"):
+                if next_r["attestation"].get("approved_at"):
+                    console.print(f"[green]\u2713[/green] {next_r['name']} {mode} - approved")
+                else:
+                    console.print(f"[yellow]\u23f3[/yellow] {next_r['name']} {mode} - attested, pending approval")
+            else:
+                console.print(f"\n[bold]Next pending ritual:[/bold] {next_r['name']} {mode}")
+                print_ritual_prompt(next_r['prompt'])
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {next_r['name']} --note \"your note here\"[/dim]")
+            raise SystemExit(1)
+
     @ritual.command("attest")
     @click.argument("ritual_name")
     @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)")
