@@ -4691,6 +4691,22 @@ input[type="checkbox"] {
     margin-left: auto;
 }
 
+.group-points {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
+.issue-list-summary {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+}
+
 .issue-group-content {
     margin-top: 4px;
     margin-left: 12px;

@@ -12,6 +12,7 @@ import {
     toggleGroup,
     getPriorityIcon,
     getStatusIcon,
+    sumEstimates,
 } from './issue-list.js';
 
 describe('issue-list', () => {
@@ -285,6 +286,107 @@ describe('issue-list', () => {
         it('returns backlog icon for unknown status', () => {
             const icon = getStatusIcon('unknown');
             expect(icon).toContain('status-backlog');
+        });
+    });
+
+    describe('sumEstimates (CHT-423)', () => {
+        it('sums estimates from issues', () => {
+            expect(sumEstimates([
+                { estimate: 3 },
+                { estimate: 5 },
+                { estimate: 2 },
+            ])).toBe(10);
+        });
+
+        it('treats null estimates as 0', () => {
+            expect(sumEstimates([
+                { estimate: 3 },
+                { estimate: null },
+                { estimate: 5 },
+            ])).toBe(8);
+        });
+
+        it('returns 0 for empty array', () => {
+            expect(sumEstimates([])).toBe(0);
+        });
+
+        it('handles explicit zero estimates', () => {
+            expect(sumEstimates([
+                { estimate: 0 },
+                { estimate: 3 },
+            ])).toBe(3);
+        });
+
+        it('handles missing estimate property', () => {
+            expect(sumEstimates([
+                { id: '1' },
+                { id: '2', estimate: 5 },
+            ])).toBe(5);
+        });
+    });
+
+    describe('points summary (CHT-423)', () => {
+        const issuesWithEstimates = [
+            { id: '1', identifier: 'T-1', title: 'A', status: 'todo', priority: 'medium', estimate: 3 },
+            { id: '2', identifier: 'T-2', title: 'B', status: 'todo', priority: 'high', estimate: 5 },
+            { id: '3', identifier: 'T-3', title: 'C', status: 'done', priority: 'medium', estimate: null },
+        ];
+
+        it('shows summary bar with count and points in flat list', () => {
+            setTestIssues(issuesWithEstimates);
+            renderIssues();
+
+            const html = document.getElementById('issues-list').innerHTML;
+            expect(html).toContain('issue-list-summary');
+            expect(html).toContain('3 issues');
+            expect(html).toContain('8pt');
+        });
+
+        it('shows summary bar when grouped by status', () => {
+            setTestIssues(issuesWithEstimates);
+            mockDeps.getGroupByValue.mockReturnValue('status');
+            setDependencies(mockDeps);
+            renderIssues();
+
+            const html = document.getElementById('issues-list').innerHTML;
+            expect(html).toContain('issue-list-summary');
+            expect(html).toContain('3 issues');
+            expect(html).toContain('8pt');
+        });
+
+        it('shows points per group in group headers', () => {
+            setTestIssues(issuesWithEstimates);
+            mockDeps.getGroupByValue.mockReturnValue('status');
+            setDependencies(mockDeps);
+            renderIssues();
+
+            const html = document.getElementById('issues-list').innerHTML;
+            // todo group has 2 issues (3pt + 5pt = 8pt)
+            const todoGroup = html.match(/data-group="todo"[\s\S]*?<\/div>/);
+            expect(todoGroup[0]).toContain('group-points');
+            expect(todoGroup[0]).toContain('8pt');
+        });
+
+        it('shows points per group when grouped by priority', () => {
+            setTestIssues(issuesWithEstimates);
+            mockDeps.getGroupByValue.mockReturnValue('priority');
+            setDependencies(mockDeps);
+            renderIssues();
+
+            const html = document.getElementById('issues-list').innerHTML;
+            // high group has 1 issue (5pt)
+            const highGroup = html.match(/data-group="high"[\s\S]*?<\/div>/);
+            expect(highGroup[0]).toContain('group-points');
+            expect(highGroup[0]).toContain('5pt');
+        });
+
+        it('does not show summary when no issues (empty state)', () => {
+            setTestIssues([]);
+            renderIssues();
+
+            const html = document.getElementById('issues-list').innerHTML;
+            expect(html).not.toContain('issue-list-summary');
+            expect(html).toContain('No issues found');
         });
     });
 });
