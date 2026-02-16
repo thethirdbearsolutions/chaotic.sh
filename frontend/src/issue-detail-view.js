@@ -604,8 +604,12 @@ export async function viewIssue(issueId, pushHistory = true) {
             deps.api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
         ]);
 
-        // Extract attestation notes from completed rituals and merge with comments
-        const attestationNotes = (ritualStatus.completed_rituals || [])
+        // Extract attestation notes from ALL rituals (pending + completed) and merge with comments
+        const allRituals = [
+            ...(ritualStatus.pending_rituals || []),
+            ...(ritualStatus.completed_rituals || []),
+        ];
+        const attestationNotes = allRituals
             .filter(r => r.attestation && r.attestation.note)
             .map(r => ({
                 id: `attestation-${r.attestation.id}`,
@@ -614,6 +618,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                 created_at: r.attestation.attested_at,
                 is_attestation: true,
                 ritual_name: r.name,
+                is_pending: !r.attestation.approved_at,
             }));
 
         // Combine and sort chronologically
@@ -834,12 +839,12 @@ export async function viewIssue(issueId, pushHistory = true) {
                             ${allComments.length === 0 ? `
                                 <div class="comments-empty">No comments yet</div>
                             ` : allComments.map(comment => `
-                                <div class="comment ${comment.is_attestation ? 'comment-attestation' : ''}">
-                                    <div class="comment-avatar ${comment.is_attestation ? 'avatar-attestation' : ''}">${comment.is_attestation ? '✓' : (comment.author_name || 'U').charAt(0).toUpperCase()}</div>
+                                <div class="comment ${comment.is_attestation ? 'comment-attestation' : ''} ${comment.is_pending ? 'comment-attestation-pending' : ''}">
+                                    <div class="comment-avatar ${comment.is_attestation ? 'avatar-attestation' : ''}">${comment.is_attestation ? (comment.is_pending ? '⏳' : '✓') : (comment.author_name || 'U').charAt(0).toUpperCase()}</div>
                                     <div class="comment-body">
                                         <div class="comment-header">
                                             <span class="comment-author">${deps.escapeHtml(comment.author_name || 'User')}</span>
-                                            ${comment.is_attestation ? `<span class="comment-ritual-badge">Ritual: ${deps.escapeHtml(comment.ritual_name)}</span>` : ''}
+                                            ${comment.is_attestation ? `<span class="comment-ritual-badge">${comment.is_pending ? 'Pending approval — ' : ''}Ritual: ${deps.escapeHtml(comment.ritual_name)}</span>` : ''}
                                             <span class="comment-date">${deps.formatTimeAgo(comment.created_at)}</span>
                                         </div>
                                         <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>

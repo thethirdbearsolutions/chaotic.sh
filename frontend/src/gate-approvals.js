@@ -74,6 +74,7 @@ function showGateApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issu
         handleGateApproval(event, ritualId, issueId, ritualName);
     });
     showModal();
+    document.querySelector('.modal')?.classList.add('modal-wide');
 }
 
 /**
@@ -132,6 +133,7 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
         handleReviewApproval(event, ritualId, issueId, ritualName);
     });
     showModal();
+    document.querySelector('.modal')?.classList.add('modal-wide');
 }
 
 /**
