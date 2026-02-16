@@ -337,3 +337,69 @@ class TestAPIKeyAPIEndpoints:
         )
         assert response.status_code == 403
         assert "Not authorized" in response.json()["detail"]
+
+    async def test_create_api_key_unauthenticated(self, client):
+        """POST /api-keys without auth should return 401."""
+        response = await client.post("/api/api-keys", json={"name": "No Auth"})
+        assert response.status_code == 401
+
+    async def test_list_api_keys_unauthenticated(self, client):
+        """GET /api-keys without auth should return 401."""
+        response = await client.get("/api/api-keys")
+        assert response.status_code == 401
+
+    async def test_revoke_api_key_unauthenticated(self, client):
+        """DELETE /api-keys/{id} without auth should return 401."""
+        response = await client.delete("/api/api-keys/some-id")
+        assert response.status_code == 401
+
+    async def test_list_api_keys_empty(self, client, auth_headers):
+        """GET /api-keys with no keys should return empty list."""
+        response = await client.get("/api/api-keys", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json() == []
+
+    async def test_list_api_keys_isolated_between_users(self, client, auth_headers, auth_headers2, test_user, test_user2, db_session):
+        """User should only see their own API keys."""
+        service = APIKeyService(db_session)
+        await service.create(test_user.id, APIKeyCreate(name="User1 Key"))
+        await service.create(test_user2.id, APIKeyCreate(name="User2 Key"))
+
+        r1 = await client.get("/api/api-keys", headers=auth_headers)
+        r2 = await client.get("/api/api-keys", headers=auth_headers2)
+
+        assert all(k["name"] != "User2 Key" for k in r1.json())
+        assert all(k["name"] != "User1 Key" for k in r2.json())
+
+
+@pytest.mark.asyncio
+class TestAPIKeyServiceLookups:
+    """Tests for get_by_id and get_by_prefix."""
+
+    async def test_get_by_id_found(self, db_session, test_user):
+        """get_by_id should return key when it exists."""
+        service = APIKeyService(db_session)
+        api_key, _ = await service.create(test_user.id, APIKeyCreate(name="Lookup"))
+        result = await service.get_by_id(api_key.id)
+        assert result is not None
+        assert result.name == "Lookup"
+
+    async def test_get_by_id_not_found(self, db_session):
+        """get_by_id should return None for nonexistent ID."""
+        service = APIKeyService(db_session)
+        result = await service.get_by_id("nonexistent-id")
+        assert result is None
+
+    async def test_get_by_prefix_found(self, db_session, test_user):
+        """get_by_prefix should return key matching prefix."""
+        service = APIKeyService(db_session)
+        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="Prefix"))
+        result = await service.get_by_prefix(full_key[:11])
+        assert result is not None
+        assert result.id == api_key.id
+
+    async def test_get_by_prefix_not_found(self, db_session):
+        """get_by_prefix should return None for unknown prefix."""
+        service = APIKeyService(db_session)
+        result = await service.get_by_prefix("ck_unknown")
+        assert result is None
