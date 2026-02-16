@@ -190,8 +190,8 @@ class TestSprintLimboErrorParsing:
             client._request("POST", "/api/sprints/123/close", {})
 
         error_msg = str(exc_info.value)
-        # Should suggest ritual list command
-        assert "chaotic ritual list" in error_msg.lower()
+        # Should suggest ritual pending command
+        assert "chaotic ritual pending" in error_msg.lower()
 
 
 class TestArrearsErrorParsing:

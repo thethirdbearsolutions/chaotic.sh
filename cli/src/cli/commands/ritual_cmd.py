@@ -66,7 +66,8 @@ def register(cli):
         if status["in_limbo"]:
             console.print(Panel(
                 "[yellow]Sprint is in LIMBO[/yellow]\n"
-                "Complete pending rituals to continue.",
+                "Complete pending rituals to continue.\n"
+                "Run [bold]chaotic ritual pending[/bold] to see what to do next.",
                 title="Limbo Status"
             ))
 

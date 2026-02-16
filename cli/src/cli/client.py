@@ -63,9 +63,9 @@ class Client:
         if "pending_rituals" in detail and "issue_id" in detail:
             return self._format_ticket_ritual_error(detail)
         if "pending_rituals" in detail:
-            return "Sprint is in limbo. Run `chaotic ritual list` to continue."
+            return "Sprint is in limbo. Run `chaotic ritual pending` to see what to do next."
         if "arrears_by" in detail:
-            return "Sprint is in arrears. Run `chaotic sprint close` to continue."
+            return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
         return detail.get("message", str(detail))
 
     def _format_ticket_ritual_error(self, detail: dict) -> str:
