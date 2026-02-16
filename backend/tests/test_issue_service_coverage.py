@@ -49,7 +49,6 @@ async def labeled_issue(db_session, test_project, test_user, test_label):
     db_session.add(issue)
     await db_session.flush()
     # Use raw insert to avoid lazy-load on issue.labels
-    from app.models.issue import issue_labels
     await db_session.execute(
         issue_labels.insert().values(issue_id=issue.id, label_id=test_label.id)
     )
@@ -77,15 +76,17 @@ async def active_sprint(db_session, test_project):
 
 @pytest.mark.asyncio
 async def test_list_issues_filter_by_label(
-    db_session, issue_service, test_project, test_team, labeled_issue, test_label
+    db_session, issue_service, test_project, test_team, labeled_issue, test_label, test_issue
 ):
     """list_issues with label_names filters to only labeled issues (covers L796-802)."""
     results = await issue_service.list_issues(
         team_id=test_team.id,
         label_names=[test_label.name],
     )
-    assert len(results) >= 1
-    assert all(labeled_issue.id == r.id for r in results)
+    result_ids = {r.id for r in results}
+    assert labeled_issue.id in result_ids
+    # Unlabeled test_issue should be excluded
+    assert test_issue.id not in result_ids
 
 
 # --- Issue type filter on list_by_sprint (L858) and shuffle (L864) ---
@@ -120,7 +121,8 @@ async def test_list_by_sprint_with_issue_type(
 async def test_list_by_sprint_shuffle_sort(
     db_session, issue_service, test_project, test_user, active_sprint
 ):
-    """list_by_sprint with sort_by=shuffle returns results (covers L864)."""
+    """list_by_sprint with sort_by=random invokes shuffle (covers L864)."""
+    from unittest.mock import patch
     test_project.issue_count += 1
     issue = Issue(
         project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
@@ -130,8 +132,10 @@ async def test_list_by_sprint_shuffle_sort(
     db_session.add(issue)
     await db_session.commit()
 
-    results = await issue_service.list_by_sprint(active_sprint.id, sort_by="random")
-    assert len(results) >= 1
+    with patch("app.services.issue_service.random.shuffle") as mock_shuffle:
+        results = await issue_service.list_by_sprint(active_sprint.id, sort_by="random")
+        assert len(results) >= 1
+        mock_shuffle.assert_called_once()
 
 
 # --- Issue type + shuffle on list_by_assignee (L892, L898) ---
@@ -141,6 +145,7 @@ async def test_list_by_assignee_with_type_and_shuffle(
     db_session, issue_service, test_project, test_user
 ):
     """list_by_assignee filters by issue_type and supports shuffle (covers L892, L898)."""
+    from unittest.mock import patch
     test_project.issue_count += 1
     task = Issue(
         project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
@@ -150,11 +155,13 @@ async def test_list_by_assignee_with_type_and_shuffle(
     db_session.add(task)
     await db_session.commit()
 
-    results = await issue_service.list_by_assignee(
-        test_user.id, issue_type=IssueType.TASK, sort_by="random"
-    )
-    assert len(results) >= 1
-    assert all(r.issue_type == IssueType.TASK for r in results)
+    with patch("app.services.issue_service.random.shuffle") as mock_shuffle:
+        results = await issue_service.list_by_assignee(
+            test_user.id, issue_type=IssueType.TASK, sort_by="random"
+        )
+        assert len(results) >= 1
+        assert all(r.issue_type == IssueType.TASK for r in results)
+        mock_shuffle.assert_called_once()
 
 
 # --- Deprecated list_by_team (L916) ---
@@ -270,7 +277,7 @@ async def test_batch_update_replace_labels_missing(
 
 @pytest.mark.asyncio
 async def test_batch_update_add_label_wrong_team(
-    db_session, issue_service, test_issue, test_label
+    db_session, issue_service, test_issue, test_team
 ):
     """batch_update raises when add_label belongs to different team (covers L1342)."""
     from app.models.team import Team
@@ -292,7 +299,7 @@ async def test_batch_update_add_label_wrong_team(
         await issue_service.batch_update(
             [issue], update_data={},
             add_label_ids=[other_label.id],
-            team_id=test_issue.project_id,  # wrong team
+            team_id=test_team.id,
         )
 
 
@@ -386,7 +393,7 @@ async def test_list_issues_unassigned_filter(
 
 @pytest.mark.asyncio
 async def test_batch_update_replace_label_wrong_team(
-    db_session, issue_service, test_issue
+    db_session, issue_service, test_issue, test_team
 ):
     """batch_update raises when replace label belongs to different team (covers L1355-1357)."""
     from app.models.team import Team
@@ -408,5 +415,5 @@ async def test_batch_update_replace_label_wrong_team(
         await issue_service.batch_update(
             [issue], update_data={},
             label_ids=[other_label.id],
-            team_id=test_issue.project_id,
+            team_id=test_team.id,
         )
