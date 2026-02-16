@@ -653,3 +653,5 @@ async def test_create_invitation_for_existing_non_member(client, auth_headers, t
     assert response.status_code == 201
     data = response.json()
     assert data["email"] == test_user2.email
+    assert data["role"] == "member"
+    assert data["team_id"] == test_team.id
