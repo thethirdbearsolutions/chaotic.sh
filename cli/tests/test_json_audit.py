@@ -269,7 +269,7 @@ class TestDocJson:
         client.get_document = MagicMock(return_value=SAMPLE_DOC)
         client.get_document_issues = MagicMock(return_value=[])
         client.get_document_comments = MagicMock(return_value=[comment])
-        result = cli_runner.invoke(cli, ['doc', 'show', 'd-1', '--comments', '--json'])
+        result = cli_runner.invoke(cli, ['doc', 'show', 'd-1', '--json'])
         assert result.exit_code == 0
         data = _parse_json(result.output)
         assert len(data['comments']) == 1
