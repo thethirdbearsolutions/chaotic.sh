@@ -1850,6 +1850,7 @@ setIssueDetailViewDependencies({
     showDetailDropdown,
     setupMentionAutocomplete,
     renderTicketRitualActions,
+    getIssues,
 });
 
 // ============================================

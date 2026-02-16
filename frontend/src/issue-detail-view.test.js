@@ -400,6 +400,128 @@ describe('issue-detail-view', () => {
             // Non-attested pending ritual shows circle icon
             expect(ritualsHtml).toContain('○');
         });
+
+        describe('prev/next navigation (CHT-553)', () => {
+            const issueList = [
+                { id: 'issue-a', identifier: 'TEST-1', title: 'First' },
+                { id: 'issue-1', identifier: 'TEST-2', title: 'Middle' },
+                { id: 'issue-c', identifier: 'TEST-3', title: 'Last' },
+            ];
+
+            it('renders prev/next buttons when issue is in list', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                expect(html).toContain('issue-nav-arrows');
+                expect(html).toContain('2 / 3');
+            });
+
+            it('prev button links to previous issue', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                expect(html).toContain('Previous issue');
+                expect(html).toContain('issue-a');
+            });
+
+            it('next button links to next issue', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                expect(html).toContain('Next issue');
+                expect(html).toContain('issue-c');
+            });
+
+            it('disables prev button on first issue', async () => {
+                setDependencies({ getIssues: () => issueList });
+                mockApi.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-a',
+                });
+
+                await viewIssue('issue-a');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                const prevMatch = html.match(/<button[^>]*title="Previous issue"[^>]*>/);
+                expect(prevMatch[0]).toContain('disabled');
+            });
+
+            it('disables next button on last issue', async () => {
+                setDependencies({ getIssues: () => issueList });
+                mockApi.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-c',
+                });
+
+                await viewIssue('issue-c');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                const nextMatch = html.match(/<button[^>]*title="Next issue"[^>]*>/);
+                expect(nextMatch[0]).toContain('disabled');
+            });
+
+            it('hides nav arrows when issue not in list', async () => {
+                setDependencies({ getIssues: () => [] });
+
+                await viewIssue('issue-1');
+
+                const html = document.getElementById('issue-detail-content').innerHTML;
+                expect(html).not.toContain('issue-nav-arrows');
+            });
+
+            it('handles keyboard ArrowRight to navigate next', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+                mockApi.getIssue.mockClear();
+                mockApi.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-c',
+                });
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(mockApi.getIssue).toHaveBeenCalledWith('issue-c');
+            });
+
+            it('handles keyboard ArrowLeft to navigate prev', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+                mockApi.getIssue.mockClear();
+                mockApi.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-a',
+                });
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(mockApi.getIssue).toHaveBeenCalledWith('issue-a');
+            });
+
+            it('ignores keyboard nav when detail view is hidden', async () => {
+                setDependencies({ getIssues: () => issueList });
+
+                await viewIssue('issue-1');
+                mockApi.getIssue.mockClear();
+
+                // Simulate navigating away from detail view
+                document.getElementById('issue-detail-view').classList.add('hidden');
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(mockApi.getIssue).not.toHaveBeenCalled();
+            });
+        });
     });
 
     describe('viewIssueByPath', () => {
