@@ -58,8 +58,15 @@ class TeamService:
         return team
 
     async def delete(self, team: OxydeTeam) -> None:
-        """Delete a team."""
-        await team.delete()
+        """Delete a team and its child records.
+
+        Oxyde doesn't enforce FK cascades, so we manually delete
+        members and invitations before removing the team.
+        """
+        async with atomic():
+            await OxydeTeamInvitation.objects.filter(team_id=team.id).delete()
+            await OxydeTeamMember.objects.filter(team_id=team.id).delete()
+            await team.delete()
 
     async def get_user_teams(self, user_id: str) -> list[OxydeTeam]:
         """Get all teams for a user.
@@ -85,14 +92,18 @@ class TeamService:
         """Get all members of a team.
 
         Note: In the Oxyde version, the 'user' relationship data is loaded
-        separately. The route layer handles this via get_member_with_user().
+        separately via a batched query (replaces SQLAlchemy selectinload).
         """
         members = await OxydeTeamMember.objects.filter(team_id=team_id).all()
-        # Attach user data for each member (replaces selectinload)
+        # Batch-load user data (avoids N+1 queries)
+        user_ids = [m.user_id for m in members]
+        if user_ids:
+            users = await OxydeUser.objects.filter(id__in=user_ids).all()
+            user_map = {u.id: u for u in users}
+        else:
+            user_map = {}
         for member in members:
-            user = await OxydeUser.objects.get_or_none(id=member.user_id)
-            # Attach as dynamic attribute for route layer compatibility
-            member._user = user
+            member._user = user_map.get(member.user_id)
         return members
 
     async def get_member(
@@ -164,14 +175,15 @@ class TeamService:
         self, invitation: OxydeTeamInvitation, user: OxydeUser
     ) -> OxydeTeamMember:
         """Accept a team invitation."""
-        invitation.status = InvitationStatus.ACCEPTED.value
-        await invitation.save(update_fields={"status"})
+        async with atomic():
+            invitation.status = InvitationStatus.ACCEPTED.value
+            await invitation.save(update_fields={"status"})
 
-        member = await OxydeTeamMember.objects.create(
-            team_id=invitation.team_id,
-            user_id=user.id,
-            role=invitation.role,
-        )
+            member = await OxydeTeamMember.objects.create(
+                team_id=invitation.team_id,
+                user_id=user.id,
+                role=invitation.role,
+            )
         await member.refresh()
         return member
 
