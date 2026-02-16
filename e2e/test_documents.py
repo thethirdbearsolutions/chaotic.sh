@@ -53,6 +53,40 @@ class TestDocumentCRUD:
             unauthenticated_client.create_document("fake-team", "No Auth")
 
 
+class TestDocumentFilterParams:
+    """CHT-965: Tests for missing get_documents filter params."""
+
+    def test_get_documents_filter_project_id(self, api_client, test_team, test_project):
+        api_client.create_document(
+            test_team["id"], "Project Doc", project_id=test_project["id"]
+        )
+        docs = api_client.get_documents(
+            test_team["id"], project_id=test_project["id"]
+        )
+        assert isinstance(docs, list)
+        assert len(docs) >= 1
+
+    def test_get_documents_filter_sprint_id(self, api_client, test_team, test_project):
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.create_document(
+            test_team["id"], "Sprint Doc", sprint_id=current["id"]
+        )
+        docs = api_client.get_documents(
+            test_team["id"], sprint_id=current["id"]
+        )
+        assert isinstance(docs, list)
+
+    def test_get_documents_filter_project_and_search(self, api_client, test_team, test_project):
+        api_client.create_document(
+            test_team["id"], "Unique Mango Report",
+            project_id=test_project["id"]
+        )
+        docs = api_client.get_documents(
+            test_team["id"], project_id=test_project["id"], search="Mango"
+        )
+        assert any("Mango" in d["title"] for d in docs)
+
+
 class TestDocumentIssueLinks:
     def test_link_document_to_issue(self, api_client, test_team, test_project):
         doc = api_client.create_document(test_team["id"], "Linked Doc")

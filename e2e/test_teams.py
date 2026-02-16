@@ -84,3 +84,42 @@ class TestInvitations:
         assert "email" in invite
         assert invite["email"] == "structure@example.com"
         assert "status" in invite
+
+    def test_accept_invitation(self, api_client, test_team):
+        """Accept an invitation using the token fetched from the DB."""
+        # Create a fresh user for this test (not already a team member)
+        from conftest import _run_async, _create_user_in_db
+        from unittest.mock import patch
+        accept_user = _run_async(_create_user_in_db(
+            "accept-invite@example.com", "Accept User"
+        ))
+        from app.utils.security import create_access_token
+        accept_token = create_access_token(data={"sub": accept_user.id})
+        invite = api_client.invite_member(test_team["id"], accept_user.email)
+        # Token isn't in API response; fetch it from DB
+        from app.database import async_session_maker
+        from app.models.team import TeamInvitation
+        from sqlalchemy import select
+
+        async def _get_token():
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    select(TeamInvitation.token).where(
+                        TeamInvitation.id == invite["id"]
+                    )
+                )
+                return result.scalar_one()
+
+        token = _run_async(_get_token())
+
+        # Accept as the invited user
+        from cli.client import Client
+        with patch('cli.client.get_api_url', return_value='http://127.0.0.1:19876/api'), \
+             patch('cli.client.get_token', return_value=accept_token), \
+             patch('cli.client.get_api_key', return_value=None):
+            accept_client = Client()
+            result = accept_client.accept_invitation(token)
+        assert result is not None
+        # User should now be a member
+        members = api_client.get_team_members(test_team["id"])
+        assert any(m.get("user_id") == accept_user.id for m in members)
