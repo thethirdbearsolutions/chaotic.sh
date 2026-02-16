@@ -1034,3 +1034,47 @@ class TestProjectDocumentAccessControl:
             headers=cross_team_headers,
         )
         assert response.status_code == 403
+
+
+# --- Service-level coverage tests (CHT-924) ---
+
+@pytest.mark.asyncio
+async def test_document_service_link_issue_not_found(db_session):
+    """link_issue raises ValueError when document or issue doesn't exist (covers L218)."""
+    from app.services.document_service import DocumentService
+
+    service = DocumentService(db_session)
+    with pytest.raises(ValueError, match="Document or issue not found"):
+        await service.link_issue("nonexistent-doc", "nonexistent-issue")
+
+
+@pytest.mark.asyncio
+async def test_document_service_link_issue_idempotent(db_session, test_document, test_issue):
+    """link_issue is idempotent — linking twice doesn't raise (covers L231)."""
+    from app.services.document_service import DocumentService
+
+    # Ensure doc has a project (same team as issue)
+    test_document.project_id = test_issue.project_id
+    await db_session.commit()
+
+    service = DocumentService(db_session)
+    await service.link_issue(test_document.id, test_issue.id)
+    # Link again — should be a no-op, not an error
+    await service.link_issue(test_document.id, test_issue.id)
+
+
+@pytest.mark.asyncio
+async def test_document_service_add_label_idempotent(db_session, test_document):
+    """add_label is idempotent — adding twice doesn't raise (covers L280)."""
+    from app.services.document_service import DocumentService
+    from app.models.document import Label
+
+    # Create a label
+    label = Label(name="test-label", team_id=test_document.team_id)
+    db_session.add(label)
+    await db_session.flush()
+
+    service = DocumentService(db_session)
+    await service.add_label(test_document.id, label.id)
+    # Add again — should be a no-op
+    await service.add_label(test_document.id, label.id)
