@@ -6689,3 +6689,104 @@ class TestAttestationHistoryAPI:
         )
         assert response.status_code == 200
         assert len(response.json()) == 1
+
+
+# --- Ritual schema validation tests (CHT-923) ---
+
+class TestRitualSchemaValidation:
+    """Tests for ritual schema validators (covers schemas/ritual.py)."""
+
+    def test_validate_conditions_none(self):
+        """validate_conditions returns None for None input (L20)."""
+        from app.schemas.ritual import validate_conditions
+        assert validate_conditions(None) is None
+
+    def test_validate_conditions_not_dict(self):
+        """validate_conditions raises for non-dict input (L23)."""
+        from app.schemas.ritual import validate_conditions
+        with pytest.raises(ValueError, match="Conditions must be a dictionary"):
+            validate_conditions("not a dict")
+
+    def test_validate_conditions_valid(self):
+        """validate_conditions returns valid conditions unchanged."""
+        from app.schemas.ritual import validate_conditions
+        cond = {"estimate__gte": 3, "priority__eq": "high"}
+        assert validate_conditions(cond) == cond
+
+    def test_validate_conditions_bad_key_format(self):
+        """validate_conditions raises for malformed key."""
+        from app.schemas.ritual import validate_conditions
+        with pytest.raises(ValueError, match="Invalid condition key"):
+            validate_conditions({"bad_key": 1})
+
+    def test_validate_conditions_unknown_field(self):
+        """validate_conditions raises for unknown field."""
+        from app.schemas.ritual import validate_conditions
+        with pytest.raises(ValueError, match="Unknown field"):
+            validate_conditions({"unknown__eq": 1})
+
+    def test_validate_conditions_unknown_operator(self):
+        """validate_conditions raises for unknown operator."""
+        from app.schemas.ritual import validate_conditions
+        with pytest.raises(ValueError, match="Unknown operator"):
+            validate_conditions({"estimate__nope": 1})
+
+    def test_ritual_create_name_too_long(self):
+        """RitualCreate rejects names over 100 chars (L116)."""
+        from app.schemas.ritual import RitualCreate
+        with pytest.raises(Exception):
+            RitualCreate(
+                name="a" * 101,
+                prompt="test",
+                trigger="every_sprint",
+                approval_mode="auto",
+            )
+
+    def test_ritual_response_parse_conditions_json_string(self):
+        """RitualResponse.parse_conditions handles JSON string (L194-196)."""
+        from app.schemas.ritual import RitualResponse
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        data = {
+            "id": "r1", "project_id": "p1", "name": "test", "prompt": "p",
+            "trigger": "every_sprint", "approval_mode": "auto",
+            "conditions": '{"estimate__gte": 3}',
+            "created_at": now, "updated_at": now,
+            "note_required": False, "is_active": True,
+            "group_id": None, "weight": 1.0, "percentage": None,
+            "selection_mode": None,
+        }
+        resp = RitualResponse(**data)
+        assert resp.conditions == {"estimate__gte": 3}
+
+    def test_pending_ritual_parse_conditions_json_string(self):
+        """PendingRitualResponse.parse_conditions handles JSON string (L242-244)."""
+        from app.schemas.ritual import PendingRitualResponse
+        data = {
+            "id": "r1", "name": "test", "prompt": "p",
+            "approval_mode": "auto", "note_required": False,
+            "conditions": '{"priority__eq": "high"}',
+        }
+        resp = PendingRitualResponse(**data)
+        assert resp.conditions == {"priority__eq": "high"}
+
+    def test_completed_ritual_parse_conditions_json_string(self):
+        """CompletedRitualResponse.parse_conditions handles JSON string (L269-273)."""
+        from app.schemas.ritual import CompletedRitualResponse
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        attestation_data = {
+            "id": "a1", "ritual_id": "r1", "sprint_id": None,
+            "issue_id": None, "attested_by": "u1",
+            "attested_at": now,
+            "note": None, "approved_by": None, "approved_at": None,
+        }
+        data = {
+            "id": "r1", "project_id": "p1", "name": "test", "prompt": "p",
+            "trigger": "every_sprint", "approval_mode": "auto",
+            "conditions": '{"labels__contains": "urgent"}',
+            "created_at": now, "updated_at": now,
+            "attestation": attestation_data,
+        }
+        resp = CompletedRitualResponse(**data)
+        assert resp.conditions == {"labels__contains": "urgent"}

@@ -615,3 +615,44 @@ class TestAgentAPIEndpoints:
         )
         assert response.status_code == 403
         assert "Agents cannot create other agents" in response.json()["detail"]
+
+
+# --- Service-level coverage tests (CHT-922) ---
+
+@pytest.mark.asyncio
+async def test_agent_service_list_by_parent(client, test_team, db_session, test_user, auth_headers):
+    """Test AgentService.list_by_parent (covers agent_service.py L101-106)."""
+    from app.services.agent_service import AgentService
+
+    # Create an agent via API first
+    response = await client.post(
+        f"/api/teams/{test_team.id}/agents",
+        json={"name": "List Parent Bot"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+
+    service = AgentService(db_session)
+    agents = await service.list_by_parent(test_user.id)
+    assert len(agents) == 1
+    assert agents[0].name == "List Parent Bot"
+
+
+@pytest.mark.asyncio
+async def test_agent_service_get_agent_api_keys(client, test_team, db_session, test_user, auth_headers):
+    """Test AgentService.get_agent_api_keys (covers agent_service.py L124-129)."""
+    from app.services.agent_service import AgentService
+
+    # Create an agent via API (auto-creates an API key)
+    response = await client.post(
+        f"/api/teams/{test_team.id}/agents",
+        json={"name": "Keys Bot"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+    agent_id = response.json()["id"]
+
+    service = AgentService(db_session)
+    keys = await service.get_agent_api_keys(agent_id)
+    assert len(keys) == 1
+    assert keys[0].agent_user_id == agent_id
