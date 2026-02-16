@@ -2,7 +2,9 @@
  * Chaotic - Main Application
  */
 
-/* global api, marked, DOMPurify -- provided via window by main.js entry point */
+/* global api -- provided via window by main.js entry point */
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 import { showModal, closeModal, isModalOpen, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
@@ -295,30 +297,19 @@ window.addEventListener('resize', () => {
 // Markdown rendering helper with XSS protection
 function renderMarkdown(content) {
     if (!content) return '';
-    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-        try {
-            // Configure marked for GFM rendering
-            marked.setOptions({
-                breaks: true,  // Convert \n to <br>
-                gfm: true,     // GitHub Flavored Markdown
-            });
-            // Parse markdown then sanitize HTML to prevent XSS
-            const rawHtml = marked.parse(content);
-            // Escape raw-text HTML elements (title, style, textarea, xmp) whose
-            // content gets silently destroyed by DOMPurify since it treats their
-            // children as raw text, not DOM nodes (CHT-829)
-            const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
-                (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-            // FORCE_BODY: treat content as body context so raw-text elements
-            // like <title> can't be created even if escaping is bypassed
-            return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
-        } catch (e) {
-            console.error('Markdown parsing error:', e);
-            // Fall through to safe fallback
-        }
+    try {
+        marked.setOptions({ breaks: true, gfm: true });
+        const rawHtml = marked.parse(content);
+        // Escape raw-text HTML elements (title, style, textarea, xmp) whose
+        // content gets silently destroyed by DOMPurify since it treats their
+        // children as raw text, not DOM nodes (CHT-829)
+        const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
+            (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+        return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
+    } catch (e) {
+        console.error('Markdown parsing error:', e);
+        return content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     }
-    // Fallback to plain text if marked/DOMPurify not loaded or parse error
-    return content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
 }
 
 const ISSUE_TEMPLATES = [
@@ -938,7 +929,7 @@ function renderApprovalIssue(approvalIssue) {
             ? `<span class="gate-waiting-info">${waitingLabel}: <strong>${escapeHtml(r.requested_by_name)}</strong>${r.requested_at ? ` (${formatRelativeTime(r.requested_at)})` : ''}</span>`
             : '';
         const attestationNote = isReview && r.attestation_note
-            ? `<div class="gate-attestation-note"><em>${escapeHtml(r.attestation_note)}</em></div>`
+            ? `<div class="gate-attestation-note">${renderMarkdown(r.attestation_note)}</div>`
             : '';
         const btnClass = isReview ? 'review-approve-btn' : 'gate-approve-btn';
         const btnLabel = isReview ? 'Approve' : 'Complete';

@@ -12,7 +12,7 @@ import { escapeHtml, escapeJsString } from './utils.js';
 /**
  * Render markdown content safely using marked + DOMPurify.
  */
-function renderMarkdown(content) {
+export function renderMarkdown(content) {
     if (!content) return '';
     try {
         marked.setOptions({ breaks: true, gfm: true });
