@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { initIssueTooltip, clearIssueCache, destroyIssueTooltip } from './issue-tooltip.js';
+import { initIssueTooltip, clearIssueCache, destroyIssueTooltip, hideTooltip } from './issue-tooltip.js';
 
 describe('Issue Tooltip', () => {
     let mockApi;
@@ -186,6 +186,44 @@ describe('Issue Tooltip', () => {
             await vi.waitFor(() => {
                 expect(mockApi.getIssueByIdentifier).toHaveBeenCalledWith('ABC-789');
             }, { timeout: 500 });
+
+            link.remove();
+        });
+    });
+
+    describe('hideTooltip', () => {
+        it('should hide a visible tooltip immediately', async () => {
+            const mockIssue = {
+                identifier: 'CHT-200',
+                title: 'Visible Issue',
+                status: 'in_progress',
+                priority: 'high',
+                issue_type: 'task',
+            };
+            mockApi.getIssueByIdentifier.mockResolvedValue(mockIssue);
+
+            initIssueTooltip({ api: mockApi });
+
+            // Create and hover a link to show tooltip
+            const link = document.createElement('a');
+            link.className = 'issue-link';
+            link.href = '#/issue/CHT-200';
+            document.body.appendChild(link);
+
+            link.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            await vi.waitFor(() => {
+                expect(mockApi.getIssueByIdentifier).toHaveBeenCalled();
+            }, { timeout: 500 });
+
+            const tooltip = document.querySelector('.issue-tooltip');
+
+            // Tooltip should be visible
+            expect(tooltip.style.display).toBe('block');
+
+            // Call hideTooltip (simulating route change)
+            hideTooltip();
+
+            expect(tooltip.style.display).toBe('none');
 
             link.remove();
         });

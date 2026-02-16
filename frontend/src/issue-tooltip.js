@@ -161,7 +161,7 @@ async function showTooltip(link, identifier) {
 /**
  * Hide the tooltip
  */
-function hideTooltip() {
+export function hideTooltip() {
     if (tooltipEl) {
         tooltipEl.style.display = 'none';
     }

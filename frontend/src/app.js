@@ -201,7 +201,7 @@ import {
     getCurrentUser,
     setCurrentUser,
 } from './state.js';
-import { initIssueTooltip } from './issue-tooltip.js';
+import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
 import {
     navigateTo,
     handleRoute,
@@ -385,6 +385,7 @@ configureRouter({
         window.currentDetailIssue = null;
         window.currentDetailSprints = null;
         closeSidebar();
+        hideTooltip();
     },
     detailRoute: (parts) => {
         if (parts[0] === 'epic' && parts[1]) {
