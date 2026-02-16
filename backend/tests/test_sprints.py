@@ -1188,3 +1188,54 @@ async def test_budget_transaction_no_duplicate_on_status_unchanged(client, auth_
     )
     count = result.scalar()
     assert count == 0, "No transaction should be created when done issue is updated"
+
+
+# --- Sprint model property tests (CHT-921) ---
+
+class TestSprintModelProperties:
+    """Unit tests for Sprint model computed properties."""
+
+    def test_in_arrears_no_budget(self):
+        """Sprint with no budget is never in arrears."""
+        sprint = Sprint(name="test", project_id="p1", budget=None, points_spent=100)
+        assert sprint.in_arrears is False
+
+    def test_in_arrears_under_budget(self):
+        """Sprint under budget is not in arrears."""
+        sprint = Sprint(name="test", project_id="p1", budget=20, points_spent=15)
+        assert sprint.in_arrears is False
+
+    def test_in_arrears_over_budget(self):
+        """Sprint over budget is in arrears."""
+        sprint = Sprint(name="test", project_id="p1", budget=20, points_spent=25)
+        assert sprint.in_arrears is True
+
+    def test_remaining_budget_none(self):
+        """Sprint with no budget returns None remaining."""
+        sprint = Sprint(name="test", project_id="p1", budget=None, points_spent=5)
+        assert sprint.remaining_budget is None
+
+    def test_remaining_budget_value(self):
+        """Sprint with budget returns correct remaining."""
+        sprint = Sprint(name="test", project_id="p1", budget=20, points_spent=8)
+        assert sprint.remaining_budget == 12
+
+    def test_token_in_arrears_no_budget(self):
+        """Sprint with no token budget is never in arrears."""
+        sprint = Sprint(name="test", project_id="p1", token_budget=None, tokens_spent=1000)
+        assert sprint.token_in_arrears is False
+
+    def test_token_in_arrears_over_budget(self):
+        """Sprint over token budget is in arrears."""
+        sprint = Sprint(name="test", project_id="p1", token_budget=500, tokens_spent=1000)
+        assert sprint.token_in_arrears is True
+
+    def test_remaining_token_budget_none(self):
+        """Sprint with no token budget returns None remaining."""
+        sprint = Sprint(name="test", project_id="p1", token_budget=None, tokens_spent=100)
+        assert sprint.remaining_token_budget is None
+
+    def test_remaining_token_budget_value(self):
+        """Sprint with token budget returns correct remaining."""
+        sprint = Sprint(name="test", project_id="p1", token_budget=1000, tokens_spent=300)
+        assert sprint.remaining_token_budget == 700
