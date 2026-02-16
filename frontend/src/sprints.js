@@ -747,6 +747,7 @@ export function showLimboDetailsModal() {
                       document.getElementById('ritual-project-filter')?.value;
 
     document.getElementById('modal-title').textContent = 'Limbo Status';
+    document.querySelector('.modal')?.classList.add('modal-wide');
     document.getElementById('modal-content').innerHTML = `
         <div class="limbo-details">
             <p>Complete all pending rituals to exit limbo and activate the next sprint.</p>

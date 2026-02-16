@@ -705,6 +705,9 @@ function updateAssigneeFilter() {
     }
 }
 
+// Sprint limbo rituals shown in the approvals view (CHT-905)
+let sprintLimboApprovals = [];
+
 async function loadGateApprovals() {
     if (!window.currentTeam) return;
 
@@ -716,11 +719,26 @@ async function loadGateApprovals() {
     try {
         // Load from all projects in the team
         const allApprovals = [];
+        const allLimbo = [];
         for (const project of getProjects()) {
-            const approvals = await api.getPendingApprovals(project.id);
+            const [approvals, limbo] = await Promise.all([
+                api.getPendingApprovals(project.id),
+                api.getLimboStatus(project.id),
+            ]);
             allApprovals.push(...approvals);
+            if (limbo && limbo.in_limbo) {
+                // Collect pending sprint rituals that need human action
+                const actionable = (limbo.pending_rituals || []).filter(r =>
+                    !r.attestation?.approved_at &&
+                    (r.approval_mode === 'gate' || (r.attestation && !r.attestation.approved_at))
+                );
+                if (actionable.length > 0) {
+                    allLimbo.push({ project, rituals: actionable });
+                }
+            }
         }
         setPendingGates(allApprovals);
+        sprintLimboApprovals = allLimbo;
         renderGateApprovals();
     } catch (e) {
         container.innerHTML = `<div class="empty-state"><h3>Error loading approvals</h3><p>${escapeHtml(e.message)}</p></div>`;
@@ -732,7 +750,9 @@ function renderGateApprovals() {
     if (!container) return;
 
     const pendingItems = getPendingGates();
-    if (pendingItems.length === 0) {
+    const hasSprintLimbo = sprintLimboApprovals.length > 0;
+
+    if (pendingItems.length === 0 && !hasSprintLimbo) {
         container.innerHTML = `
             <div class="empty-state">
                 <h3>No pending approvals</h3>
@@ -740,6 +760,62 @@ function renderGateApprovals() {
             </div>
         `;
         return;
+    }
+
+    let html = '';
+
+    // Sprint limbo section (CHT-905)
+    if (hasSprintLimbo) {
+        html += `
+            <div class="gate-section">
+                <h3 class="gate-section-title">Sprint Rituals</h3>
+                <p class="gate-section-desc">Sprint is in limbo — complete these rituals to activate the next sprint</p>
+                <div class="gate-list">
+                    ${sprintLimboApprovals.map(({ project, rituals }) => `
+                        <div class="gate-issue-card">
+                            <div class="gate-issue-header">
+                                <span class="gate-issue-id">${escapeHtml(project.name)}</span>
+                                <span class="badge badge-in_progress">in limbo</span>
+                            </div>
+                            <div class="gate-rituals">
+                                ${rituals.map(r => {
+                                    const hasAttestation = r.attestation && !r.attestation.approved_at;
+                                    const statusIcon = hasAttestation ? '⏳' : '○';
+                                    const statusText = hasAttestation
+                                        ? `<span class="gate-waiting-info">Attested by <strong>${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</strong></span>`
+                                        : (r.approval_mode === 'gate'
+                                            ? ''
+                                            : '<span class="text-muted">Awaiting agent attestation</span>');
+                                    const actionBtn = hasAttestation
+                                        ? `<button class="btn btn-small btn-primary sprint-approve-btn"
+                                            data-ritual-id="${escapeAttr(r.id)}"
+                                            data-project-id="${escapeAttr(project.id)}">Approve</button>`
+                                        : (r.approval_mode === 'gate'
+                                            ? `<button class="btn btn-small btn-primary sprint-complete-btn"
+                                                data-ritual-id="${escapeAttr(r.id)}"
+                                                data-project-id="${escapeAttr(project.id)}"
+                                                data-ritual-name="${escapeAttr(r.name)}">Complete</button>`
+                                            : '');
+
+                                    return `
+                                        <div class="gate-ritual">
+                                            <div class="gate-ritual-info">
+                                                <span class="gate-ritual-name">${statusIcon} ${escapeHtml(r.name)}
+                                                    <span class="badge badge-ritual-${escapeAttr(r.approval_mode)}">${escapeHtml(r.approval_mode)}</span>
+                                                </span>
+                                                <span class="gate-ritual-prompt">${escapeHtml(r.prompt)}</span>
+                                                ${statusText}
+                                            </div>
+                                            ${actionBtn}
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
     }
 
     // Filter helper: returns only the approvals matching a predicate
@@ -753,8 +829,6 @@ function renderGateApprovals() {
     const claimGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'claim')).filter(Boolean);
     const closeGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'close')).filter(Boolean);
     const reviewItems = pendingItems.map(filterPred(r => r.approval_mode === 'review')).filter(Boolean);
-
-    let html = '';
 
     if (claimGates.length > 0) {
         html += `
@@ -826,6 +900,24 @@ function renderGateApprovals() {
                 d.requestedAt,
                 d.attestationNote
             );
+        });
+    });
+
+    // Attach click handlers for sprint ritual buttons (CHT-905)
+    container.querySelectorAll('.sprint-approve-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                await api.approveAttestation(btn.dataset.ritualId, btn.dataset.projectId);
+                showToast('Sprint ritual approved!', 'success');
+                await loadGateApprovals();
+            } catch (e) {
+                showToast(e.message, 'error');
+            }
+        });
+    });
+    container.querySelectorAll('.sprint-complete-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            completeGateRitual(btn.dataset.ritualId, btn.dataset.projectId, btn.dataset.ritualName);
         });
     });
 }
