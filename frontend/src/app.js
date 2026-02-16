@@ -717,21 +717,26 @@ async function loadGateApprovals() {
     container.innerHTML = '<div class="loading">Loading pending approvals...</div>';
 
     try {
-        // Load from all projects in the team
-        const allApprovals = [];
-        const allLimbo = [];
-        for (const project of getProjects()) {
+        // Load from all projects in parallel
+        const results = await Promise.all(getProjects().map(async project => {
             const [approvals, limbo] = await Promise.all([
                 api.getPendingApprovals(project.id),
                 api.getLimboStatus(project.id),
             ]);
+            return { project, approvals, limbo };
+        }));
+
+        const allApprovals = [];
+        const allLimbo = [];
+        for (const { project, approvals, limbo } of results) {
             allApprovals.push(...approvals);
             if (limbo && limbo.in_limbo) {
-                // Collect pending sprint rituals that need human action
-                const actionable = (limbo.pending_rituals || []).filter(r =>
-                    !r.attestation?.approved_at &&
-                    (r.approval_mode === 'gate' || (r.attestation && !r.attestation.approved_at))
-                );
+                // Collect pending sprint rituals that need human action:
+                // gate-mode rituals awaiting completion, or attested rituals awaiting approval
+                const actionable = (limbo.pending_rituals || []).filter(r => {
+                    if (r.attestation?.approved_at) return false;
+                    return r.approval_mode === 'gate' || !!r.attestation;
+                });
                 if (actionable.length > 0) {
                     allLimbo.push({ project, rituals: actionable });
                 }
@@ -906,11 +911,13 @@ function renderGateApprovals() {
     // Attach click handlers for sprint ritual buttons (CHT-905)
     container.querySelectorAll('.sprint-approve-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
+            btn.disabled = true;
             try {
                 await api.approveAttestation(btn.dataset.ritualId, btn.dataset.projectId);
                 showToast('Sprint ritual approved!', 'success');
                 await loadGateApprovals();
             } catch (e) {
+                btn.disabled = false;
                 showToast(e.message, 'error');
             }
         });
