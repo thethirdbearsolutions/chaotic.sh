@@ -588,13 +588,21 @@ def get_latest_version() -> str | None:
     return None
 
 
-def checkout_version(version: str) -> bool:
-    """Checkout a specific version (tag, branch, or commit). Returns True on success."""
+def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
+    """Checkout a specific version (tag, branch, or commit).
+
+    Returns (success, error_message). When force=True, uses git reset --hard
+    to handle dirty working trees (e.g. lock files modified by uv sync).
+    """
     try:
-        run_command(["git", "checkout", version], cwd=SERVER_DIR)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        if force:
+            # For upgrades: reset hard to handle dirty state from uv sync etc.
+            run_command(["git", "reset", "--hard", version], cwd=SERVER_DIR)
+        else:
+            run_command(["git", "checkout", version], cwd=SERVER_DIR)
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        return False, (e.stderr or e.stdout or "Unknown error").strip()
 
 
 def run_migrations() -> tuple[bool, str]:
@@ -1173,14 +1181,17 @@ def system_upgrade(target_version, no_backup, yes):
         else:
             console.print("  [dim]No database to backup[/dim]")
 
-    # Checkout new version
+    # Checkout new version (force to handle dirty state from uv sync etc.)
     console.print(f"Checking out {target_version}...")
-    if not checkout_version(target_version):
-        console.print("[red]Failed to checkout version.[/red]")
+    ok, err = checkout_version(target_version, force=True)
+    if not ok:
+        console.print(f"[red]Failed to checkout version.[/red]")
+        if err:
+            console.print(f"  [dim]{err}[/dim]")
         # Rollback
         if current_commit:
             console.print("Rolling back...")
-            checkout_version(current_commit)
+            checkout_version(current_commit, force=True)
         if was_running:
             if not start_service():
                 console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
@@ -1194,7 +1205,7 @@ def system_upgrade(target_version, no_backup, yes):
         # Rollback
         console.print("Rolling back...")
         if current_commit:
-            checkout_version(current_commit)
+            checkout_version(current_commit, force=True)
         if backup_path:
             restore_backup(backup_path)
         if was_running:
@@ -1209,7 +1220,7 @@ def system_upgrade(target_version, no_backup, yes):
             console.print("[red]Failed to start server.[/red]")
             console.print("Rolling back...")
             if current_commit:
-                checkout_version(current_commit)
+                checkout_version(current_commit, force=True)
             if backup_path:
                 restore_backup(backup_path)
             if not start_service():
@@ -1228,7 +1239,7 @@ def system_upgrade(target_version, no_backup, yes):
             console.print("\nHealth check failed. Rolling back...")
             stop_service()
             if current_commit:
-                checkout_version(current_commit)
+                checkout_version(current_commit, force=True)
             if backup_path:
                 restore_backup(backup_path)
             if not start_service():
