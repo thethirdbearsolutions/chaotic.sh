@@ -6466,3 +6466,226 @@ class TestDefensiveLimboHandling:
         assert result is not None
         assert result.approved_at is not None
         assert result.approved_by == test_user.id
+
+
+@pytest.mark.asyncio
+class TestAttestationHistory:
+    """Tests for attestation history (CHT-79)."""
+
+    async def test_history_empty(self, db_session, test_project):
+        """Test empty history returns empty list."""
+        service = RitualService(db_session)
+        result = await service.list_attestation_history(test_project.id)
+        assert result == []
+
+    async def test_history_returns_attestations(self, db_session, test_project, test_user):
+        """Test history returns attestations ordered by date descending."""
+        service = RitualService(db_session)
+
+        # Create ritual
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="history-test",
+            prompt="Test prompt",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create sprint
+        sprint = Sprint(
+            project_id=test_project.id,
+            name="Sprint 1",
+            status=SprintStatus.COMPLETED,
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        # Create attestation
+        att = RitualAttestation(
+            ritual_id=ritual.id,
+            sprint_id=sprint.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            note="Test note",
+            approved_by=test_user.id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db_session.add(att)
+        await db_session.commit()
+
+        result = await service.list_attestation_history(test_project.id)
+        assert len(result) == 1
+        assert result[0].ritual.name == "history-test"
+        assert result[0].attester.name == "Test User"
+        assert result[0].note == "Test note"
+        assert result[0].sprint.name == "Sprint 1"
+
+    async def test_history_pagination(self, db_session, test_project, test_user):
+        """Test history respects skip and limit."""
+        service = RitualService(db_session)
+
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="pagination-test",
+            prompt="Test",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        # Create 3 sprints with attestations
+        for i in range(3):
+            sprint = Sprint(
+                project_id=test_project.id,
+                name=f"Sprint {i+1}",
+                status=SprintStatus.COMPLETED,
+            )
+            db_session.add(sprint)
+            await db_session.flush()
+
+            att = RitualAttestation(
+                ritual_id=ritual.id,
+                sprint_id=sprint.id,
+                attested_by=test_user.id,
+                attested_at=datetime.now(timezone.utc),
+            )
+            db_session.add(att)
+
+        await db_session.commit()
+
+        # Get all
+        all_results = await service.list_attestation_history(test_project.id)
+        assert len(all_results) == 3
+
+        # Limit
+        limited = await service.list_attestation_history(test_project.id, limit=2)
+        assert len(limited) == 2
+
+        # Skip
+        skipped = await service.list_attestation_history(test_project.id, skip=1)
+        assert len(skipped) == 2
+
+
+@pytest.mark.asyncio
+class TestAttestationHistoryAPI:
+    """API-level tests for GET /api/rituals/history (CHT-79)."""
+
+    async def test_history_happy_path(self, client, auth_headers, db_session, test_project, test_user):
+        """Test history endpoint returns attestations with proper schema."""
+        # Create ritual + attestation
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="api-history-test",
+            prompt="Test",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        sprint = Sprint(
+            project_id=test_project.id,
+            name="Sprint 1",
+            status=SprintStatus.COMPLETED,
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        att = RitualAttestation(
+            ritual_id=ritual.id,
+            sprint_id=sprint.id,
+            attested_by=test_user.id,
+            attested_at=datetime.now(timezone.utc),
+            note="API test note",
+            approved_by=test_user.id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db_session.add(att)
+        await db_session.commit()
+
+        response = await client.get(
+            f"/api/rituals/history?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["ritual_name"] == "api-history-test"
+        assert entry["attested_by_name"] == "Test User"
+        assert entry["note"] == "API test note"
+        assert entry["sprint_name"] == "Sprint 1"
+        assert entry["approved_by_name"] == "Test User"
+
+    async def test_history_empty(self, client, auth_headers, test_project):
+        """Test history endpoint returns empty list for project with no attestations."""
+        response = await client.get(
+            f"/api/rituals/history?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+
+    async def test_history_project_not_found(self, client, auth_headers):
+        """Test history endpoint returns 404 for non-existent project."""
+        response = await client.get(
+            "/api/rituals/history?project_id=nonexistent",
+            headers=auth_headers,
+        )
+        assert response.status_code == 404
+
+    async def test_history_not_team_member(self, client, auth_headers2, test_project):
+        """Test that non-team members cannot access history."""
+        response = await client.get(
+            f"/api/rituals/history?project_id={test_project.id}",
+            headers=auth_headers2,
+        )
+        assert response.status_code == 403
+
+    async def test_history_pagination(self, client, auth_headers, db_session, test_project, test_user):
+        """Test history endpoint respects skip and limit."""
+        ritual = Ritual(
+            project_id=test_project.id,
+            name="pagination-api-test",
+            prompt="Test",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+        db_session.add(ritual)
+        await db_session.flush()
+
+        for i in range(3):
+            sprint = Sprint(
+                project_id=test_project.id,
+                name=f"Sprint {i+1}",
+                status=SprintStatus.COMPLETED,
+            )
+            db_session.add(sprint)
+            await db_session.flush()
+            att = RitualAttestation(
+                ritual_id=ritual.id,
+                sprint_id=sprint.id,
+                attested_by=test_user.id,
+                attested_at=datetime.now(timezone.utc),
+            )
+            db_session.add(att)
+        await db_session.commit()
+
+        # Limit
+        response = await client.get(
+            f"/api/rituals/history?project_id={test_project.id}&limit=2",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()) == 2
+
+        # Skip
+        response = await client.get(
+            f"/api/rituals/history?project_id={test_project.id}&skip=2",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()) == 1

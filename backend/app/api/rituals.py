@@ -7,6 +7,7 @@ from app.schemas.ritual import (
     RitualResponse,
     RitualAttestationCreate,
     RitualAttestationResponse,
+    RitualAttestationHistoryItem,
     LimboStatusResponse,
     PendingRitualResponse,
     CompletedRitualResponse,
@@ -90,6 +91,53 @@ async def list_rituals(
 
     rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
     return rituals
+
+
+@router.get("/history", response_model=list[RitualAttestationHistoryItem])
+async def list_attestation_history(
+    project_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 50,
+):
+    """List attestation history for a project."""
+    project_service = ProjectService(db)
+    ritual_service = RitualService(db)
+
+    project = await project_service.get_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    if not await check_user_project_access(db, current_user, project_id, project.team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
+
+    attestations = await ritual_service.list_attestation_history(project_id, skip, limit)
+
+    return [
+        RitualAttestationHistoryItem(
+            id=att.id,
+            ritual_name=att.ritual.name,
+            ritual_trigger=att.ritual.trigger.value,
+            approval_mode=att.ritual.approval_mode.value,
+            sprint_id=att.sprint_id,
+            sprint_name=att.sprint.name if att.sprint else None,
+            issue_id=att.issue_id,
+            issue_identifier=att.issue.identifier if att.issue else None,
+            attested_by_name=att.attester.name if att.attester else "Unknown",
+            attested_at=att.attested_at,
+            note=att.note,
+            approved_by_name=att.approver.name if att.approver else None,
+            approved_at=att.approved_at,
+        )
+        for att in attestations
+    ]
 
 
 @router.get("/limbo", response_model=LimboStatusResponse)

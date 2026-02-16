@@ -3,6 +3,7 @@ import sys
 
 import click
 from rich.panel import Panel
+from rich.table import Table
 
 from .shared import _client, console, format_ritual_line, print_ritual_prompt
 
@@ -562,6 +563,65 @@ def register(cli):
                 pending_count = len(status["pending_rituals"])
                 console.print(f"[green]Ritual '{ritual_name}' completed.[/green] {pending_count} remaining.")
                 console.print("Run `chaotic ritual list` to continue.")
+
+    @ritual.command("history")
+    @click.option("--limit", "-n", type=int, default=20, help="Number of entries to show (default: 20)")
+    @_main().require_project
+    @_main().handle_error
+    def ritual_history(limit):
+        """Show recent ritual attestation history."""
+        m = _main()
+        project_id = m.get_current_project()
+        entries = _client().get_ritual_history(project_id, limit=limit)
+
+        if not entries:
+            console.print("[dim]No attestation history found.[/dim]")
+            return
+
+        table = Table(title="Attestation History")
+        table.add_column("Date", style="dim")
+        table.add_column("Ritual")
+        table.add_column("Type", style="dim")
+        table.add_column("Context")
+        table.add_column("Attested By")
+        table.add_column("Status")
+        table.add_column("Note", max_width=40)
+
+        for entry in entries:
+            # Format date
+            date = entry["attested_at"][:10] if entry.get("attested_at") else "?"
+
+            # Format trigger type
+            trigger = entry.get("ritual_trigger", "")
+            type_display = {"every_sprint": "Sprint", "ticket_close": "Close", "ticket_claim": "Claim"}.get(trigger, trigger)
+
+            # Format context (sprint name or issue identifier)
+            context = entry.get("sprint_name") or entry.get("issue_identifier") or ""
+
+            # Format status
+            if entry.get("approved_at"):
+                approval_mode = entry.get("approval_mode", "auto")
+                if approval_mode == "auto":
+                    status_str = "[green]Auto[/green]"
+                else:
+                    approver = entry.get("approved_by_name", "")
+                    status_str = f"[green]Approved[/green] by {approver}"
+            else:
+                status_str = "[yellow]Pending[/yellow]"
+
+            note = (entry.get("note") or "")[:40]
+
+            table.add_row(
+                date,
+                entry.get("ritual_name", "?"),
+                type_display,
+                context,
+                entry.get("attested_by_name", "?"),
+                status_str,
+                note,
+            )
+
+        console.print(table)
 
     @ritual.command("force-clear")
     @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
