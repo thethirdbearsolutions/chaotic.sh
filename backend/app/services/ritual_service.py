@@ -1366,3 +1366,25 @@ class RitualService:
             })
 
         return list(issues_map.values())
+
+    async def list_attestation_history(
+        self, project_id: str, skip: int = 0, limit: int = 50
+    ) -> list[RitualAttestation]:
+        """List attestation history for a project, newest first."""
+        stmt = (
+            select(RitualAttestation)
+            .join(Ritual, RitualAttestation.ritual_id == Ritual.id)
+            .where(Ritual.project_id == project_id)
+            .options(
+                selectinload(RitualAttestation.ritual),
+                selectinload(RitualAttestation.attester),
+                selectinload(RitualAttestation.approver),
+                selectinload(RitualAttestation.sprint),
+                selectinload(RitualAttestation.issue),
+            )
+            .order_by(RitualAttestation.attested_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())

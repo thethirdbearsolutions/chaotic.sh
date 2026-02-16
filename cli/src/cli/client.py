@@ -358,6 +358,9 @@ class Client:
             url += "&include_inactive=true"
         return self._request("GET", url)
 
+    def get_ritual_history(self, project_id: str, skip: int = 0, limit: int = 50) -> list:
+        return self._request("GET", f"/rituals/history?project_id={project_id}&skip={skip}&limit={limit}")
+
     def get_pending_gates(self, project_id: str) -> list:
         return self._request("GET", f"/rituals/pending-gates?project_id={project_id}")
 

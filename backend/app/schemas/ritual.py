@@ -290,6 +290,24 @@ class TicketRitualsStatusResponse(BaseModel):
     completed_rituals: list[CompletedRitualResponse]
 
 
+class RitualAttestationHistoryItem(BaseModel):
+    """Schema for attestation history response."""
+
+    id: str
+    ritual_name: str
+    ritual_trigger: str
+    approval_mode: str
+    sprint_id: str | None = None
+    sprint_name: str | None = None
+    issue_id: str | None = None
+    issue_identifier: str | None = None
+    attested_by_name: str
+    attested_at: DateTimeUTC
+    note: str | None = None
+    approved_by_name: str | None = None
+    approved_at: DateTimeUTC | None = None
+
+
 class PendingGateRitualInfo(BaseModel):
     """Info about a pending GATE ritual on an issue in limbo."""
 
