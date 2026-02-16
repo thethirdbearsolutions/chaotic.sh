@@ -786,3 +786,355 @@ class TestCompleteGateEdgeCases:
         )
         assert response.status_code == 400
         assert "not a GATE mode ritual" in response.json()["detail"]
+
+
+# --- Service-level ritual_service.py coverage tests (CHT-920) ---
+
+@pytest.mark.asyncio
+async def test_update_ritual_group_percentage_validation(client, auth_headers, test_project, db_session):
+    """Updating ritual into PERCENTAGE group with invalid percentage raises error (covers L141-153)."""
+    from app.models.ritual import RitualGroup, SelectionMode
+
+    # Create a PERCENTAGE group
+    group = RitualGroup(
+        project_id=test_project.id,
+        name="pct-group",
+        selection_mode=SelectionMode.PERCENTAGE,
+    )
+    db_session.add(group)
+    await db_session.flush()
+
+    # Create a ritual
+    ritual = Ritual(
+        project_id=test_project.id,
+        name="pct-test-ritual",
+        prompt="test",
+        trigger=RitualTrigger.EVERY_SPRINT,
+        approval_mode=ApprovalMode.AUTO,
+    )
+    db_session.add(ritual)
+    await db_session.commit()
+    await db_session.refresh(ritual)
+    await db_session.refresh(group)
+
+    # Try to assign to percentage group without setting percentage
+    response = await client.patch(
+        f"/api/rituals/{ritual.id}?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"group_id": group.id, "percentage": 0},
+    )
+    assert response.status_code == 400
+    assert "percentage" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_update_ritual_group_weight_validation(client, auth_headers, test_project, db_session):
+    """Updating ritual into RANDOM_ONE group with zero weight raises error (covers L151-156)."""
+    from app.models.ritual import RitualGroup, SelectionMode
+
+    # Create a RANDOM_ONE group
+    group = RitualGroup(
+        project_id=test_project.id,
+        name="rng-group",
+        selection_mode=SelectionMode.RANDOM_ONE,
+    )
+    db_session.add(group)
+    await db_session.flush()
+
+    # Create a ritual with zero weight
+    ritual = Ritual(
+        project_id=test_project.id,
+        name="rng-test-ritual",
+        prompt="test",
+        trigger=RitualTrigger.EVERY_SPRINT,
+        approval_mode=ApprovalMode.AUTO,
+        weight=0,
+    )
+    db_session.add(ritual)
+    await db_session.commit()
+    await db_session.refresh(ritual)
+    await db_session.refresh(group)
+
+    # Try to assign to random_one group with zero weight
+    response = await client.patch(
+        f"/api/rituals/{ritual.id}?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"group_id": group.id},
+    )
+    assert response.status_code == 400
+    assert "weight" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_group_name_raises(client, auth_headers, test_project, db_session):
+    """Creating a group with duplicate name raises ValueError (covers L203)."""
+    from app.models.ritual import RitualGroup, SelectionMode
+
+    group = RitualGroup(
+        project_id=test_project.id,
+        name="unique-group",
+        selection_mode=SelectionMode.RANDOM_ONE,
+    )
+    db_session.add(group)
+    await db_session.commit()
+
+    # Try creating another group with same name
+    response = await client.post(
+        f"/api/rituals/groups?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"name": "unique-group", "selection_mode": "random_one"},
+    )
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_conditions_empty_conditions(db_session, test_project, test_user):
+    """_evaluate_conditions returns True for empty conditions dict (covers L491)."""
+    from app.services.ritual_service import RitualService
+    from app.models.issue import Issue
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    issue = Issue(
+        project_id=test_project.id,
+        title="Test Issue",
+        identifier="TST-1",
+        number=1,
+        creator_id=test_user.id,
+    )
+    db_session.add(issue)
+    await db_session.flush()
+
+    # Re-fetch with labels eagerly loaded
+    result = await db_session.execute(
+        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
+    )
+    issue = result.scalar_one()
+
+    ritual = Ritual(
+        project_id=test_project.id,
+        name="empty-cond",
+        prompt="test",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.AUTO,
+        conditions="{}",
+    )
+    db_session.add(ritual)
+    await db_session.flush()
+
+    service = RitualService(db_session)
+    assert service._evaluate_conditions(ritual, issue) is True
+
+
+@pytest.mark.asyncio
+async def test_evaluate_conditions_invalid_key_format(db_session, test_project, test_user):
+    """_evaluate_conditions returns False for malformed condition key (covers L501)."""
+    from app.services.ritual_service import RitualService
+    from app.models.issue import Issue
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    issue = Issue(
+        project_id=test_project.id,
+        title="Test Issue 2",
+        identifier="TST-2",
+        number=2,
+        creator_id=test_user.id,
+    )
+    db_session.add(issue)
+    await db_session.flush()
+
+    # Re-fetch with labels eagerly loaded
+    result = await db_session.execute(
+        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
+    )
+    issue = result.scalar_one()
+
+    ritual = Ritual(
+        project_id=test_project.id,
+        name="bad-cond",
+        prompt="test",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.AUTO,
+        conditions='{"badkey": 1}',
+    )
+    db_session.add(ritual)
+    await db_session.flush()
+
+    service = RitualService(db_session)
+    assert service._evaluate_conditions(ritual, issue) is False
+
+
+@pytest.mark.asyncio
+async def test_pending_ticket_rituals_issue_not_found(db_session, test_project):
+    """get_pending_ticket_rituals returns empty for non-existent issue (covers L574)."""
+    from app.services.ritual_service import RitualService
+
+    service = RitualService(db_session)
+    result = await service.get_pending_ticket_rituals(test_project.id, "nonexistent-issue")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_is_ritual_pending_gate_mode(db_session):
+    """_is_ritual_pending returns True for GATE mode without approval (covers L427)."""
+    from app.services.ritual_service import RitualService
+
+    ritual = Ritual(
+        project_id="p1",
+        name="gate-test",
+        prompt="test",
+        trigger=RitualTrigger.EVERY_SPRINT,
+        approval_mode=ApprovalMode.GATE,
+    )
+
+    # Attestation without approval
+    attestation = RitualAttestation(
+        ritual_id="r1",
+        sprint_id="s1",
+        attested_by="u1",
+        attested_at=datetime.datetime.now(datetime.timezone.utc),
+        approved_at=None,
+    )
+
+    service = RitualService(db_session)
+    assert service._is_ritual_pending(ritual, attestation) is True
+
+
+@pytest.mark.asyncio
+async def test_pending_claim_rituals_issue_not_found(db_session, test_project):
+    """get_pending_claim_rituals returns empty for non-existent issue (covers L623)."""
+    from app.services.ritual_service import RitualService
+
+    service = RitualService(db_session)
+    result = await service.get_pending_claim_rituals(test_project.id, "nonexistent-issue")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_select_random_one_no_seed(db_session):
+    """_select_random_one works without seed (covers L350)."""
+    from app.services.ritual_service import RitualService
+
+    r1 = Ritual(id="r1", project_id="p1", name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
+    r2 = Ritual(id="r2", project_id="p1", name="b", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
+
+    service = RitualService(db_session)
+    result = service._select_random_one([r1, r2], seed=None)
+    assert result in [r1, r2]
+
+
+@pytest.mark.asyncio
+async def test_select_round_robin_empty(db_session):
+    """_select_round_robin returns None for empty list (covers L368)."""
+    from app.services.ritual_service import RitualService
+    from app.models.ritual import RitualGroup, SelectionMode
+
+    group = RitualGroup(id="g1", project_id="p1", name="rr", selection_mode=SelectionMode.ROUND_ROBIN)
+
+    service = RitualService(db_session)
+    result = await service._select_round_robin(group, [], sprint_id="s1")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_select_percentage_no_seed(db_session):
+    """_select_by_percentage works without seed (covers L410-411)."""
+    from app.services.ritual_service import RitualService
+
+    r1 = Ritual(id="r1", project_id="p1", name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, percentage=100.0)
+
+    service = RitualService(db_session)
+    result = service._select_by_percentage([r1], seed=None)
+    assert r1 in result
+
+
+@pytest.mark.asyncio
+async def test_apply_group_selection_deleted_group(db_session):
+    """_apply_group_selection includes all rituals when group is deleted (covers L305-306)."""
+    from app.services.ritual_service import RitualService
+
+    # Ritual references a non-existent group_id
+    r1 = Ritual(
+        id="r1", project_id="p1", name="orphan", prompt="p",
+        trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
+        group_id="deleted-group-id", is_active=True,
+    )
+
+    service = RitualService(db_session)
+    result = await service._apply_group_selection([r1], sprint_id="s1")
+    # Orphaned rituals from deleted groups should be included
+    assert r1 in result
+
+
+@pytest.mark.asyncio
+async def test_apply_group_selection_no_active_rituals(db_session, test_project):
+    """_apply_group_selection skips groups where all rituals are inactive (covers L311)."""
+    from app.services.ritual_service import RitualService
+    from app.models.ritual import RitualGroup, SelectionMode
+
+    group = RitualGroup(
+        id="g-inactive", project_id=test_project.id, name="inactive-group",
+        selection_mode=SelectionMode.RANDOM_ONE,
+    )
+    db_session.add(group)
+    await db_session.flush()
+
+    r1 = Ritual(
+        id="r-inactive", project_id=test_project.id, name="inactive", prompt="p",
+        trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
+        group_id=group.id, is_active=False,
+    )
+
+    service = RitualService(db_session)
+    result = await service._apply_group_selection([r1], sprint_id="s1")
+    # Inactive rituals should be skipped, result should be empty
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_evaluate_conditions_malformed_json(db_session, test_project, test_user):
+    """_evaluate_conditions returns False for malformed JSON conditions (covers L486-488)."""
+    from app.services.ritual_service import RitualService
+    from app.models.issue import Issue
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    issue = Issue(
+        project_id=test_project.id, title="Test", identifier="TST-99",
+        number=99, creator_id=test_user.id,
+    )
+    db_session.add(issue)
+    await db_session.flush()
+    result = await db_session.execute(
+        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
+    )
+    issue = result.scalar_one()
+
+    ritual = Ritual(
+        project_id=test_project.id, name="bad-json", prompt="test",
+        trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.AUTO,
+        conditions="not-valid-json",
+    )
+    db_session.add(ritual)
+    await db_session.flush()
+
+    service = RitualService(db_session)
+    assert service._evaluate_conditions(ritual, issue) is False
+
+
+@pytest.mark.asyncio
+async def test_select_percentage_zero_excludes(db_session):
+    """_select_by_percentage excludes rituals with 0% chance (strengthens L410-411 test)."""
+    from app.services.ritual_service import RitualService
+
+    r1 = Ritual(
+        id="r-zero", project_id="p1", name="zero-pct", prompt="p",
+        trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
+        percentage=0.0,
+    )
+
+    service = RitualService(db_session)
+    result = service._select_by_percentage([r1], seed=None)
+    assert r1 not in result
