@@ -3347,3 +3347,108 @@ async def test_list_relations_cross_team_denied(
         headers=cross_team_headers_issues,
     )
     assert response.status_code == 403
+
+
+# --- Additional batch update edge case tests (CHT-942) ---
+
+
+@pytest.mark.asyncio
+async def test_batch_update_unauthenticated(client, test_issue):
+    """POST /issues/batch-update without auth should return 401."""
+    response = await client.post(
+        "/api/issues/batch-update",
+        json={"issue_ids": [test_issue.id], "priority": "high"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_batch_update_estimate(client, auth_headers, test_project, test_user, db_session):
+    """POST /issues/batch-update should update estimate field."""
+    from app.models.issue import Issue
+
+    issue1 = Issue(
+        project_id=test_project.id, identifier=f"{test_project.key}-1900",
+        number=1900, title="Estimate Batch 1", creator_id=test_user.id,
+    )
+    issue2 = Issue(
+        project_id=test_project.id, identifier=f"{test_project.key}-1901",
+        number=1901, title="Estimate Batch 2", creator_id=test_user.id,
+    )
+    db_session.add_all([issue1, issue2])
+    await db_session.commit()
+    await db_session.refresh(issue1)
+    await db_session.refresh(issue2)
+
+    response = await client.post(
+        "/api/issues/batch-update",
+        headers=auth_headers,
+        json={"issue_ids": [issue1.id, issue2.id], "estimate": 5},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert all(d["estimate"] == 5 for d in data)
+
+
+@pytest.mark.asyncio
+async def test_batch_update_deduplicates_ids(client, auth_headers, test_project, test_user, db_session):
+    """POST /issues/batch-update should deduplicate issue_ids."""
+    from app.models.issue import Issue
+
+    issue = Issue(
+        project_id=test_project.id, identifier=f"{test_project.key}-1902",
+        number=1902, title="Dedup Batch", creator_id=test_user.id,
+        priority="low",
+    )
+    db_session.add(issue)
+    await db_session.commit()
+    await db_session.refresh(issue)
+
+    response = await client.post(
+        "/api/issues/batch-update",
+        headers=auth_headers,
+        json={"issue_ids": [issue.id, issue.id, issue.id], "priority": "high"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return single issue despite duplicate IDs
+    assert len(data) == 1
+    assert data[0]["priority"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_batch_update_empty_fields(client, auth_headers, test_project, test_user, db_session):
+    """POST /issues/batch-update with no update fields should succeed as no-op."""
+    from app.models.issue import Issue
+
+    issue = Issue(
+        project_id=test_project.id, identifier=f"{test_project.key}-1903",
+        number=1903, title="No-op Batch", creator_id=test_user.id,
+        priority="medium",
+    )
+    db_session.add(issue)
+    await db_session.commit()
+    await db_session.refresh(issue)
+
+    response = await client.post(
+        "/api/issues/batch-update",
+        headers=auth_headers,
+        json={"issue_ids": [issue.id]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["priority"] == "medium"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_batch_update_cross_team_denied(
+    client, cross_team_headers_issues, test_issue
+):
+    """POST /issues/batch-update returns 403 for cross-team user."""
+    response = await client.post(
+        "/api/issues/batch-update",
+        headers=cross_team_headers_issues,
+        json={"issue_ids": [test_issue.id], "priority": "high"},
+    )
+    assert response.status_code == 403
