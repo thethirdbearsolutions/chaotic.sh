@@ -137,8 +137,8 @@ async def list_team_members(team_id: str, db: DbSession, current_user: CurrentUs
             team_id=m.team_id,
             role=m.role,
             joined_at=m.joined_at,
-            user_name=getattr(m, '_user', None) and m._user.name,
-            user_email=getattr(m, '_user', None) and m._user.email,
+            user_name=m.user and m.user.name,
+            user_email=m.user and m.user.email,
         )
         for m in members
     ]

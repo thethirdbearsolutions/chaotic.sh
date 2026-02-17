@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
+from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 
 
 class OxydeTeam(OxydeModel):
@@ -25,7 +26,7 @@ class OxydeTeamMember(OxydeModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
-    user_id: str = Field()
+    user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     role: str = Field(default="member")
     joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -42,7 +43,7 @@ class OxydeTeamInvitation(OxydeModel):
     email: str = Field(db_index=True)
     role: str = Field(default="member")
     token: str = Field(db_unique=True, db_index=True)
-    invited_by_id: str = Field()
+    invited_by: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     status: str = Field(default="pending")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field()
