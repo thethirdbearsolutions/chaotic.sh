@@ -2,8 +2,11 @@
 
 Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 """
+import logging
 import re
 import random
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
 from app.oxyde_models.issue import (
@@ -173,7 +176,11 @@ class IssueService:
         return issues
 
     async def _check_sprint_limbo(self, project_id: str) -> None:
-        """Check if project has a sprint in limbo and raise error if so."""
+        """Check if project has a sprint in limbo and raise error if so.
+
+        Self-heals stale limbo flags: if the sprint has limbo=True but all
+        rituals are already attested, clears the flag instead of blocking (CHT-977).
+        """
         from app.services.ritual_service import RitualService
 
         limbo_sprint = await OxydeSprint.objects.filter(
@@ -184,8 +191,22 @@ class IssueService:
 
         ritual_service = RitualService(self.db)
         pending_rituals = await ritual_service.get_pending_rituals(project_id, limbo_sprint.id)
-        pending_data = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
 
+        if not pending_rituals:
+            # Stale limbo flag — all rituals are attested but limbo was never
+            # cleared (e.g. _maybe_clear_limbo failed silently). Self-heal.
+            try:
+                from app.services.sprint_service import SprintService
+                sprint_service = SprintService(self.db)
+                await sprint_service.complete_limbo(limbo_sprint)
+            except Exception:
+                logger.exception(
+                    "Self-heal of stale limbo failed for sprint=%s",
+                    limbo_sprint.id,
+                )
+            return
+
+        pending_data = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
         raise SprintInLimboError(limbo_sprint.id, pending_data)
 
     async def _check_sprint_arrears(self, project_id: str) -> None:

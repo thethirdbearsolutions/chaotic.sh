@@ -312,13 +312,22 @@ async def force_clear_limbo(
             detail="Only admins can force-clear limbo",
         )
 
-    # Check project is in limbo
+    # Check project is in limbo (via ritual_service or stale sprint flag)
     in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(project_id)
     if not in_limbo or not limbo_sprint:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project is not in limbo",
-        )
+        # Fallback: check for stale limbo flag on sprint directly (CHT-977)
+        # This handles the case where rituals are all attested but the sprint
+        # limbo flag was never cleared (e.g. due to _maybe_clear_limbo failure)
+        from app.oxyde_models.sprint import OxydeSprint
+        stale_sprint = await OxydeSprint.objects.filter(
+            project_id=project_id, limbo=True,
+        ).first()
+        if not stale_sprint:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Project is not in limbo",
+            )
+        limbo_sprint = stale_sprint
 
     # Force-clear by calling complete_limbo directly
     await sprint_service.complete_limbo(limbo_sprint)
