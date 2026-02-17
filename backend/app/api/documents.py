@@ -144,14 +144,14 @@ async def list_documents(
                 detail="Not authorized for this sprint",
             )
 
-    if sprint_id:
-        documents = await document_service.list_by_sprint(sprint_id, skip, limit)
-    elif project_id:
-        documents = await document_service.list_by_project(project_id, skip, limit)
-    elif search:
-        documents = await document_service.search(team_id, search, skip, limit)
-    else:
-        documents = await document_service.list_by_team(team_id, skip, limit)
+    documents = await document_service.list_filtered(
+        team_id=team_id,
+        project_id=project_id,
+        sprint_id=sprint_id,
+        search=search,
+        skip=skip,
+        limit=limit,
+    )
 
     return [build_document_response(doc) for doc in documents]
 
