@@ -34,7 +34,7 @@ class TeamService:
             await OxydeTeamMember.objects.create(
                 team_id=team.id,
                 user_id=creator.id,
-                role=TeamRole.OWNER.value,
+                role=TeamRole.OWNER.name,
             )
         await team.refresh()
         return team
@@ -109,7 +109,7 @@ class TeamService:
         member = await OxydeTeamMember.objects.create(
             team_id=team.id,
             user_id=user.id,
-            role=role.value,
+            role=role.name,
         )
         await member.refresh()
         return member
@@ -118,7 +118,7 @@ class TeamService:
         self, member: OxydeTeamMember, role: TeamRole
     ) -> OxydeTeamMember:
         """Update a member's role."""
-        member.role = role.value
+        member.role = role.name
         await member.save(update_fields={"role"})
         await member.refresh()
         return member
@@ -137,7 +137,7 @@ class TeamService:
         invitation = await OxydeTeamInvitation.objects.create(
             team_id=team.id,
             email=invitation_in.email,
-            role=invitation_in.role.value if hasattr(invitation_in.role, 'value') else invitation_in.role,
+            role=invitation_in.role.name,
             token=secrets.token_urlsafe(32),
             invited_by_id=invited_by.id,
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
@@ -156,7 +156,7 @@ class TeamService:
     ) -> list[OxydeTeamInvitation]:
         """Get all pending invitations for a team."""
         return await OxydeTeamInvitation.objects.filter(
-            team_id=team_id, status=InvitationStatus.PENDING.value
+            team_id=team_id, status=InvitationStatus.PENDING.name
         ).all()
 
     async def accept_invitation(
@@ -164,7 +164,7 @@ class TeamService:
     ) -> OxydeTeamMember:
         """Accept a team invitation."""
         async with atomic():
-            invitation.status = InvitationStatus.ACCEPTED.value
+            invitation.status = InvitationStatus.ACCEPTED.name
             await invitation.save(update_fields={"status"})
 
             member = await OxydeTeamMember.objects.create(
@@ -177,7 +177,7 @@ class TeamService:
 
     async def decline_invitation(self, invitation: OxydeTeamInvitation) -> None:
         """Decline a team invitation."""
-        invitation.status = InvitationStatus.DECLINED.value
+        invitation.status = InvitationStatus.DECLINED.name
         await invitation.save(update_fields={"status"})
 
     async def delete_invitation(self, invitation: OxydeTeamInvitation) -> None:
@@ -189,4 +189,4 @@ class TeamService:
         member = await self.get_member(team_id, user_id)
         if not member:
             return False
-        return member.role in [TeamRole.OWNER.value, TeamRole.ADMIN.value]
+        return member.role in [TeamRole.OWNER.name, TeamRole.ADMIN.name]

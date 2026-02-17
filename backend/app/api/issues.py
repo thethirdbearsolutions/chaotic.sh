@@ -512,10 +512,10 @@ async def list_team_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
-    moved_to_sprint_val = ActivityType.MOVED_TO_SPRINT.value
-    removed_from_sprint_val = ActivityType.REMOVED_FROM_SPRINT.value
+    moved_to_sprint_val = ActivityType.MOVED_TO_SPRINT.name
+    removed_from_sprint_val = ActivityType.REMOVED_FROM_SPRINT.name
     for a in issue_activities:
-        act_type = a.activity_type.value if hasattr(a.activity_type, 'value') else a.activity_type
+        act_type = a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name
         if act_type == moved_to_sprint_val and a.new_value:
             sprint_ids.add(a.new_value)
         elif act_type == removed_from_sprint_val and a.old_value:
@@ -528,7 +528,7 @@ async def list_team_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        act_type = activity.activity_type.value if hasattr(activity.activity_type, 'value') else activity.activity_type
+        act_type = activity.activity_type if isinstance(activity.activity_type, str) else activity.activity_type.name
         if act_type == moved_to_sprint_val:
             return sprint_names.get(activity.new_value)
         elif act_type == removed_from_sprint_val:
@@ -545,7 +545,7 @@ async def list_team_activities(
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
@@ -564,7 +564,7 @@ async def list_team_activities(
             user_id=a.user_id,
             user_name=a.user and a.user.name,
             user_email=a.user and a.user.email,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
             created_at=ensure_utc(a.created_at),
         )
         for a in doc_activities
@@ -877,10 +877,10 @@ async def list_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
-    moved_val = ActivityType.MOVED_TO_SPRINT.value
-    removed_val = ActivityType.REMOVED_FROM_SPRINT.value
+    moved_val = ActivityType.MOVED_TO_SPRINT.name
+    removed_val = ActivityType.REMOVED_FROM_SPRINT.name
     for a in activities:
-        act_type = a.activity_type.value if hasattr(a.activity_type, 'value') else a.activity_type
+        act_type = a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name
         if act_type == moved_val and a.new_value:
             sprint_ids.add(a.new_value)
         elif act_type == removed_val and a.old_value:
@@ -893,7 +893,7 @@ async def list_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        act_type = activity.activity_type.value if hasattr(activity.activity_type, 'value') else activity.activity_type
+        act_type = activity.activity_type if isinstance(activity.activity_type, str) else activity.activity_type.name
         if act_type == moved_val:
             return sprint_names.get(activity.new_value)
         elif act_type == removed_val:
@@ -907,7 +907,7 @@ async def list_activities(
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
@@ -1215,7 +1215,7 @@ async def create_relation(
         "id": relation.id,
         "issue_id": relation.issue_id,
         "related_issue_id": relation.related_issue_id,
-        "relation_type": relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.value,
+        "relation_type": relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name,
         "created_at": relation.created_at,
     }
 
