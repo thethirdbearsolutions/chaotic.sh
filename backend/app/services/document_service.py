@@ -216,6 +216,26 @@ class DocumentService:
         ).order_by("-updated_at").offset(skip).limit(limit).all()
         return await self._batch_load_document_relations(docs)
 
+    async def list_filtered(
+        self,
+        team_id: str,
+        project_id: str | None = None,
+        sprint_id: str | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[OxydeDocument]:
+        """List documents with composable filters (CHT-973)."""
+        qs = OxydeDocument.objects.filter(team_id=team_id)
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        if sprint_id:
+            qs = qs.filter(sprint_id=sprint_id)
+        if search:
+            qs = qs.filter(title__icontains=search)
+        docs = await qs.order_by("-updated_at").offset(skip).limit(limit).all()
+        return await self._batch_load_document_relations(docs)
+
     async def get_linked_issues(self, document_id: str) -> list:
         """Get issues linked to a document.
 

@@ -30,6 +30,7 @@ function stripMarkdown(text) {
 // Module state
 let documents = [];  // Raw documents from API
 let filteredDocs = [];  // After search/filter/sort
+let currentTeamId = null;  // Team ID for fetching
 let selectedDocIds = new Set();
 let currentViewMode = 'list';  // 'list' or 'grid'
 let isSelectionMode = false;  // Selection mode for bulk operations
@@ -146,20 +147,20 @@ export function clearDocSearch() {
 }
 
 /**
- * Clear document project filter
+ * Clear document project filter (re-fetches from server)
  */
-export function clearDocProjectFilter() {
+export async function clearDocProjectFilter() {
   const projectFilter = document.getElementById('doc-project-filter');
   if (projectFilter) {
     projectFilter.value = '';
   }
-  filterDocuments();
+  await onDocProjectFilterChange();
 }
 
 /**
- * Clear all document filters
+ * Clear all document filters (re-fetches from server)
  */
-export function clearAllDocFilters() {
+export async function clearAllDocFilters() {
   const searchInput = document.getElementById('doc-search');
   const projectFilter = document.getElementById('doc-project-filter');
   if (searchInput) {
@@ -168,7 +169,7 @@ export function clearAllDocFilters() {
   if (projectFilter) {
     projectFilter.value = '';
   }
-  filterDocuments();
+  await onDocProjectFilterChange();
 }
 
 /**
@@ -215,26 +216,23 @@ export function getDocuments() {
 }
 
 /**
- * Filter, sort, and re-render documents based on current UI state
+ * Filter, sort, and re-render documents based on current UI state.
+ * Operates client-side on the already-loaded `documents` array.
  */
 export function filterDocuments() {
   const searchTerm = document.getElementById('doc-search')?.value?.toLowerCase() || '';
-  const projectFilter = document.getElementById('doc-project-filter')?.value || '';
   const sortBy = document.getElementById('doc-sort')?.value || 'updated_desc';
 
   // Update filter chips
   updateDocFilterChips();
 
-  // Filter
+  // Filter (client-side search for responsiveness)
   filteredDocs = documents.filter(doc => {
-    // Search filter
     if (searchTerm) {
       const titleMatch = doc.title?.toLowerCase().includes(searchTerm);
       const contentMatch = doc.content?.toLowerCase().includes(searchTerm);
       if (!titleMatch && !contentMatch) return false;
     }
-    // Project filter
-    if (projectFilter && doc.project_id !== projectFilter) return false;
     return true;
   });
 
@@ -257,6 +255,23 @@ export function filterDocuments() {
 }
 
 /**
+ * Handle project filter dropdown change (CHT-970).
+ * Re-fetches documents from server with new project filter, then re-renders.
+ */
+export async function onDocProjectFilterChange() {
+  const teamId = currentTeamId || window.currentTeam?.id;
+  if (!teamId) return;
+
+  const projectFilter = document.getElementById('doc-project-filter')?.value || null;
+  try {
+    documents = await api.getDocuments(teamId, projectFilter);
+    filterDocuments();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+/**
  * Load documents for the current team/project
  * @param {string} teamId - Team ID
  * @param {string} projectId - Project ID (optional, filters by project)
@@ -268,7 +283,9 @@ export async function loadDocuments(teamId, projectId = null) {
   }
   if (!teamId) return;
 
-  // If no projectId specified, use current project from documents view filter (if it exists)
+  currentTeamId = teamId;
+
+  // Use project from dropdown if not explicitly specified
   if (projectId === null) {
     const docProjectFilter = document.getElementById('doc-project-filter');
     if (docProjectFilter?.value) {
@@ -287,7 +304,7 @@ export async function loadDocuments(teamId, projectId = null) {
       gridBtn.classList.toggle('active', currentViewMode === 'grid');
     }
 
-    filterDocuments();  // Apply current filters and render
+    filterDocuments();  // Apply search/sort and render
   } catch (e) {
     showToast(e.message, 'error');
   }
@@ -392,14 +409,17 @@ export function renderDocuments(groupBy = '', viewMode = 'list') {
   selectedDocIds.clear();
   updateBulkActionsBar();
 
-  const docsToRender = filteredDocs.length > 0 || document.getElementById('doc-search')?.value ? filteredDocs : documents;
+  // Always use filteredDocs — it's the canonical set after filter/sort (CHT-971)
+  const docsToRender = filteredDocs;
 
   if (docsToRender.length === 0) {
     const searchTerm = document.getElementById('doc-search')?.value;
+    const projectFilter = document.getElementById('doc-project-filter')?.value;
+    const hasFilters = searchTerm || projectFilter;
     list.innerHTML = `
       <div class="empty-state">
-        <h3>${searchTerm ? 'No documents match your search' : 'No documents yet'}</h3>
-        <p>${searchTerm ? 'Try a different search term' : 'Create your first document to get started'}</p>
+        <h3>${hasFilters ? 'No documents match your filters' : 'No documents yet'}</h3>
+        <p>${hasFilters ? 'Try different search terms or filters' : 'Create your first document to get started'}</p>
       </div>
     `;
     return;
@@ -485,8 +505,9 @@ export function toggleDocSelection(docId) {
  * Select all documents
  */
 export function selectAllDocs() {
-  documents.forEach(doc => selectedDocIds.add(doc.id));
-  documents.forEach(doc => {
+  // Only select visible (filtered) documents (CHT-972)
+  filteredDocs.forEach(doc => selectedDocIds.add(doc.id));
+  filteredDocs.forEach(doc => {
     const checkbox = document.getElementById(`doc-check-${doc.id}`);
     if (checkbox) checkbox.checked = true;
     const gridItem = document.querySelector(`.grid-item[data-doc-id="${doc.id}"]`);
@@ -499,13 +520,14 @@ export function selectAllDocs() {
  * Clear document selection
  */
 export function clearDocSelection() {
-  selectedDocIds.clear();
-  documents.forEach(doc => {
-    const checkbox = document.getElementById(`doc-check-${doc.id}`);
+  // Clear checkboxes for all previously selected docs
+  selectedDocIds.forEach(docId => {
+    const checkbox = document.getElementById(`doc-check-${docId}`);
     if (checkbox) checkbox.checked = false;
-    const gridItem = document.querySelector(`.grid-item[data-doc-id="${doc.id}"]`);
+    const gridItem = document.querySelector(`.grid-item[data-doc-id="${docId}"]`);
     if (gridItem) gridItem.classList.remove('selected');
   });
+  selectedDocIds.clear();
   updateBulkActionsBar();
 }
 
@@ -1267,4 +1289,5 @@ Object.assign(window, {
   clearDocSearch,
   clearDocProjectFilter,
   clearAllDocFilters,
+  onDocProjectFilterChange,
 });
