@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
+from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType
 
 
 class OxydeIssue(OxydeModel):
@@ -17,9 +18,9 @@ class OxydeIssue(OxydeModel):
     number: int = Field()
     title: str = Field()
     description: str | None = Field(default=None)
-    status: str = Field(default="BACKLOG")
-    priority: str = Field(default="NO_PRIORITY")
-    issue_type: str = Field(default="TASK")
+    status: str = Field(default=IssueStatus.BACKLOG.name)
+    priority: str = Field(default=IssuePriority.NO_PRIORITY.name)
+    issue_type: str = Field(default=IssueType.TASK.name)
     estimate: int | None = Field(default=None)
     assignee_id: str | None = Field(default=None)
     creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
@@ -73,7 +74,7 @@ class OxydeIssueRelation(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
     related_issue_id: str = Field()
-    relation_type: str = Field(default="RELATES_TO")
+    relation_type: str = Field(default=IssueRelationType.RELATES_TO.name)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
