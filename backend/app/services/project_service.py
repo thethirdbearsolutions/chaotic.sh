@@ -4,14 +4,9 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
 from oxyde import F
-from enum import Enum
 from app.oxyde_models.project import OxydeProject
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
-
-def _enum_name(val):
-    """Convert enum to its name (matching SQLAlchemy's default storage)."""
-    return val.name if isinstance(val, Enum) else val
 
 # Type alias for API compatibility
 Project = OxydeProject
@@ -34,8 +29,8 @@ class ProjectService:
             color=project_in.color,
             icon=project_in.icon,
             lead_id=project_in.lead_id,
-            estimate_scale=_enum_name(project_in.estimate_scale),
-            unestimated_handling=_enum_name(project_in.unestimated_handling),
+            estimate_scale=project_in.estimate_scale.name,
+            unestimated_handling=project_in.unestimated_handling.name,
             default_sprint_budget=project_in.default_sprint_budget,
             require_estimate_on_claim=project_in.require_estimate_on_claim,
         )
@@ -56,8 +51,8 @@ class ProjectService:
         """Update a project."""
         update_data = project_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            # Convert enums to names for SQLAlchemy-compatible DB storage
-            value = _enum_name(value)
+            if field in ("estimate_scale", "unestimated_handling"):
+                value = value.name
             setattr(project, field, value)
         project.updated_at = datetime.now(timezone.utc)
         await project.save(update_fields=set(update_data.keys()) | {"updated_at"})

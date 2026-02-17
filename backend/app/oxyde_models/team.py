@@ -31,6 +31,10 @@ class OxydeTeamMember(OxydeModel):
     role: str = Field(default=TeamRole.MEMBER.name)
     joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @property
+    def role_enum(self) -> TeamRole:
+        return TeamRole[self.role]
+
     class Meta:
         is_table = True
         table_name = "team_members"
@@ -48,6 +52,14 @@ class OxydeTeamInvitation(OxydeModel):
     status: str = Field(default=InvitationStatus.PENDING.name)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field()
+
+    @property
+    def role_enum(self) -> TeamRole:
+        return TeamRole[self.role]
+
+    @property
+    def status_enum(self) -> InvitationStatus:
+        return InvitationStatus[self.status]
 
     class Meta:
         is_table = True

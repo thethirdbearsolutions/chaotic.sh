@@ -13,6 +13,11 @@ class OxydeSprint(OxydeModel):
     name: str = Field()
     description: str | None = Field(default=None)
     status: str = Field(default=SprintStatus.PLANNED.name)
+
+    @property
+    def status_enum(self) -> SprintStatus:
+        return SprintStatus[self.status]
+
     start_date: datetime | None = Field(default=None)
     end_date: datetime | None = Field(default=None)
     budget: int | None = Field(default=None)
