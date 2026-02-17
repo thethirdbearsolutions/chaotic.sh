@@ -21,6 +21,9 @@ def ensure_utc(dt: datetime | None) -> datetime | None:
     """
     if dt is None:
         return None
+    # Handle string datetimes from raw SQL queries
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt

@@ -626,8 +626,6 @@ async def get_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    if project:
-        await db.refresh(project)
     has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
@@ -1330,7 +1328,7 @@ async def get_issue_documents(issue_id: str, db: DbSession, current_user: Curren
             id=doc.id,
             team_id=doc.team_id,
             author_id=doc.author_id,
-            author_name=doc.author.name if doc.author else None,
+            author_name=getattr(doc, '_author', None) and doc._author.name,
             project_id=doc.project_id,
             sprint_id=doc.sprint_id,
             title=doc.title,

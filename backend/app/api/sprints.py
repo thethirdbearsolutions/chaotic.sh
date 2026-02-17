@@ -150,7 +150,7 @@ async def close_sprint(sprint_id: str, db: DbSession, current_user: CurrentUser)
             detail="Not a member of this team",
         )
 
-    if sprint.status != SprintStatus.ACTIVE:
+    if sprint.status not in (SprintStatus.ACTIVE.name, SprintStatus.ACTIVE.value, SprintStatus.ACTIVE):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Can only close an active sprint",

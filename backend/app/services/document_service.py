@@ -1,18 +1,33 @@
-"""Document service for document management."""
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from app.models.document import Document, DocumentComment, DocumentActivity, DocumentActivityType, document_issues, document_labels
-from app.models.issue import Issue, Label
-from app.models.project import Project
+"""Document service for document management.
+
+Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
+"""
+from datetime import datetime, timezone
+from oxyde import atomic, execute_raw
+from app.oxyde_models.document import (
+    OxydeDocument,
+    OxydeDocumentComment,
+    OxydeDocumentActivity,
+    OxydeDocumentIssue,
+    OxydeDocumentLabel,
+)
+from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.label import OxydeLabel
+from app.models.document import DocumentActivityType
 from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentCommentCreate, DocumentCommentUpdate
+
+# Type aliases for API compatibility
+Document = OxydeDocument
+DocumentComment = OxydeDocumentComment
+DocumentActivity = OxydeDocumentActivity
 
 
 class DocumentService:
     """Service for document operations."""
 
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self, db=None):
+        # db parameter kept for API compatibility during migration.
+        pass
 
     async def _log_activity(
         self,
@@ -24,360 +39,397 @@ class DocumentService:
         document_icon: str | None = None,
     ) -> None:
         """Log a document activity."""
-        activity = DocumentActivity(
-            activity_type=activity_type,
+        await OxydeDocumentActivity.objects.create(
+            activity_type=activity_type.name if hasattr(activity_type, 'name') and hasattr(activity_type, 'value') else activity_type,
             team_id=team_id,
             user_id=user_id,
             document_id=document_id,
             document_title=document_title,
             document_icon=document_icon,
         )
-        self.db.add(activity)
+
+    async def _load_document_relations(self, doc: OxydeDocument) -> OxydeDocument:
+        """Load author and labels for a document (replaces selectinload)."""
+        # Load author
+        author = await OxydeUser.objects.get_or_none(id=doc.author_id)
+        doc._author = author
+
+        # Load labels via junction table
+        label_links = await OxydeDocumentLabel.objects.filter(document_id=doc.id).all()
+        if label_links:
+            label_ids = [link.label_id for link in label_links]
+            labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
+            doc._labels = labels
+        else:
+            doc._labels = []
+
+        return doc
+
+    async def _batch_load_document_relations(self, docs: list[OxydeDocument]) -> list[OxydeDocument]:
+        """Batch-load author and labels for multiple documents."""
+        if not docs:
+            return docs
+
+        # Batch-load authors
+        author_ids = list({d.author_id for d in docs})
+        authors = await OxydeUser.objects.filter(id__in=author_ids).all()
+        author_map = {a.id: a for a in authors}
+
+        # Batch-load label links
+        doc_ids = [d.id for d in docs]
+        label_links = await OxydeDocumentLabel.objects.filter(document_id__in=doc_ids).all()
+
+        # Group label IDs by document
+        doc_label_ids: dict[str, list[str]] = {}
+        all_label_ids = set()
+        for link in label_links:
+            doc_label_ids.setdefault(link.document_id, []).append(link.label_id)
+            all_label_ids.add(link.label_id)
+
+        # Batch-load labels
+        if all_label_ids:
+            labels = await OxydeLabel.objects.filter(id__in=list(all_label_ids)).all()
+            label_map = {l.id: l for l in labels}
+        else:
+            label_map = {}
+
+        # Attach to documents
+        for doc in docs:
+            doc._author = author_map.get(doc.author_id)
+            label_ids_for_doc = doc_label_ids.get(doc.id, [])
+            doc._labels = [label_map[lid] for lid in label_ids_for_doc if lid in label_map]
+
+        return docs
 
     async def create(
         self, document_in: DocumentCreate, team_id: str, author_id: str
-    ) -> Document:
+    ) -> OxydeDocument:
         """Create a new document."""
-        document = Document(
-            team_id=team_id,
-            author_id=author_id,
-            title=document_in.title,
-            content=document_in.content,
-            icon=document_in.icon,
-            project_id=document_in.project_id,
-            sprint_id=document_in.sprint_id,
-        )
-        self.db.add(document)
-        await self.db.flush()  # Get the document ID
-
-        # Log activity (CHT-639)
-        await self._log_activity(
-            DocumentActivityType.CREATED,
-            team_id,
-            author_id,
-            document_id=document.id,
-            document_title=document.title,
-            document_icon=document.icon,
-        )
-
-        await self.db.commit()
-
-        # Reload with labels eagerly loaded to avoid lazy loading issues
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.id == document.id)
-        )
-        return result.scalar_one()
-
-    async def get_by_id(self, document_id: str) -> Document | None:
-        """Get document by ID."""
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.id == document_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def update(
-        self, document: Document, document_in: DocumentUpdate, user_id: str
-    ) -> Document:
-        """Update a document."""
-        update_data = document_in.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(document, field, value)
-
-        # Log activity (CHT-639)
-        await self._log_activity(
-            DocumentActivityType.UPDATED,
-            document.team_id,
-            user_id,
-            document_id=document.id,
-            document_title=document.title,
-            document_icon=document.icon,
-        )
-
-        await self.db.commit()
-
-        # Reload with labels eagerly loaded to avoid lazy loading issues
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.id == document.id)
-        )
-        return result.scalar_one()
-
-    async def delete(self, document: Document, user_id: str) -> None:
-        """Delete a document."""
-        # Log activity before deletion (CHT-639)
-        # Store title/icon since document will be deleted
-        await self._log_activity(
-            DocumentActivityType.DELETED,
-            document.team_id,
-            user_id,
-            document_id=None,  # Will be cascade deleted
-            document_title=document.title,
-            document_icon=document.icon,
-        )
-        await self.db.delete(document)
-        await self.db.commit()
-
-    async def list_by_team(
-        self, team_id: str, skip: int = 0, limit: int = 100
-    ) -> list[Document]:
-        """List documents for a team."""
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.team_id == team_id)
-            .order_by(Document.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
-
-    async def list_by_project(
-        self, project_id: str, skip: int = 0, limit: int = 100
-    ) -> list[Document]:
-        """List documents for a project."""
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.project_id == project_id)
-            .order_by(Document.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
-
-    async def list_by_sprint(
-        self, sprint_id: str, skip: int = 0, limit: int = 100
-    ) -> list[Document]:
-        """List documents for a sprint."""
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(Document.sprint_id == sprint_id)
-            .order_by(Document.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
-
-    async def search(
-        self, team_id: str, query: str, skip: int = 0, limit: int = 100
-    ) -> list[Document]:
-        """Search documents by title."""
-        result = await self.db.execute(
-            select(Document)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(
-                Document.team_id == team_id,
-                Document.title.ilike(f"%{query}%"),
+        async with atomic():
+            document = await OxydeDocument.objects.create(
+                team_id=team_id,
+                author_id=author_id,
+                title=document_in.title,
+                content=document_in.content,
+                icon=document_in.icon,
+                project_id=document_in.project_id,
+                sprint_id=document_in.sprint_id,
             )
-            .order_by(Document.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
 
-    async def get_linked_issues(self, document_id: str) -> list[Issue]:
-        """Get issues linked to a document."""
-        result = await self.db.execute(
-            select(Issue)
-            .join(document_issues, Issue.id == document_issues.c.issue_id)
-            .options(
-                selectinload(Issue.creator),
-                selectinload(Issue.labels),
-            )
-            .where(document_issues.c.document_id == document_id)
-            .order_by(Issue.updated_at.desc())
-        )
-        return list(result.scalars().all())
-
-    async def link_issue(self, document_id: str, issue_id: str) -> None:
-        """Link a document to an issue.
-
-        Raises:
-            ValueError: If the document and issue belong to different teams.
-        """
-        # Verify document and issue belong to the same team
-        doc_result = await self.db.execute(
-            select(Document.team_id).where(Document.id == document_id)
-        )
-        doc_team_id = doc_result.scalar_one_or_none()
-
-        issue_team_result = await self.db.execute(
-            select(Project.team_id)
-            .join(Issue, Issue.project_id == Project.id)
-            .where(Issue.id == issue_id)
-        )
-        issue_team_id = issue_team_result.scalar_one_or_none()
-
-        if doc_team_id is None or issue_team_id is None:
-            raise ValueError("Document or issue not found")
-
-        if doc_team_id != issue_team_id:
-            raise ValueError("Cannot link document and issue from different teams")
-
-        # Check if already linked
-        existing = await self.db.execute(
-            select(document_issues).where(
-                document_issues.c.document_id == document_id,
-                document_issues.c.issue_id == issue_id,
-            )
-        )
-        if existing.first():
-            return  # Already linked
-
-        await self.db.execute(
-            document_issues.insert().values(
-                document_id=document_id,
-                issue_id=issue_id,
-            )
-        )
-        await self.db.commit()
-
-    async def unlink_issue(self, document_id: str, issue_id: str) -> None:
-        """Unlink a document from an issue."""
-        await self.db.execute(
-            document_issues.delete().where(
-                document_issues.c.document_id == document_id,
-                document_issues.c.issue_id == issue_id,
-            )
-        )
-        await self.db.commit()
-
-    async def get_linked_documents_for_issue(self, issue_id: str) -> list[Document]:
-        """Get documents linked to an issue."""
-        result = await self.db.execute(
-            select(Document)
-            .join(document_issues, Document.id == document_issues.c.document_id)
-            .options(selectinload(Document.author), selectinload(Document.labels))
-            .where(document_issues.c.issue_id == issue_id)
-            .order_by(Document.updated_at.desc())
-        )
-        return list(result.scalars().all())
-
-    # Label methods
-    async def get_label_by_id(self, label_id: str) -> Label | None:
-        """Get label by ID."""
-        result = await self.db.execute(
-            select(Label).where(Label.id == label_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def add_label(self, document_id: str, label_id: str) -> None:
-        """Add a label to a document."""
-        # Check if already linked
-        existing = await self.db.execute(
-            select(document_labels).where(
-                document_labels.c.document_id == document_id,
-                document_labels.c.label_id == label_id,
-            )
-        )
-        if existing.first():
-            return  # Already linked
-
-        await self.db.execute(
-            document_labels.insert().values(
-                document_id=document_id,
-                label_id=label_id,
-            )
-        )
-        await self.db.commit()
-
-    async def remove_label(self, document_id: str, label_id: str) -> None:
-        """Remove a label from a document."""
-        await self.db.execute(
-            document_labels.delete().where(
-                document_labels.c.document_id == document_id,
-                document_labels.c.label_id == label_id,
-            )
-        )
-        await self.db.commit()
-
-    # Comment methods
-    async def create_comment(
-        self, document_id: str, comment_in: DocumentCommentCreate, author_id: str
-    ) -> DocumentComment:
-        """Create a comment on a document."""
-        # Get the document to access team_id for activity logging
-        document = await self.get_by_id(document_id)
-
-        comment = DocumentComment(
-            document_id=document_id,
-            author_id=author_id,
-            content=comment_in.content,
-        )
-        self.db.add(comment)
-
-        # Log activity (CHT-677)
-        if document:
+            # Log activity (CHT-639)
             await self._log_activity(
-                DocumentActivityType.COMMENTED,
-                document.team_id,
+                DocumentActivityType.CREATED,
+                team_id,
                 author_id,
                 document_id=document.id,
                 document_title=document.title,
                 document_icon=document.icon,
             )
 
-        await self.db.commit()
-        await self.db.refresh(comment)
+        await document.refresh()
+        return await self._load_document_relations(document)
+
+    async def get_by_id(self, document_id: str) -> OxydeDocument | None:
+        """Get document by ID."""
+        document = await OxydeDocument.objects.get_or_none(id=document_id)
+        if document:
+            await self._load_document_relations(document)
+        return document
+
+    async def update(
+        self, document: OxydeDocument, document_in: DocumentUpdate, user_id: str
+    ) -> OxydeDocument:
+        """Update a document."""
+        update_data = document_in.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(document, field, value)
+        document.updated_at = datetime.now(timezone.utc)
+
+        async with atomic():
+            await document.save(update_fields=set(update_data.keys()) | {"updated_at"})
+
+            # Log activity (CHT-639)
+            await self._log_activity(
+                DocumentActivityType.UPDATED,
+                document.team_id,
+                user_id,
+                document_id=document.id,
+                document_title=document.title,
+                document_icon=document.icon,
+            )
+
+        await document.refresh()
+        return await self._load_document_relations(document)
+
+    async def delete(self, document: OxydeDocument, user_id: str) -> None:
+        """Delete a document."""
+        async with atomic():
+            # Log activity before deletion (CHT-639)
+            await self._log_activity(
+                DocumentActivityType.DELETED,
+                document.team_id,
+                user_id,
+                document_id=None,  # Will be cascade deleted
+                document_title=document.title,
+                document_icon=document.icon,
+            )
+            # Manual cascade: delete child records
+            await OxydeDocumentComment.objects.filter(document_id=document.id).delete()
+            await OxydeDocumentIssue.objects.filter(document_id=document.id).delete()
+            await OxydeDocumentLabel.objects.filter(document_id=document.id).delete()
+            await OxydeDocumentActivity.objects.filter(document_id=document.id).delete()
+            await document.delete()
+
+    async def list_by_team(
+        self, team_id: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeDocument]:
+        """List documents for a team."""
+        docs = await OxydeDocument.objects.filter(
+            team_id=team_id
+        ).order_by("-updated_at").offset(skip).limit(limit).all()
+        return await self._batch_load_document_relations(docs)
+
+    async def list_by_project(
+        self, project_id: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeDocument]:
+        """List documents for a project."""
+        docs = await OxydeDocument.objects.filter(
+            project_id=project_id
+        ).order_by("-updated_at").offset(skip).limit(limit).all()
+        return await self._batch_load_document_relations(docs)
+
+    async def list_by_sprint(
+        self, sprint_id: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeDocument]:
+        """List documents for a sprint."""
+        docs = await OxydeDocument.objects.filter(
+            sprint_id=sprint_id
+        ).order_by("-updated_at").offset(skip).limit(limit).all()
+        return await self._batch_load_document_relations(docs)
+
+    async def search(
+        self, team_id: str, query: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeDocument]:
+        """Search documents by title."""
+        docs = await OxydeDocument.objects.filter(
+            team_id=team_id, title__icontains=query
+        ).order_by("-updated_at").offset(skip).limit(limit).all()
+        return await self._batch_load_document_relations(docs)
+
+    async def get_linked_issues(self, document_id: str) -> list:
+        """Get issues linked to a document.
+
+        Returns raw dicts from the issues table with creator/labels loaded.
+        This stays as raw SQL since Issue is not yet ported to Oxyde.
+        """
+        # Get linked issue IDs
+        links = await OxydeDocumentIssue.objects.filter(document_id=document_id).all()
+        if not links:
+            return []
+
+        issue_ids = [link.issue_id for link in links]
+        placeholders = ",".join("?" for _ in issue_ids)
+
+        # Fetch issues via raw SQL (not ported to Oxyde yet)
+        rows = await execute_raw(
+            f"SELECT * FROM issues WHERE id IN ({placeholders}) ORDER BY updated_at DESC",
+            issue_ids,
+        )
+
+        # For each issue, load creator and labels
+        from app.oxyde_models.user import OxydeUser
+
+        # Build minimal issue-like objects
+        issues = []
+        for row in rows:
+            issue = _DictObj(row)
+            # Load creator
+            creator = await OxydeUser.objects.get_or_none(id=row.get("creator_id"))
+            issue.creator = creator
+            # Load labels via issue_labels junction
+            label_rows = await execute_raw(
+                "SELECT label_id FROM issue_labels WHERE issue_id = ?",
+                [row["id"]],
+            )
+            if label_rows:
+                label_ids = [lr["label_id"] for lr in label_rows]
+                issue.labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
+            else:
+                issue.labels = []
+            issues.append(issue)
+
+        return issues
+
+    async def link_issue(self, document_id: str, issue_id: str) -> None:
+        """Link a document to an issue."""
+        # Verify document and issue belong to the same team
+        doc = await OxydeDocument.objects.get_or_none(id=document_id)
+        if not doc:
+            raise ValueError("Document or issue not found")
+
+        issue_rows = await execute_raw(
+            "SELECT p.team_id FROM issues i JOIN projects p ON i.project_id = p.id WHERE i.id = ?",
+            [issue_id],
+        )
+        if not issue_rows:
+            raise ValueError("Document or issue not found")
+
+        if doc.team_id != issue_rows[0]["team_id"]:
+            raise ValueError("Cannot link document and issue from different teams")
+
+        # Check if already linked
+        existing = await OxydeDocumentIssue.objects.filter(
+            document_id=document_id, issue_id=issue_id
+        ).first()
+        if existing:
+            return  # Already linked
+
+        await OxydeDocumentIssue.objects.create(
+            document_id=document_id,
+            issue_id=issue_id,
+        )
+
+    async def unlink_issue(self, document_id: str, issue_id: str) -> None:
+        """Unlink a document from an issue."""
+        await OxydeDocumentIssue.objects.filter(
+            document_id=document_id, issue_id=issue_id
+        ).delete()
+
+    async def get_linked_documents_for_issue(self, issue_id: str) -> list[OxydeDocument]:
+        """Get documents linked to an issue."""
+        links = await OxydeDocumentIssue.objects.filter(issue_id=issue_id).all()
+        if not links:
+            return []
+        doc_ids = [link.document_id for link in links]
+        docs = await OxydeDocument.objects.filter(id__in=doc_ids).order_by("-updated_at").all()
+        return await self._batch_load_document_relations(docs)
+
+    # Label methods
+    async def get_label_by_id(self, label_id: str) -> OxydeLabel | None:
+        """Get label by ID."""
+        return await OxydeLabel.objects.get_or_none(id=label_id)
+
+    async def add_label(self, document_id: str, label_id: str) -> None:
+        """Add a label to a document."""
+        existing = await OxydeDocumentLabel.objects.filter(
+            document_id=document_id, label_id=label_id
+        ).first()
+        if existing:
+            return  # Already linked
+
+        await OxydeDocumentLabel.objects.create(
+            document_id=document_id,
+            label_id=label_id,
+        )
+
+    async def remove_label(self, document_id: str, label_id: str) -> None:
+        """Remove a label from a document."""
+        await OxydeDocumentLabel.objects.filter(
+            document_id=document_id, label_id=label_id
+        ).delete()
+
+    # Comment methods
+    async def create_comment(
+        self, document_id: str, comment_in: DocumentCommentCreate, author_id: str
+    ) -> OxydeDocumentComment:
+        """Create a comment on a document."""
+        # Get the document to access team_id for activity logging
+        document = await self.get_by_id(document_id)
+
+        async with atomic():
+            comment = await OxydeDocumentComment.objects.create(
+                document_id=document_id,
+                author_id=author_id,
+                content=comment_in.content,
+            )
+
+            # Log activity (CHT-677)
+            if document:
+                await self._log_activity(
+                    DocumentActivityType.COMMENTED,
+                    document.team_id,
+                    author_id,
+                    document_id=document.id,
+                    document_title=document.title,
+                    document_icon=document.icon,
+                )
+
+        await comment.refresh()
+        # Load author for response
+        author = await OxydeUser.objects.get_or_none(id=comment.author_id)
+        comment._author = author
         return comment
 
-    async def get_comment_by_id(self, comment_id: str) -> DocumentComment | None:
+    async def get_comment_by_id(self, comment_id: str) -> OxydeDocumentComment | None:
         """Get comment by ID."""
-        result = await self.db.execute(
-            select(DocumentComment)
-            .options(selectinload(DocumentComment.author))
-            .where(DocumentComment.id == comment_id)
-        )
-        return result.scalar_one_or_none()
+        comment = await OxydeDocumentComment.objects.get_or_none(id=comment_id)
+        if comment:
+            author = await OxydeUser.objects.get_or_none(id=comment.author_id)
+            comment._author = author
+        return comment
 
     async def update_comment(
-        self, comment: DocumentComment, comment_in: DocumentCommentUpdate
-    ) -> DocumentComment:
+        self, comment: OxydeDocumentComment, comment_in: DocumentCommentUpdate
+    ) -> OxydeDocumentComment:
         """Update a comment."""
         comment.content = comment_in.content
-        await self.db.commit()
-        # Re-fetch with author relationship loaded
+        comment.updated_at = datetime.now(timezone.utc)
+        await comment.save(update_fields={"content", "updated_at"})
+        await comment.refresh()
+        # Re-fetch with author
         return await self.get_comment_by_id(comment.id)
 
-    async def delete_comment(self, comment: DocumentComment) -> None:
+    async def delete_comment(self, comment: OxydeDocumentComment) -> None:
         """Delete a comment."""
-        await self.db.delete(comment)
-        await self.db.commit()
+        await comment.delete()
 
     async def list_comments(
         self, document_id: str, skip: int = 0, limit: int = 100
-    ) -> list[DocumentComment]:
+    ) -> list[OxydeDocumentComment]:
         """List comments for a document."""
-        result = await self.db.execute(
-            select(DocumentComment)
-            .options(selectinload(DocumentComment.author))
-            .where(DocumentComment.document_id == document_id)
-            .order_by(DocumentComment.created_at.asc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
+        comments = await OxydeDocumentComment.objects.filter(
+            document_id=document_id
+        ).order_by("created_at").offset(skip).limit(limit).all()
+        # Batch-load authors
+        author_ids = list({c.author_id for c in comments})
+        if author_ids:
+            authors = await OxydeUser.objects.filter(id__in=author_ids).all()
+            author_map = {a.id: a for a in authors}
+        else:
+            author_map = {}
+        for comment in comments:
+            comment._author = author_map.get(comment.author_id)
+        return comments
 
     async def list_team_activities(
         self, team_id: str, skip: int = 0, limit: int = 50
-    ) -> list[DocumentActivity]:
+    ) -> list[OxydeDocumentActivity]:
         """List document activities for a team."""
-        from app.models.user import User
-        result = await self.db.execute(
-            select(DocumentActivity)
-            .options(
-                selectinload(DocumentActivity.document),
-                selectinload(DocumentActivity.user),
-            )
-            .where(DocumentActivity.team_id == team_id)
-            .order_by(DocumentActivity.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
+        activities = await OxydeDocumentActivity.objects.filter(
+            team_id=team_id
+        ).order_by("-created_at").offset(skip).limit(limit).all()
+        # Batch-load related data
+        user_ids = list({a.user_id for a in activities})
+        doc_ids = list({a.document_id for a in activities if a.document_id})
+        if user_ids:
+            users = await OxydeUser.objects.filter(id__in=user_ids).all()
+            user_map = {u.id: u for u in users}
+        else:
+            user_map = {}
+        if doc_ids:
+            docs = await OxydeDocument.objects.filter(id__in=doc_ids).all()
+            doc_map = {d.id: d for d in docs}
+        else:
+            doc_map = {}
+        for activity in activities:
+            activity._user = user_map.get(activity.user_id)
+            activity._document = doc_map.get(activity.document_id)
+        return activities
+
+
+class _DictObj:
+    """Minimal object wrapper for raw SQL dicts to support attribute access."""
+
+    def __init__(self, data: dict):
+        for key, value in data.items():
+            setattr(self, key, value)

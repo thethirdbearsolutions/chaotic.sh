@@ -21,16 +21,17 @@ from app.models.document import Document
 router = APIRouter()
 
 
-def get_author_name(doc: Document, override: str | None = None) -> str | None:
+def get_author_name(doc, override: str | None = None) -> str | None:
     """Get author name, preferring explicit override if provided."""
     if override is not None:
         return override
-    if doc.author:
-        return doc.author.name
+    author = getattr(doc, '_author', None)
+    if author:
+        return author.name
     return None
 
 
-def build_document_response(doc: Document, author_name: str | None = None) -> DocumentResponse:
+def build_document_response(doc, author_name: str | None = None) -> DocumentResponse:
     """Build a DocumentResponse with author_name from a Document model."""
     return DocumentResponse(
         id=doc.id,
@@ -53,7 +54,7 @@ def build_document_response(doc: Document, author_name: str | None = None) -> Do
                 description=label.description,
                 created_at=ensure_utc(label.created_at),
             )
-            for label in (doc.labels or [])
+            for label in (getattr(doc, '_labels', None) or [])
         ],
     )
 
@@ -554,7 +555,7 @@ def build_comment_response(comment, author_name: str | None = None) -> DocumentC
         id=comment.id,
         document_id=comment.document_id,
         author_id=comment.author_id,
-        author_name=author_name if author_name is not None else (comment.author.name if comment.author else None),
+        author_name=author_name if author_name is not None else (getattr(comment, '_author', None) and comment._author.name),
         content=comment.content,
         created_at=ensure_utc(comment.created_at),
         updated_at=ensure_utc(comment.updated_at),
