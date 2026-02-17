@@ -2,8 +2,11 @@
 
 Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 """
+import logging
 import re
 import random
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
 from app.oxyde_models.issue import (
@@ -192,9 +195,15 @@ class IssueService:
         if not pending_rituals:
             # Stale limbo flag — all rituals are attested but limbo was never
             # cleared (e.g. _maybe_clear_limbo failed silently). Self-heal.
-            from app.services.sprint_service import SprintService
-            sprint_service = SprintService(self.db)
-            await sprint_service.complete_limbo(limbo_sprint)
+            try:
+                from app.services.sprint_service import SprintService
+                sprint_service = SprintService(self.db)
+                await sprint_service.complete_limbo(limbo_sprint)
+            except Exception:
+                logger.exception(
+                    "Self-heal of stale limbo failed for sprint=%s",
+                    limbo_sprint.id,
+                )
             return
 
         pending_data = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
