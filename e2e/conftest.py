@@ -109,6 +109,10 @@ def reset_db_between_tests():
             for table in reversed(tables):
                 await conn.execute(table.delete())
             await conn.execute(text("PRAGMA foreign_keys = ON"))
+        # Also perform a write via Oxyde to keep its connection pool in sync
+        # with the SQLAlchemy-driven cleanup (dual-ORM visibility workaround).
+        from app.oxyde_models.user import OxydeUser
+        await OxydeUser.objects.filter(id="__noop__").delete()
     _run_async(_clear_data())
 
 

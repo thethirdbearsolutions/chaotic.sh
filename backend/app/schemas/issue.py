@@ -1,8 +1,18 @@
 """Issue schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.utils import DateTimeUTC
+
+
+def _coerce_enum(enum_cls, v):
+    """Accept both enum names (DB-stored uppercase) and values (lowercase)."""
+    if isinstance(v, str) and v not in [e.value for e in enum_cls]:
+        try:
+            return enum_cls[v].value
+        except KeyError:
+            pass
+    return v
 
 
 class IssueCreate(BaseModel):
@@ -62,6 +72,21 @@ class IssueResponse(BaseModel):
     labels: list["LabelResponse"] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _coerce_enum(IssueStatus, v)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _coerce_priority(cls, v):
+        return _coerce_enum(IssuePriority, v)
+
+    @field_validator("issue_type", mode="before")
+    @classmethod
+    def _coerce_issue_type(cls, v):
+        return _coerce_enum(IssueType, v)
 
 
 class IssueCommentCreate(BaseModel):

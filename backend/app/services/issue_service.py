@@ -414,7 +414,10 @@ class IssueService:
         - Estimate requirement (for IN_PROGRESS, agents only)
         """
         # Ensure project is attached to session before accessing attributes
-        await self.db.refresh(project)
+        # (skip for Oxyde models which don't need SQLAlchemy session attachment)
+        from app.oxyde_models.project import OxydeProject
+        if not isinstance(project, OxydeProject):
+            await self.db.refresh(project)
         project_id = project.id
         project_key = project.key
 
@@ -495,8 +498,12 @@ class IssueService:
                 self.db.add(issue)
 
                 # Update project issue_count to stay in sync
-                project.issue_count = issue_number
-                self.db.add(project)
+                from app.oxyde_models.project import OxydeProject as _OxydeProject
+                if isinstance(project, _OxydeProject):
+                    await _OxydeProject.objects.filter(id=project_id).update(issue_count=issue_number)
+                else:
+                    project.issue_count = issue_number
+                    self.db.add(project)
 
                 # Flush to populate issue.id
                 await self.db.flush()

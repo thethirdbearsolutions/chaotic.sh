@@ -567,12 +567,12 @@ async def list_team_activities(
         IssueActivityFeedResponse(
             id=a.id,
             document_id=a.document_id,
-            document_title=a.document_title or (a.document.title if a.document else None),
-            document_icon=a.document_icon or (a.document.icon if a.document else None),
+            document_title=a.document_title or (getattr(a, '_document', None) and a._document.title),
+            document_icon=a.document_icon or (getattr(a, '_document', None) and a._document.icon),
             user_id=a.user_id,
-            user_name=a.user.name if a.user else None,
-            user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type.value,  # Convert enum to string
+            user_name=getattr(a, '_user', None) and a._user.name,
+            user_email=getattr(a, '_user', None) and a._user.email,
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
             created_at=ensure_utc(a.created_at),
         )
         for a in doc_activities
@@ -626,8 +626,6 @@ async def get_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    if project:
-        await db.refresh(project)
     has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
@@ -1330,7 +1328,7 @@ async def get_issue_documents(issue_id: str, db: DbSession, current_user: Curren
             id=doc.id,
             team_id=doc.team_id,
             author_id=doc.author_id,
-            author_name=doc.author.name if doc.author else None,
+            author_name=getattr(doc, '_author', None) and doc._author.name,
             project_id=doc.project_id,
             sprint_id=doc.sprint_id,
             title=doc.title,
