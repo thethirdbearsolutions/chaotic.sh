@@ -3,8 +3,13 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
-from oxyde import F
+from oxyde import F, atomic
 from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.sprint import OxydeSprint
+from app.oxyde_models.document import (
+    OxydeDocument, OxydeDocumentComment, OxydeDocumentActivity,
+    OxydeDocumentIssue, OxydeDocumentLabel,
+)
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
@@ -61,13 +66,6 @@ class ProjectService:
 
     async def delete(self, project: OxydeProject) -> None:
         """Delete a project and cascade to child records."""
-        from oxyde import atomic
-        from app.oxyde_models.sprint import OxydeSprint
-        from app.oxyde_models.document import (
-            OxydeDocument, OxydeDocumentComment, OxydeDocumentActivity,
-            OxydeDocumentIssue, OxydeDocumentLabel,
-        )
-
         async with atomic():
             # Cascade: sprints
             await OxydeSprint.objects.filter(project_id=project.id).delete()

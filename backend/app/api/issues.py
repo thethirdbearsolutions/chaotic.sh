@@ -33,6 +33,9 @@ from app.services.issue_service import (
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
+from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.label import OxydeLabel
+from app.oxyde_models.project import OxydeProject
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.models.document import DocumentActivityType
 
@@ -61,7 +64,6 @@ async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
     """Validate that assignee exists and belongs to the project's team (CHT-293)."""
     if not assignee_id:
         return
-    from app.oxyde_models.user import OxydeUser
     user = await OxydeUser.objects.get_or_none(id=assignee_id)
     if not user:
         raise HTTPException(
@@ -107,7 +109,6 @@ async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
     """Validate that all labels exist and belong to the team (CHT-296)."""
     if not label_ids:
         return
-    from app.oxyde_models.label import OxydeLabel
     labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
     if len(labels) != len(label_ids):
         found = {l.id for l in labels}
@@ -431,8 +432,6 @@ async def batch_update_issues(
     Does NOT support status, assignee, or sprint changes, which require
     per-issue validation. Use the single-issue PATCH endpoint for those.
     """
-    from app.oxyde_models.project import OxydeProject
-
     issue_service = IssueService(db)
 
     # Deduplicate issue IDs
@@ -509,8 +508,6 @@ async def list_team_activities(
     limit: int = 50,
 ):
     """List recent activities for a team (issues and documents)."""
-    from app.services.document_service import DocumentService
-
     issue_service = IssueService(db)
     sprint_service = SprintService(db)
     document_service = DocumentService(db)

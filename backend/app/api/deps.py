@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.user import User
 from app.services.user_service import UserService
 from app.services.api_key_service import APIKeyService
+from app.services.team_service import TeamService
 from app.utils.security import decode_token
 
 security = HTTPBearer(auto_error=False)
@@ -131,7 +132,6 @@ async def check_user_team_access(db: AsyncSession, user: User, team_id: str) -> 
     if user.is_agent:
         return user.agent_team_id == team_id
 
-    from app.services.team_service import TeamService
     team_service = TeamService(db)
     member = await team_service.get_member(team_id, user.id)
     return member is not None
@@ -153,7 +153,6 @@ async def check_user_project_access(db: AsyncSession, user: User, project_id: st
         return user.agent_team_id == team_id
 
     # Human user: check team membership
-    from app.services.team_service import TeamService
     team_service = TeamService(db)
     member = await team_service.get_member(team_id, user.id)
     return member is not None

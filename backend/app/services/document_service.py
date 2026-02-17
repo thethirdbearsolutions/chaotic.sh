@@ -249,7 +249,6 @@ class DocumentService:
         )
 
         # Batch-load creators
-        from app.oxyde_models.user import OxydeUser
         creator_ids = list({row.get("creator_id") for row in rows if row.get("creator_id")})
         if creator_ids:
             creators = await OxydeUser.objects.filter(id__in=creator_ids).all()
