@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
+from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
 
 
@@ -38,6 +39,7 @@ class OxydeIssue(OxydeModel):
     completed_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")
 
     @property
     def status_enum(self) -> IssueStatus:
@@ -75,7 +77,7 @@ class OxydeIssueActivity(OxydeModel):
     """Activity log for issues."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    issue_id: str = Field()
+    issue: "OxydeIssue" | None = Field(default=None, db_on_delete="CASCADE")
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     activity_type: str = Field()
     field_name: str | None = Field(default=None)
@@ -113,8 +115,8 @@ class OxydeIssueRelation(OxydeModel):
 class OxydeIssueLabel(OxydeModel):
     """Junction table for issue-label links."""
 
-    issue_id: str = Field(db_pk=True)
-    label_id: str = Field(db_pk=True)
+    issue: "OxydeIssue" = Field(db_pk=True, db_on_delete="CASCADE")
+    label: "OxydeLabel" = Field(db_pk=True, db_on_delete="CASCADE")
 
     class Meta:
         is_table = True

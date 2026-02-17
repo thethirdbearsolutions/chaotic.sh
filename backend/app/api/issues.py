@@ -170,7 +170,7 @@ def issue_to_response(issue: Issue) -> IssueResponse:
         completed_at=ensure_utc(issue.completed_at),
         created_at=ensure_utc(issue.created_at),
         updated_at=ensure_utc(issue.updated_at),
-        labels=[LabelResponse.model_validate(label) for label in getattr(issue, '_labels', [])] if getattr(issue, '_labels', []) else [],
+        labels=[LabelResponse.model_validate(label) for label in issue.labels] if issue.labels else [],
     )
 
 
@@ -554,8 +554,8 @@ async def list_team_activities(
         IssueActivityFeedResponse(
             id=a.id,
             issue_id=a.issue_id,
-            issue_identifier=getattr(a, '_issue', None) and a._issue.identifier,
-            issue_title=getattr(a, '_issue', None) and a._issue.title,
+            issue_identifier=a.issue.identifier if a.issue else None,
+            issue_title=a.issue.title if a.issue else None,
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,

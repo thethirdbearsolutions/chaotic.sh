@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
+from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.models.document import DocumentActivityType
 from app.oxyde_models.issue import _to_enum
 
@@ -20,6 +21,7 @@ class OxydeDocument(OxydeModel):
     icon: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeDocumentLabel")
 
     class Meta:
         is_table = True
@@ -77,8 +79,8 @@ class OxydeDocumentIssue(OxydeModel):
 class OxydeDocumentLabel(OxydeModel):
     """Junction table for document-label links."""
 
-    document_id: str = Field(db_pk=True)
-    label_id: str = Field(db_pk=True)
+    document: "OxydeDocument" = Field(db_pk=True, db_on_delete="CASCADE")
+    label: "OxydeLabel" = Field(db_pk=True, db_on_delete="CASCADE")
 
     class Meta:
         is_table = True

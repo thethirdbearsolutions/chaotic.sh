@@ -54,7 +54,7 @@ def build_document_response(doc, author_name: str | None = None) -> DocumentResp
                 description=label.description,
                 created_at=ensure_utc(label.created_at),
             )
-            for label in (getattr(doc, '_labels', None) or [])
+            for label in (doc.labels or [])
         ],
     )
 
@@ -463,7 +463,7 @@ async def get_document_labels(document_id: str, db: DbSession, current_user: Cur
             description=label.description,
             created_at=ensure_utc(label.created_at),
         )
-        for label in (getattr(document, '_labels', None) or [])
+        for label in (document.labels or [])
     ]
 
 

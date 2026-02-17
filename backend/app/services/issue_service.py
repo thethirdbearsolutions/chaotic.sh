@@ -17,7 +17,6 @@ from app.oxyde_models.issue import (
     OxydeTicketLimbo,
     OxydeBudgetTransaction,
 )
-from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
@@ -133,49 +132,6 @@ class IssueService:
     def __init__(self, db=None):
         # db parameter kept for ritual_service interop during migration.
         self.db = db
-
-    async def _load_issue_relations(self, issue: OxydeIssue) -> OxydeIssue:
-        """Load labels and project for an issue (creator loaded via join)."""
-        # Load labels via junction table
-        label_links = await OxydeIssueLabel.objects.filter(issue_id=issue.id).all()
-        if label_links:
-            label_ids = [link.label_id for link in label_links]
-            labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
-            issue._labels = labels
-        else:
-            issue._labels = []
-
-        # Load project
-        project = await OxydeProject.objects.get_or_none(id=issue.project_id)
-        issue._project = project
-
-        return issue
-
-    async def _batch_load_labels(self, issues: list[OxydeIssue]) -> list[OxydeIssue]:
-        """Batch-load labels for multiple issues (creators loaded via join)."""
-        if not issues:
-            return issues
-
-        issue_ids = [i.id for i in issues]
-        label_links = await OxydeIssueLabel.objects.filter(issue_id__in=issue_ids).all()
-
-        issue_label_ids: dict[str, list[str]] = {}
-        all_label_ids = set()
-        for link in label_links:
-            issue_label_ids.setdefault(link.issue_id, []).append(link.label_id)
-            all_label_ids.add(link.label_id)
-
-        if all_label_ids:
-            labels = await OxydeLabel.objects.filter(id__in=list(all_label_ids)).all()
-            label_map = {l.id: l for l in labels}
-        else:
-            label_map = {}
-
-        for issue in issues:
-            lid_list = issue_label_ids.get(issue.id, [])
-            issue._labels = [label_map[lid] for lid in lid_list if lid in label_map]
-
-        return issues
 
     async def _check_sprint_limbo(self, project_id: str) -> None:
         """Check if project has a sprint in limbo and raise error if so."""
@@ -419,10 +375,7 @@ class IssueService:
 
     async def get_by_id(self, issue_id: str) -> OxydeIssue | None:
         """Get issue by ID."""
-        issue = await OxydeIssue.objects.filter(id=issue_id).join("creator").first()
-        if issue:
-            await self._load_issue_relations(issue)
-        return issue
+        return await OxydeIssue.objects.filter(id=issue_id).join("creator").prefetch("labels").first()
 
     async def get_by_identifier(self, identifier: str, team_id: str | None = None) -> OxydeIssue | None:
         """Get issue by identifier (e.g., PRJ-123)."""
@@ -437,12 +390,9 @@ class IssueService:
                 return None
             return await self.get_by_id(rows[0]["id"])
         else:
-            issue = await OxydeIssue.objects.filter(
+            return await OxydeIssue.objects.filter(
                 identifier=identifier.upper(),
-            ).join("creator").first()
-            if issue:
-                await self._load_issue_relations(issue)
-            return issue
+            ).join("creator").prefetch("labels").first()
 
     async def update(
         self, issue, issue_in: IssueUpdate, user_id: str | None = None, is_human_request: bool = True
@@ -574,18 +524,7 @@ class IssueService:
         activity_ids = [r["id"] for r in rows]
         activities = await OxydeIssueActivity.objects.filter(
             id__in=activity_ids,
-        ).join("user").order_by("-created_at").all()
-
-        # Batch load issue data for activities
-        issue_ids = list({a.issue_id for a in activities})
-        if issue_ids:
-            issues = await OxydeIssue.objects.filter(id__in=issue_ids).all()
-            issue_map = {i.id: i for i in issues}
-            for a in activities:
-                a._issue = issue_map.get(a.issue_id)
-        else:
-            for a in activities:
-                a._issue = None
+        ).join("user", "issue").order_by("-created_at").all()
 
         return activities
 
@@ -707,11 +646,11 @@ class IssueService:
         if not rows:
             return []
 
-        # Fetch full issue objects with creator
+        # Fetch full issue objects with creator and labels
         issue_ids = [r["id"] for r in rows]
         issues = await OxydeIssue.objects.filter(
             id__in=issue_ids,
-        ).join("creator").all()
+        ).join("creator").prefetch("labels").all()
 
         # Preserve sort order from SQL
         id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
@@ -720,7 +659,7 @@ class IssueService:
         if needs_shuffle:
             random.shuffle(issues)
 
-        return await self._batch_load_labels(issues)
+        return issues
 
     async def list_by_project(
         self,
@@ -776,14 +715,14 @@ class IssueService:
             return []
 
         issue_ids = [r["id"] for r in rows]
-        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").all()
+        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").prefetch("labels").all()
         id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
         issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         if needs_shuffle:
             random.shuffle(issues)
 
-        return await self._batch_load_labels(issues)
+        return issues
 
     async def list_by_assignee(
         self, user_id: str, skip: int = 0, limit: int = 100,
@@ -836,14 +775,14 @@ class IssueService:
             return []
 
         issue_ids = [r["id"] for r in rows]
-        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").all()
+        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").prefetch("labels").all()
         id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
         issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         if needs_shuffle:
             random.shuffle(issues)
 
-        return await self._batch_load_labels(issues)
+        return issues
 
     async def list_by_team(
         self,
@@ -897,10 +836,10 @@ class IssueService:
             return []
 
         issue_ids = [r["id"] for r in rows]
-        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").all()
+        issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").prefetch("labels").all()
         id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
         issues.sort(key=lambda i: id_order.get(i.id, 0))
-        return await self._batch_load_labels(issues)
+        return issues
 
     # Comment operations
     async def create_comment(
@@ -921,10 +860,7 @@ class IssueService:
                 new_value=comment_in.content,
             )
         await comment.refresh()
-        # Load author
-        author = await OxydeUser.objects.get_or_none(id=comment.author_id)
-        comment.__dict__["author"] = author
-        return comment
+        return await self.get_comment_by_id(comment.id)
 
     async def get_comment_by_id(self, comment_id: str) -> OxydeIssueComment | None:
         """Get comment by ID."""
@@ -958,10 +894,9 @@ class IssueService:
         self, parent_id: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeIssue]:
         """List sub-issues for an issue."""
-        issues = await OxydeIssue.objects.filter(
+        return await OxydeIssue.objects.filter(
             parent_id=parent_id,
-        ).join("creator").order_by("created_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(issues)
+        ).join("creator").prefetch("labels").order_by("created_at").offset(skip).limit(limit).all()
 
     # Label operations
     async def create_label(self, label_in: LabelCreate, team_id: str) -> OxydeLabel:
@@ -1260,5 +1195,4 @@ class IssueService:
                             )
 
         # Reload all issues
-        reloaded = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").all()
-        return await self._batch_load_labels(reloaded)
+        return await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").prefetch("labels").all()
