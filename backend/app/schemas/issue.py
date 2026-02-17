@@ -159,6 +159,11 @@ class IssueActivityResponse(BaseModel):
     sprint_name: str | None = None  # For moved_to_sprint activities
     created_at: DateTimeUTC
 
+    @field_validator("activity_type", mode="before")
+    @classmethod
+    def coerce_activity_type(cls, v):
+        return _coerce_enum(ActivityType, v)
+
     model_config = ConfigDict(from_attributes=True)
 
 

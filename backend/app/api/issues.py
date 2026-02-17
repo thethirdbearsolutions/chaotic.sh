@@ -34,6 +34,23 @@ from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.models.document import DocumentActivityType
+
+
+def _activity_type_value(raw, enum_cls):
+    """Convert a raw activity_type (possibly .name) to the .value string."""
+    if isinstance(raw, str):
+        # Already a .value?
+        if raw in {e.value for e in enum_cls}:
+            return raw
+        # Try as .name
+        try:
+            return enum_cls[raw].value
+        except KeyError:
+            logger.warning("Unknown %s activity_type: %r", enum_cls.__name__, raw)
+    elif hasattr(raw, 'value'):
+        return raw.value
+    return raw
 from app.services.issue_service import Issue
 from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event, broadcast_relation_event
 
@@ -512,10 +529,10 @@ async def list_team_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
-    moved_to_sprint_val = ActivityType.MOVED_TO_SPRINT.name
-    removed_from_sprint_val = ActivityType.REMOVED_FROM_SPRINT.name
+    moved_to_sprint_val = ActivityType.MOVED_TO_SPRINT.value
+    removed_from_sprint_val = ActivityType.REMOVED_FROM_SPRINT.value
     for a in issue_activities:
-        act_type = a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name
+        act_type = _activity_type_value(a.activity_type, ActivityType)
         if act_type == moved_to_sprint_val and a.new_value:
             sprint_ids.add(a.new_value)
         elif act_type == removed_from_sprint_val and a.old_value:
@@ -528,7 +545,7 @@ async def list_team_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        act_type = activity.activity_type if isinstance(activity.activity_type, str) else activity.activity_type.name
+        act_type = _activity_type_value(activity.activity_type, ActivityType)
         if act_type == moved_to_sprint_val:
             return sprint_names.get(activity.new_value)
         elif act_type == removed_from_sprint_val:
@@ -545,7 +562,7 @@ async def list_team_activities(
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
+            activity_type=_activity_type_value(a.activity_type, ActivityType),
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
@@ -564,7 +581,7 @@ async def list_team_activities(
             user_id=a.user_id,
             user_name=a.user and a.user.name,
             user_email=a.user and a.user.email,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
+            activity_type=_activity_type_value(a.activity_type, DocumentActivityType),
             created_at=ensure_utc(a.created_at),
         )
         for a in doc_activities
@@ -877,10 +894,10 @@ async def list_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
-    moved_val = ActivityType.MOVED_TO_SPRINT.name
-    removed_val = ActivityType.REMOVED_FROM_SPRINT.name
+    moved_val = ActivityType.MOVED_TO_SPRINT.value
+    removed_val = ActivityType.REMOVED_FROM_SPRINT.value
     for a in activities:
-        act_type = a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name
+        act_type = _activity_type_value(a.activity_type, ActivityType)
         if act_type == moved_val and a.new_value:
             sprint_ids.add(a.new_value)
         elif act_type == removed_val and a.old_value:
@@ -893,7 +910,7 @@ async def list_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        act_type = activity.activity_type if isinstance(activity.activity_type, str) else activity.activity_type.name
+        act_type = _activity_type_value(activity.activity_type, ActivityType)
         if act_type == moved_val:
             return sprint_names.get(activity.new_value)
         elif act_type == removed_val:
@@ -907,7 +924,7 @@ async def list_activities(
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.name,
+            activity_type=_activity_type_value(a.activity_type, ActivityType),
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
