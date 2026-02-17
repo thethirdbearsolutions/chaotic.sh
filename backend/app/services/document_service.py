@@ -181,7 +181,7 @@ class DocumentService:
         """Get issues linked to a document.
 
         Returns raw dicts from the issues table with creator/labels loaded.
-        This stays as raw SQL since Issue is not yet ported to Oxyde.
+        Uses raw SQL to avoid circular import with issue_service.
         """
         # Get linked issue IDs
         links = await OxydeDocumentIssue.objects.filter(document_id=document_id).all()

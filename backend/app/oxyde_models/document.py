@@ -21,7 +21,7 @@ class OxydeDocument(OxydeModel):
     icon: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    labels: list["OxydeLabel"] = Field(default=[], db_m2m=True, db_through="OxydeDocumentLabel")
+    labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeDocumentLabel")
 
     class Meta:
         is_table = True
