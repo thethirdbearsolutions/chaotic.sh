@@ -497,6 +497,7 @@ class IssueService:
                     })
 
         # Check if status change requires limbo/arrears/ticket ritual checks
+        needs_budget_deduction = False
         if "status" in update_data:
             new_status = update_data["status"]
             old_status = issue.status
@@ -522,7 +523,7 @@ class IssueService:
 
             if new_status == IssueStatus.DONE.value and old_status != IssueStatus.DONE.value:
                 update_data["completed_at"] = datetime.now(timezone.utc)
-                await self._deduct_from_sprint_budget(issue, user_id)
+                needs_budget_deduction = True
             elif old_status == IssueStatus.DONE.value and new_status != IssueStatus.DONE.value:
                 update_data["completed_at"] = None
 
@@ -545,6 +546,10 @@ class IssueService:
             # Add activity records
             for act_data in activities:
                 await OxydeIssueActivity.objects.create(**act_data)
+
+            # Deduct from sprint budget inside transaction (CHT-974 review fix)
+            if needs_budget_deduction:
+                await self._deduct_from_sprint_budget(issue, user_id)
 
         # Reload with relations
         return await self.get_by_id(issue.id)
@@ -1077,19 +1082,20 @@ class IssueService:
             existing_pairs.add(frozenset((row["issue_id"], row["related_issue_id"])))
 
         created = []
-        for identifier in identifiers:
-            target_id = targets.get(identifier)
-            if not target_id:
-                continue
-            if frozenset((issue_id, target_id)) in existing_pairs:
-                continue
+        async with atomic():
+            for identifier in identifiers:
+                target_id = targets.get(identifier)
+                if not target_id:
+                    continue
+                if frozenset((issue_id, target_id)) in existing_pairs:
+                    continue
 
-            relation = await OxydeIssueRelation.objects.create(
-                issue_id=issue_id,
-                related_issue_id=target_id,
-                relation_type=IssueRelationType.RELATES_TO.value,
-            )
-            created.append(relation)
+                relation = await OxydeIssueRelation.objects.create(
+                    issue_id=issue_id,
+                    related_issue_id=target_id,
+                    relation_type=IssueRelationType.RELATES_TO.value,
+                )
+                created.append(relation)
 
         return created
 

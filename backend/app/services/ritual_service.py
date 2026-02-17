@@ -514,11 +514,14 @@ class RitualService:
             if field == "estimate":
                 actual_value = issue.estimate
             elif field == "priority":
-                actual_value = issue.priority.value if issue.priority else None
+                pval = issue.priority
+                actual_value = (pval.value if hasattr(pval, 'value') else pval) if pval else None
             elif field == "issue_type":
-                actual_value = issue.issue_type.value if issue.issue_type else None
+                tval = issue.issue_type
+                actual_value = (tval.value if hasattr(tval, 'value') else tval) if tval else None
             elif field == "status":
-                actual_value = issue.status.value if issue.status else None
+                sval = issue.status
+                actual_value = (sval.value if hasattr(sval, 'value') else sval) if sval else None
             elif field == "labels":
                 actual_value = label_names
             else:
@@ -788,18 +791,19 @@ class RitualService:
             )
 
         # Validate issue status is appropriate for this ritual type
+        issue_status_str = issue.status.value if hasattr(issue.status, 'value') else issue.status
         if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue.status in (IssueStatus.DONE, IssueStatus.CANCELED):
+            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
                 raise ValueError(
                     f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue.status.value}. "
+                    f"issue is already {issue_status_str}. "
                     "TICKET_CLOSE rituals are for issues being closed, not already closed."
                 )
         elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue.status not in (IssueStatus.BACKLOG, IssueStatus.TODO):
+            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
                 raise ValueError(
                     f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue.status.value}. "
+                    f"issue is {issue_status_str}. "
                     "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
                 )
 
@@ -891,18 +895,19 @@ class RitualService:
             )
 
         # Validate issue status is appropriate for this ritual type
+        issue_status_str = issue.status.value if hasattr(issue.status, 'value') else issue.status
         if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue.status in (IssueStatus.DONE, IssueStatus.CANCELED):
+            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
                 raise ValueError(
                     f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue.status.value}. "
+                    f"issue is already {issue_status_str}. "
                     "TICKET_CLOSE rituals are for issues being closed, not already closed."
                 )
         elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue.status not in (IssueStatus.BACKLOG, IssueStatus.TODO):
+            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
                 raise ValueError(
                     f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue.status.value}. "
+                    f"issue is {issue_status_str}. "
                     "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
                 )
 
@@ -1236,7 +1241,7 @@ class RitualService:
                     "issue_id": issue.id,
                     "identifier": issue.identifier,
                     "title": issue.title,
-                    "status": issue.status.value,
+                    "status": issue.status.value if hasattr(issue.status, 'value') else issue.status,
                     "project_id": project_id,
                     "project_name": project.name,
                     "pending_gates": [],
@@ -1309,7 +1314,7 @@ class RitualService:
                     "issue_id": issue.id,
                     "identifier": issue.identifier,
                     "title": issue.title,
-                    "status": issue.status.value,
+                    "status": issue.status.value if hasattr(issue.status, 'value') else issue.status,
                     "project_id": project_id,
                     "project_name": project.name,
                     list_key: [],
