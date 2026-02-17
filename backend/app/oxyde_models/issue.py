@@ -77,7 +77,7 @@ class OxydeIssueActivity(OxydeModel):
     """Activity log for issues."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    issue: "OxydeIssue" | None = Field(default=None, db_on_delete="CASCADE")
+    issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     activity_type: str = Field()
     field_name: str | None = Field(default=None)
