@@ -43,6 +43,7 @@
 - **EVERY PR must have a subagent code review before merge**
 - Spawn an oppositional review agent to look for issues
 - The review should check: security, edge cases, error handling, test coverage
+- **Post the full review as a PR comment FIRST**, before responding with fixes
 - Address or ticket every issue found - fix, ticket, or pushback with explanation
 - Don't merge until review is complete and all issues addressed
 
