@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from app.oxyde_models.user import OxydeUser
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.security import get_password_hash, verify_password
+from oxyde import atomic
+from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
+from app.oxyde_models.api_key import OxydeAPIKey
 
 # Type alias: callers still see "User" but it's now an Oxyde model
 User = OxydeUser
@@ -58,10 +61,6 @@ class UserService:
 
     async def delete(self, user: OxydeUser) -> None:
         """Delete a user and cascade to child records."""
-        from oxyde import atomic
-        from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
-        from app.oxyde_models.api_key import OxydeAPIKey
-
         async with atomic():
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()
             await OxydeTeamInvitation.objects.filter(email=user.email).delete()

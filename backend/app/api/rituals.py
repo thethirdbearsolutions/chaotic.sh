@@ -23,7 +23,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.models.ritual import ApprovalMode
+from app.models.ritual import ApprovalMode, RitualTrigger
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
@@ -187,7 +187,7 @@ async def get_limbo_status(
 
     # Get completed rituals with attestation details
     all_rituals = await ritual_service.list_by_project(project_id)
-    from app.models.ritual import RitualTrigger
+
     sprint_rituals = [r for r in all_rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
     pending_ids = {r.id for r in pending}
     completed_rituals = [r for r in sprint_rituals if r.id not in pending_ids]
@@ -403,7 +403,7 @@ async def get_pending_ticket_rituals(
 
     # Get completed rituals (attested and approved for this issue)
     all_rituals = await ritual_service.list_by_project(issue.project_id)
-    from app.models.ritual import RitualTrigger
+
     # Include both TICKET_CLOSE and TICKET_CLAIM rituals
     ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     ticket_rituals = [r for r in all_rituals if r.trigger in ticket_triggers]
@@ -487,7 +487,7 @@ async def attest_ritual_for_issue(
         )
 
     # Check ritual is a ticket-level type (TICKET_CLOSE or TICKET_CLAIM)
-    from app.models.ritual import RitualTrigger
+
     ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
@@ -586,7 +586,7 @@ async def complete_gate_ritual_for_issue(
         )
 
     # Check ritual is a ticket-level type (TICKET_CLOSE or TICKET_CLAIM)
-    from app.models.ritual import RitualTrigger
+
     ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
@@ -687,7 +687,7 @@ async def approve_issue_attestation(
         )
 
     # Check ritual is a ticket-level type (TICKET_CLOSE or TICKET_CLAIM)
-    from app.models.ritual import RitualTrigger
+
     ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
@@ -1087,7 +1087,7 @@ async def attest_ritual(
         )
 
     # Check ritual is a sprint-level type (EVERY_SPRINT)
-    from app.models.ritual import RitualTrigger
+
     if ritual.trigger != RitualTrigger.EVERY_SPRINT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1251,7 +1251,7 @@ async def complete_gate_ritual(
         )
 
     # Check ritual is a sprint-level type (EVERY_SPRINT)
-    from app.models.ritual import RitualTrigger
+
     if ritual.trigger != RitualTrigger.EVERY_SPRINT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -21,6 +21,9 @@ from app.models.sprint import Sprint, SprintStatus
 from app.models.issue import Issue, IssueStatus, IssueActivity, ActivityType
 from app.models.ticket_limbo import TicketLimbo, LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
+from app.services.sprint_service import SprintService
+from app.oxyde_models.sprint import OxydeSprint
+from app.models.project import Project
 
 
 class RitualService:
@@ -1138,9 +1141,6 @@ class RitualService:
 
     async def _maybe_clear_limbo(self, sprint_id: str) -> None:
         """Clear limbo if all rituals are complete."""
-        from app.services.sprint_service import SprintService
-        from app.oxyde_models.sprint import OxydeSprint
-
         sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
         if not sprint or not sprint.limbo:
             return
@@ -1153,8 +1153,6 @@ class RitualService:
 
     async def maybe_clear_limbo_for_project(self, project_id: str) -> None:
         """Check if project's limbo should be cleared (e.g., after ritual deletion)."""
-        from app.oxyde_models.sprint import OxydeSprint
-
         limbo_sprint = await OxydeSprint.objects.filter(
             project_id=project_id, limbo=True,
         ).first()
@@ -1166,8 +1164,6 @@ class RitualService:
 
         Returns: (in_limbo, sprint, pending_rituals)
         """
-        from app.oxyde_models.sprint import OxydeSprint
-
         limbo_sprint = await OxydeSprint.objects.filter(
             project_id=project_id, limbo=True,
         ).first()
@@ -1212,8 +1208,6 @@ class RitualService:
             - pending_gates: list of {ritual_id, ritual_name, ritual_prompt, trigger,
                                       requested_by_name, requested_at}
         """
-        from app.models.project import Project
-
         project = await self.db.get(Project, project_id)
         if not project:
             return []
@@ -1292,8 +1286,6 @@ class RitualService:
                                           approval_mode, limbo_type, requested_by_name,
                                           requested_at, attestation_note}
         """
-        from app.models.project import Project
-
         project = await self.db.get(Project, project_id)
         if not project:
             return []

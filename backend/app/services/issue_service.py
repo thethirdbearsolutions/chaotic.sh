@@ -24,7 +24,8 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.models.project import UnestimatedHandling
 from app.models.ticket_limbo import LimboType
-from app.models.ritual import ApprovalMode
+from app.models.ritual import ApprovalMode, RitualTrigger
+from app.services.ritual_service import RitualService
 from app.schemas.issue import (
     IssueCreate,
     IssueUpdate,
@@ -178,8 +179,6 @@ class IssueService:
 
     async def _check_sprint_limbo(self, project_id: str) -> None:
         """Check if project has a sprint in limbo and raise error if so."""
-        from app.services.ritual_service import RitualService
-
         limbo_sprint = await OxydeSprint.objects.filter(
             project_id=project_id, limbo=True,
         ).first()
@@ -206,8 +205,6 @@ class IssueService:
         self, issue, user_id: str, is_human_request: bool = False
     ) -> None:
         """Check if ticket has pending rituals and raise error if so."""
-        from app.services.ritual_service import RitualService
-
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
@@ -232,8 +229,6 @@ class IssueService:
         self, issue, user_id: str, is_human_request: bool = False
     ) -> None:
         """Check if ticket has pending claim rituals and raise error if so."""
-        from app.services.ritual_service import RitualService
-
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
@@ -344,8 +339,6 @@ class IssueService:
                         "Estimate is required before claiming issues in this project"
                     )
             if not is_human_request:
-                from app.services.ritual_service import RitualService
-                from app.models.ritual import RitualTrigger
                 ritual_service = RitualService(self.db)
                 rituals = await ritual_service.list_by_project(project_id)
                 claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
@@ -354,8 +347,6 @@ class IssueService:
                     raise ClaimRitualsError("NEW", pending_info)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
-            from app.services.ritual_service import RitualService
-            from app.models.ritual import RitualTrigger
             ritual_service = RitualService(self.db)
             rituals = await ritual_service.list_by_project(project_id)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
