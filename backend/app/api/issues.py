@@ -33,8 +33,8 @@ from app.services.issue_service import (
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
 from app.services.team_service import TeamService
-from app.models.issue import Issue, IssueStatus, IssuePriority, IssueType, ActivityType
-from app.models.user import User
+from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.services.issue_service import Issue
 from app.websocket import broadcast_issue_event, broadcast_comment_event, broadcast_activity_event, broadcast_relation_event
 
 router = APIRouter()
@@ -44,9 +44,8 @@ async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
     """Validate that assignee exists and belongs to the project's team (CHT-293)."""
     if not assignee_id:
         return
-    from sqlalchemy import select
-    result = await db.execute(select(User).where(User.id == assignee_id))
-    user = result.scalar_one_or_none()
+    from app.oxyde_models.user import OxydeUser
+    user = await OxydeUser.objects.get_or_none(id=assignee_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -91,10 +90,8 @@ async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
     """Validate that all labels exist and belong to the team (CHT-296)."""
     if not label_ids:
         return
-    from sqlalchemy import select
-    from app.models.issue import Label
-    result = await db.execute(select(Label).where(Label.id.in_(label_ids)))
-    labels = list(result.scalars().all())
+    from app.oxyde_models.label import OxydeLabel
+    labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
     if len(labels) != len(label_ids):
         found = {l.id for l in labels}
         missing = set(label_ids) - found
@@ -155,7 +152,7 @@ def issue_to_response(issue: Issue) -> IssueResponse:
         completed_at=ensure_utc(issue.completed_at),
         created_at=ensure_utc(issue.created_at),
         updated_at=ensure_utc(issue.updated_at),
-        labels=[LabelResponse.model_validate(label) for label in issue.labels] if issue.labels else [],
+        labels=[LabelResponse.model_validate(label) for label in getattr(issue, '_labels', [])] if getattr(issue, '_labels', []) else [],
     )
 
 
@@ -417,23 +414,16 @@ async def batch_update_issues(
     Does NOT support status, assignee, or sprint changes, which require
     per-issue validation. Use the single-issue PATCH endpoint for those.
     """
-    from sqlalchemy import select as sa_select
-    from sqlalchemy.orm import selectinload
-    from app.models.issue import Issue as IssueModel
-    from app.models.project import Project as ProjectModel
+    from app.oxyde_models.project import OxydeProject
 
     issue_service = IssueService(db)
 
     # Deduplicate issue IDs
     unique_ids = list(dict.fromkeys(batch_in.issue_ids))
 
-    # Bulk fetch all issues in one query
-    result = await db.execute(
-        sa_select(IssueModel)
-        .options(selectinload(IssueModel.labels), selectinload(IssueModel.creator))
-        .where(IssueModel.id.in_(unique_ids))
-    )
-    issues = {iss.id: iss for iss in result.scalars().all()}
+    # Bulk fetch all issues
+    issue_list = await Issue.objects.filter(id__in=unique_ids).join("creator").all()
+    issues = {iss.id: iss for iss in issue_list}
 
     if len(issues) != len(unique_ids):
         missing = set(unique_ids) - set(issues.keys())
@@ -442,12 +432,10 @@ async def batch_update_issues(
             detail=f"Issues not found: {missing}",
         )
 
-    # Bulk fetch all referenced projects in one query
-    project_ids = {iss.project_id for iss in issues.values()}
-    result = await db.execute(
-        sa_select(ProjectModel).where(ProjectModel.id.in_(project_ids))
-    )
-    projects = {p.id: p for p in result.scalars().all()}
+    # Bulk fetch all referenced projects
+    project_ids = list({iss.project_id for iss in issues.values()})
+    project_list = await OxydeProject.objects.filter(id__in=project_ids).all()
+    projects = {p.id: p for p in project_list}
 
     # All issues must belong to the same team for label validation
     team_ids = {p.team_id for p in projects.values()}
@@ -524,10 +512,13 @@ async def list_team_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
+    moved_to_sprint_val = ActivityType.MOVED_TO_SPRINT.value
+    removed_from_sprint_val = ActivityType.REMOVED_FROM_SPRINT.value
     for a in issue_activities:
-        if a.activity_type == ActivityType.MOVED_TO_SPRINT and a.new_value:
+        act_type = a.activity_type.value if hasattr(a.activity_type, 'value') else a.activity_type
+        if act_type == moved_to_sprint_val and a.new_value:
             sprint_ids.add(a.new_value)
-        elif a.activity_type == ActivityType.REMOVED_FROM_SPRINT and a.old_value:
+        elif act_type == removed_from_sprint_val and a.old_value:
             sprint_ids.add(a.old_value)
     sprint_names = {}
     for sprint_id in sprint_ids:
@@ -537,9 +528,10 @@ async def list_team_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        if activity.activity_type == ActivityType.MOVED_TO_SPRINT:
+        act_type = activity.activity_type.value if hasattr(activity.activity_type, 'value') else activity.activity_type
+        if act_type == moved_to_sprint_val:
             return sprint_names.get(activity.new_value)
-        elif activity.activity_type == ActivityType.REMOVED_FROM_SPRINT:
+        elif act_type == removed_from_sprint_val:
             return sprint_names.get(activity.old_value)
         return None
 
@@ -548,12 +540,12 @@ async def list_team_activities(
         IssueActivityFeedResponse(
             id=a.id,
             issue_id=a.issue_id,
-            issue_identifier=a.issue.identifier if a.issue else None,
-            issue_title=a.issue.title if a.issue else None,
+            issue_identifier=getattr(a, '_issue', None) and a._issue.identifier,
+            issue_title=getattr(a, '_issue', None) and a._issue.title,
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type.value,  # Convert enum to string
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
@@ -885,10 +877,13 @@ async def list_activities(
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()
+    moved_val = ActivityType.MOVED_TO_SPRINT.value
+    removed_val = ActivityType.REMOVED_FROM_SPRINT.value
     for a in activities:
-        if a.activity_type == ActivityType.MOVED_TO_SPRINT and a.new_value:
+        act_type = a.activity_type.value if hasattr(a.activity_type, 'value') else a.activity_type
+        if act_type == moved_val and a.new_value:
             sprint_ids.add(a.new_value)
-        elif a.activity_type == ActivityType.REMOVED_FROM_SPRINT and a.old_value:
+        elif act_type == removed_val and a.old_value:
             sprint_ids.add(a.old_value)
     sprint_names = {}
     for sprint_id in sprint_ids:
@@ -898,9 +893,10 @@ async def list_activities(
 
     def get_sprint_name(activity):
         """Get sprint name for sprint-related activities."""
-        if activity.activity_type == ActivityType.MOVED_TO_SPRINT:
+        act_type = activity.activity_type.value if hasattr(activity.activity_type, 'value') else activity.activity_type
+        if act_type == moved_val:
             return sprint_names.get(activity.new_value)
-        elif activity.activity_type == ActivityType.REMOVED_FROM_SPRINT:
+        elif act_type == removed_val:
             return sprint_names.get(activity.old_value)
         return None
 
@@ -911,7 +907,7 @@ async def list_activities(
             user_id=a.user_id,
             user_name=a.user.name if a.user else None,
             user_email=a.user.email if a.user else None,
-            activity_type=a.activity_type,
+            activity_type=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
             field_name=a.field_name,
             old_value=a.old_value,
             new_value=a.new_value,
@@ -1219,7 +1215,7 @@ async def create_relation(
         "id": relation.id,
         "issue_id": relation.issue_id,
         "related_issue_id": relation.related_issue_id,
-        "relation_type": relation.relation_type.value,
+        "relation_type": relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.value,
         "created_at": relation.created_at,
     }
 

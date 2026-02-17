@@ -12,6 +12,15 @@ from app.oxyde_models.document import (
     OxydeDocumentIssue,
     OxydeDocumentLabel,
 )
+from app.oxyde_models.issue import (
+    OxydeIssue,
+    OxydeIssueComment,
+    OxydeIssueActivity,
+    OxydeIssueRelation,
+    OxydeIssueLabel,
+    OxydeTicketLimbo,
+    OxydeBudgetTransaction,
+)
 
 __all__ = [
     "OxydeUser",
@@ -27,4 +36,11 @@ __all__ = [
     "OxydeDocumentActivity",
     "OxydeDocumentIssue",
     "OxydeDocumentLabel",
+    "OxydeIssue",
+    "OxydeIssueComment",
+    "OxydeIssueActivity",
+    "OxydeIssueRelation",
+    "OxydeIssueLabel",
+    "OxydeTicketLimbo",
+    "OxydeBudgetTransaction",
 ]
