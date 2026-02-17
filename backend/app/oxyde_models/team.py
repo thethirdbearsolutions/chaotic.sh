@@ -27,7 +27,7 @@ class OxydeTeamMember(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    role: str = Field(default="member")
+    role: str = Field(default="MEMBER")
     joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
@@ -41,10 +41,10 @@ class OxydeTeamInvitation(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
     email: str = Field(db_index=True)
-    role: str = Field(default="member")
+    role: str = Field(default="MEMBER")
     token: str = Field(db_unique=True, db_index=True)
     invited_by: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    status: str = Field(default="pending")
+    status: str = Field(default="PENDING")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field()
 

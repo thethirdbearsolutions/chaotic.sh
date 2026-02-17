@@ -17,9 +17,9 @@ class OxydeIssue(OxydeModel):
     number: int = Field()
     title: str = Field()
     description: str | None = Field(default=None)
-    status: str = Field(default="backlog")
-    priority: str = Field(default="no_priority")
-    issue_type: str = Field(default="task")
+    status: str = Field(default="BACKLOG")
+    priority: str = Field(default="NO_PRIORITY")
+    issue_type: str = Field(default="TASK")
     estimate: int | None = Field(default=None)
     assignee_id: str | None = Field(default=None)
     creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
@@ -73,7 +73,7 @@ class OxydeIssueRelation(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
     related_issue_id: str = Field()
-    relation_type: str = Field(default="relates_to")
+    relation_type: str = Field(default="RELATES_TO")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:

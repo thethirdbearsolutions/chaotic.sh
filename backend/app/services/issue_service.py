@@ -9,9 +9,6 @@ from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
 
 
-def _enum_name(val):
-    """Convert enum to its name (matching SQLAlchemy's default storage)."""
-    return val.name if isinstance(val, Enum) else val
 from app.oxyde_models.issue import (
     OxydeIssue,
     OxydeIssueComment,
@@ -37,6 +34,11 @@ from app.schemas.issue import (
     LabelUpdate,
     IssueRelationCreate,
 )
+
+def _enum_name(val):
+    """Convert enum to its name (matching SQLAlchemy's default storage)."""
+    return val.name if isinstance(val, Enum) else val
+
 
 # Type aliases for API compatibility
 Issue = OxydeIssue
