@@ -1139,11 +1139,9 @@ class RitualService:
     async def _maybe_clear_limbo(self, sprint_id: str) -> None:
         """Clear limbo if all rituals are complete."""
         from app.services.sprint_service import SprintService
+        from app.oxyde_models.sprint import OxydeSprint
 
-        result = await self.db.execute(
-            select(Sprint).where(Sprint.id == sprint_id)
-        )
-        sprint = result.scalar_one_or_none()
+        sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
         if not sprint or not sprint.limbo:
             return
 
@@ -1155,30 +1153,24 @@ class RitualService:
 
     async def maybe_clear_limbo_for_project(self, project_id: str) -> None:
         """Check if project's limbo should be cleared (e.g., after ritual deletion)."""
-        # Find limbo sprint for this project
-        result = await self.db.execute(
-            select(Sprint).where(
-                Sprint.project_id == project_id,
-                Sprint.limbo == True,
-            )
-        )
-        limbo_sprint = result.scalar_one_or_none()
+        from app.oxyde_models.sprint import OxydeSprint
+
+        limbo_sprint = await OxydeSprint.objects.filter(
+            project_id=project_id, limbo=True,
+        ).first()
         if limbo_sprint:
             await self._maybe_clear_limbo(limbo_sprint.id)
 
-    async def check_limbo(self, project_id: str) -> tuple[bool, Sprint | None, list[Ritual]]:
+    async def check_limbo(self, project_id: str) -> tuple[bool, "OxydeSprint | None", list[Ritual]]:
         """Check if project is in limbo and get pending rituals.
 
         Returns: (in_limbo, sprint, pending_rituals)
         """
-        # Get the completed sprint that might be in limbo
-        result = await self.db.execute(
-            select(Sprint).where(
-                Sprint.project_id == project_id,
-                Sprint.limbo == True,
-            )
-        )
-        limbo_sprint = result.scalar_one_or_none()
+        from app.oxyde_models.sprint import OxydeSprint
+
+        limbo_sprint = await OxydeSprint.objects.filter(
+            project_id=project_id, limbo=True,
+        ).first()
 
         if not limbo_sprint:
             return False, None, []
