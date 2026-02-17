@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.models.sprint import SprintStatus
+from app.oxyde_models.issue import _to_enum
 
 
 class OxydeSprint(OxydeModel):
@@ -13,6 +14,11 @@ class OxydeSprint(OxydeModel):
     name: str = Field()
     description: str | None = Field(default=None)
     status: str = Field(default=SprintStatus.PLANNED.name)
+
+    @property
+    def status_enum(self) -> SprintStatus:
+        return _to_enum(SprintStatus, self.status)
+
     start_date: datetime | None = Field(default=None)
     end_date: datetime | None = Field(default=None)
     budget: int | None = Field(default=None)

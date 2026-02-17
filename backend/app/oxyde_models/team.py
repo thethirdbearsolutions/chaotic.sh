@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.models.team import TeamRole, InvitationStatus
+from app.oxyde_models.issue import _to_enum
 
 
 class OxydeTeam(OxydeModel):
@@ -31,6 +32,10 @@ class OxydeTeamMember(OxydeModel):
     role: str = Field(default=TeamRole.MEMBER.name)
     joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @property
+    def role_enum(self) -> TeamRole:
+        return _to_enum(TeamRole, self.role)
+
     class Meta:
         is_table = True
         table_name = "team_members"
@@ -48,6 +53,14 @@ class OxydeTeamInvitation(OxydeModel):
     status: str = Field(default=InvitationStatus.PENDING.name)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field()
+
+    @property
+    def role_enum(self) -> TeamRole:
+        return _to_enum(TeamRole, self.role)
+
+    @property
+    def status_enum(self) -> InvitationStatus:
+        return _to_enum(InvitationStatus, self.status)
 
     class Meta:
         is_table = True

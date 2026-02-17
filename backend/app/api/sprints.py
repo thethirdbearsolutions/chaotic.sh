@@ -150,8 +150,7 @@ async def close_sprint(sprint_id: str, db: DbSession, current_user: CurrentUser)
             detail="Not a member of this team",
         )
 
-    # Oxyde stores enum names (e.g. "ACTIVE"); compare with .name
-    if sprint.status != SprintStatus.ACTIVE.name:
+    if sprint.status_enum != SprintStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Can only close an active sprint",

@@ -2,17 +2,12 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
-from enum import Enum
 from oxyde import atomic, execute_raw
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
 from app.models.sprint import SprintStatus
 from app.models.issue import IssueStatus
 from app.schemas.sprint import SprintCreate, SprintUpdate
-
-def _enum_name(val):
-    """Convert enum to its name (matching SQLAlchemy's default storage)."""
-    return val.name if isinstance(val, Enum) else val
 
 # Type alias for API compatibility
 Sprint = OxydeSprint
@@ -115,7 +110,7 @@ class SprintService:
         3. Next sprint becomes ACTIVE (new Current)
         4. Creates a new Next sprint
         """
-        if sprint.status != SprintStatus.ACTIVE.name:
+        if sprint.status_enum != SprintStatus.ACTIVE:
             raise ValueError("Can only close an active sprint")
 
         if sprint.limbo:
@@ -226,7 +221,8 @@ class SprintService:
         """Update a sprint."""
         update_data = sprint_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            value = _enum_name(value)
+            if field == "status":
+                value = value.name
             setattr(sprint, field, value)
         await sprint.save(update_fields=set(update_data.keys()))
         await sprint.refresh()
@@ -251,7 +247,7 @@ class SprintService:
 
     async def enter_limbo(self, sprint: OxydeSprint) -> OxydeSprint:
         """Put sprint into limbo state (pending rituals)."""
-        if sprint.status != SprintStatus.ACTIVE.name:
+        if sprint.status_enum != SprintStatus.ACTIVE:
             raise ValueError("Can only put an active sprint into limbo")
         sprint.limbo = True
         await sprint.save(update_fields={"limbo"})

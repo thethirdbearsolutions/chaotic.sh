@@ -6,7 +6,15 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
-from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType
+from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
+
+
+def _to_enum(enum_cls, raw: str):
+    """Convert a raw DB string to an enum member, with a clear error on bad data."""
+    try:
+        return enum_cls[raw]
+    except KeyError:
+        raise ValueError(f"Invalid {enum_cls.__name__} in DB: {raw!r}")
 
 
 class OxydeIssue(OxydeModel):
@@ -30,6 +38,18 @@ class OxydeIssue(OxydeModel):
     completed_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def status_enum(self) -> IssueStatus:
+        return _to_enum(IssueStatus, self.status)
+
+    @property
+    def priority_enum(self) -> IssuePriority:
+        return _to_enum(IssuePriority, self.priority)
+
+    @property
+    def issue_type_enum(self) -> IssueType:
+        return _to_enum(IssueType, self.issue_type)
 
     class Meta:
         is_table = True
@@ -63,6 +83,10 @@ class OxydeIssueActivity(OxydeModel):
     new_value: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @property
+    def activity_type_enum(self) -> ActivityType:
+        return _to_enum(ActivityType, self.activity_type)
+
     class Meta:
         is_table = True
         table_name = "issue_activities"
@@ -76,6 +100,10 @@ class OxydeIssueRelation(OxydeModel):
     related_issue_id: str = Field()
     relation_type: str = Field(default=IssueRelationType.RELATES_TO.name)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def relation_type_enum(self) -> IssueRelationType:
+        return _to_enum(IssueRelationType, self.relation_type)
 
     class Meta:
         is_table = True

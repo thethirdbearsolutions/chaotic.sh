@@ -4,7 +4,6 @@ Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 """
 import re
 import random
-from enum import Enum
 from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
 
@@ -23,6 +22,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.models.project import UnestimatedHandling
 from app.models.ticket_limbo import LimboType
 from app.models.ritual import ApprovalMode
 from app.schemas.issue import (
@@ -34,10 +34,6 @@ from app.schemas.issue import (
     LabelUpdate,
     IssueRelationCreate,
 )
-
-def _enum_name(val):
-    """Convert enum to its name (matching SQLAlchemy's default storage)."""
-    return val.name if isinstance(val, Enum) else val
 
 
 # Type aliases for API compatibility
@@ -272,7 +268,7 @@ class IssueService:
 
         if issue.estimate is not None:
             points = issue.estimate
-        elif project.unestimated_handling == "DEFAULT_ONE_POINT":
+        elif project.unestimated_handling_enum == UnestimatedHandling.DEFAULT_ONE_POINT:
             points = 1
         else:
             raise EstimateRequiredError(
@@ -301,7 +297,7 @@ class IssueService:
         self, issue_id: str, ritual_id: str, limbo_type, user_id: str
     ):
         """Create a limbo record for a ticket blocked by a GATE ritual."""
-        limbo_type_val = _enum_name(limbo_type)
+        limbo_type_val = limbo_type.name
         try:
             limbo = await OxydeTicketLimbo.objects.create(
                 issue_id=issue_id,
@@ -337,12 +333,11 @@ class IssueService:
         project_key = project.key
 
         # Check constraints for non-default statuses (CHT-536)
-        status_val = _enum_name(issue_in.status)
-        if status_val in {IssueStatus.DONE.name, IssueStatus.CANCELED.name, IssueStatus.IN_PROGRESS.name}:
+        if issue_in.status in {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}:
             await self._check_sprint_limbo(project_id)
             await self._check_sprint_arrears(project_id)
 
-        if status_val == IssueStatus.IN_PROGRESS.name:
+        if issue_in.status == IssueStatus.IN_PROGRESS:
             if project.require_estimate_on_claim and not is_human_request:
                 if issue_in.estimate is None:
                     raise EstimateRequiredError(
@@ -358,7 +353,7 @@ class IssueService:
                     pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
                     raise ClaimRitualsError("NEW", pending_info)
 
-        if status_val == IssueStatus.DONE.name and not is_human_request:
+        if issue_in.status == IssueStatus.DONE and not is_human_request:
             from app.services.ritual_service import RitualService
             from app.models.ritual import RitualTrigger
             ritual_service = RitualService(self.db)
@@ -383,16 +378,16 @@ class IssueService:
                         number=issue_number,
                         title=issue_in.title,
                         description=issue_in.description,
-                        status=status_val,
-                        priority=_enum_name(issue_in.priority),
-                        issue_type=_enum_name(issue_in.issue_type),
+                        status=issue_in.status.name,
+                        priority=issue_in.priority.name,
+                        issue_type=issue_in.issue_type.name,
                         estimate=issue_in.estimate,
                         assignee_id=issue_in.assignee_id,
                         creator_id=creator_id,
                         sprint_id=issue_in.sprint_id,
                         parent_id=issue_in.parent_id,
                         due_date=issue_in.due_date,
-                        completed_at=datetime.now(timezone.utc) if status_val == IssueStatus.DONE.name else None,
+                        completed_at=datetime.now(timezone.utc) if issue_in.status == IssueStatus.DONE else None,
                     )
 
                     # Handle labels via junction table
@@ -415,7 +410,7 @@ class IssueService:
                     )
 
                     # Deduct from sprint budget if creating as DONE
-                    if status_val == IssueStatus.DONE.name:
+                    if issue_in.status == IssueStatus.DONE:
                         await self._deduct_from_sprint_budget(issue, creator_id)
 
                 # Reload with relations
@@ -464,19 +459,18 @@ class IssueService:
         """Update an issue and log activity."""
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids"})
 
-        # Convert enum values to strings for Oxyde
+        # Convert enum values to .name strings for DB storage
         for field in ("status", "priority", "issue_type"):
-            if field in update_data:
-                update_data[field] = _enum_name(update_data[field])
+            if field in update_data and update_data[field] is not None:
+                update_data[field] = update_data[field].name
 
         # Track changes for activity log
         activities = []
         if user_id:
             for field, new_value in update_data.items():
                 old_value = getattr(issue, field)
-                # Compare string values for enum fields
-                old_cmp = _enum_name(old_value)
-                new_cmp = _enum_name(new_value)
+                old_cmp = old_value
+                new_cmp = new_value
                 if old_cmp != new_cmp:
                     activity_type = ActivityType.UPDATED.name
                     if field == "status":
@@ -505,12 +499,12 @@ class IssueService:
 
         # Check if status change requires limbo/arrears/ticket ritual checks
         needs_budget_deduction = False
-        if "status" in update_data:
-            new_status = update_data["status"]
-            old_status = issue.status
+        if issue_in.status is not None and "status" in update_data:
+            new_status = issue_in.status
+            old_status = issue.status_enum
 
             # Check ticket-level rituals FIRST (CHT-145)
-            if new_status == IssueStatus.IN_PROGRESS.name and old_status != IssueStatus.IN_PROGRESS.name:
+            if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
                 project = await OxydeProject.objects.get_or_none(id=issue.project_id)
                 if project and project.require_estimate_on_claim and not is_human_request:
                     estimate_value = update_data.get("estimate", issue.estimate)
@@ -520,18 +514,18 @@ class IssueService:
                         )
                 await self._check_claim_rituals(issue, user_id, is_human_request)
 
-            if new_status == IssueStatus.DONE.name and old_status != IssueStatus.DONE.name:
+            if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 await self._check_ticket_rituals(issue, user_id, is_human_request)
 
-            blocked_statuses = {IssueStatus.DONE.name, IssueStatus.CANCELED.name, IssueStatus.IN_PROGRESS.name}
+            blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
             if new_status in blocked_statuses and old_status != new_status:
                 await self._check_sprint_limbo(issue.project_id)
                 await self._check_sprint_arrears(issue.project_id)
 
-            if new_status == IssueStatus.DONE.name and old_status != IssueStatus.DONE.name:
+            if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
                 update_data["completed_at"] = datetime.now(timezone.utc)
                 needs_budget_deduction = True
-            elif old_status == IssueStatus.DONE.name and new_status != IssueStatus.DONE.name:
+            elif old_status == IssueStatus.DONE and new_status != IssueStatus.DONE:
                 update_data["completed_at"] = None
 
         # Apply field updates
@@ -648,19 +642,19 @@ class IssueService:
             params.append(team_id)
 
         if statuses:
-            status_vals = [_enum_name(s) for s in statuses]
+            status_vals = [s.name for s in statuses]
             placeholders = ",".join("?" for _ in status_vals)
             conditions.append(f"i.status IN ({placeholders})")
             params.extend(status_vals)
 
         if priorities:
-            priority_vals = [_enum_name(p) for p in priorities]
+            priority_vals = [p.name for p in priorities]
             placeholders = ",".join("?" for _ in priority_vals)
             conditions.append(f"i.priority IN ({placeholders})")
             params.extend(priority_vals)
 
         if issue_type:
-            type_val = _enum_name(issue_type)
+            type_val = issue_type.name
             conditions.append("i.issue_type = ?")
             params.append(type_val)
 
@@ -770,7 +764,7 @@ class IssueService:
         params = [sprint_id]
 
         if issue_type:
-            type_val = _enum_name(issue_type)
+            type_val = issue_type.name
             conditions.append("i.issue_type = ?")
             params.append(type_val)
 
@@ -816,19 +810,19 @@ class IssueService:
             params.extend(team_ids)
 
         if statuses:
-            status_vals = [_enum_name(s) for s in statuses]
+            status_vals = [s.name for s in statuses]
             placeholders = ",".join("?" for _ in status_vals)
             conditions.append(f"i.status IN ({placeholders})")
             params.extend(status_vals)
 
         if priorities:
-            priority_vals = [_enum_name(p) for p in priorities]
+            priority_vals = [p.name for p in priorities]
             placeholders = ",".join("?" for _ in priority_vals)
             conditions.append(f"i.priority IN ({placeholders})")
             params.extend(priority_vals)
 
         if issue_type:
-            type_val = _enum_name(issue_type)
+            type_val = issue_type.name
             conditions.append("i.issue_type = ?")
             params.append(type_val)
 
@@ -1019,7 +1013,7 @@ class IssueService:
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
         """Create a relationship between two issues."""
-        relation_type_val = _enum_name(relation_in.relation_type)
+        relation_type_val = relation_in.relation_type.name
         return await OxydeIssueRelation.objects.create(
             issue_id=issue_id,
             related_issue_id=relation_in.related_issue_id,
@@ -1223,10 +1217,13 @@ class IssueService:
                     if label.team_id != team_id:
                         raise ValueError(f"Label {label.id} does not belong to this team")
 
-        # Convert enum values in update_data
+        # Convert enum fields to .name strings for DB storage
         clean_data = {}
         for field, value in update_data.items():
-            clean_data[field] = _enum_name(value)
+            if field in ("status", "priority", "issue_type") and value is not None:
+                clean_data[field] = value.name
+            else:
+                clean_data[field] = value
 
         async with atomic():
             for issue in issues:
@@ -1234,8 +1231,7 @@ class IssueService:
                 if user_id:
                     for field, new_value in clean_data.items():
                         old_value = getattr(issue, field)
-                        old_cmp = _enum_name(old_value)
-                        if old_cmp != new_value:
+                        if old_value != new_value:
                             activity_type = ActivityType.UPDATED.name
                             if field == "priority":
                                 activity_type = ActivityType.PRIORITY_CHANGED.name
