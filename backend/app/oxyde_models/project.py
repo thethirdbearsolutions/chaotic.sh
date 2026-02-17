@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
+from app.models.project import EstimateScale, UnestimatedHandling
 
 
 class OxydeProject(OxydeModel):
@@ -16,8 +17,8 @@ class OxydeProject(OxydeModel):
     icon: str | None = Field(default=None)
     lead_id: str | None = Field(default=None)
     issue_count: int = Field(default=0)
-    estimate_scale: str = Field(default="FIBONACCI")
-    unestimated_handling: str = Field(default="DEFAULT_ONE_POINT")
+    estimate_scale: str = Field(default=EstimateScale.FIBONACCI.name)
+    unestimated_handling: str = Field(default=UnestimatedHandling.DEFAULT_ONE_POINT.name)
     default_sprint_budget: int | None = Field(default=None)
     human_rituals_required: bool = Field(default=False)
     require_estimate_on_claim: bool = Field(default=False)
