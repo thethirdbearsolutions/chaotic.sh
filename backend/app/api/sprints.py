@@ -157,6 +157,12 @@ async def close_sprint(sprint_id: str, db: DbSession, current_user: CurrentUser)
             detail="Can only close an active sprint",
         )
 
+    if sprint.limbo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sprint is already in limbo. Complete pending rituals first, or use force-clear-limbo.",
+        )
+
     # Check if project has rituals
     rituals = await ritual_service.list_by_project(project.id)
     has_rituals = len(rituals) > 0
