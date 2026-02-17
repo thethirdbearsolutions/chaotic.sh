@@ -47,7 +47,12 @@ class Client:
                     return None
                 raise APIError(f"Server returned {response.status_code} with no body")
 
-            result = response.json()
+            try:
+                result = response.json()
+            except Exception:
+                if response.is_success:
+                    return None
+                raise APIError(f"Server returned {response.status_code} with non-JSON body")
 
             if not response.is_success:
                 detail = result.get("detail", "Unknown error")
