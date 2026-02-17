@@ -3,6 +3,8 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
+from app.models.document import DocumentActivityType
+from app.oxyde_models.issue import _to_enum
 
 
 class OxydeDocument(OxydeModel):
@@ -50,6 +52,10 @@ class OxydeDocumentActivity(OxydeModel):
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def activity_type_enum(self) -> DocumentActivityType:
+        return _to_enum(DocumentActivityType, self.activity_type)
 
     class Meta:
         is_table = True

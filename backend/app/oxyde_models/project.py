@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.models.project import EstimateScale, UnestimatedHandling
+from app.oxyde_models.issue import _to_enum
 
 
 class OxydeProject(OxydeModel):
@@ -22,11 +23,11 @@ class OxydeProject(OxydeModel):
 
     @property
     def estimate_scale_enum(self) -> EstimateScale:
-        return EstimateScale[self.estimate_scale]
+        return _to_enum(EstimateScale, self.estimate_scale)
 
     @property
     def unestimated_handling_enum(self) -> UnestimatedHandling:
-        return UnestimatedHandling[self.unestimated_handling]
+        return _to_enum(UnestimatedHandling, self.unestimated_handling)
 
     default_sprint_budget: int | None = Field(default=None)
     human_rituals_required: bool = Field(default=False)

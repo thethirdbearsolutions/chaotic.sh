@@ -22,6 +22,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.models.project import UnestimatedHandling
 from app.models.ticket_limbo import LimboType
 from app.models.ritual import ApprovalMode
 from app.schemas.issue import (
@@ -267,7 +268,7 @@ class IssueService:
 
         if issue.estimate is not None:
             points = issue.estimate
-        elif project.unestimated_handling == "DEFAULT_ONE_POINT":
+        elif project.unestimated_handling_enum == UnestimatedHandling.DEFAULT_ONE_POINT:
             points = 1
         else:
             raise EstimateRequiredError(
@@ -460,7 +461,7 @@ class IssueService:
 
         # Convert enum values to .name strings for DB storage
         for field in ("status", "priority", "issue_type"):
-            if field in update_data:
+            if field in update_data and update_data[field] is not None:
                 update_data[field] = update_data[field].name
 
         # Track changes for activity log

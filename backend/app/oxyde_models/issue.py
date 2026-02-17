@@ -9,6 +9,14 @@ from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK reso
 from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
 
 
+def _to_enum(enum_cls, raw: str):
+    """Convert a raw DB string to an enum member, with a clear error on bad data."""
+    try:
+        return enum_cls[raw]
+    except KeyError:
+        raise ValueError(f"Invalid {enum_cls.__name__} in DB: {raw!r}")
+
+
 class OxydeIssue(OxydeModel):
     """Issue/task model."""
 
@@ -33,15 +41,15 @@ class OxydeIssue(OxydeModel):
 
     @property
     def status_enum(self) -> IssueStatus:
-        return IssueStatus[self.status]
+        return _to_enum(IssueStatus, self.status)
 
     @property
     def priority_enum(self) -> IssuePriority:
-        return IssuePriority[self.priority]
+        return _to_enum(IssuePriority, self.priority)
 
     @property
     def issue_type_enum(self) -> IssueType:
-        return IssueType[self.issue_type]
+        return _to_enum(IssueType, self.issue_type)
 
     class Meta:
         is_table = True
@@ -77,7 +85,7 @@ class OxydeIssueActivity(OxydeModel):
 
     @property
     def activity_type_enum(self) -> ActivityType:
-        return ActivityType[self.activity_type]
+        return _to_enum(ActivityType, self.activity_type)
 
     class Meta:
         is_table = True
@@ -95,7 +103,7 @@ class OxydeIssueRelation(OxydeModel):
 
     @property
     def relation_type_enum(self) -> IssueRelationType:
-        return IssueRelationType[self.relation_type]
+        return _to_enum(IssueRelationType, self.relation_type)
 
     class Meta:
         is_table = True
