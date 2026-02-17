@@ -48,49 +48,6 @@ class DocumentService:
             document_icon=document_icon,
         )
 
-    async def _load_document_relations(self, doc: OxydeDocument) -> OxydeDocument:
-        """Load author and labels for a document."""
-        # Author loaded via join() in query; load labels via junction table
-        if doc.author is None:
-            author = await OxydeUser.objects.get_or_none(id=doc.author_id)
-            doc.__dict__["author"] = author
-
-        label_links = await OxydeDocumentLabel.objects.filter(document_id=doc.id).all()
-        if label_links:
-            label_ids = [link.label_id for link in label_links]
-            labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
-            doc._labels = labels
-        else:
-            doc._labels = []
-
-        return doc
-
-    async def _batch_load_labels(self, docs: list[OxydeDocument]) -> list[OxydeDocument]:
-        """Batch-load labels for multiple documents (authors loaded via join)."""
-        if not docs:
-            return docs
-
-        doc_ids = [d.id for d in docs]
-        label_links = await OxydeDocumentLabel.objects.filter(document_id__in=doc_ids).all()
-
-        doc_label_ids: dict[str, list[str]] = {}
-        all_label_ids = set()
-        for link in label_links:
-            doc_label_ids.setdefault(link.document_id, []).append(link.label_id)
-            all_label_ids.add(link.label_id)
-
-        if all_label_ids:
-            labels = await OxydeLabel.objects.filter(id__in=list(all_label_ids)).all()
-            label_map = {l.id: l for l in labels}
-        else:
-            label_map = {}
-
-        for doc in docs:
-            label_ids_for_doc = doc_label_ids.get(doc.id, [])
-            doc._labels = [label_map[lid] for lid in label_ids_for_doc if lid in label_map]
-
-        return docs
-
     async def create(
         self, document_in: DocumentCreate, team_id: str, author_id: str
     ) -> OxydeDocument:
@@ -117,16 +74,13 @@ class DocumentService:
             )
 
         await document.refresh()
-        return await self._load_document_relations(document)
+        return await self.get_by_id(document.id)
 
     async def get_by_id(self, document_id: str) -> OxydeDocument | None:
         """Get document by ID."""
-        document = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             id=document_id
-        ).join("author").first()
-        if document:
-            await self._load_document_relations(document)
-        return document
+        ).join("author").prefetch("labels").first()
 
     async def update(
         self, document: OxydeDocument, document_in: DocumentUpdate, user_id: str
@@ -151,7 +105,7 @@ class DocumentService:
             )
 
         await document.refresh()
-        return await self._load_document_relations(document)
+        return await self.get_by_id(document.id)
 
     async def delete(self, document: OxydeDocument, user_id: str) -> None:
         """Delete a document."""
@@ -176,37 +130,33 @@ class DocumentService:
         self, team_id: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeDocument]:
         """List documents for a team."""
-        docs = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             team_id=team_id
-        ).join("author").order_by("-updated_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(docs)
+        ).join("author").prefetch("labels").order_by("-updated_at").offset(skip).limit(limit).all()
 
     async def list_by_project(
         self, project_id: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeDocument]:
         """List documents for a project."""
-        docs = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             project_id=project_id
-        ).join("author").order_by("-updated_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(docs)
+        ).join("author").prefetch("labels").order_by("-updated_at").offset(skip).limit(limit).all()
 
     async def list_by_sprint(
         self, sprint_id: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeDocument]:
         """List documents for a sprint."""
-        docs = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             sprint_id=sprint_id
-        ).join("author").order_by("-updated_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(docs)
+        ).join("author").prefetch("labels").order_by("-updated_at").offset(skip).limit(limit).all()
 
     async def search(
         self, team_id: str, query: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeDocument]:
         """Search documents by title."""
-        docs = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             team_id=team_id, title__icontains=query
-        ).join("author").order_by("-updated_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(docs)
+        ).join("author").prefetch("labels").order_by("-updated_at").offset(skip).limit(limit).all()
 
     async def list_filtered(
         self,
@@ -225,8 +175,7 @@ class DocumentService:
             qs = qs.filter(sprint_id=sprint_id)
         if search:
             qs = qs.filter(title__icontains=search)
-        docs = await qs.join("author").order_by("-updated_at").offset(skip).limit(limit).all()
-        return await self._batch_load_labels(docs)
+        return await qs.join("author").prefetch("labels").order_by("-updated_at").offset(skip).limit(limit).all()
 
     async def get_linked_issues(self, document_id: str) -> list:
         """Get issues linked to a document.
@@ -326,10 +275,9 @@ class DocumentService:
         if not links:
             return []
         doc_ids = [link.document_id for link in links]
-        docs = await OxydeDocument.objects.filter(
+        return await OxydeDocument.objects.filter(
             id__in=doc_ids
-        ).join("author").order_by("-updated_at").all()
-        return await self._batch_load_labels(docs)
+        ).join("author").prefetch("labels").order_by("-updated_at").all()
 
     # Label methods
     async def get_label_by_id(self, label_id: str) -> OxydeLabel | None:
@@ -382,10 +330,7 @@ class DocumentService:
                 )
 
         await comment.refresh()
-        # Load author for response
-        author = await OxydeUser.objects.get_or_none(id=comment.author_id)
-        comment.__dict__["author"] = author
-        return comment
+        return await self.get_comment_by_id(comment.id)
 
     async def get_comment_by_id(self, comment_id: str) -> OxydeDocumentComment | None:
         """Get comment by ID."""
