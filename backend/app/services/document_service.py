@@ -236,26 +236,40 @@ class DocumentService:
             issue_ids,
         )
 
-        # For each issue, load creator and labels
+        # Batch-load creators
         from app.oxyde_models.user import OxydeUser
+        creator_ids = list({row.get("creator_id") for row in rows if row.get("creator_id")})
+        if creator_ids:
+            creators = await OxydeUser.objects.filter(id__in=creator_ids).all()
+            creator_map = {c.id: c for c in creators}
+        else:
+            creator_map = {}
+
+        # Batch-load labels via issue_labels junction
+        all_label_rows = await execute_raw(
+            f"SELECT issue_id, label_id FROM issue_labels WHERE issue_id IN ({placeholders})",
+            issue_ids,
+        )
+        # Group label IDs by issue
+        issue_label_ids: dict[str, list[str]] = {}
+        all_label_id_set = set()
+        for lr in all_label_rows:
+            issue_label_ids.setdefault(lr["issue_id"], []).append(lr["label_id"])
+            all_label_id_set.add(lr["label_id"])
+
+        if all_label_id_set:
+            labels = await OxydeLabel.objects.filter(id__in=list(all_label_id_set)).all()
+            label_map = {l.id: l for l in labels}
+        else:
+            label_map = {}
 
         # Build minimal issue-like objects
         issues = []
         for row in rows:
             issue = _DictObj(row)
-            # Load creator
-            creator = await OxydeUser.objects.get_or_none(id=row.get("creator_id"))
-            issue.creator = creator
-            # Load labels via issue_labels junction
-            label_rows = await execute_raw(
-                "SELECT label_id FROM issue_labels WHERE issue_id = ?",
-                [row["id"]],
-            )
-            if label_rows:
-                label_ids = [lr["label_id"] for lr in label_rows]
-                issue.labels = await OxydeLabel.objects.filter(id__in=label_ids).all()
-            else:
-                issue.labels = []
+            issue.creator = creator_map.get(row.get("creator_id"))
+            lid_list = issue_label_ids.get(row["id"], [])
+            issue.labels = [label_map[lid] for lid in lid_list if lid in label_map]
             issues.append(issue)
 
         return issues

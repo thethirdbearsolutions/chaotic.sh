@@ -10,19 +10,6 @@ from app.models.sprint import SprintStatus
 from app.models.issue import IssueStatus
 from app.schemas.sprint import SprintCreate, SprintUpdate
 
-# SQLAlchemy stores enum NAMES in the DB, so we must use .name not .value
-_SPRINT_STATUS_MAP = {e.name: e.value for e in SprintStatus}
-
-
-def _fix_sprint_status(sprint: OxydeSprint) -> OxydeSprint:
-    """Convert DB-stored enum names to enum values for Pydantic compat."""
-    if sprint is None:
-        return sprint
-    if sprint.status in _SPRINT_STATUS_MAP:
-        sprint.status = _SPRINT_STATUS_MAP[sprint.status]
-    return sprint
-
-
 def _enum_name(val):
     """Convert enum to its name (matching SQLAlchemy's default storage)."""
     return val.name if isinstance(val, Enum) else val
@@ -136,43 +123,44 @@ class SprintService:
 
         project_id = sprint.project_id
 
-        # Get next sprint (or create if doesn't exist)
-        next_sprint = await self.get_next_sprint(project_id)
-        if not next_sprint:
-            sprint_num = await self._get_next_sprint_number(project_id)
-            default_budget = await self._get_project_default_budget(project_id)
-            next_sprint = await OxydeSprint.objects.create(
-                project_id=project_id,
-                name=f"Sprint {sprint_num}",
-                status=SprintStatus.PLANNED.name,
-                budget=default_budget,
+        async with atomic():
+            # Get next sprint (or create if doesn't exist)
+            next_sprint = await self.get_next_sprint(project_id)
+            if not next_sprint:
+                sprint_num = await self._get_next_sprint_number(project_id)
+                default_budget = await self._get_project_default_budget(project_id)
+                next_sprint = await OxydeSprint.objects.create(
+                    project_id=project_id,
+                    name=f"Sprint {sprint_num}",
+                    status=SprintStatus.PLANNED.name,
+                    budget=default_budget,
+                )
+                await next_sprint.refresh()
+
+            # Move incomplete issues from current sprint to next sprint
+            # Using raw SQL since Issue is not yet ported to Oxyde
+            incomplete_statuses = [
+                IssueStatus.BACKLOG.name,
+                IssueStatus.TODO.name,
+                IssueStatus.IN_PROGRESS.name,
+                IssueStatus.IN_REVIEW.name,
+            ]
+            placeholders = ",".join("?" for _ in incomplete_statuses)
+            await execute_raw(
+                f"UPDATE issues SET sprint_id = ? WHERE sprint_id = ? AND status IN ({placeholders})",
+                [next_sprint.id, sprint.id] + incomplete_statuses,
             )
-            await next_sprint.refresh()
 
-        # Move incomplete issues from current sprint to next sprint
-        # Using raw SQL since Issue is not yet ported to Oxyde
-        incomplete_statuses = [
-            IssueStatus.BACKLOG.name,
-            IssueStatus.TODO.name,
-            IssueStatus.IN_PROGRESS.name,
-            IssueStatus.IN_REVIEW.name,
-        ]
-        placeholders = ",".join("?" for _ in incomplete_statuses)
-        await execute_raw(
-            f"UPDATE issues SET sprint_id = ? WHERE sprint_id = ? AND status IN ({placeholders})",
-            [next_sprint.id, sprint.id] + incomplete_statuses,
-        )
-
-        if has_rituals:
-            # Enter limbo - sprint stays ACTIVE but blocked
-            sprint.limbo = True
-            await sprint.save(update_fields={"limbo"})
-        else:
-            # Full rotation - complete and activate next sprint
-            sprint.status = SprintStatus.COMPLETED.name
-            sprint.limbo = False
-            await sprint.save(update_fields={"status", "limbo"})
-            await self._activate_next_sprint(next_sprint)
+            if has_rituals:
+                # Enter limbo - sprint stays ACTIVE but blocked
+                sprint.limbo = True
+                await sprint.save(update_fields={"limbo"})
+            else:
+                # Full rotation - complete and activate next sprint
+                sprint.status = SprintStatus.COMPLETED.name
+                sprint.limbo = False
+                await sprint.save(update_fields={"status", "limbo"})
+                await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
         return sprint

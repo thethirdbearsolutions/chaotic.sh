@@ -57,8 +57,16 @@ class UserService:
         return user
 
     async def delete(self, user: OxydeUser) -> None:
-        """Delete a user."""
-        await user.delete()
+        """Delete a user and cascade to child records."""
+        from oxyde import atomic
+        from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        async with atomic():
+            await OxydeTeamMember.objects.filter(user_id=user.id).delete()
+            await OxydeTeamInvitation.objects.filter(email=user.email).delete()
+            await OxydeAPIKey.objects.filter(user_id=user.id).delete()
+            await user.delete()
 
     async def list_users(self, skip: int = 0, limit: int = 100) -> list[OxydeUser]:
         """List all users."""
