@@ -89,22 +89,10 @@ class TeamService:
         return teams
 
     async def get_members(self, team_id: str) -> list[OxydeTeamMember]:
-        """Get all members of a team.
-
-        Note: In the Oxyde version, the 'user' relationship data is loaded
-        separately via a batched query (replaces SQLAlchemy selectinload).
-        """
-        members = await OxydeTeamMember.objects.filter(team_id=team_id).all()
-        # Batch-load user data (avoids N+1 queries)
-        user_ids = [m.user_id for m in members]
-        if user_ids:
-            users = await OxydeUser.objects.filter(id__in=user_ids).all()
-            user_map = {u.id: u for u in users}
-        else:
-            user_map = {}
-        for member in members:
-            member._user = user_map.get(member.user_id)
-        return members
+        """Get all members of a team."""
+        return await OxydeTeamMember.objects.filter(
+            team_id=team_id
+        ).join("user").all()
 
     async def get_member(
         self, team_id: str, user_id: str

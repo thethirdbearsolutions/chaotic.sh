@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
+from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 
 
 class OxydeDocument(OxydeModel):
@@ -9,7 +10,7 @@ class OxydeDocument(OxydeModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
-    author_id: str = Field()
+    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     project_id: str | None = Field(default=None)
     sprint_id: str | None = Field(default=None)
     title: str = Field()
@@ -28,7 +29,7 @@ class OxydeDocumentComment(OxydeModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     document_id: str = Field()
-    author_id: str = Field()
+    author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     content: str = Field()
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -42,9 +43,9 @@ class OxydeDocumentActivity(OxydeModel):
     """Activity log for documents."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    document_id: str | None = Field(default=None)
+    document: OxydeDocument | None = Field(default=None, db_on_delete="CASCADE")
     team_id: str = Field()
-    user_id: str = Field()
+    user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     activity_type: str = Field()
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)
