@@ -147,20 +147,20 @@ export function clearDocSearch() {
 }
 
 /**
- * Clear document project filter
+ * Clear document project filter (re-fetches from server)
  */
-export function clearDocProjectFilter() {
+export async function clearDocProjectFilter() {
   const projectFilter = document.getElementById('doc-project-filter');
   if (projectFilter) {
     projectFilter.value = '';
   }
-  filterDocuments();
+  await onDocProjectFilterChange();
 }
 
 /**
- * Clear all document filters
+ * Clear all document filters (re-fetches from server)
  */
-export function clearAllDocFilters() {
+export async function clearAllDocFilters() {
   const searchInput = document.getElementById('doc-search');
   const projectFilter = document.getElementById('doc-project-filter');
   if (searchInput) {
@@ -169,7 +169,7 @@ export function clearAllDocFilters() {
   if (projectFilter) {
     projectFilter.value = '';
   }
-  filterDocuments();
+  await onDocProjectFilterChange();
 }
 
 /**
@@ -217,27 +217,16 @@ export function getDocuments() {
 
 /**
  * Filter, sort, and re-render documents based on current UI state.
- * Re-fetches from the server when the project filter changes (CHT-970).
+ * Operates client-side on the already-loaded `documents` array.
  */
-export async function filterDocuments() {
+export function filterDocuments() {
   const searchTerm = document.getElementById('doc-search')?.value?.toLowerCase() || '';
-  const projectFilter = document.getElementById('doc-project-filter')?.value || '';
   const sortBy = document.getElementById('doc-sort')?.value || 'updated_desc';
 
   // Update filter chips
   updateDocFilterChips();
 
-  // Re-fetch from server when project filter changes (CHT-970)
-  const teamId = currentTeamId || window.currentTeam?.id;
-  if (teamId) {
-    try {
-      documents = await api.getDocuments(teamId, projectFilter || null);
-    } catch {
-      // Fall back to client-side filtering if fetch fails
-    }
-  }
-
-  // Filter (search is still client-side for responsiveness)
+  // Filter (client-side search for responsiveness)
   filteredDocs = documents.filter(doc => {
     if (searchTerm) {
       const titleMatch = doc.title?.toLowerCase().includes(searchTerm);
@@ -266,6 +255,23 @@ export async function filterDocuments() {
 }
 
 /**
+ * Handle project filter dropdown change (CHT-970).
+ * Re-fetches documents from server with new project filter, then re-renders.
+ */
+export async function onDocProjectFilterChange() {
+  const teamId = currentTeamId || window.currentTeam?.id;
+  if (!teamId) return;
+
+  const projectFilter = document.getElementById('doc-project-filter')?.value || null;
+  try {
+    documents = await api.getDocuments(teamId, projectFilter);
+    filterDocuments();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+/**
  * Load documents for the current team/project
  * @param {string} teamId - Team ID
  * @param {string} projectId - Project ID (optional, filters by project)
@@ -279,15 +285,17 @@ export async function loadDocuments(teamId, projectId = null) {
 
   currentTeamId = teamId;
 
-  // If projectId specified, set the dropdown to match
-  if (projectId !== null) {
+  // Use project from dropdown if not explicitly specified
+  if (projectId === null) {
     const docProjectFilter = document.getElementById('doc-project-filter');
-    if (docProjectFilter) {
-      docProjectFilter.value = projectId;
+    if (docProjectFilter?.value) {
+      projectId = docProjectFilter.value;
     }
   }
 
   try {
+    documents = await api.getDocuments(teamId, projectId);
+
     // Initialize view toggle button states
     const listBtn = document.getElementById('doc-view-list');
     const gridBtn = document.getElementById('doc-view-grid');
@@ -296,8 +304,7 @@ export async function loadDocuments(teamId, projectId = null) {
       gridBtn.classList.toggle('active', currentViewMode === 'grid');
     }
 
-    // filterDocuments handles fetching with current project filter
-    await filterDocuments();
+    filterDocuments();  // Apply search/sort and render
   } catch (e) {
     showToast(e.message, 'error');
   }
@@ -1282,4 +1289,5 @@ Object.assign(window, {
   clearDocSearch,
   clearDocProjectFilter,
   clearAllDocFilters,
+  onDocProjectFilterChange,
 });
