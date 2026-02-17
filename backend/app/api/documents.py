@@ -16,6 +16,7 @@ from app.websocket import broadcast_comment_event
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.services.issue_service import IssueService
+from app.services.project_service import ProjectService
 from app.models.document import Document
 
 router = APIRouter()
@@ -361,8 +362,9 @@ async def link_document_to_issue(
             )
 
     # Check access to issue (must be on same team via project)
-    issue_project = issue.project
-    if issue_project.team_id != document.team_id:
+    project_service = ProjectService(db)
+    issue_project = await project_service.get_by_id(issue.project_id)
+    if not issue_project or issue_project.team_id != document.team_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Document and issue must be in the same team",
@@ -413,8 +415,15 @@ async def unlink_document_from_issue(
                 detail="Not authorized for this document",
             )
 
-    # Check access to issue
-    if not await check_user_project_access(db, current_user, issue.project_id, issue.project.team_id):
+    # Check access to issue (must be on same team via project)
+    project_service = ProjectService(db)
+    issue_project = await project_service.get_by_id(issue.project_id)
+    if not issue_project or issue_project.team_id != document.team_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document and issue must be in the same team",
+        )
+    if not await check_user_project_access(db, current_user, issue.project_id, issue_project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized for this issue",
