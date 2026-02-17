@@ -47,8 +47,7 @@ fi
 
 # Step 2: Create a safe online backup via sqlite3
 TEMP_BACKUP="${BACKUP_DIR}/.backup.tmp.db"
-sqlite3 "$DB_PATH" ".backup '${TEMP_BACKUP}'" 2>/dev/null
-if [ $? -ne 0 ]; then
+if ! sqlite3 "$DB_PATH" ".backup '${TEMP_BACKUP}'" 2>/dev/null; then
     log "ERROR: sqlite3 .backup command failed."
     rm -f "$TEMP_BACKUP"
     exit 1
@@ -67,37 +66,44 @@ HOUR=$(date -u '+%H' | sed 's/^0//')
 MINUTE=${MINUTE:-0}
 HOUR=${HOUR:-0}
 
+# Atomic rotate: cp to temp, then mv (atomic on same filesystem)
+rotate() {
+    local target="$1"
+    cp "$TEMP_BACKUP" "${target}.tmp"
+    mv "${target}.tmp" "$target"
+}
+
 # 1-minute: always
-cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.1min.db"
+rotate "${BACKUP_DIR}/backup.1min.db"
 
 # 5-minute
 if [ $((MINUTE % 5)) -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.5min.db"
+    rotate "${BACKUP_DIR}/backup.5min.db"
 fi
 
 # 10-minute
 if [ $((MINUTE % 10)) -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.10min.db"
+    rotate "${BACKUP_DIR}/backup.10min.db"
 fi
 
 # 1-hour
 if [ "$MINUTE" -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.1hr.db"
+    rotate "${BACKUP_DIR}/backup.1hr.db"
 fi
 
 # 4-hour
 if [ "$MINUTE" -eq 0 ] && [ $((HOUR % 4)) -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.4hr.db"
+    rotate "${BACKUP_DIR}/backup.4hr.db"
 fi
 
 # 12-hour
 if [ "$MINUTE" -eq 0 ] && [ $((HOUR % 12)) -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.12hr.db"
+    rotate "${BACKUP_DIR}/backup.12hr.db"
 fi
 
 # 24-hour
 if [ "$MINUTE" -eq 0 ] && [ "$HOUR" -eq 0 ]; then
-    cp "$TEMP_BACKUP" "${BACKUP_DIR}/backup.24hr.db"
+    rotate "${BACKUP_DIR}/backup.24hr.db"
 fi
 
 rm -f "$TEMP_BACKUP"

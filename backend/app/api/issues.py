@@ -40,10 +40,14 @@ from app.models.document import DocumentActivityType
 def _activity_type_value(raw, enum_cls):
     """Convert a raw activity_type (possibly .name) to the .value string."""
     if isinstance(raw, str):
+        # Already a .value?
+        if raw in {e.value for e in enum_cls}:
+            return raw
+        # Try as .name
         try:
             return enum_cls[raw].value
         except KeyError:
-            pass
+            logger.warning("Unknown %s activity_type: %r", enum_cls.__name__, raw)
     elif hasattr(raw, 'value'):
         return raw.value
     return raw
