@@ -297,7 +297,7 @@ class IssueService:
             if not is_human_request:
                 ritual_service = RitualService()
                 rituals = await ritual_service.list_by_project(project_id)
-                claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
+                claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM.name and r.is_active]
                 if claim_rituals:
                     pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
                     raise ClaimRitualsError("NEW", pending_info)
@@ -305,7 +305,7 @@ class IssueService:
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
-            close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
+            close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE.name and r.is_active]
             if close_rituals:
                 pending_info = [{"name": r.name, "prompt": r.prompt} for r in close_rituals]
                 raise TicketRitualsError("NEW", pending_info)

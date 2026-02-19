@@ -24,9 +24,30 @@ from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.models.ritual import ApprovalMode, RitualTrigger
+from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
+
+
+async def _build_attestation_response(att) -> RitualAttestationResponse:
+    """Build attestation response with user names loaded."""
+    user_service = UserService()
+    attester = await user_service.get_by_id(att.attested_by) if att.attested_by else None
+    approver = await user_service.get_by_id(att.approved_by) if att.approved_by else None
+    return RitualAttestationResponse(
+        id=att.id,
+        ritual_id=att.ritual_id,
+        sprint_id=att.sprint_id,
+        issue_id=att.issue_id,
+        attested_by=att.attested_by,
+        attested_by_name=attester.name if attester else None,
+        attested_at=att.attested_at,
+        note=att.note,
+        approved_by=att.approved_by,
+        approved_by_name=approver.name if approver else None,
+        approved_at=att.approved_at,
+    )
 
 
 @router.post("", response_model=RitualResponse, status_code=status.HTTP_201_CREATED)
@@ -167,7 +188,7 @@ async def get_limbo_status(
         if limbo_sprint:
             att = await ritual_service.get_attestation(ritual.id, limbo_sprint.id)
             if att:
-                attestation = RitualAttestationResponse.model_validate(att)
+                attestation = await _build_attestation_response(att)
 
         pending_responses.append(PendingRitualResponse(
             id=ritual.id,
@@ -201,7 +222,7 @@ async def get_limbo_status(
                     approval_mode=ritual.approval_mode,
                     created_at=ritual.created_at,
                     updated_at=ritual.updated_at,
-                    attestation=RitualAttestationResponse.model_validate(att),
+                    attestation=await _build_attestation_response(att),
                 ))
 
     return LimboStatusResponse(
@@ -352,7 +373,7 @@ async def get_pending_ticket_rituals(
             approval_mode=ritual.approval_mode,
             note_required=ritual.note_required,
             conditions=ritual.conditions,
-            attestation=RitualAttestationResponse.model_validate(att) if att else None,
+            attestation=(await _build_attestation_response(att)) if att else None,
         ))
 
     # Get completed rituals
@@ -376,7 +397,7 @@ async def get_pending_ticket_rituals(
                 approval_mode=ritual.approval_mode,
                 created_at=ritual.created_at,
                 updated_at=ritual.updated_at,
-                attestation=RitualAttestationResponse.model_validate(att),
+                attestation=await _build_attestation_response(att),
             ))
 
     return TicketRitualsStatusResponse(
