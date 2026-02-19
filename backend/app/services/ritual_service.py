@@ -41,16 +41,16 @@ class RitualService:
             if group.project_id != project_id:
                 raise ValueError("Ritual group belongs to a different project")
 
-            if group.selection_mode == SelectionMode.PERCENTAGE.name:
+            if group.selection_mode == SelectionMode.PERCENTAGE:
                 if ritual_in.percentage is None or ritual_in.percentage <= 0:
                     raise ValueError(
                         f"Rituals in a PERCENTAGE group must have percentage > 0. "
                         f"Got: {ritual_in.percentage}"
                     )
-            elif group.selection_mode in (SelectionMode.RANDOM_ONE.name, SelectionMode.ROUND_ROBIN.name):
+            elif group.selection_mode in (SelectionMode.RANDOM_ONE, SelectionMode.ROUND_ROBIN):
                 if ritual_in.weight <= 0:
                     raise ValueError(
-                        f"Rituals in a {SelectionMode[group.selection_mode].value} group must have weight > 0. "
+                        f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {ritual_in.weight}"
                     )
 
@@ -63,8 +63,8 @@ class RitualService:
             project_id=project_id,
             name=ritual_in.name,
             prompt=ritual_in.prompt,
-            trigger=ritual_in.trigger.name if hasattr(ritual_in.trigger, 'name') else ritual_in.trigger,
-            approval_mode=ritual_in.approval_mode.name if hasattr(ritual_in.approval_mode, 'name') else ritual_in.approval_mode,
+            trigger=ritual_in.trigger,
+            approval_mode=ritual_in.approval_mode,
             note_required=ritual_in.note_required,
             conditions=conditions_json,
             group_id=ritual_in.group_id,
@@ -127,28 +127,18 @@ class RitualService:
             new_weight = update_data.get("weight", ritual.weight)
             new_percentage = update_data.get("percentage", ritual.percentage)
 
-            if group.selection_mode == SelectionMode.PERCENTAGE.name:
+            if group.selection_mode == SelectionMode.PERCENTAGE:
                 if new_percentage is None or new_percentage <= 0:
                     raise ValueError(
                         f"Rituals in a PERCENTAGE group must have percentage > 0. "
                         f"Got: {new_percentage}"
                     )
-            elif group.selection_mode in (SelectionMode.RANDOM_ONE.name, SelectionMode.ROUND_ROBIN.name):
+            elif group.selection_mode in (SelectionMode.RANDOM_ONE, SelectionMode.ROUND_ROBIN):
                 if new_weight <= 0:
                     raise ValueError(
-                        f"Rituals in a {SelectionMode[group.selection_mode].value} group must have weight > 0. "
+                        f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {new_weight}"
                     )
-
-        # Convert enum values to names for storage
-        if "trigger" in update_data:
-            v = update_data["trigger"]
-            if hasattr(v, 'name'):
-                update_data["trigger"] = v.name
-        if "approval_mode" in update_data:
-            v = update_data["approval_mode"]
-            if hasattr(v, 'name'):
-                update_data["approval_mode"] = v.name
 
         # Serialize conditions to JSON if provided
         if "conditions" in update_data:
@@ -202,7 +192,7 @@ class RitualService:
         group = await OxydeRitualGroup.objects.create(
             project_id=project_id,
             name=group_in.name,
-            selection_mode=group_in.selection_mode.name if hasattr(group_in.selection_mode, 'name') else group_in.selection_mode,
+            selection_mode=group_in.selection_mode,
         )
         # Attach empty rituals list for response compat
         group._rituals = []
@@ -237,10 +227,6 @@ class RitualService:
     async def update_group(self, group: OxydeRitualGroup, group_in: RitualGroupUpdate) -> OxydeRitualGroup:
         """Update a ritual group."""
         update_data = group_in.model_dump(exclude_unset=True)
-        if "selection_mode" in update_data:
-            v = update_data["selection_mode"]
-            if hasattr(v, 'name'):
-                update_data["selection_mode"] = v.name
         for field, value in update_data.items():
             setattr(group, field, value)
         await group.save()
@@ -285,19 +271,19 @@ class RitualService:
             if not active_rituals:
                 continue
 
-            if group.selection_mode == SelectionMode.RANDOM_ONE.name:
+            if group.selection_mode == SelectionMode.RANDOM_ONE:
                 selected = self._select_random_one(active_rituals, seed=sprint_id)
                 if selected:
                     selected_from_groups.append(selected)
 
-            elif group.selection_mode == SelectionMode.ROUND_ROBIN.name:
+            elif group.selection_mode == SelectionMode.ROUND_ROBIN:
                 selected = await self._select_round_robin(
                     group, active_rituals, sprint_id, advance=advance_round_robin
                 )
                 if selected:
                     selected_from_groups.append(selected)
 
-            elif group.selection_mode == SelectionMode.PERCENTAGE.name:
+            elif group.selection_mode == SelectionMode.PERCENTAGE:
                 selected = self._select_by_percentage(active_rituals, seed=sprint_id)
                 selected_from_groups.extend(selected)
 
@@ -366,9 +352,9 @@ class RitualService:
         """Check if a ritual is still pending based on its attestation state."""
         if attestation is None:
             return True
-        if ritual.approval_mode == ApprovalMode.REVIEW.name and attestation.approved_at is None:
+        if ritual.approval_mode == ApprovalMode.REVIEW and attestation.approved_at is None:
             return True
-        if ritual.approval_mode == ApprovalMode.GATE.name and attestation.approved_at is None:
+        if ritual.approval_mode == ApprovalMode.GATE and attestation.approved_at is None:
             return True
         return False
 
@@ -378,7 +364,7 @@ class RitualService:
         """Get EVERY_SPRINT rituals that haven't been completed for a sprint."""
         rituals = await self.list_by_project(project_id)
 
-        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT.name]
+        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
         selected_rituals = await self._apply_group_selection(sprint_rituals, sprint_id)
 
         pending = []
@@ -472,7 +458,7 @@ class RitualService:
 
         ticket_rituals = []
         for ritual in rituals:
-            if ritual.trigger != RitualTrigger.TICKET_CLOSE.name:
+            if ritual.trigger != RitualTrigger.TICKET_CLOSE:
                 continue
             if not self._evaluate_conditions(ritual, issue):
                 continue
@@ -500,7 +486,7 @@ class RitualService:
 
         claim_rituals = []
         for ritual in rituals:
-            if ritual.trigger != RitualTrigger.TICKET_CLAIM.name:
+            if ritual.trigger != RitualTrigger.TICKET_CLAIM:
                 continue
             if not self._evaluate_conditions(ritual, issue):
                 continue
@@ -540,14 +526,14 @@ class RitualService:
         note: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ritual for a sprint."""
-        if ritual.trigger != RitualTrigger.EVERY_SPRINT.name:
+        if ritual.trigger != RitualTrigger.EVERY_SPRINT:
             raise ValueError(
                 f"Ritual '{ritual.name}' is not a sprint ritual. "
                 f"Only rituals with trigger=EVERY_SPRINT can be attested for sprints. "
-                f"This ritual has trigger={RitualTrigger[ritual.trigger].value}."
+                f"This ritual has trigger={ritual.trigger.value}."
             )
 
-        if ritual.approval_mode == ApprovalMode.GATE.name:
+        if ritual.approval_mode == ApprovalMode.GATE:
             raise ValueError(
                 f"Ritual '{ritual.name}' requires human completion (gate mode). "
                 "Use the web UI to complete this ritual."
@@ -566,7 +552,7 @@ class RitualService:
             note=note,
         )
 
-        if ritual.approval_mode == ApprovalMode.AUTO.name:
+        if ritual.approval_mode == ApprovalMode.AUTO:
             data["approved_by"] = user_id
             data["approved_at"] = datetime.now(timezone.utc)
 
@@ -598,12 +584,12 @@ class RitualService:
         note: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ticket ritual for an issue."""
-        allowed_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+        allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
         if ritual.trigger not in allowed_triggers:
             raise ValueError(
                 f"Ritual '{ritual.name}' is not a ticket-level ritual. "
                 f"Only rituals with trigger=TICKET_CLOSE or TICKET_CLAIM can be attested for issues. "
-                f"This ritual has trigger={RitualTrigger[ritual.trigger].value}."
+                f"This ritual has trigger={ritual.trigger.value}."
             )
 
         issue = await OxydeIssue.objects.get_or_none(id=issue_id)
@@ -614,15 +600,15 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = IssueStatus[issue.status].value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE.name:
+        issue_status_str = issue.status.value if issue.status else issue.status
+        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
             if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
                 raise ValueError(
                     f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
                     f"issue is already {issue_status_str}. "
                     "TICKET_CLOSE rituals are for issues being closed, not already closed."
                 )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM.name:
+        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
             if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
                 raise ValueError(
                     f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
@@ -630,7 +616,7 @@ class RitualService:
                     "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
                 )
 
-        if ritual.approval_mode == ApprovalMode.GATE.name:
+        if ritual.approval_mode == ApprovalMode.GATE:
             raise ValueError(
                 f"Ritual '{ritual.name}' requires human completion (gate mode). "
                 "Use the web UI to complete this ritual."
@@ -650,7 +636,7 @@ class RitualService:
             note=note,
         )
 
-        if ritual.approval_mode == ApprovalMode.AUTO.name:
+        if ritual.approval_mode == ApprovalMode.AUTO:
             data["approved_by"] = user_id
             data["approved_at"] = datetime.now(timezone.utc)
 
@@ -660,7 +646,7 @@ class RitualService:
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=user_id,
-                activity_type=ActivityType.RITUAL_ATTESTED.name,
+                activity_type=ActivityType.RITUAL_ATTESTED,
                 field_name=ritual_name,
                 new_value=note,
             )
@@ -680,12 +666,12 @@ class RitualService:
         note: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ticket ritual — human-only."""
-        allowed_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+        allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
         if ritual.trigger not in allowed_triggers:
             raise ValueError(
                 f"Ritual '{ritual.name}' is not a ticket-level ritual. "
                 f"Only rituals with trigger=TICKET_CLOSE or TICKET_CLAIM can be completed for issues. "
-                f"This ritual has trigger={RitualTrigger[ritual.trigger].value}."
+                f"This ritual has trigger={ritual.trigger.value}."
             )
 
         issue = await OxydeIssue.objects.get_or_none(id=issue_id)
@@ -696,15 +682,15 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = IssueStatus[issue.status].value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE.name:
+        issue_status_str = issue.status.value if issue.status else issue.status
+        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
             if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
                 raise ValueError(
                     f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
                     f"issue is already {issue_status_str}. "
                     "TICKET_CLOSE rituals are for issues being closed, not already closed."
                 )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM.name:
+        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
             if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
                 raise ValueError(
                     f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
@@ -733,7 +719,7 @@ class RitualService:
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=user_id,
-                activity_type=ActivityType.RITUAL_ATTESTED.name,
+                activity_type=ActivityType.RITUAL_ATTESTED,
                 field_name=ritual_name,
                 new_value=note,
             )
@@ -845,11 +831,11 @@ class RitualService:
         note: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ritual (human-only)."""
-        if ritual.trigger != RitualTrigger.EVERY_SPRINT.name:
+        if ritual.trigger != RitualTrigger.EVERY_SPRINT:
             raise ValueError(
                 f"Ritual '{ritual.name}' is not a sprint ritual. "
                 f"Only rituals with trigger=EVERY_SPRINT can be completed for sprints. "
-                f"This ritual has trigger={RitualTrigger[ritual.trigger].value}."
+                f"This ritual has trigger={ritual.trigger.value}."
             )
 
         ritual_id = ritual.id
@@ -928,7 +914,7 @@ class RitualService:
             project_id = s.project_id
 
         rituals = await self.list_by_project(project_id)
-        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT.name]
+        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
 
         selected_rituals = await self._apply_group_selection(
             sprint_rituals, sprint_id, advance_round_robin=True
@@ -961,7 +947,7 @@ class RitualService:
                     "issue_id": issue.id,
                     "identifier": issue.identifier,
                     "title": issue.title,
-                    "status": IssueStatus[issue.status].value if issue.status else issue.status,
+                    "status": issue.status.value if issue.status else issue.status,
                     "project_id": project_id,
                     "project_name": project.name,
                     "pending_gates": [],
@@ -971,7 +957,7 @@ class RitualService:
                 "ritual_id": ritual.id,
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
-                "trigger": RitualTrigger[ritual.trigger].value,
+                "trigger": ritual.trigger.value,
                 "limbo_type": LimboType[limbo.limbo_type].value if limbo.limbo_type else limbo.limbo_type,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
@@ -992,7 +978,7 @@ class RitualService:
         from app.oxyde_models.user import OxydeUser
 
         # Get all issues in this project that aren't done/canceled
-        done_statuses = {IssueStatus.DONE.name, IssueStatus.CANCELED.name}
+        done_statuses = {IssueStatus.DONE, IssueStatus.CANCELED}
         issues = await OxydeIssue.objects.filter(project_id=project_id).all()
         active_issues = {i.id: i for i in issues if i.status not in done_statuses}
 
@@ -1037,7 +1023,7 @@ class RitualService:
                     "issue_id": issue.id,
                     "identifier": issue.identifier,
                     "title": issue.title,
-                    "status": IssueStatus[issue.status].value if issue.status else issue.status,
+                    "status": issue.status.value if issue.status else issue.status,
                     "project_id": project_id,
                     "project_name": project.name,
                     "pending_approvals": [],
@@ -1050,7 +1036,7 @@ class RitualService:
                 "ritual_id": ritual.id,
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
-                "trigger": RitualTrigger[ritual.trigger].value,
+                "trigger": ritual.trigger.value,
                 "approval_mode": "gate",
                 "limbo_type": LimboType[limbo.limbo_type].value if limbo.limbo_type else limbo.limbo_type,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
@@ -1059,10 +1045,10 @@ class RitualService:
             })
 
         # 2. REVIEW rituals from attestations (unapproved, for issues in this project)
-        done_statuses = {IssueStatus.DONE.name, IssueStatus.CANCELED.name}
+        done_statuses = {IssueStatus.DONE, IssueStatus.CANCELED}
         review_rituals = await OxydeRitual.objects.filter(
             project_id=project_id,
-            approval_mode=ApprovalMode.REVIEW.name,
+            approval_mode=ApprovalMode.REVIEW.name,  # .name for filter
             is_active=True,
         ).all()
 
@@ -1085,7 +1071,7 @@ class RitualService:
                     "ritual_id": ritual.id,
                     "ritual_name": ritual.name,
                     "ritual_prompt": ritual.prompt,
-                    "trigger": RitualTrigger[ritual.trigger].value,
+                    "trigger": ritual.trigger.value,
                     "approval_mode": "review",
                     "limbo_type": None,
                     "requested_by_name": attester.name if attester else "Unknown",

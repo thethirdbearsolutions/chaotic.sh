@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.models.team import TeamRole, InvitationStatus
-from app.oxyde_models.issue import _to_enum
+from app.oxyde_models.enums import DbEnum
 
 
 class OxydeTeam(OxydeModel):
@@ -29,12 +29,8 @@ class OxydeTeamMember(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    role: str = Field(default=TeamRole.MEMBER.name)
+    role: DbEnum(TeamRole) = Field(default=TeamRole.MEMBER)
     joined_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def role_enum(self) -> TeamRole:
-        return _to_enum(TeamRole, self.role)
 
     class Meta:
         is_table = True
@@ -47,20 +43,12 @@ class OxydeTeamInvitation(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     team_id: str = Field()
     email: str = Field(db_index=True)
-    role: str = Field(default=TeamRole.MEMBER.name)
+    role: DbEnum(TeamRole) = Field(default=TeamRole.MEMBER)
     token: str = Field(db_unique=True, db_index=True)
     invited_by: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    status: str = Field(default=InvitationStatus.PENDING.name)
+    status: DbEnum(InvitationStatus) = Field(default=InvitationStatus.PENDING)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = Field()
-
-    @property
-    def role_enum(self) -> TeamRole:
-        return _to_enum(TeamRole, self.role)
-
-    @property
-    def status_enum(self) -> InvitationStatus:
-        return _to_enum(InvitationStatus, self.status)
 
     class Meta:
         is_table = True

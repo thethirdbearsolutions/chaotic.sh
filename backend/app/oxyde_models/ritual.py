@@ -9,7 +9,7 @@ from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK reso
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
 from app.models.ritual import RitualTrigger, ApprovalMode, SelectionMode
-from app.oxyde_models.issue import _to_enum
+from app.oxyde_models.enums import DbEnum
 
 
 class OxydeRitualGroup(OxydeModel):
@@ -18,13 +18,9 @@ class OxydeRitualGroup(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     project_id: str = Field()
     name: str = Field()
-    selection_mode: str = Field(default=SelectionMode.RANDOM_ONE.name)
+    selection_mode: DbEnum(SelectionMode) = Field(default=SelectionMode.RANDOM_ONE)
     last_selected_ritual_id: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def selection_mode_enum(self) -> SelectionMode:
-        return _to_enum(SelectionMode, self.selection_mode)
 
     class Meta:
         is_table = True
@@ -38,8 +34,8 @@ class OxydeRitual(OxydeModel):
     project_id: str = Field()
     name: str = Field()
     prompt: str = Field()
-    trigger: str = Field(default=RitualTrigger.EVERY_SPRINT.name)
-    approval_mode: str = Field(default=ApprovalMode.AUTO.name)
+    trigger: DbEnum(RitualTrigger) = Field(default=RitualTrigger.EVERY_SPRINT)
+    approval_mode: DbEnum(ApprovalMode) = Field(default=ApprovalMode.AUTO)
     note_required: bool = Field(default=True)
     conditions: str | None = Field(default=None)
     group_id: str | None = Field(default=None)
@@ -48,14 +44,6 @@ class OxydeRitual(OxydeModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = Field(default=True)
-
-    @property
-    def trigger_enum(self) -> RitualTrigger:
-        return _to_enum(RitualTrigger, self.trigger)
-
-    @property
-    def approval_mode_enum(self) -> ApprovalMode:
-        return _to_enum(ApprovalMode, self.approval_mode)
 
     @property
     def group_name(self) -> str | None:

@@ -8,14 +8,7 @@ from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.models.issue import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
-
-
-def _to_enum(enum_cls, raw: str):
-    """Convert a raw DB string to an enum member, with a clear error on bad data."""
-    try:
-        return enum_cls[raw]
-    except KeyError:
-        raise ValueError(f"Invalid {enum_cls.__name__} in DB: {raw!r}")
+from app.oxyde_models.enums import DbEnum
 
 
 class OxydeIssue(OxydeModel):
@@ -27,9 +20,9 @@ class OxydeIssue(OxydeModel):
     number: int = Field()
     title: str = Field()
     description: str | None = Field(default=None)
-    status: str = Field(default=IssueStatus.BACKLOG.name)
-    priority: str = Field(default=IssuePriority.NO_PRIORITY.name)
-    issue_type: str = Field(default=IssueType.TASK.name)
+    status: DbEnum(IssueStatus) = Field(default=IssueStatus.BACKLOG)
+    priority: DbEnum(IssuePriority) = Field(default=IssuePriority.NO_PRIORITY)
+    issue_type: DbEnum(IssueType) = Field(default=IssueType.TASK)
     estimate: int | None = Field(default=None)
     assignee_id: str | None = Field(default=None)
     creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
@@ -40,18 +33,6 @@ class OxydeIssue(OxydeModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")
-
-    @property
-    def status_enum(self) -> IssueStatus:
-        return _to_enum(IssueStatus, self.status)
-
-    @property
-    def priority_enum(self) -> IssuePriority:
-        return _to_enum(IssuePriority, self.priority)
-
-    @property
-    def issue_type_enum(self) -> IssueType:
-        return _to_enum(IssueType, self.issue_type)
 
     class Meta:
         is_table = True
@@ -79,15 +60,11 @@ class OxydeIssueActivity(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    activity_type: str = Field()
+    activity_type: DbEnum(ActivityType) = Field()
     field_name: str | None = Field(default=None)
     old_value: str | None = Field(default=None)
     new_value: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def activity_type_enum(self) -> ActivityType:
-        return _to_enum(ActivityType, self.activity_type)
 
     class Meta:
         is_table = True
@@ -100,12 +77,8 @@ class OxydeIssueRelation(OxydeModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
     related_issue_id: str = Field()
-    relation_type: str = Field(default=IssueRelationType.RELATES_TO.name)
+    relation_type: DbEnum(IssueRelationType) = Field(default=IssueRelationType.RELATES_TO)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def relation_type_enum(self) -> IssueRelationType:
-        return _to_enum(IssueRelationType, self.relation_type)
 
     class Meta:
         is_table = True

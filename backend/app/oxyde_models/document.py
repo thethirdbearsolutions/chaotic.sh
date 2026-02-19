@@ -5,7 +5,7 @@ from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.models.document import DocumentActivityType
-from app.oxyde_models.issue import _to_enum
+from app.oxyde_models.enums import DbEnum
 
 
 class OxydeDocument(OxydeModel):
@@ -50,14 +50,10 @@ class OxydeDocumentActivity(OxydeModel):
     document: OxydeDocument | None = Field(default=None, db_on_delete="CASCADE")
     team_id: str = Field()
     user: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
-    activity_type: str = Field()
+    activity_type: DbEnum(DocumentActivityType) = Field()
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def activity_type_enum(self) -> DocumentActivityType:
-        return _to_enum(DocumentActivityType, self.activity_type)
 
     class Meta:
         is_table = True

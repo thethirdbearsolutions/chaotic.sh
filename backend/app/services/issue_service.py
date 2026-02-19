@@ -219,7 +219,7 @@ class IssueService:
 
         if issue.estimate is not None:
             points = issue.estimate
-        elif project.unestimated_handling_enum == UnestimatedHandling.DEFAULT_ONE_POINT:
+        elif project.unestimated_handling == UnestimatedHandling.DEFAULT_ONE_POINT:
             points = 1
         else:
             raise EstimateRequiredError(
@@ -248,12 +248,11 @@ class IssueService:
         self, issue_id: str, ritual_id: str, limbo_type, user_id: str
     ):
         """Create a limbo record for a ticket blocked by a GATE ritual."""
-        limbo_type_val = limbo_type.name
         try:
             limbo = await OxydeTicketLimbo.objects.create(
                 issue_id=issue_id,
                 ritual_id=ritual_id,
-                limbo_type=limbo_type_val,
+                limbo_type=limbo_type.name,  # .name: OxydeTicketLimbo.limbo_type is str, not DbEnum
                 requested_by_id=user_id,
             )
             return limbo
@@ -262,7 +261,7 @@ class IssueService:
             existing = await OxydeTicketLimbo.objects.filter(
                 issue_id=issue_id,
                 ritual_id=ritual_id,
-                limbo_type=limbo_type_val,
+                limbo_type=limbo_type.name,  # .name for filter
                 cleared_at=None,
             ).first()
             return existing
@@ -297,7 +296,7 @@ class IssueService:
             if not is_human_request:
                 ritual_service = RitualService()
                 rituals = await ritual_service.list_by_project(project_id)
-                claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM.name and r.is_active]
+                claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
                 if claim_rituals:
                     pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
                     raise ClaimRitualsError("NEW", pending_info)
@@ -305,7 +304,7 @@ class IssueService:
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
-            close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE.name and r.is_active]
+            close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
                 pending_info = [{"name": r.name, "prompt": r.prompt} for r in close_rituals]
                 raise TicketRitualsError("NEW", pending_info)
@@ -325,9 +324,9 @@ class IssueService:
                         number=issue_number,
                         title=issue_in.title,
                         description=issue_in.description,
-                        status=issue_in.status.name,
-                        priority=issue_in.priority.name,
-                        issue_type=issue_in.issue_type.name,
+                        status=issue_in.status,
+                        priority=issue_in.priority,
+                        issue_type=issue_in.issue_type,
                         estimate=issue_in.estimate,
                         assignee_id=issue_in.assignee_id,
                         creator_id=creator_id,
@@ -353,7 +352,7 @@ class IssueService:
                     await OxydeIssueActivity.objects.create(
                         issue_id=issue.id,
                         user_id=creator_id,
-                        activity_type=ActivityType.CREATED.name,
+                        activity_type=ActivityType.CREATED,
                     )
 
                     # Deduct from sprint budget if creating as DONE
@@ -400,11 +399,6 @@ class IssueService:
         """Update an issue and log activity."""
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids"})
 
-        # Convert enum values to .name strings for DB storage
-        for field in ("status", "priority", "issue_type"):
-            if field in update_data and update_data[field] is not None:
-                update_data[field] = update_data[field].name
-
         # Track changes for activity log
         activities = []
         if user_id:
@@ -413,20 +407,20 @@ class IssueService:
                 old_cmp = old_value
                 new_cmp = new_value
                 if old_cmp != new_cmp:
-                    activity_type = ActivityType.UPDATED.name
+                    activity_type = ActivityType.UPDATED
                     if field == "status":
-                        activity_type = ActivityType.STATUS_CHANGED.name
+                        activity_type = ActivityType.STATUS_CHANGED
                     elif field == "priority":
-                        activity_type = ActivityType.PRIORITY_CHANGED.name
+                        activity_type = ActivityType.PRIORITY_CHANGED
                     elif field == "assignee_id":
                         activity_type = (
-                            ActivityType.ASSIGNED.name if new_value else ActivityType.UNASSIGNED.name
+                            ActivityType.ASSIGNED if new_value else ActivityType.UNASSIGNED
                         )
                     elif field == "sprint_id":
                         activity_type = (
-                            ActivityType.MOVED_TO_SPRINT.name
+                            ActivityType.MOVED_TO_SPRINT
                             if new_value
-                            else ActivityType.REMOVED_FROM_SPRINT.name
+                            else ActivityType.REMOVED_FROM_SPRINT
                         )
 
                     activities.append({
@@ -434,15 +428,15 @@ class IssueService:
                         "user_id": user_id,
                         "activity_type": activity_type,
                         "field_name": field,
-                        "old_value": str(old_value) if old_value else None,
-                        "new_value": str(new_value) if new_value else None,
+                        "old_value": old_value.name if hasattr(old_value, 'name') and hasattr(old_value, 'value') else str(old_value) if old_value else None,
+                        "new_value": new_value.name if hasattr(new_value, 'name') and hasattr(new_value, 'value') else str(new_value) if new_value else None,
                     })
 
         # Check if status change requires limbo/arrears/ticket ritual checks
         needs_budget_deduction = False
         if issue_in.status is not None and "status" in update_data:
             new_status = issue_in.status
-            old_status = issue.status_enum
+            old_status = issue.status
 
             # Check ticket-level rituals FIRST (CHT-145)
             if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
@@ -855,7 +849,7 @@ class IssueService:
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=author_id,
-                activity_type=ActivityType.COMMENTED.name,
+                activity_type=ActivityType.COMMENTED,
                 field_name="comment",
                 new_value=comment_in.content,
             )
@@ -939,11 +933,10 @@ class IssueService:
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
         """Create a relationship between two issues."""
-        relation_type_val = relation_in.relation_type.name
         return await OxydeIssueRelation.objects.create(
             issue_id=issue_id,
             related_issue_id=relation_in.related_issue_id,
-            relation_type=relation_type_val,
+            relation_type=relation_in.relation_type,
         )
 
     async def get_relation_by_id(self, relation_id: str) -> OxydeIssueRelation | None:
@@ -1020,7 +1013,7 @@ class IssueService:
                 relation = await OxydeIssueRelation.objects.create(
                     issue_id=issue_id,
                     related_issue_id=target_id,
-                    relation_type=IssueRelationType.RELATES_TO.name,
+                    relation_type=IssueRelationType.RELATES_TO,
                 )
                 created.append(relation)
 
@@ -1143,38 +1136,30 @@ class IssueService:
                     if label.team_id != team_id:
                         raise ValueError(f"Label {label.id} does not belong to this team")
 
-        # Convert enum fields to .name strings for DB storage
-        clean_data = {}
-        for field, value in update_data.items():
-            if field in ("status", "priority", "issue_type") and value is not None:
-                clean_data[field] = value.name
-            else:
-                clean_data[field] = value
-
         async with atomic():
             for issue in issues:
                 # Log activity for field changes
                 if user_id:
-                    for field, new_value in clean_data.items():
+                    for field, new_value in update_data.items():
                         old_value = getattr(issue, field)
                         if old_value != new_value:
-                            activity_type = ActivityType.UPDATED.name
+                            activity_type = ActivityType.UPDATED
                             if field == "priority":
-                                activity_type = ActivityType.PRIORITY_CHANGED.name
+                                activity_type = ActivityType.PRIORITY_CHANGED
                             await OxydeIssueActivity.objects.create(
                                 issue_id=issue.id,
                                 user_id=user_id,
                                 activity_type=activity_type,
                                 field_name=field,
-                                old_value=str(old_value) if old_value else None,
-                                new_value=str(new_value) if new_value else None,
+                                old_value=old_value.name if hasattr(old_value, 'name') and hasattr(old_value, 'value') else str(old_value) if old_value else None,
+                                new_value=new_value.name if hasattr(new_value, 'name') and hasattr(new_value, 'value') else str(new_value) if new_value else None,
                             )
 
                 # Apply field updates
-                for field, value in clean_data.items():
+                for field, value in update_data.items():
                     setattr(issue, field, value)
                 issue.updated_at = datetime.now(timezone.utc)
-                await issue.save(update_fields=set(clean_data.keys()) | {"updated_at"})
+                await issue.save(update_fields=set(update_data.keys()) | {"updated_at"})
 
                 # Replace labels if specified
                 if label_ids is not None:
