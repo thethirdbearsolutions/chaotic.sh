@@ -1,6 +1,6 @@
 """Label API routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import DbSession, CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.issue import LabelCreate, LabelUpdate, LabelResponse
 from app.services.issue_service import IssueService
 from app.services.team_service import TeamService
@@ -12,13 +12,12 @@ router = APIRouter()
 async def create_label(
     team_id: str,
     label_in: LabelCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a new label."""
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
@@ -31,15 +30,14 @@ async def create_label(
 @router.get("", response_model=list[LabelResponse])
 async def list_labels(
     team_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
     """List labels for a team."""
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
@@ -50,9 +48,9 @@ async def list_labels(
 
 
 @router.get("/{label_id}", response_model=LabelResponse)
-async def get_label(label_id: str, db: DbSession, current_user: CurrentUser):
+async def get_label(label_id: str, current_user: CurrentUser):
     """Get label by ID."""
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
     label = await issue_service.get_label_by_id(label_id)
     if not label:
@@ -61,7 +59,7 @@ async def get_label(label_id: str, db: DbSession, current_user: CurrentUser):
             detail="Label not found",
         )
 
-    if not await check_user_team_access(db, current_user, label.team_id):
+    if not await check_user_team_access(current_user, label.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
@@ -74,11 +72,10 @@ async def get_label(label_id: str, db: DbSession, current_user: CurrentUser):
 async def update_label(
     label_id: str,
     label_in: LabelUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update a label."""
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
     label = await issue_service.get_label_by_id(label_id)
     if not label:
@@ -87,7 +84,7 @@ async def update_label(
             detail="Label not found",
         )
 
-    if not await check_user_team_access(db, current_user, label.team_id):
+    if not await check_user_team_access(current_user, label.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this team",
@@ -98,7 +95,7 @@ async def update_label(
 
 
 @router.delete("/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_label(label_id: str, db: DbSession, current_user: CurrentUser):
+async def delete_label(label_id: str, current_user: CurrentUser):
     """Delete a label."""
     # Agents cannot delete labels — check before lookup to avoid info disclosure
     if current_user.is_agent:
@@ -107,7 +104,7 @@ async def delete_label(label_id: str, db: DbSession, current_user: CurrentUser):
             detail="Agents cannot delete labels",
         )
 
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
     label = await issue_service.get_label_by_id(label_id)
     if not label:
@@ -116,7 +113,7 @@ async def delete_label(label_id: str, db: DbSession, current_user: CurrentUser):
             detail="Label not found",
         )
 
-    team_service = TeamService(db)
+    team_service = TeamService()
     if not await team_service.is_team_admin(label.team_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -6,6 +6,16 @@ from app.models.ritual import RitualTrigger, ApprovalMode, SelectionMode
 from app.utils import DateTimeUTC
 import re
 
+
+def _coerce_ritual_enum(enum_cls, v):
+    """Accept both enum names (DB-stored uppercase) and values (lowercase)."""
+    if isinstance(v, str) and v not in [e.value for e in enum_cls]:
+        try:
+            return enum_cls[v].value
+        except KeyError:
+            pass
+    return v
+
 # Supported condition fields and operators
 CONDITION_FIELDS = {"estimate", "priority", "issue_type", "status", "labels"}
 CONDITION_OPERATORS = {"eq", "in", "gte", "lte", "contains", "isnull"}
@@ -77,6 +87,11 @@ class RitualGroupResponse(BaseModel):
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("selection_mode", mode="before")
+    @classmethod
+    def _coerce_selection_mode(cls, v):
+        return _coerce_ritual_enum(SelectionMode, v)
 
 
 # ============================================================================
@@ -185,6 +200,16 @@ class RitualResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("trigger", mode="before")
+    @classmethod
+    def _coerce_trigger(cls, v):
+        return _coerce_ritual_enum(RitualTrigger, v)
+
+    @field_validator("approval_mode", mode="before")
+    @classmethod
+    def _coerce_approval_mode(cls, v):
+        return _coerce_ritual_enum(ApprovalMode, v)
+
     @field_validator("conditions", mode="before")
     @classmethod
     def parse_conditions(cls, v):
@@ -233,6 +258,18 @@ class PendingRitualResponse(BaseModel):
     # If attested but pending approval
     attestation: RitualAttestationResponse | None = None
 
+    @field_validator("trigger", mode="before")
+    @classmethod
+    def _coerce_trigger(cls, v):
+        if v is None:
+            return v
+        return _coerce_ritual_enum(RitualTrigger, v)
+
+    @field_validator("approval_mode", mode="before")
+    @classmethod
+    def _coerce_approval_mode(cls, v):
+        return _coerce_ritual_enum(ApprovalMode, v)
+
     @field_validator("conditions", mode="before")
     @classmethod
     def parse_conditions(cls, v):
@@ -261,6 +298,16 @@ class CompletedRitualResponse(BaseModel):
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
     attestation: RitualAttestationResponse
+
+    @field_validator("trigger", mode="before")
+    @classmethod
+    def _coerce_trigger(cls, v):
+        return _coerce_ritual_enum(RitualTrigger, v)
+
+    @field_validator("approval_mode", mode="before")
+    @classmethod
+    def _coerce_approval_mode(cls, v):
+        return _coerce_ritual_enum(ApprovalMode, v)
 
     @field_validator("conditions", mode="before")
     @classmethod

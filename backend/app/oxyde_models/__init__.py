@@ -21,6 +21,11 @@ from app.oxyde_models.issue import (
     OxydeTicketLimbo,
     OxydeBudgetTransaction,
 )
+from app.oxyde_models.ritual import (
+    OxydeRitual,
+    OxydeRitualGroup,
+    OxydeRitualAttestation,
+)
 
 __all__ = [
     "OxydeUser",
@@ -43,4 +48,7 @@ __all__ = [
     "OxydeIssueLabel",
     "OxydeTicketLimbo",
     "OxydeBudgetTransaction",
+    "OxydeRitual",
+    "OxydeRitualGroup",
+    "OxydeRitualAttestation",
 ]

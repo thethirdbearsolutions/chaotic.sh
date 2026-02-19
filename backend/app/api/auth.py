@@ -1,6 +1,6 @@
 """Authentication API routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import DbSession, CurrentUser
+from app.api.deps import CurrentUser
 from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
 from app.services.user_service import UserService
 from app.utils.security import create_access_token
@@ -9,9 +9,9 @@ router = APIRouter()
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def signup(user_in: UserCreate, db: DbSession):
+async def signup(user_in: UserCreate):
     """Register a new user."""
-    user_service = UserService(db)
+    user_service = UserService()
 
     existing_user = await user_service.get_by_email(user_in.email)
     if existing_user:
@@ -25,9 +25,9 @@ async def signup(user_in: UserCreate, db: DbSession):
 
 
 @router.post("/login", response_model=Token)
-async def login(user_in: UserLogin, db: DbSession):
+async def login(user_in: UserLogin):
     """Login and get access token."""
-    user_service = UserService(db)
+    user_service = UserService()
 
     user = await user_service.authenticate(user_in.email, user_in.password)
     if not user:
