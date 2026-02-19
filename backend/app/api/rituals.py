@@ -204,7 +204,7 @@ async def get_limbo_status(
     # Get completed rituals with attestation details
     all_rituals = await ritual_service.list_by_project(project_id)
 
-    sprint_rituals = [r for r in all_rituals if r.trigger == RitualTrigger.EVERY_SPRINT.name]
+    sprint_rituals = [r for r in all_rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
     pending_ids = {r.id for r in pending}
     completed_rituals = [r for r in sprint_rituals if r.id not in pending_ids]
 
@@ -379,7 +379,7 @@ async def get_pending_ticket_rituals(
     # Get completed rituals
     all_rituals = await ritual_service.list_by_project(issue.project_id)
 
-    ticket_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+    ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     ticket_rituals = [r for r in all_rituals if r.trigger in ticket_triggers]
     pending_ids = {r.id for r in pending}
     completed_rituals = [r for r in ticket_rituals if r.id not in pending_ids]
@@ -452,14 +452,14 @@ async def attest_ritual_for_issue(
             detail="Ritual does not belong to this issue's project",
         )
 
-    ticket_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+    ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual is not a ticket-level ritual (must be TICKET_CLOSE or TICKET_CLAIM)",
         )
 
-    if ritual.approval_mode == ApprovalMode.GATE.name:
+    if ritual.approval_mode == ApprovalMode.GATE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Ritual '{ritual.name}' requires human completion (gate mode). Use the complete endpoint.",
@@ -541,7 +541,7 @@ async def complete_gate_ritual_for_issue(
             detail="GATE rituals require human completion. Agent users cannot complete GATE mode rituals.",
         )
 
-    ticket_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+    ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -554,7 +554,7 @@ async def complete_gate_ritual_for_issue(
             detail="Ritual does not belong to this issue's project",
         )
 
-    if ritual.approval_mode != ApprovalMode.GATE.name:
+    if ritual.approval_mode != ApprovalMode.GATE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use attest-issue instead.",
@@ -629,14 +629,14 @@ async def approve_issue_attestation(
             detail="Ritual does not belong to this issue's project",
         )
 
-    ticket_triggers = {RitualTrigger.TICKET_CLOSE.name, RitualTrigger.TICKET_CLAIM.name}
+    ticket_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
     if ritual.trigger not in ticket_triggers:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual is not a ticket-level ritual (must be TICKET_CLOSE or TICKET_CLAIM)",
         )
 
-    if ritual.approval_mode != ApprovalMode.REVIEW.name:
+    if ritual.approval_mode != ApprovalMode.REVIEW:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ritual '{ritual.name}' is not a REVIEW mode ritual. Only REVIEW mode attestations need approval.",
@@ -992,13 +992,13 @@ async def attest_ritual(
             detail="Ritual does not belong to this project",
         )
 
-    if ritual.trigger != RitualTrigger.EVERY_SPRINT.name:
+    if ritual.trigger != RitualTrigger.EVERY_SPRINT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual is not a sprint-level ritual (must be EVERY_SPRINT)",
         )
 
-    if ritual.approval_mode == ApprovalMode.GATE.name:
+    if ritual.approval_mode == ApprovalMode.GATE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Ritual '{ritual.name}' requires human completion (gate mode). Use the complete endpoint.",
@@ -1137,13 +1137,13 @@ async def complete_gate_ritual(
             detail="Ritual does not belong to this project",
         )
 
-    if ritual.trigger != RitualTrigger.EVERY_SPRINT.name:
+    if ritual.trigger != RitualTrigger.EVERY_SPRINT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual is not a sprint-level ritual (must be EVERY_SPRINT)",
         )
 
-    if ritual.approval_mode != ApprovalMode.GATE.name:
+    if ritual.approval_mode != ApprovalMode.GATE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use attest instead.",

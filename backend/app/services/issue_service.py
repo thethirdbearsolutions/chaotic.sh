@@ -252,7 +252,7 @@ class IssueService:
             limbo = await OxydeTicketLimbo.objects.create(
                 issue_id=issue_id,
                 ritual_id=ritual_id,
-                limbo_type=limbo_type,
+                limbo_type=limbo_type.name,  # .name: OxydeTicketLimbo.limbo_type is str, not DbEnum
                 requested_by_id=user_id,
             )
             return limbo
@@ -428,8 +428,8 @@ class IssueService:
                         "user_id": user_id,
                         "activity_type": activity_type,
                         "field_name": field,
-                        "old_value": str(old_value) if old_value else None,
-                        "new_value": str(new_value) if new_value else None,
+                        "old_value": old_value.name if hasattr(old_value, 'name') and hasattr(old_value, 'value') else str(old_value) if old_value else None,
+                        "new_value": new_value.name if hasattr(new_value, 'name') and hasattr(new_value, 'value') else str(new_value) if new_value else None,
                     })
 
         # Check if status change requires limbo/arrears/ticket ritual checks
@@ -1151,8 +1151,8 @@ class IssueService:
                                 user_id=user_id,
                                 activity_type=activity_type,
                                 field_name=field,
-                                old_value=str(old_value) if old_value else None,
-                                new_value=str(new_value) if new_value else None,
+                                old_value=old_value.name if hasattr(old_value, 'name') and hasattr(old_value, 'value') else str(old_value) if old_value else None,
+                                new_value=new_value.name if hasattr(new_value, 'name') and hasattr(new_value, 'value') else str(new_value) if new_value else None,
                             )
 
                 # Apply field updates
