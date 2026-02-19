@@ -79,8 +79,8 @@ class OxydeDocumentIssue(OxydeModel):
 class OxydeDocumentLabel(OxydeModel):
     """Junction table for document-label links."""
 
-    document: "OxydeDocument" = Field(db_pk=True, db_on_delete="CASCADE")
-    label: "OxydeLabel" = Field(db_pk=True, db_on_delete="CASCADE")
+    document: OxydeDocument | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")
+    label: OxydeLabel | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")
 
     class Meta:
         is_table = True
