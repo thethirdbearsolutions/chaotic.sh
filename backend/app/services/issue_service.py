@@ -141,7 +141,7 @@ class IssueService:
         if not limbo_sprint:
             return
 
-        ritual_service = RitualService(self.db)
+        ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_rituals(project_id, limbo_sprint.id)
         pending_data = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
         raise SprintInLimboError(limbo_sprint.id, pending_data)
@@ -166,7 +166,7 @@ class IssueService:
             if project and not project.human_rituals_required:
                 return
 
-        ritual_service = RitualService(self.db)
+        ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_ticket_rituals(
             issue.project_id, issue.id
         )
@@ -190,7 +190,7 @@ class IssueService:
             if project and not project.human_rituals_required:
                 return
 
-        ritual_service = RitualService(self.db)
+        ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_claim_rituals(
             issue.project_id, issue.id
         )
@@ -295,7 +295,7 @@ class IssueService:
                         "Estimate is required before claiming issues in this project"
                     )
             if not is_human_request:
-                ritual_service = RitualService(self.db)
+                ritual_service = RitualService()
                 rituals = await ritual_service.list_by_project(project_id)
                 claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
                 if claim_rituals:
@@ -303,7 +303,7 @@ class IssueService:
                     raise ClaimRitualsError("NEW", pending_info)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
-            ritual_service = RitualService(self.db)
+            ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:

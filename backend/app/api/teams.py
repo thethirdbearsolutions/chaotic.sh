@@ -1,7 +1,7 @@
 """Team API routes."""
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import DbSession, CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, check_user_team_access
 from app.utils import ensure_utc
 from app.schemas.team import (
     TeamCreate,
@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
-async def create_team(team_in: TeamCreate, db: DbSession, current_user: CurrentUser):
+async def create_team(team_in: TeamCreate, current_user: CurrentUser):
     """Create a new team."""
     if current_user.is_agent:
         raise HTTPException(
@@ -27,7 +27,7 @@ async def create_team(team_in: TeamCreate, db: DbSession, current_user: CurrentU
             detail="Agents cannot create teams",
         )
 
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     existing_team = await team_service.get_by_key(team_in.key)
     if existing_team:
@@ -41,17 +41,17 @@ async def create_team(team_in: TeamCreate, db: DbSession, current_user: CurrentU
 
 
 @router.get("", response_model=list[TeamResponse])
-async def list_my_teams(db: DbSession, current_user: CurrentUser):
+async def list_my_teams(current_user: CurrentUser):
     """List teams for current user."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     teams = await team_service.get_user_teams(current_user.id)
     return teams
 
 
 @router.get("/{team_id}", response_model=TeamResponse)
-async def get_team(team_id: str, db: DbSession, current_user: CurrentUser):
+async def get_team(team_id: str, current_user: CurrentUser):
     """Get team by ID."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     team = await team_service.get_by_id(team_id)
 
     if not team:
@@ -62,7 +62,7 @@ async def get_team(team_id: str, db: DbSession, current_user: CurrentUser):
 
     # Use check_user_team_access which handles both regular members
     # and agent users (CHT-732)
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -73,10 +73,10 @@ async def get_team(team_id: str, db: DbSession, current_user: CurrentUser):
 
 @router.patch("/{team_id}", response_model=TeamResponse)
 async def update_team(
-    team_id: str, team_in: TeamUpdate, db: DbSession, current_user: CurrentUser
+    team_id: str, team_in: TeamUpdate, current_user: CurrentUser
 ):
     """Update a team."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     team = await team_service.get_by_id(team_id)
 
     if not team:
@@ -96,9 +96,9 @@ async def update_team(
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_team(team_id: str, db: DbSession, current_user: CurrentUser):
+async def delete_team(team_id: str, current_user: CurrentUser):
     """Delete a team."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     team = await team_service.get_by_id(team_id)
 
     if not team:
@@ -119,13 +119,13 @@ async def delete_team(team_id: str, db: DbSession, current_user: CurrentUser):
 
 # Members
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
-async def list_team_members(team_id: str, db: DbSession, current_user: CurrentUser):
+async def list_team_members(team_id: str, current_user: CurrentUser):
     """List team members."""
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     # Use check_user_team_access which handles both regular members
     # and agent users (CHT-732)
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -151,11 +151,10 @@ async def update_member_role(
     team_id: str,
     user_id: str,
     role: TeamRole,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update a member's role."""
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
@@ -188,10 +187,10 @@ async def update_member_role(
 
 @router.delete("/{team_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
-    team_id: str, user_id: str, db: DbSession, current_user: CurrentUser
+    team_id: str, user_id: str, current_user: CurrentUser
 ):
     """Remove a member from team."""
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     # Allow removing self or admin removing others
     is_admin = await team_service.is_team_admin(team_id, current_user.id)
@@ -226,11 +225,10 @@ async def remove_member(
 async def create_invitation(
     team_id: str,
     invitation_in: TeamInvitationCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a team invitation."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     team = await team_service.get_by_id(team_id)
 
     if not team:
@@ -246,7 +244,7 @@ async def create_invitation(
         )
 
     # Check if user already a member
-    user_service = UserService(db)
+    user_service = UserService()
     existing_user = await user_service.get_by_email(invitation_in.email)
     if existing_user:
         existing_member = await team_service.get_member(team_id, existing_user.id)
@@ -262,10 +260,10 @@ async def create_invitation(
 
 @router.get("/{team_id}/invitations", response_model=list[TeamInvitationResponse])
 async def list_team_invitations(
-    team_id: str, db: DbSession, current_user: CurrentUser
+    team_id: str, current_user: CurrentUser
 ):
     """List pending team invitations."""
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
@@ -278,9 +276,9 @@ async def list_team_invitations(
 
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
-async def accept_invitation(token: str, db: DbSession, current_user: CurrentUser):
+async def accept_invitation(token: str, current_user: CurrentUser):
     """Accept a team invitation."""
-    team_service = TeamService(db)
+    team_service = TeamService()
     invitation = await team_service.get_invitation_by_token(token)
 
     if not invitation:
@@ -315,10 +313,10 @@ async def accept_invitation(token: str, db: DbSession, current_user: CurrentUser
     "/{team_id}/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 async def delete_invitation(
-    team_id: str, invitation_id: str, db: DbSession, current_user: CurrentUser
+    team_id: str, invitation_id: str, current_user: CurrentUser
 ):
     """Delete a team invitation."""
-    team_service = TeamService(db)
+    team_service = TeamService()
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(

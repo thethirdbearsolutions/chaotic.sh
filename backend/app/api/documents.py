@@ -1,6 +1,6 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import DbSession, CurrentUser, check_user_team_access, check_user_project_access
+from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
 from app.api.issues import ensure_utc
 from app.schemas.document import (
     DocumentCreate,
@@ -64,13 +64,12 @@ def build_document_response(doc, author_name: str | None = None) -> DocumentResp
 async def create_document(
     team_id: str,
     document_in: DocumentCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a new document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -85,7 +84,7 @@ async def create_document(
 
     # Validate sprint belongs to document's project
     if document_in.sprint_id:
-        sprint_service = SprintService(db)
+        sprint_service = SprintService()
         sprint = await sprint_service.get_by_id(document_in.sprint_id)
         if not sprint:
             raise HTTPException(
@@ -105,7 +104,6 @@ async def create_document(
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
     team_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     project_id: str | None = None,
     sprint_id: str | None = None,
@@ -114,9 +112,9 @@ async def list_documents(
     limit: int = 100,
 ):
     """List documents for a team."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
-    if not await check_user_team_access(db, current_user, team_id):
+    if not await check_user_team_access(current_user, team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
@@ -124,7 +122,7 @@ async def list_documents(
 
     # Check project access if filtering by project
     if project_id:
-        if not await check_user_project_access(db, current_user, project_id, team_id):
+        if not await check_user_project_access(current_user, project_id, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this project",
@@ -132,14 +130,14 @@ async def list_documents(
 
     # Check sprint access if filtering by sprint
     if sprint_id:
-        sprint_service = SprintService(db)
+        sprint_service = SprintService()
         sprint = await sprint_service.get_by_id(sprint_id)
         if not sprint:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Sprint not found",
             )
-        if not await check_user_project_access(db, current_user, sprint.project_id, team_id):
+        if not await check_user_project_access(current_user, sprint.project_id, team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this sprint",
@@ -158,9 +156,9 @@ async def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(document_id: str, db: DbSession, current_user: CurrentUser):
+async def get_document(document_id: str, current_user: CurrentUser):
     """Get document by ID."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -171,13 +169,13 @@ async def get_document(document_id: str, db: DbSession, current_user: CurrentUse
 
     # For documents with a project, check project access; otherwise team access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
@@ -190,11 +188,10 @@ async def get_document(document_id: str, db: DbSession, current_user: CurrentUse
 async def update_document(
     document_id: str,
     document_in: DocumentUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -205,13 +202,13 @@ async def update_document(
 
     # For documents with a project, check project access; otherwise team access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
@@ -220,7 +217,7 @@ async def update_document(
     # Check access to target project if moving document to a different project
     if document_in.project_id is not None and document_in.project_id != document.project_id:
         if document_in.project_id:  # Moving to a specific project (not making global)
-            if not await check_user_project_access(db, current_user, document_in.project_id, document.team_id):
+            if not await check_user_project_access(current_user, document_in.project_id, document.team_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Not authorized for target project",
@@ -230,7 +227,7 @@ async def update_document(
     target_sprint_id = document_in.sprint_id if document_in.sprint_id is not None else document.sprint_id
     target_project_id = document_in.project_id if document_in.project_id is not None else document.project_id
     if target_sprint_id:
-        sprint_service = SprintService(db)
+        sprint_service = SprintService()
         sprint = await sprint_service.get_by_id(target_sprint_id)
         if not sprint:
             raise HTTPException(
@@ -248,10 +245,10 @@ async def update_document(
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(document_id: str, db: DbSession, current_user: CurrentUser):
+async def delete_document(document_id: str, current_user: CurrentUser):
     """Delete a document."""
-    document_service = DocumentService(db)
-    team_service = TeamService(db)
+    document_service = DocumentService()
+    team_service = TeamService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -272,9 +269,9 @@ async def delete_document(document_id: str, db: DbSession, current_user: Current
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
-async def get_document_issues(document_id: str, db: DbSession, current_user: CurrentUser):
+async def get_document_issues(document_id: str, current_user: CurrentUser):
     """Get issues linked to a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -285,13 +282,13 @@ async def get_document_issues(document_id: str, db: DbSession, current_user: Cur
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
@@ -327,11 +324,11 @@ async def get_document_issues(document_id: str, db: DbSession, current_user: Cur
 
 @router.post("/{document_id}/issues/{issue_id}", status_code=status.HTTP_201_CREATED)
 async def link_document_to_issue(
-    document_id: str, issue_id: str, db: DbSession, current_user: CurrentUser
+    document_id: str, issue_id: str, current_user: CurrentUser
 ):
     """Link a document to an issue."""
-    document_service = DocumentService(db)
-    issue_service = IssueService(db)
+    document_service = DocumentService()
+    issue_service = IssueService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -349,27 +346,27 @@ async def link_document_to_issue(
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
 
     # Check access to issue (must be on same team via project)
-    project_service = ProjectService(db)
+    project_service = ProjectService()
     issue_project = await project_service.get_by_id(issue.project_id)
     if not issue_project or issue_project.team_id != document.team_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Document and issue must be in the same team",
         )
-    if not await check_user_project_access(db, current_user, issue.project_id, issue_project.team_id):
+    if not await check_user_project_access(current_user, issue.project_id, issue_project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized for this issue",
@@ -381,11 +378,11 @@ async def link_document_to_issue(
 
 @router.delete("/{document_id}/issues/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink_document_from_issue(
-    document_id: str, issue_id: str, db: DbSession, current_user: CurrentUser
+    document_id: str, issue_id: str, current_user: CurrentUser
 ):
     """Unlink a document from an issue."""
-    document_service = DocumentService(db)
-    issue_service = IssueService(db)
+    document_service = DocumentService()
+    issue_service = IssueService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -403,27 +400,27 @@ async def unlink_document_from_issue(
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
 
     # Check access to issue (must be on same team via project)
-    project_service = ProjectService(db)
+    project_service = ProjectService()
     issue_project = await project_service.get_by_id(issue.project_id)
     if not issue_project or issue_project.team_id != document.team_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Document and issue must be in the same team",
         )
-    if not await check_user_project_access(db, current_user, issue.project_id, issue_project.team_id):
+    if not await check_user_project_access(current_user, issue.project_id, issue_project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized for this issue",
@@ -438,9 +435,9 @@ async def unlink_document_from_issue(
 
 
 @router.get("/{document_id}/labels", response_model=list[LabelResponse])
-async def get_document_labels(document_id: str, db: DbSession, current_user: CurrentUser):
+async def get_document_labels(document_id: str, current_user: CurrentUser):
     """Get labels for a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -451,13 +448,13 @@ async def get_document_labels(document_id: str, db: DbSession, current_user: Cur
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this team",
@@ -478,10 +475,10 @@ async def get_document_labels(document_id: str, db: DbSession, current_user: Cur
 
 @router.post("/{document_id}/labels/{label_id}", status_code=status.HTTP_201_CREATED)
 async def add_label_to_document(
-    document_id: str, label_id: str, db: DbSession, current_user: CurrentUser
+    document_id: str, label_id: str, current_user: CurrentUser
 ):
     """Add a label to a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -499,13 +496,13 @@ async def add_label_to_document(
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
@@ -524,10 +521,10 @@ async def add_label_to_document(
 
 @router.delete("/{document_id}/labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_label_from_document(
-    document_id: str, label_id: str, db: DbSession, current_user: CurrentUser
+    document_id: str, label_id: str, current_user: CurrentUser
 ):
     """Remove a label from a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -538,13 +535,13 @@ async def remove_label_from_document(
 
     # Check access to document
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
@@ -575,11 +572,10 @@ def build_comment_response(comment, author_name: str | None = None) -> DocumentC
 async def create_comment(
     document_id: str,
     comment_in: DocumentCommentCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a comment on a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -590,13 +586,13 @@ async def create_comment(
 
     # Check document access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
@@ -614,13 +610,12 @@ async def create_comment(
 @router.get("/{document_id}/comments", response_model=list[DocumentCommentResponse])
 async def list_comments(
     document_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
     """List comments for a document."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -631,13 +626,13 @@ async def list_comments(
 
     # Check document access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
@@ -652,11 +647,10 @@ async def update_comment(
     document_id: str,
     comment_id: str,
     comment_in: DocumentCommentUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update a comment."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -667,13 +661,13 @@ async def update_comment(
 
     # Check document access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
@@ -706,11 +700,10 @@ async def update_comment(
 async def delete_comment(
     document_id: str,
     comment_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Delete a comment."""
-    document_service = DocumentService(db)
+    document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)
     if not document:
@@ -721,13 +714,13 @@ async def delete_comment(
 
     # Check document access
     if document.project_id:
-        if not await check_user_project_access(db, current_user, document.project_id, document.team_id):
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",
             )
     else:
-        if not await check_user_team_access(db, current_user, document.team_id):
+        if not await check_user_team_access(current_user, document.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized for this document",

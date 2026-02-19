@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Query
-from app.api.deps import DbSession, CurrentUser, check_user_project_access, check_user_team_access
+from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ from app.websocket import broadcast_issue_event, broadcast_comment_event, broadc
 router = APIRouter()
 
 
-async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
+async def _validate_assignee(assignee_id: str | None, team_id: str) -> None:
     """Validate that assignee exists and belongs to the project's team (CHT-293)."""
     if not assignee_id:
         return
@@ -78,7 +78,7 @@ async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
                 detail="Assignee (agent) is not scoped to this project's team",
             )
     else:
-        team_service = TeamService(db)
+        team_service = TeamService()
         member = await team_service.get_member(team_id, assignee_id)
         if not member:
             raise HTTPException(
@@ -87,11 +87,11 @@ async def _validate_assignee(db, assignee_id: str | None, team_id: str) -> None:
             )
 
 
-async def _validate_sprint(db, sprint_id: str | None, project_id: str) -> None:
+async def _validate_sprint(sprint_id: str | None, project_id: str) -> None:
     """Validate that sprint exists and belongs to the project (CHT-294)."""
     if not sprint_id:
         return
-    sprint_service = SprintService(db)
+    sprint_service = SprintService()
     sprint = await sprint_service.get_by_id(sprint_id)
     if not sprint:
         raise HTTPException(
@@ -105,7 +105,7 @@ async def _validate_sprint(db, sprint_id: str | None, project_id: str) -> None:
         )
 
 
-async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
+async def _validate_labels(label_ids: list[str], team_id: str) -> None:
     """Validate that all labels exist and belong to the team (CHT-296)."""
     if not label_ids:
         return
@@ -125,7 +125,7 @@ async def _validate_labels(db, label_ids: list[str], team_id: str) -> None:
             )
 
 
-async def _validate_parent(db, parent_id: str | None, project_id: str, issue_id: str | None = None) -> None:
+async def _validate_parent(parent_id: str | None, project_id: str, issue_id: str | None = None) -> None:
     """Validate that parent issue exists and belongs to the project (CHT-295)."""
     if not parent_id:
         return
@@ -134,7 +134,7 @@ async def _validate_parent(db, parent_id: str | None, project_id: str, issue_id:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An issue cannot be its own parent",
         )
-    issue_service = IssueService(db)
+    issue_service = IssueService()
     parent = await issue_service.get_by_id(parent_id)
     if not parent:
         raise HTTPException(
@@ -178,12 +178,11 @@ def issue_to_response(issue: Issue) -> IssueResponse:
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a new issue."""
-    project_service = ProjectService(db)
-    issue_service = IssueService(db)
+    project_service = ProjectService()
+    issue_service = IssueService()
 
     project = await project_service.get_by_id(project_id)
     if not project:
@@ -193,7 +192,7 @@ async def create_issue(
         )
 
     # Check access (team membership for humans, agent scope for agents)
-    has_access = await check_user_project_access(db, current_user, project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -201,10 +200,10 @@ async def create_issue(
         )
 
     # Validate assignee, sprint, labels, and parent (CHT-293, CHT-294, CHT-296, CHT-295)
-    await _validate_assignee(db, issue_in.assignee_id, project.team_id)
-    await _validate_sprint(db, issue_in.sprint_id, project_id)
-    await _validate_labels(db, issue_in.label_ids, project.team_id)
-    await _validate_parent(db, issue_in.parent_id, project_id)
+    await _validate_assignee(issue_in.assignee_id, project.team_id)
+    await _validate_sprint(issue_in.sprint_id, project_id)
+    await _validate_labels(issue_in.label_ids, project.team_id)
+    await _validate_parent(issue_in.parent_id, project_id)
 
     # Check if this is a human user (not an agent)
     is_human_request = not current_user.is_agent
@@ -273,7 +272,6 @@ async def create_issue(
 
 @router.get("", response_model=list[IssueResponse])
 async def list_issues(
-    db: DbSession,
     current_user: CurrentUser,
     project_id: str | None = None,
     sprint_id: str | None = None,
@@ -294,16 +292,16 @@ async def list_issues(
 
     All filter parameters work consistently whether querying by project_id or team_id.
     """
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
-    team_service = TeamService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
+    team_service = TeamService()
 
     # Validate access and determine scope
     if project_id:
         project = await project_service.get_by_id(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        has_access = await check_user_project_access(db, current_user, project_id, project.team_id)
+        has_access = await check_user_project_access(current_user, project_id, project.team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this project")
 
@@ -324,7 +322,7 @@ async def list_issues(
             label_names=labels,
         )
     elif team_id:
-        has_access = await check_user_team_access(db, current_user, team_id)
+        has_access = await check_user_team_access(current_user, team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
 
@@ -346,14 +344,14 @@ async def list_issues(
         )
     elif sprint_id:
         # Sprint-only query: check access via sprint -> project -> team
-        sprint_service = SprintService(db)
+        sprint_service = SprintService()
         sprint = await sprint_service.get_by_id(sprint_id)
         if not sprint:
             raise HTTPException(status_code=404, detail="Sprint not found")
         project = await project_service.get_by_id(sprint.project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        has_access = await check_user_project_access(db, current_user, project.id, project.team_id)
+        has_access = await check_user_project_access(current_user, project.id, project.team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this sprint")
         issues = await issue_service.list_by_sprint(
@@ -387,7 +385,6 @@ async def list_issues(
 async def search_issues(
     team_id: str,
     q: str = Query(..., min_length=1, max_length=200),
-    db: DbSession = None,
     current_user: CurrentUser = None,
     project_id: str | None = None,
     skip: int = 0,
@@ -398,10 +395,10 @@ async def search_issues(
     If project_id is provided, only search within that project.
     Otherwise, search across all projects in the team.
     """
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
-    has_access = await check_user_team_access(db, current_user, team_id)
+    has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -424,7 +421,6 @@ async def search_issues(
 @router.post("/batch-update", response_model=list[IssueResponse])
 async def batch_update_issues(
     batch_in: IssueBatchUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Batch update multiple issues with safe fields (priority, estimate, labels).
@@ -432,7 +428,7 @@ async def batch_update_issues(
     Does NOT support status, assignee, or sprint changes, which require
     per-issue validation. Use the single-issue PATCH endpoint for those.
     """
-    issue_service = IssueService(db)
+    issue_service = IssueService()
 
     # Deduplicate issue IDs
     unique_ids = list(dict.fromkeys(batch_in.issue_ids))
@@ -464,7 +460,7 @@ async def batch_update_issues(
 
     # Check access per distinct project (not per issue)
     for project_id, project in projects.items():
-        if not await check_user_project_access(db, current_user, project_id, project.team_id):
+        if not await check_user_project_access(current_user, project_id, project.team_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access one or more issues",
@@ -502,17 +498,16 @@ async def batch_update_issues(
 @router.get("/activities", response_model=list[IssueActivityFeedResponse])
 async def list_team_activities(
     team_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 50,
 ):
     """List recent activities for a team (issues and documents)."""
-    issue_service = IssueService(db)
-    sprint_service = SprintService(db)
-    document_service = DocumentService(db)
+    issue_service = IssueService()
+    sprint_service = SprintService()
+    document_service = DocumentService()
 
-    has_access = await check_user_team_access(db, current_user, team_id)
+    has_access = await check_user_team_access(current_user, team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -594,11 +589,11 @@ async def list_team_activities(
 
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
 async def get_issue_by_identifier(
-    identifier: str, db: DbSession, current_user: CurrentUser
+    identifier: str, current_user: CurrentUser
 ):
     """Get issue by identifier (e.g., PRJ-123)."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_identifier(identifier)
     if not issue:
@@ -608,7 +603,7 @@ async def get_issue_by_identifier(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -619,10 +614,10 @@ async def get_issue_by_identifier(
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
-async def get_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
+async def get_issue(issue_id: str, current_user: CurrentUser):
     """Get issue by ID."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -632,7 +627,7 @@ async def get_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -646,12 +641,11 @@ async def get_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
 async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -661,7 +655,7 @@ async def update_issue(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -670,13 +664,13 @@ async def update_issue(
 
     # Validate assignee, sprint, labels, parent if provided (CHT-293, CHT-294, CHT-296, CHT-295)
     if issue_in.assignee_id is not None:
-        await _validate_assignee(db, issue_in.assignee_id, project.team_id)
+        await _validate_assignee(issue_in.assignee_id, project.team_id)
     if issue_in.sprint_id is not None:
-        await _validate_sprint(db, issue_in.sprint_id, issue.project_id)
+        await _validate_sprint(issue_in.sprint_id, issue.project_id)
     if issue_in.label_ids is not None:
-        await _validate_labels(db, issue_in.label_ids, project.team_id)
+        await _validate_labels(issue_in.label_ids, project.team_id)
     if issue_in.parent_id is not None:
-        await _validate_parent(db, issue_in.parent_id, issue.project_id, issue_id=issue_id)
+        await _validate_parent(issue_in.parent_id, issue.project_id, issue_id=issue_id)
 
     # Check if this is a human user (not an agent)
     # Human users can use either JWT or API key auth
@@ -744,10 +738,10 @@ async def update_issue(
 
 
 @router.delete("/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
+async def delete_issue(issue_id: str, current_user: CurrentUser):
     """Delete an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -757,7 +751,7 @@ async def delete_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -775,12 +769,11 @@ async def delete_issue(issue_id: str, db: DbSession, current_user: CurrentUser):
 async def add_label_to_issue(
     issue_id: str,
     body: AddLabelRequest,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Add a label to an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -790,7 +783,7 @@ async def add_label_to_issue(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(db, current_user, issue.project_id, project.team_id):
+    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
@@ -819,12 +812,11 @@ async def add_label_to_issue(
 async def remove_label_from_issue(
     issue_id: str,
     label_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Remove a label from an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -834,7 +826,7 @@ async def remove_label_from_issue(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(db, current_user, issue.project_id, project.team_id):
+    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
@@ -862,15 +854,14 @@ async def remove_label_from_issue(
 @router.get("/{issue_id}/activities", response_model=list[IssueActivityResponse])
 async def list_activities(
     issue_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 50,
 ):
     """List activities for an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
-    sprint_service = SprintService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
+    sprint_service = SprintService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -880,7 +871,7 @@ async def list_activities(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -936,14 +927,13 @@ async def list_activities(
 @router.get("/{issue_id}/sub-issues", response_model=list[IssueResponse])
 async def list_sub_issues(
     issue_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
     """List sub-issues for an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -953,7 +943,7 @@ async def list_sub_issues(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -973,12 +963,11 @@ async def list_sub_issues(
 async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a comment on an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -988,7 +977,7 @@ async def create_comment(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1020,14 +1009,13 @@ async def create_comment(
 @router.get("/{issue_id}/comments", response_model=list[IssueCommentResponse])
 async def list_comments(
     issue_id: str,
-    db: DbSession,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
     """List comments for an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1037,7 +1025,7 @@ async def list_comments(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1064,12 +1052,11 @@ async def update_comment(
     issue_id: str,
     comment_id: str,
     comment_in: IssueCommentUpdate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Update a comment."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1079,7 +1066,7 @@ async def update_comment(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1121,12 +1108,11 @@ async def update_comment(
 async def delete_comment(
     issue_id: str,
     comment_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Delete a comment."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1136,7 +1122,7 @@ async def delete_comment(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1173,12 +1159,11 @@ async def delete_comment(
 async def create_relation(
     issue_id: str,
     relation_in: IssueRelationCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a relation between two issues."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     # Check that both issues exist and user has access
     issue = await issue_service.get_by_id(issue_id)
@@ -1197,7 +1182,7 @@ async def create_relation(
 
     # Check user has access to both issues' projects
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1205,7 +1190,7 @@ async def create_relation(
         )
 
     related_project = await project_service.get_by_id(related_issue.project_id)
-    has_related_access = await check_user_project_access(db, current_user, related_issue.project_id, related_project.team_id)
+    has_related_access = await check_user_project_access(current_user, related_issue.project_id, related_project.team_id)
     if not has_related_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1237,12 +1222,11 @@ async def create_relation(
 @router.get("/{issue_id}/relations")
 async def list_relations(
     issue_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """List all relations for an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1252,7 +1236,7 @@ async def list_relations(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1269,12 +1253,11 @@ async def list_relations(
 async def delete_relation(
     issue_id: str,
     relation_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Delete a relation."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1284,7 +1267,7 @@ async def delete_relation(
         )
 
     project = await project_service.get_by_id(issue.project_id)
-    has_access = await check_user_project_access(db, current_user, issue.project_id, project.team_id)
+    has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1311,11 +1294,11 @@ async def delete_relation(
 
 
 @router.get("/{issue_id}/documents", response_model=list[DocumentResponse])
-async def get_issue_documents(issue_id: str, db: DbSession, current_user: CurrentUser):
+async def get_issue_documents(issue_id: str, current_user: CurrentUser):
     """Get documents linked to an issue."""
-    issue_service = IssueService(db)
-    project_service = ProjectService(db)
-    document_service = DocumentService(db)
+    issue_service = IssueService()
+    project_service = ProjectService()
+    document_service = DocumentService()
 
     issue = await issue_service.get_by_id(issue_id)
     if not issue:
@@ -1326,7 +1309,7 @@ async def get_issue_documents(issue_id: str, db: DbSession, current_user: Curren
 
     # Check project access
     project = await project_service.get_by_id(issue.project_id)
-    if not await check_user_project_access(db, current_user, issue.project_id, project.team_id):
+    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",

@@ -1,6 +1,6 @@
 """API Key routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import DbSession, CurrentUser
+from app.api.deps import CurrentUser
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
 from app.services.api_key_service import APIKeyService
 
@@ -10,11 +10,10 @@ router = APIRouter()
 @router.post("", response_model=APIKeyCreated, status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     api_key_in: APIKeyCreate,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Create a new API key. The full key is only shown once."""
-    api_key_service = APIKeyService(db)
+    api_key_service = APIKeyService()
     api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
 
     return APIKeyCreated(
@@ -28,11 +27,10 @@ async def create_api_key(
 
 @router.get("", response_model=list[APIKeyResponse])
 async def list_api_keys(
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """List all API keys for the current user."""
-    api_key_service = APIKeyService(db)
+    api_key_service = APIKeyService()
     api_keys = await api_key_service.list_by_user(current_user.id)
     return api_keys
 
@@ -40,11 +38,10 @@ async def list_api_keys(
 @router.delete("/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     api_key_id: str,
-    db: DbSession,
     current_user: CurrentUser,
 ):
     """Revoke an API key."""
-    api_key_service = APIKeyService(db)
+    api_key_service = APIKeyService()
     api_key = await api_key_service.get_by_id(api_key_id)
 
     if not api_key:
