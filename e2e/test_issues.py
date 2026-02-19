@@ -1,5 +1,7 @@
 """E2E contract tests: Issues, sub-issues, relations, and comments."""
 import pytest
+import httpx
+from conftest import TEST_BASE_URL
 from cli.client import APIError
 
 
@@ -25,6 +27,7 @@ class TestIssueCRUD:
         fetched = api_client.get_issue(created["id"])
         assert fetched["id"] == created["id"]
         assert fetched["title"] == "Get Me"
+        assert fetched["creator_name"] is not None  # CHT-995: verify join("creator")
 
     def test_get_issue_by_identifier(self, api_client, test_project):
         created = api_client.create_issue(test_project["id"], "By Identifier")
@@ -41,6 +44,8 @@ class TestIssueCRUD:
         issues = api_client.get_issues(project_id=test_project["id"])
         assert isinstance(issues, list)
         assert len(issues) >= 2
+        # CHT-995: verify join("creator") populates creator_name in list
+        assert all(i.get("creator_name") is not None for i in issues)
 
     def test_get_issues_filter_status(self, api_client, test_project):
         api_client.create_issue(test_project["id"], "Todo Issue", status="todo")
@@ -168,6 +173,21 @@ class TestSubIssues:
         subs = api_client.get_sub_issues(parent["id"])
         assert isinstance(subs, list)
         assert len(subs) >= 2
+        # CHT-995: verify join("creator") on sub-issues
+        assert all(s.get("creator_name") is not None for s in subs)
+
+    def test_get_sub_issues_with_labels(self, api_client, test_team, test_project):
+        """CHT-995: Verify sub-issues prefetch labels correctly."""
+        parent = api_client.create_issue(test_project["id"], "Label Parent")
+        child = api_client.create_issue(
+            test_project["id"], "Label Child", parent_id=parent["id"]
+        )
+        label = api_client.create_label(test_team["id"], "sub-issue-label")
+        api_client.add_label_to_issue(child["id"], label["id"])
+        subs = api_client.get_sub_issues(parent["id"])
+        matched = [s for s in subs if s["id"] == child["id"]]
+        assert len(matched) == 1
+        assert any(l["id"] == label["id"] for l in matched[0].get("labels", []))
 
     def test_get_issues_by_parent(self, api_client, test_project):
         parent = api_client.create_issue(test_project["id"], "Parent")
@@ -213,6 +233,7 @@ class TestComments:
         comment = api_client.create_comment(issue["id"], "Hello world")
         assert comment["content"] == "Hello world"
         assert "id" in comment
+        assert comment.get("author_name") is not None  # CHT-995: verify author
 
     def test_get_comments(self, api_client, test_project):
         issue = api_client.create_issue(test_project["id"], "Multi Comment")
@@ -221,6 +242,8 @@ class TestComments:
         comments = api_client.get_comments(issue["id"])
         assert isinstance(comments, list)
         assert len(comments) >= 2
+        # CHT-995: verify join("author") populates author_name
+        assert all(c.get("author_name") is not None for c in comments)
 
     def test_delete_comment(self, api_client, test_project):
         issue = api_client.create_issue(test_project["id"], "Del Comment")
@@ -228,3 +251,101 @@ class TestComments:
         api_client.delete_comment(issue["id"], comment["id"])
         comments = api_client.get_comments(issue["id"])
         assert not any(c["id"] == comment["id"] for c in comments)
+
+
+class TestIssueActivities:
+    """CHT-995: Test activity endpoints with populated relation data.
+
+    Uses raw httpx because the CLI client doesn't expose activity endpoints yet.
+    """
+
+    def _get(self, url, token):
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    def test_get_issue_activities(self, api_client, test_project, auth_token):
+        """Verify GET /issues/{id}/activities returns user_name via join("user")."""
+        issue = api_client.create_issue(test_project["id"], "Activity Test")
+        api_client.update_issue(issue["id"], title="Activity Updated")
+        activities = self._get(
+            f"{TEST_BASE_URL}/issues/{issue['id']}/activities", auth_token
+        )
+        assert isinstance(activities, list)
+        assert len(activities) >= 1
+        # Verify user relation is loaded on ALL activities
+        assert all(a["user_name"] is not None for a in activities)
+        assert all(a["user_email"] is not None for a in activities)
+
+    def test_get_team_activity_feed(self, api_client, test_team, test_project, auth_token):
+        """Verify GET /issues/activities returns issue and user relations."""
+        issue = api_client.create_issue(test_project["id"], "Feed Test")
+        api_client.update_issue(issue["id"], status="in_progress")
+        activities = self._get(
+            f"{TEST_BASE_URL}/issues/activities?team_id={test_team['id']}", auth_token
+        )
+        assert isinstance(activities, list)
+        assert len(activities) >= 1
+        # Verify user relation loaded on all activities
+        issue_acts = [a for a in activities if a.get("issue_id")]
+        assert len(issue_acts) >= 1
+        assert all(a["user_name"] is not None for a in issue_acts)
+        assert all(a["issue_identifier"] is not None for a in issue_acts)
+        assert all(a["issue_title"] is not None for a in issue_acts)
+
+    def test_team_activity_feed_includes_document_activities(
+        self, api_client, test_team, auth_token
+    ):
+        """Verify team feed includes document activities with user relation."""
+        doc = api_client.create_document(test_team["id"], "Doc Activity Test")
+        api_client.update_document(doc["id"], title="Doc Updated")
+        activities = self._get(
+            f"{TEST_BASE_URL}/issues/activities?team_id={test_team['id']}", auth_token
+        )
+        doc_acts = [a for a in activities if a.get("document_id")]
+        assert len(doc_acts) >= 1
+        assert all(a["user_name"] is not None for a in doc_acts)
+
+
+class TestBatchUpdate:
+    """CHT-995: Test batch update with populated relation data.
+
+    Uses raw httpx because the CLI client doesn't expose batch update yet.
+    """
+
+    def _post(self, url, data, token):
+        resp = httpx.post(
+            url, json=data,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def test_batch_update_priority(self, api_client, test_project, auth_token):
+        """Verify POST /issues/batch-update returns creator_name and labels."""
+        issue1 = api_client.create_issue(test_project["id"], "Batch 1")
+        issue2 = api_client.create_issue(test_project["id"], "Batch 2")
+        result = self._post(
+            f"{TEST_BASE_URL}/issues/batch-update",
+            {"issue_ids": [issue1["id"], issue2["id"]], "priority": "high"},
+            auth_token,
+        )
+        assert isinstance(result, list)
+        assert len(result) == 2
+        # Verify creator relation is loaded
+        assert all(r.get("creator_name") is not None for r in result)
+
+    def test_batch_update_with_labels(self, api_client, test_team, test_project, auth_token):
+        """Verify batch update with labels returns labels in response."""
+        label = api_client.create_label(test_team["id"], "batch-label")
+        issue = api_client.create_issue(test_project["id"], "Batch Label")
+        api_client.add_label_to_issue(issue["id"], label["id"])
+        result = self._post(
+            f"{TEST_BASE_URL}/issues/batch-update",
+            {"issue_ids": [issue["id"]], "priority": "medium"},
+            auth_token,
+        )
+        assert len(result) == 1
+        # Verify prefetch("labels") works after batch update
+        assert any(l["id"] == label["id"] for l in result[0].get("labels", []))
