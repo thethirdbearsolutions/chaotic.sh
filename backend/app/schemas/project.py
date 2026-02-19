@@ -1,6 +1,6 @@
 """Project schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from app.models.project import EstimateScale, UnestimatedHandling
 from app.utils import DateTimeUTC
 
@@ -57,25 +57,3 @@ class ProjectResponse(BaseModel):
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
-
-    @field_validator("estimate_scale", mode="before")
-    @classmethod
-    def _coerce_estimate_scale(cls, v):
-        """Accept both enum names (DB-stored) and values."""
-        if isinstance(v, str) and v not in [e.value for e in EstimateScale]:
-            try:
-                return EstimateScale[v].value
-            except KeyError:
-                pass
-        return v
-
-    @field_validator("unestimated_handling", mode="before")
-    @classmethod
-    def _coerce_unestimated_handling(cls, v):
-        """Accept both enum names (DB-stored) and values."""
-        if isinstance(v, str) and v not in [e.value for e in UnestimatedHandling]:
-            try:
-                return UnestimatedHandling[v].value
-            except KeyError:
-                pass
-        return v

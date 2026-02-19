@@ -1,6 +1,6 @@
 """Team schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from app.models.team import TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
 
@@ -48,16 +48,6 @@ class TeamMemberResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @field_validator("role", mode="before")
-    @classmethod
-    def _coerce_role(cls, v):
-        if isinstance(v, str) and v not in [e.value for e in TeamRole]:
-            try:
-                return TeamRole[v].value
-            except KeyError:
-                pass
-        return v
-
 
 class TeamInvitationCreate(BaseModel):
     """Schema for creating a team invitation."""
@@ -78,23 +68,3 @@ class TeamInvitationResponse(BaseModel):
     expires_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
-
-    @field_validator("role", mode="before")
-    @classmethod
-    def _coerce_role(cls, v):
-        if isinstance(v, str) and v not in [e.value for e in TeamRole]:
-            try:
-                return TeamRole[v].value
-            except KeyError:
-                pass
-        return v
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _coerce_status(cls, v):
-        if isinstance(v, str) and v not in [e.value for e in InvitationStatus]:
-            try:
-                return InvitationStatus[v].value
-            except KeyError:
-                pass
-        return v

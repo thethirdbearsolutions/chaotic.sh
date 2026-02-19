@@ -1,6 +1,6 @@
 """Sprint schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from app.models.sprint import SprintStatus
 from app.utils import DateTimeUTC
 
@@ -48,14 +48,3 @@ class SprintResponse(BaseModel):
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _coerce_status(cls, v):
-        """Accept both enum names (DB-stored) and values."""
-        if isinstance(v, str) and v not in [e.value for e in SprintStatus]:
-            try:
-                return SprintStatus[v].value
-            except KeyError:
-                pass
-        return v

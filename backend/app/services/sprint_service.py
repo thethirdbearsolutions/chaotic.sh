@@ -67,7 +67,7 @@ class SprintService:
             current = await OxydeSprint.objects.create(
                 project_id=project_id,
                 name=f"Sprint {sprint_num}",
-                status=SprintStatus.ACTIVE.name,
+                status=SprintStatus.ACTIVE,
                 budget=default_budget,
             )
             await current.refresh()
@@ -78,7 +78,7 @@ class SprintService:
             next_sprint = await OxydeSprint.objects.create(
                 project_id=project_id,
                 name=f"Sprint {sprint_num}",
-                status=SprintStatus.PLANNED.name,
+                status=SprintStatus.PLANNED,
                 budget=default_budget,
             )
             await next_sprint.refresh()
@@ -110,7 +110,7 @@ class SprintService:
         3. Next sprint becomes ACTIVE (new Current)
         4. Creates a new Next sprint
         """
-        if sprint.status_enum != SprintStatus.ACTIVE:
+        if sprint.status != SprintStatus.ACTIVE:
             raise ValueError("Can only close an active sprint")
 
         if sprint.limbo:
@@ -127,13 +127,13 @@ class SprintService:
                 next_sprint = await OxydeSprint.objects.create(
                     project_id=project_id,
                     name=f"Sprint {sprint_num}",
-                    status=SprintStatus.PLANNED.name,
+                    status=SprintStatus.PLANNED,
                     budget=default_budget,
                 )
                 await next_sprint.refresh()
 
             # Move incomplete issues from current sprint to next sprint
-            # Using raw SQL since Issue is not yet ported to Oxyde
+            # Raw SQL: .name strings required for execute_raw params
             incomplete_statuses = [
                 IssueStatus.BACKLOG.name,
                 IssueStatus.TODO.name,
@@ -152,7 +152,7 @@ class SprintService:
                 await sprint.save(update_fields={"limbo"})
             else:
                 # Full rotation - complete and activate next sprint
-                sprint.status = SprintStatus.COMPLETED.name
+                sprint.status = SprintStatus.COMPLETED
                 sprint.limbo = False
                 await sprint.save(update_fields={"status", "limbo"})
                 await self._activate_next_sprint(next_sprint)
@@ -162,7 +162,7 @@ class SprintService:
 
     async def _activate_next_sprint(self, next_sprint: OxydeSprint) -> None:
         """Activate the next sprint and create a new next."""
-        next_sprint.status = SprintStatus.ACTIVE.name
+        next_sprint.status = SprintStatus.ACTIVE
         await next_sprint.save(update_fields={"status"})
 
         # Determine budget for new sprint: inherit from previous Next, or fall back to project default
@@ -175,7 +175,7 @@ class SprintService:
         new_next = await OxydeSprint.objects.create(
             project_id=next_sprint.project_id,
             name=f"Sprint {sprint_num}",
-            status=SprintStatus.PLANNED.name,
+            status=SprintStatus.PLANNED,
             budget=new_budget,
         )
         await new_next.refresh()
@@ -192,13 +192,11 @@ class SprintService:
             sprint = await OxydeSprint.objects.get_or_none(id=sprint.id)
             if not sprint:
                 raise ValueError("Sprint not found")
-        # Atomic check-and-update via raw SQL (Oxyde filter().update() doesn't
-        # return rowcount, so use raw SQL for the CAS pattern)
+        # Atomic check-and-update via raw SQL — .name strings for raw params
         result = await execute_raw(
             "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1",
             [SprintStatus.COMPLETED.name, sprint.id],
         )
-        # execute_raw returns list of dicts for SELECT; for UPDATE it may return empty
         # Refresh to check if the update took effect
         await sprint.refresh()
         if sprint.limbo:
@@ -221,8 +219,6 @@ class SprintService:
         """Update a sprint."""
         update_data = sprint_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if field == "status":
-                value = value.name
             setattr(sprint, field, value)
         await sprint.save(update_fields=set(update_data.keys()))
         await sprint.refresh()
@@ -242,12 +238,13 @@ class SprintService:
         """List sprints for a project."""
         qs = OxydeSprint.objects.filter(project_id=project_id)
         if status:
+            # .name for filter (bypasses model_dump, goes to msgpack raw)
             qs = qs.filter(status=status.name if hasattr(status, 'name') else status)
         return await qs.order_by("-created_at").offset(skip).limit(limit).all()
 
     async def enter_limbo(self, sprint: OxydeSprint) -> OxydeSprint:
         """Put sprint into limbo state (pending rituals)."""
-        if sprint.status_enum != SprintStatus.ACTIVE:
+        if sprint.status != SprintStatus.ACTIVE:
             raise ValueError("Can only put an active sprint into limbo")
         sprint.limbo = True
         await sprint.save(update_fields={"limbo"})

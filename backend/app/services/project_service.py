@@ -34,8 +34,8 @@ class ProjectService:
             color=project_in.color,
             icon=project_in.icon,
             lead_id=project_in.lead_id,
-            estimate_scale=project_in.estimate_scale.name,
-            unestimated_handling=project_in.unestimated_handling.name,
+            estimate_scale=project_in.estimate_scale,
+            unestimated_handling=project_in.unestimated_handling,
             default_sprint_budget=project_in.default_sprint_budget,
             require_estimate_on_claim=project_in.require_estimate_on_claim,
         )
@@ -56,8 +56,6 @@ class ProjectService:
         """Update a project."""
         update_data = project_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if field in ("estimate_scale", "unestimated_handling"):
-                value = value.name
             setattr(project, field, value)
         project.updated_at = datetime.now(timezone.utc)
         await project.save(update_fields=set(update_data.keys()) | {"updated_at"})

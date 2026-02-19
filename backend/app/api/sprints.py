@@ -146,7 +146,7 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser):
             detail="Not a member of this team",
         )
 
-    if sprint.status_enum != SprintStatus.ACTIVE:
+    if sprint.status != SprintStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Can only close an active sprint",

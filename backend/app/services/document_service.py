@@ -40,7 +40,7 @@ class DocumentService:
     ) -> None:
         """Log a document activity."""
         await OxydeDocumentActivity.objects.create(
-            activity_type=activity_type.name if hasattr(activity_type, 'name') and hasattr(activity_type, 'value') else activity_type,
+            activity_type=activity_type,
             team_id=team_id,
             user_id=user_id,
             document_id=document_id,
