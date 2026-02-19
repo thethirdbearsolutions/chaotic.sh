@@ -52,6 +52,98 @@ class TestRitualCRUD:
             unauthenticated_client.get_rituals("fake-project")
 
 
+class TestGetRitual:
+    """CHT-993: Test GET /rituals/{ritual_id} endpoint."""
+
+    def test_get_ritual_by_id(self, api_client, test_project):
+        ritual = api_client.create_ritual(
+            test_project["id"], "get-single", "Get me by ID",
+            trigger="every_sprint", approval_mode="auto",
+        )
+        fetched = api_client.get_ritual(ritual["id"])
+        assert fetched["id"] == ritual["id"]
+        assert fetched["name"] == "get-single"
+
+    def test_get_ritual_not_found(self, api_client):
+        with pytest.raises(APIError):
+            api_client.get_ritual("nonexistent-id")
+
+
+class TestPendingApprovals:
+    """CHT-993: Test GET /rituals/pending-approvals endpoint."""
+
+    def test_get_pending_approvals_empty(self, api_client, test_project):
+        approvals = api_client.get_pending_approvals(test_project["id"])
+        assert isinstance(approvals, list)
+
+    def test_get_pending_approvals_with_review_ritual(self, api_client, test_project):
+        """Create ticket-close review ritual, attest it for an issue, then check pending."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "close-review", "Review before close",
+            trigger="ticket_close", approval_mode="review",
+        )
+        issue = api_client.create_issue(test_project["id"], "Approval Issue")
+        # Attest the ritual for this issue (submits for review)
+        api_client.attest_ritual_for_issue(ritual["id"], issue["id"], note="Ready")
+        approvals = api_client.get_pending_approvals(test_project["id"])
+        assert isinstance(approvals, list)
+        # Should have at least one pending approval
+        assert len(approvals) >= 1
+
+
+class TestApproveIssueAttestation:
+    """CHT-993: Test POST /rituals/{ritual_id}/approve-issue/{issue_id} endpoint."""
+
+    def test_approve_issue_attestation(self, api_client, test_project):
+        """Create review ritual, attest for issue, then approve."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "approve-review", "Approve this",
+            trigger="ticket_close", approval_mode="review",
+        )
+        issue = api_client.create_issue(test_project["id"], "Approve Me")
+        api_client.attest_ritual_for_issue(ritual["id"], issue["id"], note="Done")
+        result = api_client.approve_issue_attestation(ritual["id"], issue["id"])
+        assert isinstance(result, dict)
+        assert result["ritual_id"] == ritual["id"]
+        assert result["issue_id"] == issue["id"]
+        # After approval, pending approvals should not include this issue
+        approvals = api_client.get_pending_approvals(test_project["id"])
+        matching = [a for a in approvals if a.get("issue_id") == issue["id"]]
+        assert len(matching) == 0
+
+    def test_approve_issue_without_attestation_fails(self, api_client, test_project):
+        """Approving without prior attestation should fail."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "no-attest", "Approve without attesting",
+            trigger="ticket_close", approval_mode="review",
+        )
+        issue = api_client.create_issue(test_project["id"], "No Attest Issue")
+        with pytest.raises(APIError):
+            api_client.approve_issue_attestation(ritual["id"], issue["id"])
+
+
+class TestForceClearLimboHappyPath:
+    """CHT-993: Test force-clear-limbo when project IS in limbo."""
+
+    def test_force_clear_limbo_success(self, api_client, test_project):
+        """Enter limbo via sprint close with pending ritual, then force-clear."""
+        api_client.create_ritual(
+            test_project["id"], "limbo-ritual", "Blocks sprint",
+            trigger="every_sprint", approval_mode="review",
+        )
+        current = api_client.get_current_sprint(test_project["id"])
+        api_client.close_sprint(current["id"])
+        # Should now be in limbo
+        status = api_client.get_limbo_status(test_project["id"])
+        assert status.get("in_limbo") is True
+        # Force-clear should succeed
+        result = api_client.force_clear_limbo(test_project["id"])
+        assert result is not None
+        # Should no longer be in limbo
+        status = api_client.get_limbo_status(test_project["id"])
+        assert status.get("in_limbo") is False
+
+
 class TestRitualHistory:
     def test_get_ritual_history(self, api_client, test_project):
         history = api_client.get_ritual_history(test_project["id"])

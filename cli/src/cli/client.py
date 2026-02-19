@@ -361,6 +361,15 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}/labels/{label_id}")
 
     # Rituals
+    def get_ritual(self, ritual_id: str) -> dict:
+        return self._request("GET", f"/rituals/{ritual_id}")
+
+    def get_pending_approvals(self, project_id: str) -> list:
+        return self._request("GET", f"/rituals/pending-approvals?project_id={project_id}")
+
+    def approve_issue_attestation(self, ritual_id: str, issue_id: str) -> dict:
+        return self._request("POST", f"/rituals/{ritual_id}/approve-issue/{issue_id}", {})
+
     def get_rituals(self, project_id: str, include_inactive: bool = False) -> list:
         url = f"/rituals?project_id={project_id}"
         if include_inactive:
