@@ -53,6 +53,40 @@ class TestIssueLabels:
         if "labels" in fetched:
             assert not any(l["id"] == label["id"] for l in fetched["labels"])
 
+    def test_get_issue_includes_labels(self, api_client, test_team, test_project):
+        """CHT-994: Verify prefetch("labels") works — get single issue."""
+        label = api_client.create_label(test_team["id"], "prefetch-single")
+        issue = api_client.create_issue(test_project["id"], "Label Prefetch")
+        api_client.add_label_to_issue(issue["id"], label["id"])
+        fetched = api_client.get_issue(issue["id"])
+        assert "labels" in fetched
+        assert any(l["id"] == label["id"] for l in fetched["labels"])
+
+    def test_list_issues_includes_labels(self, api_client, test_team, test_project):
+        """CHT-994: Verify prefetch("labels") works — list issues."""
+        label = api_client.create_label(test_team["id"], "prefetch-list")
+        issue = api_client.create_issue(test_project["id"], "Label List")
+        api_client.add_label_to_issue(issue["id"], label["id"])
+        issues = api_client.get_issues(project_id=test_project["id"])
+        matched = [i for i in issues if i["id"] == issue["id"]]
+        assert len(matched) == 1
+        assert "labels" in matched[0]
+        assert any(l["id"] == label["id"] for l in matched[0]["labels"])
+
+    def test_list_issues_with_status_filter_includes_labels(self, api_client, test_team, test_project):
+        """CHT-994: The exact query path that caused the 500 error."""
+        label = api_client.create_label(test_team["id"], "prefetch-status")
+        issue = api_client.create_issue(
+            test_project["id"], "Status Filter Label", status="todo"
+        )
+        api_client.add_label_to_issue(issue["id"], label["id"])
+        issues = api_client.get_issues(
+            project_id=test_project["id"], status="todo"
+        )
+        matched = [i for i in issues if i["id"] == issue["id"]]
+        assert len(matched) == 1
+        assert any(l["id"] == label["id"] for l in matched[0].get("labels", []))
+
     def test_filter_issues_by_label(self, api_client, test_team, test_project):
         label = api_client.create_label(test_team["id"], "filterable")
         issue = api_client.create_issue(test_project["id"], "Filterable Issue")
