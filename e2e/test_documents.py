@@ -20,6 +20,7 @@ class TestDocumentCRUD:
         fetched = api_client.get_document(doc["id"])
         assert fetched["id"] == doc["id"]
         assert fetched["title"] == "Fetch Me"
+        assert fetched["author_name"] is not None  # CHT-995: verify join("author")
 
     def test_get_documents(self, api_client, test_team):
         api_client.create_document(test_team["id"], "Doc A")
@@ -27,6 +28,8 @@ class TestDocumentCRUD:
         docs = api_client.get_documents(test_team["id"])
         assert isinstance(docs, list)
         assert len(docs) >= 2
+        # CHT-995: verify join("author") populates author_name in list
+        assert all(d.get("author_name") is not None for d in docs)
 
     def test_get_documents_search(self, api_client, test_team):
         api_client.create_document(test_team["id"], "Unique Pineapple Doc")
@@ -104,6 +107,8 @@ class TestDocumentIssueLinks:
         issues = api_client.get_document_issues(doc["id"])
         assert isinstance(issues, list)
         assert len(issues) >= 2
+        # CHT-995: verify creator relation on linked issues
+        assert all(i.get("creator_name") is not None for i in issues)
 
     def test_get_issue_documents(self, api_client, test_team, test_project):
         doc = api_client.create_document(test_team["id"], "Issue Doc")
@@ -112,6 +117,8 @@ class TestDocumentIssueLinks:
         docs = api_client.get_issue_documents(issue["id"])
         assert isinstance(docs, list)
         assert len(docs) >= 1
+        # CHT-995: verify author relation on linked documents
+        assert all(d.get("author_name") is not None for d in docs)
 
     def test_unlink_document_from_issue(self, api_client, test_team, test_project):
         doc = api_client.create_document(test_team["id"], "Unlink Doc")
@@ -128,6 +135,7 @@ class TestDocumentComments:
         comment = api_client.create_document_comment(doc["id"], "Nice doc!")
         assert comment["content"] == "Nice doc!"
         assert "id" in comment
+        assert comment.get("author_name") is not None  # CHT-995: verify author
 
     def test_get_document_comments(self, api_client, test_team):
         doc = api_client.create_document(test_team["id"], "Multi Comment Doc")
@@ -136,3 +144,5 @@ class TestDocumentComments:
         comments = api_client.get_document_comments(doc["id"])
         assert isinstance(comments, list)
         assert len(comments) >= 2
+        # CHT-995: verify join("author") populates author_name
+        assert all(c.get("author_name") is not None for c in comments)
