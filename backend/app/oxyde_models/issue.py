@@ -115,8 +115,8 @@ class OxydeIssueRelation(OxydeModel):
 class OxydeIssueLabel(OxydeModel):
     """Junction table for issue-label links."""
 
-    issue: "OxydeIssue" = Field(db_pk=True, db_on_delete="CASCADE")
-    label: "OxydeLabel" = Field(db_pk=True, db_on_delete="CASCADE")
+    issue: OxydeIssue | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")
+    label: OxydeLabel | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")
 
     class Meta:
         is_table = True
