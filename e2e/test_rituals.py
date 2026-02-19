@@ -103,8 +103,23 @@ class TestApproveIssueAttestation:
         issue = api_client.create_issue(test_project["id"], "Approve Me")
         api_client.attest_ritual_for_issue(ritual["id"], issue["id"], note="Done")
         result = api_client.approve_issue_attestation(ritual["id"], issue["id"])
-        assert result is not None
         assert isinstance(result, dict)
+        assert result["ritual_id"] == ritual["id"]
+        assert result["issue_id"] == issue["id"]
+        # After approval, pending approvals should not include this issue
+        approvals = api_client.get_pending_approvals(test_project["id"])
+        matching = [a for a in approvals if a.get("issue_id") == issue["id"]]
+        assert len(matching) == 0
+
+    def test_approve_issue_without_attestation_fails(self, api_client, test_project):
+        """Approving without prior attestation should fail."""
+        ritual = api_client.create_ritual(
+            test_project["id"], "no-attest", "Approve without attesting",
+            trigger="ticket_close", approval_mode="review",
+        )
+        issue = api_client.create_issue(test_project["id"], "No Attest Issue")
+        with pytest.raises(APIError):
+            api_client.approve_issue_attestation(ritual["id"], issue["id"])
 
 
 class TestForceClearLimboHappyPath:
