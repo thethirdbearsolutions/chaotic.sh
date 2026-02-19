@@ -254,26 +254,28 @@ class TestComments:
 
 
 class TestIssueActivities:
-    """CHT-995: Test activity endpoints with populated relation data."""
+    """CHT-995: Test activity endpoints with populated relation data.
+
+    Uses raw httpx because the CLI client doesn't expose activity endpoints yet.
+    """
 
     def _get(self, url, token):
-        resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=5.0)
         resp.raise_for_status()
         return resp.json()
 
     def test_get_issue_activities(self, api_client, test_project, auth_token):
         """Verify GET /issues/{id}/activities returns user_name via join("user")."""
         issue = api_client.create_issue(test_project["id"], "Activity Test")
-        # Trigger an activity by updating the issue
         api_client.update_issue(issue["id"], title="Activity Updated")
         activities = self._get(
             f"{TEST_BASE_URL}/issues/{issue['id']}/activities", auth_token
         )
         assert isinstance(activities, list)
         assert len(activities) >= 1
-        # Verify user relation is loaded
-        assert activities[0]["user_name"] is not None
-        assert activities[0]["user_email"] is not None
+        # Verify user relation is loaded on ALL activities
+        assert all(a["user_name"] is not None for a in activities)
+        assert all(a["user_email"] is not None for a in activities)
 
     def test_get_team_activity_feed(self, api_client, test_team, test_project, auth_token):
         """Verify GET /issues/activities returns issue and user relations."""
@@ -284,14 +286,12 @@ class TestIssueActivities:
         )
         assert isinstance(activities, list)
         assert len(activities) >= 1
-        # Find an issue activity (not document)
+        # Verify user relation loaded on all activities
         issue_acts = [a for a in activities if a.get("issue_id")]
         assert len(issue_acts) >= 1
-        act = issue_acts[0]
-        # Verify both user and issue relations are loaded
-        assert act["user_name"] is not None
-        assert act["issue_identifier"] is not None
-        assert act["issue_title"] is not None
+        assert all(a["user_name"] is not None for a in issue_acts)
+        assert all(a["issue_identifier"] is not None for a in issue_acts)
+        assert all(a["issue_title"] is not None for a in issue_acts)
 
     def test_team_activity_feed_includes_document_activities(
         self, api_client, test_team, auth_token
@@ -304,17 +304,20 @@ class TestIssueActivities:
         )
         doc_acts = [a for a in activities if a.get("document_id")]
         assert len(doc_acts) >= 1
-        assert doc_acts[0]["user_name"] is not None
+        assert all(a["user_name"] is not None for a in doc_acts)
 
 
 class TestBatchUpdate:
-    """CHT-995: Test batch update with populated relation data."""
+    """CHT-995: Test batch update with populated relation data.
+
+    Uses raw httpx because the CLI client doesn't expose batch update yet.
+    """
 
     def _post(self, url, data, token):
         resp = httpx.post(
             url, json=data,
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
+            timeout=5.0,
         )
         resp.raise_for_status()
         return resp.json()
