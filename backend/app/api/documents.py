@@ -17,7 +17,6 @@ from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.services.issue_service import IssueService
 from app.services.project_service import ProjectService
-from app.models.document import Document
 
 router = APIRouter()
 

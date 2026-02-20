@@ -6,51 +6,56 @@ When an issue description or comment mentions another issue by identifier
 import pytest
 import pytest_asyncio
 from app.services.issue_service import IssueService
-from app.models.issue import Issue
-from app.models.project import Project
-from app.models.team import Team, TeamMember
+from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
 from app.enums import IssueRelationType, TeamRole
 
 
 @pytest_asyncio.fixture
-async def issue_service(db_session):
+async def issue_service(db):
     """Create an IssueService instance."""
-    return IssueService(db_session)
+    return IssueService()
+
+
+async def _next_issue_number(project):
+    """Increment project issue_count in DB and return new number."""
+    from oxyde import execute_raw
+    await execute_raw(
+        "UPDATE projects SET issue_count = issue_count + 1 WHERE id = ?",
+        [project.id],
+    )
+    refreshed = await OxydeProject.objects.get(id=project.id)
+    return refreshed.issue_count
 
 
 @pytest_asyncio.fixture
-async def second_issue(db_session, test_project, test_user):
+async def second_issue(db, test_project, test_user):
     """Create a second test issue."""
-    test_project.issue_count += 1
-    issue = Issue(
+    num = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
-        identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count,
+        identifier=f"{test_project.key}-{num}",
+        number=num,
         title="Second Issue",
         description="Another issue",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
     return issue
 
 
 @pytest_asyncio.fixture
-async def third_issue(db_session, test_project, test_user):
+async def third_issue(db, test_project, test_user):
     """Create a third test issue."""
-    test_project.issue_count += 1
-    issue = Issue(
+    num = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
-        identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count,
+        identifier=f"{test_project.key}-{num}",
+        number=num,
         title="Third Issue",
         description="Yet another issue",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
     return issue
 
 
@@ -148,28 +153,23 @@ class TestCreateCrossReferences:
         assert len(relations) == 1
 
     @pytest.mark.asyncio
-    async def test_skips_cross_team_reference(self, db_session, issue_service, test_issue, test_user):
+    async def test_skips_cross_team_reference(self, db, issue_service, test_issue, test_user):
         """Mentioning an issue from another team should not create a relation."""
         # Create a second team and project
-        other_team = Team(name="Other Team", key="OTHER", description="Another team")
-        db_session.add(other_team)
-        await db_session.flush()
+        other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHER", description="Another team")
 
-        other_member = TeamMember(team_id=other_team.id, user_id=test_user.id, role=TeamRole.OWNER)
-        db_session.add(other_member)
+        other_member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=test_user.id, role=TeamRole.OWNER)
 
-        other_project = Project(
+        other_project = await OxydeProject.objects.create(
             team_id=other_team.id,
             name="Secret Project",
             key="SEC",
             description="A secret project",
             color="#ff0000",
         )
-        db_session.add(other_project)
-        await db_session.flush()
 
         other_project.issue_count = 1
-        other_issue = Issue(
+        other_issue = await OxydeIssue.objects.create(
             project_id=other_project.id,
             identifier="SEC-1",
             number=1,
@@ -177,9 +177,6 @@ class TestCreateCrossReferences:
             description="Top secret",
             creator_id=test_user.id,
         )
-        db_session.add(other_issue)
-        await db_session.commit()
-        await db_session.refresh(other_issue)
 
         # Reference the other team's issue — should be silently ignored
         text = f"See {other_issue.identifier} for details"

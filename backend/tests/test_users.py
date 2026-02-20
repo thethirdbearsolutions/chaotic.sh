@@ -151,22 +151,22 @@ async def test_update_me_name_preserved_on_avatar_update(client, auth_headers):
 class TestUserService:
     """Tests for UserService methods."""
 
-    async def test_get_by_email(self, db_session, test_user):
+    async def test_get_by_email(self, db, test_user):
         """get_by_email should find user by email."""
-        service = UserService(db_session)
+        service = UserService()
         result = await service.get_by_email(test_user.email)
         assert result is not None
         assert result.id == test_user.id
 
-    async def test_get_by_email_not_found(self, db_session):
+    async def test_get_by_email_not_found(self, db):
         """get_by_email should return None for unknown email."""
-        service = UserService(db_session)
+        service = UserService()
         result = await service.get_by_email("nobody@example.com")
         assert result is None
 
-    async def test_authenticate_valid(self, db_session):
+    async def test_authenticate_valid(self, db):
         """authenticate should return user with correct credentials."""
-        service = UserService(db_session)
+        service = UserService()
         user = await service.create(UserCreate(
             email="authtest@example.com", password="password123", name="Auth Test"
         ))
@@ -174,32 +174,32 @@ class TestUserService:
         assert result is not None
         assert result.id == user.id
 
-    async def test_authenticate_wrong_password(self, db_session):
+    async def test_authenticate_wrong_password(self, db):
         """authenticate should return None for wrong password."""
-        service = UserService(db_session)
+        service = UserService()
         await service.create(UserCreate(
             email="authtest2@example.com", password="password123", name="Auth Test 2"
         ))
         result = await service.authenticate("authtest2@example.com", "wrongpassword")
         assert result is None
 
-    async def test_authenticate_nonexistent_email(self, db_session):
+    async def test_authenticate_nonexistent_email(self, db):
         """authenticate should return None for nonexistent email."""
-        service = UserService(db_session)
+        service = UserService()
         result = await service.authenticate("ghost@example.com", "password123")
         assert result is None
 
-    async def test_list_users(self, db_session, test_user, test_user2):
+    async def test_list_users(self, db, test_user, test_user2):
         """list_users should return all users."""
-        service = UserService(db_session)
+        service = UserService()
         users = await service.list_users()
         assert len(users) >= 2
         ids = [u.id for u in users]
         assert test_user.id in ids
         assert test_user2.id in ids
 
-    async def test_update_user(self, db_session, test_user):
+    async def test_update_user(self, db, test_user):
         """update should modify user fields."""
-        service = UserService(db_session)
+        service = UserService()
         updated = await service.update(test_user, UserUpdate(name="New Name"))
         assert updated.name == "New Name"

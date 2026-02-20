@@ -1,8 +1,20 @@
 """Issue schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.utils import DateTimeUTC
+
+
+def _coerce_enum(enum_cls, v):
+    """Coerce enum name strings from Oxyde to enum members."""
+    if isinstance(v, enum_cls):
+        return v
+    if isinstance(v, str):
+        try:
+            return enum_cls[v]
+        except KeyError:
+            return enum_cls(v)
+    return v
 
 
 class IssueCreate(BaseModel):
@@ -62,6 +74,21 @@ class IssueResponse(BaseModel):
     labels: list["LabelResponse"] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, v):
+        return _coerce_enum(IssueStatus, v)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def coerce_priority(cls, v):
+        return _coerce_enum(IssuePriority, v)
+
+    @field_validator("issue_type", mode="before")
+    @classmethod
+    def coerce_issue_type(cls, v):
+        return _coerce_enum(IssueType, v)
 
 
 class IssueCommentCreate(BaseModel):
@@ -136,6 +163,11 @@ class IssueActivityResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("activity_type", mode="before")
+    @classmethod
+    def coerce_activity_type(cls, v):
+        return _coerce_enum(ActivityType, v)
+
 
 class IssueActivityFeedResponse(BaseModel):
     """Schema for team activity feed response.
@@ -189,6 +221,18 @@ class IssueRelationResponse(BaseModel):
     related_issue_status: IssueStatus | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("relation_type", mode="before")
+    @classmethod
+    def coerce_relation_type(cls, v):
+        return _coerce_enum(IssueRelationType, v)
+
+    @field_validator("related_issue_status", mode="before")
+    @classmethod
+    def coerce_related_issue_status(cls, v):
+        if v is None:
+            return v
+        return _coerce_enum(IssueStatus, v)
 
 
 class AddLabelRequest(BaseModel):

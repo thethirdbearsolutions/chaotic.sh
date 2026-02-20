@@ -6,38 +6,30 @@ ritual CRUD access control. All via HTTP client.
 import datetime
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember
-from app.models.user import User
-from app.models.ritual import Ritual, RitualAttestation
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
 from app.enums import TeamRole, RitualTrigger, ApprovalMode
-from app.models import Sprint
+from app.oxyde_models.sprint import OxydeSprint
 from app.utils.security import get_password_hash, create_access_token
 
 
 @pytest_asyncio.fixture
-async def other_team(db_session):
+async def other_team(db):
     """Team that test_user is NOT a member of."""
-    team = Team(name="Ritual Other Team", key="ROT", description="Other team")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Ritual Other Team", key="ROT", description="Other team")
     return team
 
 
 @pytest_asyncio.fixture
-async def non_admin_user(db_session, test_team):
+async def non_admin_user(db, test_team):
     """User on test_team but as MEMBER (not admin)."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="member@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Member User",
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(team_id=test_team.id, user_id=user.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=user.id, role=TeamRole.MEMBER)
     return user
 
 
@@ -49,18 +41,15 @@ async def non_admin_headers(non_admin_user):
 
 
 @pytest_asyncio.fixture
-async def test_ritual(db_session, test_project):
+async def test_ritual(db, test_project):
     """Create a test ritual."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="test-ritual",
         prompt="Test ritual prompt",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.AUTO,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
@@ -357,11 +346,11 @@ class TestRitualAttestationFlow:
     """Test the full ritual attestation lifecycle via API."""
 
     async def test_attest_and_list_pending(
-        self, client, auth_headers, test_project, test_issue, db_session
+        self, client, auth_headers, test_project, test_issue, db
     ):
         """Attest a ticket-close ritual for an issue and check pending status."""
         # Create a ticket-close ritual
-        ticket_ritual = Ritual(
+        ticket_ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="close-ritual",
             prompt="What did you learn?",
@@ -369,9 +358,6 @@ class TestRitualAttestationFlow:
             approval_mode=ApprovalMode.AUTO,
             note_required=True,
         )
-        db_session.add(ticket_ritual)
-        await db_session.commit()
-        await db_session.refresh(ticket_ritual)
 
         # Attest
         response = await client.post(
@@ -400,33 +386,26 @@ class TestRitualAttestationFlow:
         assert response.status_code == 404
 
     async def test_attest_ritual_cross_team_denied(
-        self, client, db_session, test_project, test_issue, other_team
+        self, client, db, test_project, test_issue, other_team
     ):
         """POST /rituals/{id}/attest-issue/{id} returns 403 for non-team-member."""
         # Create user on other_team
-        other_user = User(
+        other_user = await OxydeUser.objects.create(
             email="attest-other@example.com",
             hashed_password=get_password_hash("test"),
             name="Attest Other",
         )
-        db_session.add(other_user)
-        await db_session.flush()
-        member = TeamMember(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
         token = create_access_token(data={"sub": other_user.id})
         other_headers = {"Authorization": f"Bearer {token}"}
 
-        ticket_ritual = Ritual(
+        ticket_ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="cross-team-ritual",
             prompt="Cross team test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ticket_ritual)
-        await db_session.commit()
-        await db_session.refresh(ticket_ritual)
 
         response = await client.post(
             f"/api/rituals/{ticket_ritual.id}/attest-issue/{test_issue.id}",
@@ -476,20 +455,15 @@ class TestLimboStatus:
 
 
 @pytest_asyncio.fixture
-async def agent_user(db_session, test_team):
+async def agent_user(db, test_team):
     """Agent user on test_team (admin)."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="agent@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Agent User",
         is_agent=True,
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(team_id=test_team.id, user_id=user.id, role=TeamRole.OWNER)
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=user.id, role=TeamRole.OWNER)
     return user
 
 
@@ -501,17 +475,14 @@ async def agent_headers(agent_user):
 
 
 @pytest_asyncio.fixture
-async def limbo_sprint(db_session, test_project):
+async def limbo_sprint(db, test_project):
     """Sprint in limbo state for test_project."""
-    sprint = Sprint(
+    sprint = await OxydeSprint.objects.create(
         project_id=test_project.id,
         name="Limbo Sprint",
         description="Sprint in limbo",
         limbo=True,
     )
-    db_session.add(sprint)
-    await db_session.commit()
-    await db_session.refresh(sprint)
     return sprint
 
 
@@ -531,19 +502,15 @@ class TestPendingApprovalsEdgeCases:
         assert "Project not found" in response.json()["detail"]
 
     async def test_pending_approvals_non_member(
-        self, client, db_session, test_project, other_team
+        self, client, db, test_project, other_team
     ):
         """GET /rituals/pending-approvals returns 403 for non-team-member."""
-        other_user = User(
+        other_user = await OxydeUser.objects.create(
             email="pending-other@example.com",
             hashed_password=get_password_hash("test"),
             name="Other User",
         )
-        db_session.add(other_user)
-        await db_session.flush()
-        member = TeamMember(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=other_user.id, role=TeamRole.OWNER)
         token = create_access_token(data={"sub": other_user.id})
         other_headers = {"Authorization": f"Bearer {token}"}
 
@@ -560,30 +527,26 @@ class TestLimboWithCompletedRituals:
     """Test limbo status with completed rituals (lines 150-153)."""
 
     async def test_limbo_shows_completed_rituals(
-        self, client, auth_headers, db_session, test_project, test_user, limbo_sprint
+        self, client, auth_headers, db, test_project, test_user, limbo_sprint
     ):
         """GET /rituals/limbo includes completed ritual attestation details."""
         # Create an EVERY_SPRINT ritual
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="sprint-ritual",
             prompt="Do the thing",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.flush()
 
         # Create an attestation for this ritual+sprint (marking it completed)
-        attestation = RitualAttestation(
+        attestation = await OxydeRitualAttestation.objects.create(
             ritual_id=ritual.id,
             sprint_id=limbo_sprint.id,
             attested_by=test_user.id,
             note="Done",
             approved_at=datetime.datetime.now(datetime.timezone.utc),
         )
-        db_session.add(attestation)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/rituals/limbo?project_id={test_project.id}",
@@ -605,19 +568,16 @@ class TestAttestIssueEdgeCases:
     """Test attest-issue endpoint edge cases (lines 471-472)."""
 
     async def test_attest_wrong_trigger_type(
-        self, client, auth_headers, db_session, test_project, test_issue
+        self, client, auth_headers, db, test_project, test_issue
     ):
         """POST attest-issue with EVERY_SPRINT ritual returns 400."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="sprint-only",
             prompt="Sprint ritual",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
@@ -633,19 +593,16 @@ class TestSprintLevelAttestEdgeCases:
     """Test sprint-level attest endpoint edge cases (lines 1044, 1071-1072)."""
 
     async def test_attest_wrong_trigger_type(
-        self, client, auth_headers, db_session, test_project, limbo_sprint
+        self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/attest with TICKET_CLOSE ritual returns 400."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ticket-ritual",
             prompt="Ticket ritual",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
@@ -656,19 +613,16 @@ class TestSprintLevelAttestEdgeCases:
         assert "not a sprint-level ritual" in response.json()["detail"]
 
     async def test_attest_not_in_limbo(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """POST /{ritual_id}/attest without limbo returns 400."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="no-limbo-ritual",
             prompt="No limbo",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
@@ -679,19 +633,16 @@ class TestSprintLevelAttestEdgeCases:
         assert "not in limbo" in response.json()["detail"]
 
     async def test_attest_gate_ritual_rejected(
-        self, client, auth_headers, db_session, test_project, limbo_sprint
+        self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/attest with GATE ritual returns 403."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="gate-ritual",
             prompt="Gate",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.GATE,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/attest?project_id={test_project.id}",
@@ -707,28 +658,24 @@ class TestAgentApprovalDenied:
     """Test agent cannot approve attestations (line 1115)."""
 
     async def test_agent_cannot_approve(
-        self, client, agent_headers, agent_user, db_session, test_project, limbo_sprint
+        self, client, agent_headers, agent_user, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/approve by agent returns 403."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="review-ritual",
             prompt="Review this",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.REVIEW,
         )
-        db_session.add(ritual)
-        await db_session.flush()
 
         # Create an unapproved attestation
-        attestation = RitualAttestation(
+        attestation = await OxydeRitualAttestation.objects.create(
             ritual_id=ritual.id,
             sprint_id=limbo_sprint.id,
             attested_by=agent_user.id,
             note="Needs approval",
         )
-        db_session.add(attestation)
-        await db_session.commit()
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/approve?project_id={test_project.id}",
@@ -743,19 +690,16 @@ class TestCompleteGateEdgeCases:
     """Test complete_gate_ritual edge cases (line 1208)."""
 
     async def test_complete_gate_wrong_trigger(
-        self, client, auth_headers, db_session, test_project, limbo_sprint
+        self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/complete with TICKET_CLOSE ritual returns 400."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ticket-gate",
             prompt="Wrong trigger",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/complete?project_id={test_project.id}",
@@ -766,19 +710,16 @@ class TestCompleteGateEdgeCases:
         assert "not a sprint-level ritual" in response.json()["detail"]
 
     async def test_complete_gate_non_gate_ritual(
-        self, client, auth_headers, db_session, test_project, limbo_sprint
+        self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/complete with AUTO ritual returns 400."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="auto-ritual",
             prompt="Not gate",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/complete?project_id={test_project.id}",
@@ -792,32 +733,26 @@ class TestCompleteGateEdgeCases:
 # --- Service-level ritual_service.py coverage tests (CHT-920) ---
 
 @pytest.mark.asyncio
-async def test_update_ritual_group_percentage_validation(client, auth_headers, test_project, db_session):
+async def test_update_ritual_group_percentage_validation(client, auth_headers, test_project, db):
     """Updating ritual into PERCENTAGE group with invalid percentage raises error (covers L141-153)."""
-    from app.models.ritual import RitualGroup
+    from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
     # Create a PERCENTAGE group
-    group = RitualGroup(
+    group = await OxydeRitualGroup.objects.create(
         project_id=test_project.id,
         name="pct-group",
         selection_mode=SelectionMode.PERCENTAGE,
     )
-    db_session.add(group)
-    await db_session.flush()
 
     # Create a ritual
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="pct-test-ritual",
         prompt="test",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.AUTO,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
-    await db_session.refresh(group)
 
     # Try to assign to percentage group without setting percentage
     response = await client.patch(
@@ -830,22 +765,20 @@ async def test_update_ritual_group_percentage_validation(client, auth_headers, t
 
 
 @pytest.mark.asyncio
-async def test_update_ritual_group_weight_validation(client, auth_headers, test_project, db_session):
+async def test_update_ritual_group_weight_validation(client, auth_headers, test_project, db):
     """Updating ritual into RANDOM_ONE group with zero weight raises error (covers L151-156)."""
-    from app.models.ritual import RitualGroup
+    from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
     # Create a RANDOM_ONE group
-    group = RitualGroup(
+    group = await OxydeRitualGroup.objects.create(
         project_id=test_project.id,
         name="rng-group",
         selection_mode=SelectionMode.RANDOM_ONE,
     )
-    db_session.add(group)
-    await db_session.flush()
 
     # Create a ritual with zero weight
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="rng-test-ritual",
         prompt="test",
@@ -853,10 +786,6 @@ async def test_update_ritual_group_weight_validation(client, auth_headers, test_
         approval_mode=ApprovalMode.AUTO,
         weight=0,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
-    await db_session.refresh(group)
 
     # Try to assign to random_one group with zero weight
     response = await client.patch(
@@ -869,18 +798,16 @@ async def test_update_ritual_group_weight_validation(client, auth_headers, test_
 
 
 @pytest.mark.asyncio
-async def test_duplicate_group_name_raises(client, auth_headers, test_project, db_session):
+async def test_duplicate_group_name_raises(client, auth_headers, test_project, db):
     """Creating a group with duplicate name raises ValueError (covers L203)."""
-    from app.models.ritual import RitualGroup
+    from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
-    group = RitualGroup(
+    group = await OxydeRitualGroup.objects.create(
         project_id=test_project.id,
         name="unique-group",
         selection_mode=SelectionMode.RANDOM_ONE,
     )
-    db_session.add(group)
-    await db_session.commit()
 
     # Try creating another group with same name
     response = await client.post(
@@ -893,30 +820,23 @@ async def test_duplicate_group_name_raises(client, auth_headers, test_project, d
 
 
 @pytest.mark.asyncio
-async def test_evaluate_conditions_empty_conditions(db_session, test_project, test_user):
+async def test_evaluate_conditions_empty_conditions(db, test_project, test_user):
     """_evaluate_conditions returns True for empty conditions dict (covers L491)."""
     from app.services.ritual_service import RitualService
-    from app.models.issue import Issue
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from app.oxyde_models.issue import OxydeIssue
 
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         title="Test Issue",
         identifier="TST-1",
         number=1,
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.flush()
 
-    # Re-fetch with labels eagerly loaded
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
-    )
-    issue = result.scalar_one()
+    # Attach empty labels list (simulates eager load)
+    issue.labels = []
 
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="empty-cond",
         prompt="test",
@@ -924,38 +844,29 @@ async def test_evaluate_conditions_empty_conditions(db_session, test_project, te
         approval_mode=ApprovalMode.AUTO,
         conditions="{}",
     )
-    db_session.add(ritual)
-    await db_session.flush()
 
-    service = RitualService(db_session)
+    service = RitualService()
     assert service._evaluate_conditions(ritual, issue) is True
 
 
 @pytest.mark.asyncio
-async def test_evaluate_conditions_invalid_key_format(db_session, test_project, test_user):
+async def test_evaluate_conditions_invalid_key_format(db, test_project, test_user):
     """_evaluate_conditions returns False for malformed condition key (covers L501)."""
     from app.services.ritual_service import RitualService
-    from app.models.issue import Issue
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from app.oxyde_models.issue import OxydeIssue
 
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         title="Test Issue 2",
         identifier="TST-2",
         number=2,
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.flush()
 
-    # Re-fetch with labels eagerly loaded
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
-    )
-    issue = result.scalar_one()
+    # Attach empty labels list (simulates eager load)
+    issue.labels = []
 
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="bad-cond",
         prompt="test",
@@ -963,184 +874,188 @@ async def test_evaluate_conditions_invalid_key_format(db_session, test_project, 
         approval_mode=ApprovalMode.AUTO,
         conditions='{"badkey": 1}',
     )
-    db_session.add(ritual)
-    await db_session.flush()
 
-    service = RitualService(db_session)
+    service = RitualService()
     assert service._evaluate_conditions(ritual, issue) is False
 
 
 @pytest.mark.asyncio
-async def test_pending_ticket_rituals_issue_not_found(db_session, test_project):
+async def test_pending_ticket_rituals_issue_not_found(db, test_project):
     """get_pending_ticket_rituals returns empty for non-existent issue (covers L574)."""
     from app.services.ritual_service import RitualService
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = await service.get_pending_ticket_rituals(test_project.id, "nonexistent-issue")
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_is_ritual_pending_gate_mode(db_session):
+async def test_is_ritual_pending_gate_mode(db, test_project, test_user):
     """_is_ritual_pending returns True for GATE mode without approval (covers L427)."""
     from app.services.ritual_service import RitualService
 
-    ritual = Ritual(
-        project_id="p1",
+    ritual = await OxydeRitual.objects.create(
+        project_id=test_project.id,
         name="gate-test",
         prompt="test",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.GATE,
     )
 
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Gate Sprint",
+    )
+
     # Attestation without approval
-    attestation = RitualAttestation(
-        ritual_id="r1",
-        sprint_id="s1",
-        attested_by="u1",
+    attestation = await OxydeRitualAttestation.objects.create(
+        ritual_id=ritual.id,
+        sprint_id=sprint.id,
+        attested_by=test_user.id,
         attested_at=datetime.datetime.now(datetime.timezone.utc),
         approved_at=None,
     )
 
-    service = RitualService(db_session)
+    service = RitualService()
     assert service._is_ritual_pending(ritual, attestation) is True
 
 
 @pytest.mark.asyncio
-async def test_pending_claim_rituals_issue_not_found(db_session, test_project):
+async def test_pending_claim_rituals_issue_not_found(db, test_project):
     """get_pending_claim_rituals returns empty for non-existent issue (covers L623)."""
     from app.services.ritual_service import RitualService
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = await service.get_pending_claim_rituals(test_project.id, "nonexistent-issue")
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_select_random_one_no_seed(db_session):
+async def test_select_random_one_no_seed(db, test_project):
     """_select_random_one works without seed (covers L350)."""
     from app.services.ritual_service import RitualService
 
-    r1 = Ritual(id="r1", project_id="p1", name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
-    r2 = Ritual(id="r2", project_id="p1", name="b", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
+    r1 = await OxydeRitual.objects.create(project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
+    r2 = await OxydeRitual.objects.create(project_id=test_project.id, name="b", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = service._select_random_one([r1, r2], seed=None)
     assert result in [r1, r2]
 
 
 @pytest.mark.asyncio
-async def test_select_round_robin_empty(db_session):
+async def test_select_round_robin_empty(db, test_project):
     """_select_round_robin returns None for empty list (covers L368)."""
     from app.services.ritual_service import RitualService
-    from app.models.ritual import RitualGroup
+    from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
-    group = RitualGroup(id="g1", project_id="p1", name="rr", selection_mode=SelectionMode.ROUND_ROBIN)
+    group = await OxydeRitualGroup.objects.create(project_id=test_project.id, name="rr", selection_mode=SelectionMode.ROUND_ROBIN)
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = await service._select_round_robin(group, [], sprint_id="s1")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_select_percentage_no_seed(db_session):
+async def test_select_percentage_no_seed(db, test_project):
     """_select_by_percentage works without seed (covers L410-411)."""
     from app.services.ritual_service import RitualService
 
-    r1 = Ritual(id="r1", project_id="p1", name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, percentage=100.0)
+    r1 = await OxydeRitual.objects.create(project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, percentage=100.0)
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = service._select_by_percentage([r1], seed=None)
     assert r1 in result
 
 
 @pytest.mark.asyncio
-async def test_apply_group_selection_deleted_group(db_session):
+async def test_apply_group_selection_deleted_group(db, test_project):
     """_apply_group_selection includes all rituals when group is deleted (covers L305-306)."""
     from app.services.ritual_service import RitualService
+    from oxyde import execute_raw
 
-    # Ritual references a non-existent group_id
-    r1 = Ritual(
-        id="r1", project_id="p1", name="orphan", prompt="p",
-        trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
-        group_id="deleted-group-id", is_active=True,
+    # Insert a ritual with a non-existent group_id using raw SQL to bypass FK checks
+    import uuid
+    ritual_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    await execute_raw(
+        "PRAGMA foreign_keys = OFF", []
+    )
+    await execute_raw(
+        "INSERT INTO rituals (id, project_id, name, prompt, \"trigger\", approval_mode, group_id, is_active, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [ritual_id, test_project.id, "orphan", "p", "EVERY_SPRINT", "AUTO", "deleted-group-id", True, 1.0, now, now],
+    )
+    await execute_raw(
+        "PRAGMA foreign_keys = ON", []
     )
 
-    service = RitualService(db_session)
+    r1 = await OxydeRitual.objects.get(id=ritual_id)
+
+    service = RitualService()
     result = await service._apply_group_selection([r1], sprint_id="s1")
     # Orphaned rituals from deleted groups should be included
     assert r1 in result
 
 
 @pytest.mark.asyncio
-async def test_apply_group_selection_no_active_rituals(db_session, test_project):
+async def test_apply_group_selection_no_active_rituals(db, test_project):
     """_apply_group_selection skips groups where all rituals are inactive (covers L311)."""
     from app.services.ritual_service import RitualService
-    from app.models.ritual import RitualGroup
+    from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
-    group = RitualGroup(
+    group = await OxydeRitualGroup.objects.create(
         id="g-inactive", project_id=test_project.id, name="inactive-group",
         selection_mode=SelectionMode.RANDOM_ONE,
     )
-    db_session.add(group)
-    await db_session.flush()
 
-    r1 = Ritual(
+    r1 = await OxydeRitual.objects.create(
         id="r-inactive", project_id=test_project.id, name="inactive", prompt="p",
         trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
         group_id=group.id, is_active=False,
     )
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = await service._apply_group_selection([r1], sprint_id="s1")
     # Inactive rituals should be skipped, result should be empty
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_evaluate_conditions_malformed_json(db_session, test_project, test_user):
+async def test_evaluate_conditions_malformed_json(db, test_project, test_user):
     """_evaluate_conditions returns False for malformed JSON conditions (covers L486-488)."""
     from app.services.ritual_service import RitualService
-    from app.models.issue import Issue
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from app.oxyde_models.issue import OxydeIssue
 
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id, title="Test", identifier="TST-99",
         number=99, creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.flush()
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels)).where(Issue.id == issue.id)
-    )
-    issue = result.scalar_one()
+    # Attach empty labels list (simulates eager load)
+    issue.labels = []
 
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id, name="bad-json", prompt="test",
         trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.AUTO,
         conditions="not-valid-json",
     )
-    db_session.add(ritual)
-    await db_session.flush()
 
-    service = RitualService(db_session)
+    service = RitualService()
     assert service._evaluate_conditions(ritual, issue) is False
 
 
 @pytest.mark.asyncio
-async def test_select_percentage_zero_excludes(db_session):
+async def test_select_percentage_zero_excludes(db, test_project):
     """_select_by_percentage excludes rituals with 0% chance (strengthens L410-411 test)."""
     from app.services.ritual_service import RitualService
 
-    r1 = Ritual(
-        id="r-zero", project_id="p1", name="zero-pct", prompt="p",
+    r1 = await OxydeRitual.objects.create(
+        project_id=test_project.id, name="zero-pct", prompt="p",
         trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
         percentage=0.0,
     )
 
-    service = RitualService(db_session)
+    service = RitualService()
     result = service._select_by_percentage([r1], seed=None)
     assert r1 not in result

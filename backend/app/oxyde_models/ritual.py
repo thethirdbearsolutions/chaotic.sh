@@ -77,6 +77,24 @@ class OxydeRitualAttestation(OxydeModel):
     approved_by: str | None = Field(default=None)
     approved_at: datetime | None = Field(default=None)
 
+    @property
+    def attester(self):
+        """Attester user, set by service code after manual lookup."""
+        return getattr(self, '_attester', None)
+
+    @attester.setter
+    def attester(self, value):
+        self._attester = value
+
+    @property
+    def approver(self):
+        """Approver user, set by service code after manual lookup."""
+        return getattr(self, '_approver', None)
+
+    @approver.setter
+    def approver(self, value):
+        self._approver = value
+
     class Meta:
         is_table = True
         table_name = "ritual_attestations"

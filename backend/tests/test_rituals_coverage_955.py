@@ -12,36 +12,33 @@ import pytest_asyncio
 from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock
 
-from app.models.ritual import (
-    Ritual, RitualAttestation,
-    RitualGroup,
+from app.oxyde_models.ritual import (
+    OxydeRitual, OxydeRitualAttestation,
+    OxydeRitualGroup,
 )
-from app.models.issue import Issue
-from app.models.ticket_limbo import TicketLimbo
-from app.models.user import User
-from app.models.team import Team, TeamMember
-from app.models.project import Project
+from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.project import OxydeProject
 from app.enums import RitualTrigger, ApprovalMode, SelectionMode, IssueStatus, LimboType, TeamRole
-from app.models import Sprint
+from app.oxyde_models.sprint import OxydeSprint
 
 
 # === Fixtures ===
 
 
 @pytest_asyncio.fixture
-async def agent_user(db_session, test_team):
+async def agent_user(db, test_team):
     """Agent user scoped to test_team."""
     from app.utils.security import get_password_hash, create_access_token
-    user = User(
+    user = await OxydeUser.objects.create(
         email="agent-ritual@example.com",
         hashed_password=get_password_hash("agentpass"),
         name="Agent Bot",
         is_agent=True,
         agent_team_id=test_team.id,
     )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
     return user
 
 
@@ -53,83 +50,74 @@ async def agent_headers(agent_user):
 
 
 @pytest_asyncio.fixture
-async def sprint_ritual(db_session, test_project):
+async def sprint_ritual(db, test_project):
     """An EVERY_SPRINT ritual (auto approval)."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="sprint-report",
         prompt="Write a sprint report",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.AUTO,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def review_sprint_ritual(db_session, test_project):
+async def review_sprint_ritual(db, test_project):
     """An EVERY_SPRINT ritual (review approval)."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="review-ritual",
         prompt="Needs human review",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.REVIEW,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def gate_ritual(db_session, test_project):
+async def gate_ritual(db, test_project):
     """A TICKET_CLOSE GATE ritual."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="gate-check",
         prompt="Human gate check before close",
         trigger=RitualTrigger.TICKET_CLOSE,
         approval_mode=ApprovalMode.GATE,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def review_ticket_ritual(db_session, test_project):
+async def review_ticket_ritual(db, test_project):
     """A TICKET_CLOSE REVIEW ritual."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="review-check",
         prompt="Review before close",
         trigger=RitualTrigger.TICKET_CLOSE,
         approval_mode=ApprovalMode.REVIEW,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def test_issue_955(db_session, test_project, test_user):
+async def test_issue_955(db, test_project, test_user):
     """Issue for ritual tests."""
-    test_project.issue_count += 1
-    issue = Issue(
-        project_id=test_project.id,
-        identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count,
+    from oxyde import execute_raw
+    await execute_raw(
+        "UPDATE projects SET issue_count = issue_count + 1 WHERE id = ?",
+        [test_project.id],
+    )
+    from app.oxyde_models.project import OxydeProject
+    project = await OxydeProject.objects.get(id=test_project.id)
+    issue = await OxydeIssue.objects.create(
+        project_id=project.id,
+        identifier=f"{project.key}-{project.issue_count}",
+        number=project.issue_count,
         title="Ritual Test Issue",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
     return issue
 
 
@@ -141,22 +129,20 @@ class TestLimboStatus:
     """Cover limbo attestation response building."""
 
     async def test_limbo_with_attested_ritual(
-        self, client, auth_headers, db_session, test_project, sprint_ritual, test_user
+        self, client, auth_headers, db, test_project, sprint_ritual, test_user
     ):
         """Limbo status shows attestation for completed ritual (line 175)."""
         from app.services.sprint_service import SprintService
-        sprint_svc = SprintService(db_session)
+        sprint_svc = SprintService()
         current, _ = await sprint_svc.ensure_sprints_exist(test_project.id)
 
         # Create attestation for the ritual
-        attestation = RitualAttestation(
+        attestation = await OxydeRitualAttestation.objects.create(
             ritual_id=sprint_ritual.id,
             sprint_id=current.id,
             attested_by=test_user.id,
             note="Test attestation",
         )
-        db_session.add(attestation)
-        await db_session.commit()
 
         # Close sprint to enter limbo
         await client.post(
@@ -179,19 +165,16 @@ class TestTicketRitualAttestation:
     """Cover ticket ritual attest/complete/approve error branches."""
 
     async def test_attest_ticket_ritual_not_found_issue(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Attest ticket ritual with nonexistent issue → 404 (line 355)."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="test-attest",
             prompt="Test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.post(
             f"/api/rituals/{ritual.id}/attest-issue/nonexistent-id",
@@ -222,13 +205,11 @@ class TestTicketRitualAttestation:
         assert response.status_code == 404
 
     async def test_approve_issue_attestation_agent_denied(
-        self, client, agent_headers, db_session, test_project, review_ticket_ritual, test_issue_955, test_team, agent_user
+        self, client, agent_headers, db, test_project, review_ticket_ritual, test_issue_955, test_team, agent_user
     ):
         """Agent cannot approve attestation (line 677)."""
         # Need agent to be admin for this test
-        member = TeamMember(team_id=test_team.id, user_id=agent_user.id, role=TeamRole.ADMIN)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=agent_user.id, role=TeamRole.ADMIN)
 
         response = await client.post(
             f"/api/rituals/{review_ticket_ritual.id}/approve-issue/{test_issue_955.id}",
@@ -246,17 +227,14 @@ class TestRitualGroupErrors:
     """Cover ritual group error branches."""
 
     async def test_get_ritual_group_access_denied(
-        self, client, auth_headers2, db_session, test_project
+        self, client, auth_headers2, db, test_project
     ):
         """Non-member can't access ritual group (line 826)."""
-        group = RitualGroup(
+        group = await OxydeRitualGroup.objects.create(
             project_id=test_project.id,
             name="Test Group",
             selection_mode=SelectionMode.RANDOM_ONE,
         )
-        db_session.add(group)
-        await db_session.commit()
-        await db_session.refresh(group)
 
         response = await client.get(
             f"/api/rituals/groups/{group.id}",
@@ -265,40 +243,44 @@ class TestRitualGroupErrors:
         assert response.status_code == 403
 
     async def test_update_ritual_group_project_not_found(
-        self, client, auth_headers, db_session
+        self, client, auth_headers, db
     ):
         """Update group with project not found → 404 (line 861)."""
-        group = RitualGroup(
-            project_id="nonexistent-project",
-            name="Orphan Group",
-            selection_mode=SelectionMode.RANDOM_ONE,
+        import uuid
+        from oxyde import execute_raw
+        group_id = str(uuid.uuid4())
+        await execute_raw('PRAGMA foreign_keys = OFF', [])
+        await execute_raw(
+            'INSERT INTO ritual_groups (id, project_id, name, selection_mode, created_at) '
+            'VALUES (?, ?, ?, ?, datetime("now"))',
+            [group_id, "nonexistent-project", "Orphan Group", "RANDOM_ONE"],
         )
-        db_session.add(group)
-        await db_session.commit()
-        await db_session.refresh(group)
+        await execute_raw('PRAGMA foreign_keys = ON', [])
 
         response = await client.patch(
-            f"/api/rituals/groups/{group.id}",
+            f"/api/rituals/groups/{group_id}",
             headers=auth_headers,
             json={"name": "Updated"},
         )
         assert response.status_code == 404
 
     async def test_delete_ritual_group_project_not_found(
-        self, client, auth_headers, db_session
+        self, client, auth_headers, db
     ):
         """Delete group with project not found → 404 (line 899)."""
-        group = RitualGroup(
-            project_id="nonexistent-project",
-            name="Orphan Group 2",
-            selection_mode=SelectionMode.RANDOM_ONE,
+        import uuid
+        from oxyde import execute_raw
+        group_id = str(uuid.uuid4())
+        await execute_raw('PRAGMA foreign_keys = OFF', [])
+        await execute_raw(
+            'INSERT INTO ritual_groups (id, project_id, name, selection_mode, created_at) '
+            'VALUES (?, ?, ?, ?, datetime("now"))',
+            [group_id, "nonexistent-project", "Orphan Group 2", "RANDOM_ONE"],
         )
-        db_session.add(group)
-        await db_session.commit()
-        await db_session.refresh(group)
+        await execute_raw('PRAGMA foreign_keys = ON', [])
 
         response = await client.delete(
-            f"/api/rituals/groups/{group.id}",
+            f"/api/rituals/groups/{group_id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -322,42 +304,44 @@ class TestRitualCRUDErrors:
         assert response.status_code == 403
 
     async def test_update_ritual_project_not_found(
-        self, client, auth_headers, db_session
+        self, client, auth_headers, db
     ):
         """Update ritual whose project doesn't exist → 404 (line 973)."""
-        ritual = Ritual(
-            project_id="nonexistent-project",
-            name="orphan-ritual",
-            prompt="test",
-            trigger=RitualTrigger.EVERY_SPRINT,
+        import uuid
+        from oxyde import execute_raw
+        ritual_id = str(uuid.uuid4())
+        await execute_raw('PRAGMA foreign_keys = OFF', [])
+        await execute_raw(
+            'INSERT INTO rituals (id, project_id, name, prompt, trigger, approval_mode, is_active, created_at, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, 1, datetime("now"), datetime("now"))',
+            [ritual_id, "nonexistent-project", "orphan-ritual", "test", "EVERY_SPRINT", "AUTO"],
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
+        await execute_raw('PRAGMA foreign_keys = ON', [])
 
         response = await client.patch(
-            f"/api/rituals/{ritual.id}",
+            f"/api/rituals/{ritual_id}",
             headers=auth_headers,
             json={"prompt": "Updated"},
         )
         assert response.status_code == 404
 
     async def test_delete_ritual_project_not_found(
-        self, client, auth_headers, db_session
+        self, client, auth_headers, db
     ):
         """Delete ritual whose project doesn't exist → 404 (line 1018)."""
-        ritual = Ritual(
-            project_id="nonexistent-project",
-            name="orphan-ritual-2",
-            prompt="test",
-            trigger=RitualTrigger.EVERY_SPRINT,
+        import uuid
+        from oxyde import execute_raw
+        ritual_id = str(uuid.uuid4())
+        await execute_raw('PRAGMA foreign_keys = OFF', [])
+        await execute_raw(
+            'INSERT INTO rituals (id, project_id, name, prompt, trigger, approval_mode, is_active, created_at, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, 1, datetime("now"), datetime("now"))',
+            [ritual_id, "nonexistent-project", "orphan-ritual-2", "test", "EVERY_SPRINT", "AUTO"],
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
+        await execute_raw('PRAGMA foreign_keys = ON', [])
 
         response = await client.delete(
-            f"/api/rituals/{ritual.id}",
+            f"/api/rituals/{ritual_id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -371,10 +355,10 @@ class TestSprintAttestErrors:
     """Cover sprint attest error branches."""
 
     async def test_sprint_attest_value_error(
-        self, client, auth_headers, db_session, test_project, sprint_ritual
+        self, client, auth_headers, db, test_project, sprint_ritual
     ):
         """Sprint attest with ValueError → 400 (line 1119-1120)."""
-        mock_sprint = Sprint(id="limbo-sprint", project_id=test_project.id, name="S1")
+        mock_sprint = await OxydeSprint.objects.create(id="limbo-sprint", project_id=test_project.id, name="S1")
         with patch("app.api.rituals.RitualService") as MockRitualService:
             mock_svc = AsyncMock()
             mock_svc.get_by_id.return_value = sprint_ritual
@@ -399,17 +383,14 @@ class TestRitualServiceValidation:
     """Cover ritual_service.py create/update validation branches."""
 
     async def test_create_ritual_in_percentage_group(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Create ritual in PERCENTAGE group without percentage → 400 (line 54-58)."""
-        group = RitualGroup(
+        group = await OxydeRitualGroup.objects.create(
             project_id=test_project.id,
             name="Pct Group",
             selection_mode=SelectionMode.PERCENTAGE,
         )
-        db_session.add(group)
-        await db_session.commit()
-        await db_session.refresh(group)
 
         response = await client.post(
             f"/api/rituals?project_id={test_project.id}",
@@ -424,17 +405,14 @@ class TestRitualServiceValidation:
         assert response.status_code == 400
 
     async def test_create_ritual_in_random_group_zero_weight(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Create ritual in RANDOM_ONE group with weight=0 → 400 (line 59-63)."""
-        group = RitualGroup(
+        group = await OxydeRitualGroup.objects.create(
             project_id=test_project.id,
             name="Random Group",
             selection_mode=SelectionMode.RANDOM_ONE,
         )
-        db_session.add(group)
-        await db_session.commit()
-        await db_session.refresh(group)
 
         response = await client.post(
             f"/api/rituals?project_id={test_project.id}",
@@ -449,24 +427,21 @@ class TestRitualServiceValidation:
         assert response.status_code == 400
 
     async def test_update_ritual_duplicate_name(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Update ritual to duplicate name → 400 (line 124)."""
-        r1 = Ritual(
+        r1 = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ritual-one",
             prompt="test",
             trigger=RitualTrigger.EVERY_SPRINT,
         )
-        r2 = Ritual(
+        r2 = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ritual-two",
             prompt="test",
             trigger=RitualTrigger.EVERY_SPRINT,
         )
-        db_session.add_all([r1, r2])
-        await db_session.commit()
-        await db_session.refresh(r2)
 
         response = await client.patch(
             f"/api/rituals/{r2.id}",
@@ -477,27 +452,22 @@ class TestRitualServiceValidation:
         assert "already exists" in response.json()["detail"]
 
     async def test_update_ritual_remove_from_group(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Update ritual with group_id="" removes from group (line 128)."""
-        group = RitualGroup(
+        group = await OxydeRitualGroup.objects.create(
             project_id=test_project.id,
             name="Removal Group",
             selection_mode=SelectionMode.RANDOM_ONE,
         )
-        db_session.add(group)
-        await db_session.flush()
 
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="grouped-ritual",
             prompt="test",
             trigger=RitualTrigger.EVERY_SPRINT,
             group_id=group.id,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.patch(
             f"/api/rituals/{ritual.id}",
@@ -508,18 +478,15 @@ class TestRitualServiceValidation:
         assert response.json()["group_id"] is None
 
     async def test_update_ritual_conditions_json(
-        self, client, auth_headers, db_session, test_project
+        self, client, auth_headers, db, test_project
     ):
         """Update ritual conditions serialized to JSON (line 160-161)."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="condition-ritual",
             prompt="test",
             trigger=RitualTrigger.EVERY_SPRINT,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         response = await client.patch(
             f"/api/rituals/{ritual.id}",
@@ -539,19 +506,16 @@ class TestBroadcastFailureSilencing:
     """Cover broadcast failure silencing on attest/complete/approve."""
 
     async def test_attest_ticket_broadcast_failure_silenced(
-        self, client, auth_headers, db_session, test_project, test_issue_955
+        self, client, auth_headers, db, test_project, test_issue_955
     ):
         """Attest ticket ritual - broadcast failure silenced (lines 530-531)."""
-        ritual = Ritual(
+        ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="broadcast-test",
             prompt="test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-        db_session.add(ritual)
-        await db_session.commit()
-        await db_session.refresh(ritual)
 
         with patch("app.api.rituals.broadcast_attestation_event", side_effect=Exception("broadcast failed")):
             response = await client.post(
@@ -563,7 +527,7 @@ class TestBroadcastFailureSilencing:
             assert response.status_code == 200
 
     async def test_complete_gate_broadcast_failure_silenced(
-        self, client, auth_headers, db_session, test_project, test_issue_955, gate_ritual, test_user
+        self, client, auth_headers, db, test_project, test_issue_955, gate_ritual, test_user
     ):
         """Complete gate ritual - broadcast failure silenced (lines 626-627)."""
         with patch("app.api.rituals.broadcast_attestation_event", side_effect=Exception("broadcast failed")):

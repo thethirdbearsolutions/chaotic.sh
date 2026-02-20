@@ -2,7 +2,7 @@
 from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.models.user import User
+from app.oxyde_models.user import OxydeUser as User
 from app.services.user_service import UserService
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService

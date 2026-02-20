@@ -118,22 +118,18 @@ async def test_create_comment_broadcasts_event(client, auth_headers, test_issue)
 
 
 @pytest.mark.asyncio
-async def test_batch_update_broadcasts_per_issue(client, auth_headers, test_project, test_user, db_session):
+async def test_batch_update_broadcasts_per_issue(client, auth_headers, test_project, test_user, db):
     """POST /issues/batch-update should broadcast one event per issue."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
-    issue1 = Issue(
+    issue1 = await OxydeIssue.objects.create(
         project_id=test_project.id, identifier=f"{test_project.key}-2000",
         number=2000, title="Batch Broadcast 1", creator_id=test_user.id,
     )
-    issue2 = Issue(
+    issue2 = await OxydeIssue.objects.create(
         project_id=test_project.id, identifier=f"{test_project.key}-2001",
         number=2001, title="Batch Broadcast 2", creator_id=test_user.id,
     )
-    db_session.add_all([issue1, issue2])
-    await db_session.commit()
-    await db_session.refresh(issue1)
-    await db_session.refresh(issue2)
 
     with patch("app.api.issues.broadcast_issue_event", new_callable=AsyncMock) as mock_broadcast:
         response = await client.post(
@@ -153,16 +149,9 @@ async def test_batch_update_broadcasts_per_issue(client, auth_headers, test_proj
 
 
 @pytest.mark.asyncio
-async def test_broadcast_uses_correct_team_id(client, auth_headers, test_issue, test_project, db_session):
+async def test_broadcast_uses_correct_team_id(client, auth_headers, test_issue, test_project, db):
     """Broadcasts should use the project's team_id."""
-    from app.models.project import Project
-    from sqlalchemy import select
-
-    result = await db_session.execute(
-        select(Project).where(Project.id == test_project.id)
-    )
-    project = result.scalar_one()
-    expected_team_id = project.team_id
+    expected_team_id = test_project.team_id
 
     with patch("app.api.issues.broadcast_issue_event", new_callable=AsyncMock) as mock_broadcast:
         await client.patch(

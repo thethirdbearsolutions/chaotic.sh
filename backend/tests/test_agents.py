@@ -15,9 +15,9 @@ from app.schemas.agent import AgentCreate, AgentUpdate
 class TestAgentServiceCreate:
     """Tests for agent creation."""
 
-    async def test_create_team_scoped_agent(self, db_session, test_user, test_team):
+    async def test_create_team_scoped_agent(self, db, test_user, test_team):
         """Should create a team-scoped agent with API key."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent_in = AgentCreate(name="Team Bot")
 
         agent, api_key, key_id = await service.create(
@@ -32,9 +32,9 @@ class TestAgentServiceCreate:
         assert agent.agent_project_id is None
         assert api_key.startswith("ck_")
 
-    async def test_create_project_scoped_agent(self, db_session, test_user, test_team, test_project):
+    async def test_create_project_scoped_agent(self, db, test_user, test_team, test_project):
         """Should create a project-scoped agent with API key."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent_in = AgentCreate(name="Project Bot")
 
         agent, api_key, key_id = await service.create(
@@ -48,9 +48,9 @@ class TestAgentServiceCreate:
         assert agent.agent_project_id == test_project.id
         assert api_key.startswith("ck_")
 
-    async def test_agent_has_unique_email(self, db_session, test_user, test_team):
+    async def test_agent_has_unique_email(self, db, test_user, test_team):
         """Each agent should have a unique email."""
-        service = AgentService(db_session)
+        service = AgentService()
 
         agent1, _, _ = await service.create(
             AgentCreate(name="Bot 1"), test_user, test_team.id
@@ -68,9 +68,9 @@ class TestAgentServiceCreate:
 class TestAgentServiceList:
     """Tests for listing agents."""
 
-    async def test_list_by_team(self, db_session, test_user, test_team, test_project):
+    async def test_list_by_team(self, db, test_user, test_team, test_project):
         """Should list all agents for a team including project-scoped ones."""
-        service = AgentService(db_session)
+        service = AgentService()
 
         # Create team-scoped agent
         await service.create(AgentCreate(name="Team Bot"), test_user, test_team.id)
@@ -86,9 +86,9 @@ class TestAgentServiceList:
         assert "Team Bot" in names
         assert "Project Bot" in names
 
-    async def test_list_by_project(self, db_session, test_user, test_team, test_project):
+    async def test_list_by_project(self, db, test_user, test_team, test_project):
         """Should only list project-scoped agents."""
-        service = AgentService(db_session)
+        service = AgentService()
 
         # Create team-scoped agent
         await service.create(AgentCreate(name="Team Bot"), test_user, test_team.id)
@@ -107,9 +107,9 @@ class TestAgentServiceList:
 class TestAgentServiceUpdate:
     """Tests for updating agents."""
 
-    async def test_update_agent_name(self, db_session, test_user, test_team):
+    async def test_update_agent_name(self, db, test_user, test_team):
         """Should update agent name."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Old Name"), test_user, test_team.id
         )
@@ -118,9 +118,9 @@ class TestAgentServiceUpdate:
 
         assert updated.name == "New Name"
 
-    async def test_update_agent_avatar(self, db_session, test_user, test_team):
+    async def test_update_agent_avatar(self, db, test_user, test_team):
         """Should update agent avatar."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Bot"), test_user, test_team.id
         )
@@ -134,9 +134,9 @@ class TestAgentServiceUpdate:
 class TestAgentServiceDelete:
     """Tests for deleting agents."""
 
-    async def test_delete_agent(self, db_session, test_user, test_team):
+    async def test_delete_agent(self, db, test_user, test_team):
         """Should delete agent."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Bot"), test_user, test_team.id
         )
@@ -152,12 +152,12 @@ class TestAgentServiceDelete:
 class TestAgentAuthentication:
     """Tests for agent authentication."""
 
-    async def test_agent_api_key_authenticates_as_agent(self, db_session, test_user, test_team):
+    async def test_agent_api_key_authenticates_as_agent(self, db, test_user, test_team):
         """API key with agent_user_id should authenticate as the agent."""
         from app.services.api_key_service import APIKeyService
 
-        agent_service = AgentService(db_session)
-        api_key_service = APIKeyService(db_session)
+        agent_service = AgentService()
+        api_key_service = APIKeyService()
 
         # Create agent
         agent, full_key, _ = await agent_service.create(
@@ -175,99 +175,93 @@ class TestAgentAuthentication:
 class TestAgentAccessControl:
     """Tests for agent access control."""
 
-    async def test_team_scoped_agent_has_team_access(self, db_session, test_user, test_team):
+    async def test_team_scoped_agent_has_team_access(self, db, test_user, test_team):
         """Team-scoped agent should have access to the team."""
         from app.api.deps import check_user_team_access
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Team Bot"), test_user, test_team.id
         )
 
-        has_access = await check_user_team_access(db_session, agent, test_team.id)
+        has_access = await check_user_team_access(agent, test_team.id)
 
         assert has_access is True
 
-    async def test_team_scoped_agent_no_access_other_team(self, db_session, test_user, test_team, test_user2):
+    async def test_team_scoped_agent_no_access_other_team(self, db, test_user, test_team, test_user2):
         """Team-scoped agent should not have access to other teams."""
         from app.api.deps import check_user_team_access
-        from app.models import Team
+        from app.oxyde_models.team import OxydeTeam
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Team Bot"), test_user, test_team.id
         )
 
         # Create another team
-        other_team = Team(name="Other Team", key="OTHER")
-        db_session.add(other_team)
-        await db_session.commit()
+        other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
 
-        has_access = await check_user_team_access(db_session, agent, other_team.id)
+        has_access = await check_user_team_access(agent, other_team.id)
 
         assert has_access is False
 
-    async def test_project_scoped_agent_has_project_access(self, db_session, test_user, test_team, test_project):
+    async def test_project_scoped_agent_has_project_access(self, db, test_user, test_team, test_project):
         """Project-scoped agent should have access to its project."""
         from app.api.deps import check_user_project_access
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Project Bot"), test_user, test_team.id, test_project.id
         )
 
         has_access = await check_user_project_access(
-            db_session, agent, test_project.id, test_team.id
+            agent, test_project.id, test_team.id
         )
 
         assert has_access is True
 
-    async def test_project_scoped_agent_no_access_other_project(self, db_session, test_user, test_team, test_project):
+    async def test_project_scoped_agent_no_access_other_project(self, db, test_user, test_team, test_project):
         """Project-scoped agent should not have access to other projects."""
         from app.api.deps import check_user_project_access
-        from app.models import Project
+        from app.oxyde_models.project import OxydeProject
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Project Bot"), test_user, test_team.id, test_project.id
         )
 
         # Create another project
-        other_project = Project(
+        other_project = await OxydeProject.objects.create(
             team_id=test_team.id, name="Other Project", key="OTHER"
         )
-        db_session.add(other_project)
-        await db_session.commit()
 
         has_access = await check_user_project_access(
-            db_session, agent, other_project.id, test_team.id
+            agent, other_project.id, test_team.id
         )
 
         assert has_access is False
 
-    async def test_team_scoped_agent_has_all_project_access(self, db_session, test_user, test_team, test_project):
+    async def test_team_scoped_agent_has_all_project_access(self, db, test_user, test_team, test_project):
         """Team-scoped agent should have access to all projects in the team."""
         from app.api.deps import check_user_project_access
-        from app.models import Project
+        from app.oxyde_models.project import OxydeProject
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Team Bot"), test_user, test_team.id
         )
 
         # Create another project in the same team
-        other_project = Project(
+        other_project = await OxydeProject.objects.create(
             team_id=test_team.id, name="Other Project", key="OTHER"
         )
-        db_session.add(other_project)
-        await db_session.commit()
 
         # Should have access to both projects
         has_access1 = await check_user_project_access(
-            db_session, agent, test_project.id, test_team.id
+            agent, test_project.id, test_team.id
         )
         has_access2 = await check_user_project_access(
-            db_session, agent, other_project.id, test_team.id
+            agent, other_project.id, test_team.id
         )
 
         assert has_access1 is True
@@ -305,10 +299,10 @@ class TestAgentAPIEndpoints:
         assert data["name"] == "Project Bot"
         assert data["agent_project_id"] == test_project.id
 
-    async def test_list_agents_endpoint(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_list_agents_endpoint(self, client, auth_headers, test_team, db, test_user):
         """GET /teams/{team_id}/agents should list agents."""
         # Create an agent first
-        service = AgentService(db_session)
+        service = AgentService()
         await service.create(AgentCreate(name="Bot"), test_user, test_team.id)
 
         response = await client.get(
@@ -320,9 +314,9 @@ class TestAgentAPIEndpoints:
         data = response.json()
         assert len(data) >= 1
 
-    async def test_delete_agent_endpoint(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_delete_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """DELETE /agents/{agent_id} should delete agent."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Bot"), test_user, test_team.id
         )
@@ -344,9 +338,9 @@ class TestAgentAPIEndpoints:
 
         assert response.status_code == 403
 
-    async def test_get_agent_endpoint(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_get_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """GET /agents/{agent_id} should return agent details."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Test Bot"), test_user, test_team.id
         )
@@ -372,9 +366,9 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 404
         assert "Agent not found" in response.json()["detail"]
 
-    async def test_get_agent_not_authorized(self, client, auth_headers2, test_team, db_session, test_user):
+    async def test_get_agent_not_authorized(self, client, auth_headers2, test_team, db, test_user):
         """GET /agents/{agent_id} should return 403 for non-team members."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Test Bot"), test_user, test_team.id
         )
@@ -386,9 +380,9 @@ class TestAgentAPIEndpoints:
 
         assert response.status_code == 403
 
-    async def test_update_agent_endpoint(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_update_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """PATCH /agents/{agent_id} should update agent."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Old Name"), test_user, test_team.id
         )
@@ -414,20 +408,18 @@ class TestAgentAPIEndpoints:
 
         assert response.status_code == 404
 
-    async def test_update_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db_session, test_user):
+    async def test_update_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db, test_user):
         """PATCH /agents/{agent_id} should return 403 for unauthorized users."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Test Bot"), test_user, test_team.id
         )
 
         # Add user2 as a regular member (not admin)
-        member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
         response = await client.patch(
             f"/api/agents/{agent.id}",
@@ -446,20 +438,18 @@ class TestAgentAPIEndpoints:
 
         assert response.status_code == 404
 
-    async def test_delete_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db_session, test_user):
+    async def test_delete_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db, test_user):
         """DELETE /agents/{agent_id} should return 403 for unauthorized users."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, _, _ = await service.create(
             AgentCreate(name="Test Bot"), test_user, test_team.id
         )
 
         # Add user2 as a regular member (not admin)
-        member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
         response = await client.delete(
             f"/api/agents/{agent.id}",
@@ -518,7 +508,7 @@ class TestAgentAPIEndpoints:
 
         assert response.status_code == 403
 
-    async def test_agent_cannot_create_team_agent(self, client, test_team, db_session, test_user):
+    async def test_agent_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents should return 403 when called by an agent.
 
         Note: Currently agents fail the membership check first (they don't have TeamMember
@@ -526,7 +516,7 @@ class TestAgentAPIEndpoints:
         as a result. This test documents actual behavior.
         """
         # Create an agent first
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Parent Bot"), test_user, test_team.id
         )
@@ -542,23 +532,21 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 403
         assert "Not a member" in response.json()["detail"]
 
-    async def test_agent_with_membership_cannot_create_team_agent(self, client, test_team, db_session, test_user):
+    async def test_agent_with_membership_cannot_create_team_agent(self, client, test_team, db, test_user):
         """POST /teams/{team_id}/agents returns 403 for agent even with TeamMember record.
 
         Covers agents.py L42-46: the is_agent check that fires after membership passes.
         """
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Member Bot"), test_user, test_team.id
         )
 
         # Manually give the agent a TeamMember record
-        member = TeamMember(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
 
         response = await client.post(
             f"/api/teams/{test_team.id}/agents",
@@ -568,7 +556,7 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 403
         assert "Agents cannot create other agents" in response.json()["detail"]
 
-    async def test_agent_cannot_create_project_agent(self, client, test_team, test_project, db_session, test_user):
+    async def test_agent_cannot_create_project_agent(self, client, test_team, test_project, db, test_user):
         """POST /projects/{project_id}/agents should return 403 when called by an agent.
 
         Note: Currently agents fail the membership check first (they don't have TeamMember
@@ -576,7 +564,7 @@ class TestAgentAPIEndpoints:
         as a result. This test documents actual behavior.
         """
         # Create an agent first
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Parent Bot"), test_user, test_team.id
         )
@@ -593,24 +581,22 @@ class TestAgentAPIEndpoints:
         assert "Not a member" in response.json()["detail"]
 
     async def test_agent_with_membership_cannot_create_project_agent(
-        self, client, test_team, test_project, db_session, test_user
+        self, client, test_team, test_project, db, test_user
     ):
         """POST /projects/{project_id}/agents returns 403 for agent with TeamMember record.
 
         Covers agents.py L99-103: the is_agent check for project-scoped agent creation.
         """
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Member Bot 2"), test_user, test_team.id
         )
 
         # Manually give the agent a TeamMember record
-        member = TeamMember(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=agent.id, role=TeamRole.MEMBER)
 
         response = await client.post(
             f"/api/projects/{test_project.id}/agents",
@@ -624,7 +610,7 @@ class TestAgentAPIEndpoints:
 # --- Service-level coverage tests (CHT-922) ---
 
 @pytest.mark.asyncio
-async def test_agent_service_list_by_parent(client, test_team, db_session, test_user, auth_headers):
+async def test_agent_service_list_by_parent(client, test_team, db, test_user, auth_headers):
     """Test AgentService.list_by_parent (covers agent_service.py L101-106)."""
     from app.services.agent_service import AgentService
 
@@ -636,14 +622,14 @@ async def test_agent_service_list_by_parent(client, test_team, db_session, test_
     )
     assert response.status_code == 201
 
-    service = AgentService(db_session)
+    service = AgentService()
     agents = await service.list_by_parent(test_user.id)
     assert len(agents) == 1
     assert agents[0].name == "List Parent Bot"
 
 
 @pytest.mark.asyncio
-async def test_agent_service_get_agent_api_keys(client, test_team, db_session, test_user, auth_headers):
+async def test_agent_service_get_agent_api_keys(client, test_team, db, test_user, auth_headers):
     """Test AgentService.get_agent_api_keys (covers agent_service.py L124-129)."""
     from app.services.agent_service import AgentService
 
@@ -656,7 +642,7 @@ async def test_agent_service_get_agent_api_keys(client, test_team, db_session, t
     assert response.status_code == 201
     agent_id = response.json()["id"]
 
-    service = AgentService(db_session)
+    service = AgentService()
     keys = await service.get_agent_api_keys(agent_id)
     assert len(keys) == 1
     assert keys[0].agent_user_id == agent_id

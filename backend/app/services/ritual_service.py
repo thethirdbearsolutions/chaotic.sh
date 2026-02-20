@@ -136,7 +136,8 @@ class RitualService:
         for field, value in update_data.items():
             setattr(ritual, field, value)
         ritual.updated_at = datetime.now(timezone.utc)
-        await ritual.save()
+        changed_fields = set(update_data.keys()) | {"updated_at"}
+        await ritual.save(update_fields=changed_fields)
 
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
@@ -144,7 +145,7 @@ class RitualService:
     async def delete(self, ritual: OxydeRitual) -> None:
         """Soft-delete a ritual by marking it inactive."""
         ritual.is_active = False
-        await ritual.save()
+        await ritual.save(update_fields={"is_active"})
 
     async def list_by_project(self, project_id: str, include_inactive: bool = False) -> list[OxydeRitual]:
         """List all rituals for a project."""
@@ -206,7 +207,7 @@ class RitualService:
         update_data = group_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(group, field, value)
-        await group.save()
+        await group.save(update_fields=set(update_data.keys()))
         return await self.get_group_by_id(group.id)
 
     async def delete_group(self, group: OxydeRitualGroup) -> None:
@@ -304,7 +305,7 @@ class RitualService:
 
         if advance and group.last_selected_ritual_id != selected.id:
             group.last_selected_ritual_id = selected.id
-            await group.save()
+            await group.save(update_fields={"last_selected_ritual_id"})
 
         return selected
 
@@ -389,13 +390,28 @@ class RitualService:
             elif field == "priority":
                 pval = issue.priority
                 # Oxyde stores enum NAMES; conditions use VALUES
-                actual_value = (IssuePriority[pval].value if pval else None) if pval else None
+                if isinstance(pval, IssuePriority):
+                    actual_value = pval.value
+                elif pval:
+                    actual_value = IssuePriority[pval].value
+                else:
+                    actual_value = None
             elif field == "issue_type":
                 tval = issue.issue_type
-                actual_value = (IssueType[tval].value if tval else None) if tval else None
+                if isinstance(tval, IssueType):
+                    actual_value = tval.value
+                elif tval:
+                    actual_value = IssueType[tval].value
+                else:
+                    actual_value = None
             elif field == "status":
                 sval = issue.status
-                actual_value = (IssueStatus[sval].value if sval else None) if sval else None
+                if isinstance(sval, IssueStatus):
+                    actual_value = sval.value
+                elif sval:
+                    actual_value = IssueStatus[sval].value
+                else:
+                    actual_value = None
             elif field == "labels":
                 actual_value = label_names
             else:
@@ -722,7 +738,7 @@ class RitualService:
         """Approve a ritual attestation (for REVIEW/GATE modes)."""
         attestation.approved_by = approver_id
         attestation.approved_at = datetime.now(timezone.utc)
-        await attestation.save()
+        await attestation.save(update_fields={"approved_by", "approved_at"})
 
         await self._maybe_clear_limbo(attestation.sprint_id)
 
@@ -737,7 +753,7 @@ class RitualService:
 
         attestation.approved_by = approver_id
         attestation.approved_at = datetime.now(timezone.utc)
-        await attestation.save()
+        await attestation.save(update_fields={"approved_by", "approved_at"})
 
         try:
             await self._clear_ticket_limbo(ritual_id, issue_id, approver_id)
@@ -762,7 +778,7 @@ class RitualService:
         for limbo in limbo_records:
             limbo.cleared_at = now
             limbo.cleared_by_id = cleared_by_id
-            await limbo.save()
+            await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
 
     async def _cleanup_orphaned_ticket_limbo(self, project_id: str) -> int:
         """Clear orphaned ticket limbo records where attestation already exists."""
@@ -789,7 +805,7 @@ class RitualService:
             if attestation and attestation.approved_at is not None:
                 limbo.cleared_at = datetime.now(timezone.utc)
                 limbo.cleared_by_id = attestation.approved_by
-                await limbo.save()
+                await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
                 cleared_count += 1
 
         if cleared_count:
@@ -902,7 +918,7 @@ class RitualService:
             oxyde_sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
             if oxyde_sprint:
                 oxyde_sprint.limbo = True
-                await oxyde_sprint.save()
+                await oxyde_sprint.save(update_fields={"limbo"})
             return selected_rituals
         return []
 
@@ -935,12 +951,28 @@ class RitualService:
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
-                "limbo_type": LimboType[limbo.limbo_type].value if limbo.limbo_type else limbo.limbo_type,
+                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
             })
 
         return list(issues_map.values())
+
+    @staticmethod
+    def _resolve_limbo_type(val) -> str | None:
+        """Convert limbo_type to its value string, handling enum/name/value inputs."""
+        if val is None:
+            return None
+        if isinstance(val, LimboType):
+            return val.value
+        # Try by name first (e.g. "CLOSE"), then by value (e.g. "close")
+        try:
+            return LimboType[val].value
+        except KeyError:
+            try:
+                return LimboType(val).value
+            except ValueError:
+                return str(val)
 
     async def _get_pending_gate_limbo_records(self, project_id: str):
         """Get uncleared limbo records for a project."""
@@ -1015,7 +1047,7 @@ class RitualService:
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
                 "approval_mode": "gate",
-                "limbo_type": LimboType[limbo.limbo_type].value if limbo.limbo_type else limbo.limbo_type,
+                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
                 "attestation_note": None,
@@ -1095,8 +1127,8 @@ class RitualService:
             attester = await OxydeUser.objects.get_or_none(id=att.attested_by) if att.attested_by else None
             approver = await OxydeUser.objects.get_or_none(id=att.approved_by) if att.approved_by else None
 
-            att._attester = attester
-            att._approver = approver
+            att.attester = attester
+            att.approver = approver
             results.append(att)
 
         return results

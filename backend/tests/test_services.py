@@ -17,9 +17,9 @@ from app.enums import TeamRole, IssueStatus, IssuePriority
 
 # User Service Tests
 @pytest.mark.asyncio
-async def test_user_service_create(db_session):
+async def test_user_service_create(db):
     """Test user creation via service."""
-    service = UserService(db_session)
+    service = UserService()
     user_in = UserCreate(
         name="Service User",
         email="service@example.com",
@@ -32,35 +32,35 @@ async def test_user_service_create(db_session):
 
 
 @pytest.mark.asyncio
-async def test_user_service_get_by_email(db_session, test_user):
+async def test_user_service_get_by_email(db, test_user):
     """Test getting user by email."""
-    service = UserService(db_session)
+    service = UserService()
     user = await service.get_by_email(test_user.email)
     assert user is not None
     assert user.id == test_user.id
 
 
 @pytest.mark.asyncio
-async def test_user_service_authenticate(db_session, test_user):
+async def test_user_service_authenticate(db, test_user):
     """Test user authentication."""
-    service = UserService(db_session)
+    service = UserService()
     user = await service.authenticate(test_user.email, "testpassword123")
     assert user is not None
     assert user.id == test_user.id
 
 
 @pytest.mark.asyncio
-async def test_user_service_authenticate_wrong_password(db_session, test_user):
+async def test_user_service_authenticate_wrong_password(db, test_user):
     """Test authentication with wrong password."""
-    service = UserService(db_session)
+    service = UserService()
     user = await service.authenticate(test_user.email, "wrongpassword")
     assert user is None
 
 
 @pytest.mark.asyncio
-async def test_user_service_update(db_session, test_user):
+async def test_user_service_update(db, test_user):
     """Test user update via service."""
-    service = UserService(db_session)
+    service = UserService()
     user_in = UserUpdate(name="Updated Service User")
     user = await service.update(test_user, user_in)
     assert user.name == "Updated Service User"
@@ -68,9 +68,9 @@ async def test_user_service_update(db_session, test_user):
 
 # Team Service Tests
 @pytest.mark.asyncio
-async def test_team_service_create(db_session, test_user):
+async def test_team_service_create(db, test_user):
     """Test team creation via service."""
-    service = TeamService(db_session)
+    service = TeamService()
     team_in = TeamCreate(
         name="Service Team",
         key="SVCTEAM",
@@ -82,27 +82,27 @@ async def test_team_service_create(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_team_service_get_user_teams(db_session, test_team, test_user):
+async def test_team_service_get_user_teams(db, test_team, test_user):
     """Test getting user's teams."""
-    service = TeamService(db_session)
+    service = TeamService()
     teams = await service.get_user_teams(test_user.id)
     assert len(teams) >= 1
     assert any(t.id == test_team.id for t in teams)
 
 
 @pytest.mark.asyncio
-async def test_team_service_is_team_admin(db_session, test_team, test_user):
+async def test_team_service_is_team_admin(db, test_team, test_user):
     """Test checking if user is team admin."""
-    service = TeamService(db_session)
+    service = TeamService()
     is_admin = await service.is_team_admin(test_team.id, test_user.id)
     assert is_admin is True
 
 
 # Project Service Tests
 @pytest.mark.asyncio
-async def test_project_service_create(db_session, test_team):
+async def test_project_service_create(db, test_team):
     """Test project creation via service."""
-    service = ProjectService(db_session)
+    service = ProjectService()
     project_in = ProjectCreate(
         name="Service Project",
         key="SVCPROJ",
@@ -115,9 +115,9 @@ async def test_project_service_create(db_session, test_team):
 
 
 @pytest.mark.asyncio
-async def test_project_service_list_by_team(db_session, test_team, test_project):
+async def test_project_service_list_by_team(db, test_team, test_project):
     """Test listing projects by team."""
-    service = ProjectService(db_session)
+    service = ProjectService()
     projects = await service.list_by_team(test_team.id)
     assert len(projects) >= 1
     assert any(p.id == test_project.id for p in projects)
@@ -125,9 +125,9 @@ async def test_project_service_list_by_team(db_session, test_team, test_project)
 
 # Issue Service Tests
 @pytest.mark.asyncio
-async def test_issue_service_create(db_session, test_project, test_user):
+async def test_issue_service_create(db, test_project, test_user):
     """Test issue creation via service."""
-    service = IssueService(db_session)
+    service = IssueService()
     issue_in = IssueCreate(
         title="Service Issue",
         description="Created by service",
@@ -143,9 +143,9 @@ async def test_issue_service_create(db_session, test_project, test_user):
 
 
 @pytest.mark.asyncio
-async def test_issue_service_update_to_done(db_session, test_issue):
+async def test_issue_service_update_to_done(db, test_issue):
     """Test updating issue to done sets completed_at."""
-    service = IssueService(db_session)
+    service = IssueService()
     issue_in = IssueUpdate(status=IssueStatus.DONE)
     issue = await service.update(test_issue, issue_in)
     assert issue.status == IssueStatus.DONE
@@ -153,18 +153,18 @@ async def test_issue_service_update_to_done(db_session, test_issue):
 
 
 @pytest.mark.asyncio
-async def test_issue_service_create_comment(db_session, test_issue, test_user):
+async def test_issue_service_create_comment(db, test_issue, test_user):
     """Test creating a comment."""
-    service = IssueService(db_session)
+    service = IssueService()
     comment_in = IssueCommentCreate(content="Service comment")
     comment = await service.create_comment(test_issue.id, comment_in, test_user.id)
     assert comment.content == "Service comment"
 
 
 @pytest.mark.asyncio
-async def test_issue_service_create_label(db_session, test_team):
+async def test_issue_service_create_label(db, test_team):
     """Test creating a label."""
-    service = IssueService(db_session)
+    service = IssueService()
     label_in = LabelCreate(name="Service Label", color="#00ff00")
     label = await service.create_label(label_in, test_team.id)
     assert label.name == "Service Label"
@@ -173,9 +173,9 @@ async def test_issue_service_create_label(db_session, test_team):
 
 # Sprint Service Tests
 @pytest.mark.asyncio
-async def test_sprint_service_create(db_session, test_project):
+async def test_sprint_service_create(db, test_project):
     """Test sprint creation via service."""
-    service = SprintService(db_session)
+    service = SprintService()
     sprint_in = SprintCreate(
         name="Service Sprint",
         description="Created by service",
@@ -191,9 +191,9 @@ async def test_sprint_service_create(db_session, test_project):
 
 # Document Service Tests
 @pytest.mark.asyncio
-async def test_document_service_create(db_session, test_team, test_user):
+async def test_document_service_create(db, test_team, test_user):
     """Test document creation via service."""
-    service = DocumentService(db_session)
+    service = DocumentService()
     doc_in = DocumentCreate(
         title="Service Doc",
         content="# Service Documentation",
@@ -206,9 +206,9 @@ async def test_document_service_create(db_session, test_team, test_user):
 
 
 @pytest.mark.asyncio
-async def test_document_service_search(db_session, test_team, test_document):
+async def test_document_service_search(db, test_team, test_document):
     """Test document search."""
-    service = DocumentService(db_session)
+    service = DocumentService()
     docs = await service.search(test_team.id, "Test")
     assert len(docs) >= 1
     assert any(d.id == test_document.id for d in docs)

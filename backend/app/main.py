@@ -10,7 +10,6 @@ from fastapi import Request
 import os
 
 from app.config import get_settings
-from app.database import init_db
 from app.oxyde_db import init_oxyde, close_oxyde
 from app.api import api_router
 from app.websocket import manager
@@ -41,8 +40,9 @@ async def lifespan(app: FastAPI):
                 "Set the SECRET_KEY environment variable to a secure random value: "
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
-    await init_db()
     await init_oxyde()
+    from oxyde.migrations.executor import apply_migrations
+    await apply_migrations(migrations_dir="migrations")
     yield
     # Shutdown
     await close_oxyde()

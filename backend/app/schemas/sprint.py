@@ -1,6 +1,6 @@
 """Sprint schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import SprintStatus
 from app.utils import DateTimeUTC
 
@@ -48,3 +48,16 @@ class SprintResponse(BaseModel):
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, v):
+        """Coerce enum name strings from Oxyde to enum members."""
+        if isinstance(v, SprintStatus):
+            return v
+        if isinstance(v, str):
+            try:
+                return SprintStatus[v]
+            except KeyError:
+                return SprintStatus(v)
+        return v

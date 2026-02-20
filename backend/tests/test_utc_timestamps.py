@@ -137,20 +137,18 @@ class TestTimestampJsonSerialization:
 
     @pytest.mark.asyncio
     async def test_issue_json_has_utc_suffix(
-        self, client, auth_headers, test_project, test_user, db_session
+        self, client, auth_headers, test_project, test_user, db
     ):
         """Issue API response JSON includes timezone offset."""
-        from app.models.issue import Issue
+        from app.oxyde_models.issue import OxydeIssue
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
             title="UTC Test Issue",
             creator_id=test_user.id,
         )
-        db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?project_id={test_project.id}",
