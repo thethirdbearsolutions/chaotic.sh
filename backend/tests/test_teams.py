@@ -97,15 +97,13 @@ async def test_update_team(client, auth_headers, test_team):
 
 
 @pytest.mark.asyncio
-async def test_update_team_not_admin(client, auth_headers2, test_team, db_session, test_user2):
+async def test_update_team_not_admin(client, auth_headers2, test_team, db, test_user2):
     """Test updating team when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.patch(
         f"/api/teams/{test_team.id}",
@@ -116,24 +114,20 @@ async def test_update_team_not_admin(client, auth_headers2, test_team, db_sessio
 
 
 @pytest.mark.asyncio
-async def test_delete_team(client, auth_headers, db_session):
+async def test_delete_team(client, auth_headers, db):
     """Test deleting a team."""
     # Create a team to delete
-    from app.models.team import Team, TeamMember
+    from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
     from app.enums import TeamRole
     from app.services.user_service import UserService
 
-    team = Team(name="Delete Me", key="DELETE")
-    db_session.add(team)
-    await db_session.flush()
+    team = await OxydeTeam.objects.create(name="Delete Me", key="DELETE")
 
     # Get user ID from token
     response = await client.get("/api/auth/me", headers=auth_headers)
     user_id = response.json()["id"]
 
-    member = TeamMember(team_id=team.id, user_id=user_id, role=TeamRole.OWNER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=team.id, user_id=user_id, role=TeamRole.OWNER)
 
     response = await client.delete(f"/api/teams/{team.id}", headers=auth_headers)
     assert response.status_code == 204
@@ -167,14 +161,14 @@ async def test_create_invitation(client, auth_headers, test_team):
 
 
 @pytest.mark.asyncio
-async def test_list_team_invitations(client, auth_headers, test_team, db_session, test_user):
+async def test_list_team_invitations(client, auth_headers, test_team, db, test_user):
     """Test listing team invitations."""
     # Create an invitation
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="pending@example.com",
         role=TeamRole.MEMBER,
@@ -183,8 +177,6 @@ async def test_list_team_invitations(client, auth_headers, test_team, db_session
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.commit()
 
     response = await client.get(
         f"/api/teams/{test_team.id}/invitations", headers=auth_headers
@@ -195,14 +187,14 @@ async def test_list_team_invitations(client, auth_headers, test_team, db_session
 
 
 @pytest.mark.asyncio
-async def test_accept_invitation(client, auth_headers2, test_team, db_session, test_user):
+async def test_accept_invitation(client, auth_headers2, test_team, db, test_user):
     """Test accepting a team invitation."""
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
     token = secrets.token_urlsafe(32)
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="test2@example.com",  # Matches test_user2
         role=TeamRole.MEMBER,
@@ -211,8 +203,6 @@ async def test_accept_invitation(client, auth_headers2, test_team, db_session, t
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.commit()
 
     response = await client.post(
         f"/api/teams/invitations/{token}/accept", headers=auth_headers2
@@ -223,15 +213,13 @@ async def test_accept_invitation(client, auth_headers2, test_team, db_session, t
 
 
 @pytest.mark.asyncio
-async def test_remove_member(client, auth_headers, test_team, db_session, test_user2):
+async def test_remove_member(client, auth_headers, test_team, db, test_user2):
     """Test removing a team member."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.delete(
         f"/api/teams/{test_team.id}/members/{test_user2.id}",
@@ -268,15 +256,13 @@ async def test_update_team_partial(client, auth_headers, test_team):
 
 
 @pytest.mark.asyncio
-async def test_remove_member_as_admin(client, auth_headers, test_team, test_user2, db_session):
+async def test_remove_member_as_admin(client, auth_headers, test_team, test_user2, db):
     """Test removing a team member as admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.delete(
         f"/api/teams/{test_team.id}/members/{test_user2.id}",
@@ -307,15 +293,13 @@ async def test_update_team_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_delete_team_not_owner(client, auth_headers2, test_team, db_session, test_user2):
+async def test_delete_team_not_owner(client, auth_headers2, test_team, db, test_user2):
     """Test deleting team when not owner (only admin)."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as admin (not owner)
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.ADMIN)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.ADMIN)
 
     response = await client.delete(f"/api/teams/{test_team.id}", headers=auth_headers2)
     assert response.status_code == 403
@@ -338,15 +322,13 @@ async def test_list_team_members_not_member(client, auth_headers2, test_team):
 
 
 @pytest.mark.asyncio
-async def test_update_member_role(client, auth_headers, test_team, test_user2, db_session):
+async def test_update_member_role(client, auth_headers, test_team, test_user2, db):
     """Test updating a member's role."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.patch(
         f"/api/teams/{test_team.id}/members/{test_user2.id}?role=admin",
@@ -358,15 +340,13 @@ async def test_update_member_role(client, auth_headers, test_team, test_user2, d
 
 
 @pytest.mark.asyncio
-async def test_update_member_role_not_admin(client, auth_headers2, test_team, test_user2, db_session):
+async def test_update_member_role_not_admin(client, auth_headers2, test_team, test_user2, db):
     """Test updating member role when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.patch(
         f"/api/teams/{test_team.id}/members/{test_user2.id}?role=admin",
@@ -416,15 +396,13 @@ async def test_remove_owner_fails(client, auth_headers, test_team, test_user):
 
 
 @pytest.mark.asyncio
-async def test_remove_member_not_admin(client, auth_headers2, test_team, test_user, db_session, test_user2):
+async def test_remove_member_not_admin(client, auth_headers2, test_team, test_user, db, test_user2):
     """Test removing member when not admin (and not self)."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     # user2 trying to remove test_user (the owner) - should fail
     response = await client.delete(
@@ -435,15 +413,13 @@ async def test_remove_member_not_admin(client, auth_headers2, test_team, test_us
 
 
 @pytest.mark.asyncio
-async def test_remove_self_as_member(client, auth_headers2, test_team, db_session, test_user2):
+async def test_remove_self_as_member(client, auth_headers2, test_team, db, test_user2):
     """Test that a member can remove themselves."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     # user2 removing themselves
     response = await client.delete(
@@ -465,15 +441,13 @@ async def test_create_invitation_team_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_create_invitation_not_admin(client, auth_headers2, test_team, db_session, test_user2):
+async def test_create_invitation_not_admin(client, auth_headers2, test_team, db, test_user2):
     """Test creating invitation when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.post(
         f"/api/teams/{test_team.id}/invitations",
@@ -496,15 +470,13 @@ async def test_create_invitation_already_member(client, auth_headers, test_team,
 
 
 @pytest.mark.asyncio
-async def test_list_invitations_not_admin(client, auth_headers2, test_team, db_session, test_user2):
+async def test_list_invitations_not_admin(client, auth_headers2, test_team, db, test_user2):
     """Test listing invitations when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.get(
         f"/api/teams/{test_team.id}/invitations",
@@ -524,14 +496,14 @@ async def test_accept_invitation_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_accept_invitation_wrong_email(client, auth_headers, test_team, db_session, test_user):
+async def test_accept_invitation_wrong_email(client, auth_headers, test_team, db, test_user):
     """Test accepting invitation intended for different email."""
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
     token = secrets.token_urlsafe(32)
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="other@example.com",  # Different from test_user
         role=TeamRole.MEMBER,
@@ -540,8 +512,6 @@ async def test_accept_invitation_wrong_email(client, auth_headers, test_team, db
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.commit()
 
     response = await client.post(
         f"/api/teams/invitations/{token}/accept",
@@ -552,14 +522,14 @@ async def test_accept_invitation_wrong_email(client, auth_headers, test_team, db
 
 
 @pytest.mark.asyncio
-async def test_accept_invitation_expired(client, auth_headers, test_team, db_session, test_user):
+async def test_accept_invitation_expired(client, auth_headers, test_team, db, test_user):
     """Test accepting expired invitation."""
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
     token = secrets.token_urlsafe(32)
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email=test_user.email,
         role=TeamRole.MEMBER,
@@ -568,8 +538,6 @@ async def test_accept_invitation_expired(client, auth_headers, test_team, db_ses
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) - timedelta(days=1),  # Expired
     )
-    db_session.add(invitation)
-    await db_session.commit()
 
     response = await client.post(
         f"/api/teams/invitations/{token}/accept",
@@ -580,14 +548,14 @@ async def test_accept_invitation_expired(client, auth_headers, test_team, db_ses
 
 
 @pytest.mark.asyncio
-async def test_delete_invitation(client, auth_headers, test_team, db_session, test_user):
+async def test_delete_invitation(client, auth_headers, test_team, db, test_user):
     """Test deleting an invitation."""
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
     token = secrets.token_urlsafe(32)
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="delete@example.com",
         role=TeamRole.MEMBER,
@@ -596,9 +564,6 @@ async def test_delete_invitation(client, auth_headers, test_team, db_session, te
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.commit()
-    await db_session.refresh(invitation)
 
     response = await client.delete(
         f"/api/teams/{test_team.id}/invitations/{invitation.id}",
@@ -608,18 +573,17 @@ async def test_delete_invitation(client, auth_headers, test_team, db_session, te
 
 
 @pytest.mark.asyncio
-async def test_delete_invitation_not_admin(client, auth_headers2, test_team, db_session, test_user, test_user2):
+async def test_delete_invitation_not_admin(client, auth_headers2, test_team, db, test_user, test_user2):
     """Test deleting invitation when not admin."""
-    from app.models.team import TeamMember, TeamInvitation
+    from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     token = secrets.token_urlsafe(32)
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="test@example.com",
         role=TeamRole.MEMBER,
@@ -628,9 +592,6 @@ async def test_delete_invitation_not_admin(client, auth_headers2, test_team, db_
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.commit()
-    await db_session.refresh(invitation)
 
     response = await client.delete(
         f"/api/teams/{test_team.id}/invitations/{invitation.id}",
@@ -671,32 +632,32 @@ async def test_create_invitation_for_existing_non_member(client, auth_headers, t
 # --- Service-level coverage tests (CHT-922) ---
 
 @pytest.mark.asyncio
-async def test_team_service_add_member(db_session, test_team, test_user2):
+async def test_team_service_add_member(db, test_team, test_user2):
     """Test TeamService.add_member directly (covers team_service.py L109-117)."""
     from app.services.team_service import TeamService
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
-    service = TeamService(db_session)
+    service = TeamService()
     member = await service.add_member(test_team, test_user2, TeamRole.MEMBER)
 
-    assert isinstance(member, TeamMember)
+    assert isinstance(member, OxydeTeamMember)
     assert member.team_id == test_team.id
     assert member.user_id == test_user2.id
     assert member.role == TeamRole.MEMBER
 
 
 @pytest.mark.asyncio
-async def test_team_service_decline_invitation(db_session, test_team, test_user):
+async def test_team_service_decline_invitation(db, test_team, test_user):
     """Test TeamService.decline_invitation directly (covers team_service.py L186-187)."""
     from app.services.team_service import TeamService
-    from app.models.team import TeamInvitation
+    from app.oxyde_models.team import OxydeTeamInvitation
     import secrets
     from datetime import datetime, timedelta, timezone
 
-    service = TeamService(db_session)
+    service = TeamService()
 
-    invitation = TeamInvitation(
+    invitation = await OxydeTeamInvitation.objects.create(
         team_id=test_team.id,
         email="decline@example.com",
         role=TeamRole.MEMBER,
@@ -705,8 +666,6 @@ async def test_team_service_decline_invitation(db_session, test_team, test_user)
         status=InvitationStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
-    db_session.add(invitation)
-    await db_session.flush()
 
     await service.decline_invitation(invitation)
-    assert invitation.status == InvitationStatus.DECLINED
+    assert invitation.status == InvitationStatus.DECLINED.name

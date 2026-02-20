@@ -13,7 +13,7 @@ import pytest
 from jose import jwt
 from datetime import datetime, timezone, timedelta
 
-from app.models.user import User
+from app.oxyde_models.user import OxydeUser
 from app.config import get_settings
 from app.utils.security import get_password_hash
 from app.services.api_key_service import APIKeyService
@@ -57,17 +57,14 @@ async def test_jwt_user_not_found(client):
 
 
 @pytest.mark.asyncio
-async def test_jwt_inactive_user(client, db_session):
+async def test_jwt_inactive_user(client, db):
     """JWT for inactive user returns 403."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="inactive@example.com",
         hashed_password=get_password_hash("password123"),
         name="Inactive User",
         is_active=False,
     )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
 
     token = jwt.encode(
         {"sub": user.id, "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
@@ -94,9 +91,9 @@ async def test_invalid_api_key(client):
 
 
 @pytest.mark.asyncio
-async def test_api_key_agent_not_found(client, db_session, test_user):
+async def test_api_key_agent_not_found(client, db, test_user):
     """API key with agent_user_id pointing to non-existent agent returns 401."""
-    api_key_service = APIKeyService(db_session)
+    api_key_service = APIKeyService()
 
     # Create a valid API key for test_user
     api_key_record, full_key = await api_key_service.create(
@@ -104,8 +101,12 @@ async def test_api_key_agent_not_found(client, db_session, test_user):
     )
 
     # Modify it to point to a non-existent agent
+    # Disable FK checks since we're deliberately setting an invalid FK
+    from oxyde import execute_raw
+    await execute_raw("PRAGMA foreign_keys = OFF")
     api_key_record.agent_user_id = "nonexistent-agent-id"
-    await db_session.commit()
+    await api_key_record.save(update_fields={"agent_user_id"})
+    await execute_raw("PRAGMA foreign_keys = ON")
 
     response = await client.get(
         "/api/auth/me",
@@ -116,9 +117,9 @@ async def test_api_key_agent_not_found(client, db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_api_key_user_not_found(client, db_session, test_user):
+async def test_api_key_user_not_found(client, db, test_user):
     """API key with user_id pointing to non-existent user returns 401."""
-    api_key_service = APIKeyService(db_session)
+    api_key_service = APIKeyService()
 
     # Create a valid API key for test_user
     api_key_record, full_key = await api_key_service.create(
@@ -126,9 +127,13 @@ async def test_api_key_user_not_found(client, db_session, test_user):
     )
 
     # Modify it to point to a non-existent user (no agent)
+    # Disable FK checks since we're deliberately setting an invalid FK
+    from oxyde import execute_raw
+    await execute_raw("PRAGMA foreign_keys = OFF")
     api_key_record.user_id = "nonexistent-user-id"
     api_key_record.agent_user_id = None
-    await db_session.commit()
+    await api_key_record.save(update_fields={"user_id", "agent_user_id"})
+    await execute_raw("PRAGMA foreign_keys = ON")
 
     response = await client.get(
         "/api/auth/me",
@@ -139,20 +144,18 @@ async def test_api_key_user_not_found(client, db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_api_key_inactive_user(client, db_session):
+async def test_api_key_inactive_user(client, db):
     """API key for inactive user returns 403."""
     # Create inactive user
-    user = User(
+    user = await OxydeUser.objects.create(
         email="inactive-api@example.com",
         hashed_password=get_password_hash("password123"),
         name="Inactive API User",
         is_active=False,
     )
-    db_session.add(user)
-    await db_session.flush()
 
     # Create a valid API key for this inactive user
-    api_key_service = APIKeyService(db_session)
+    api_key_service = APIKeyService()
     api_key_record, full_key = await api_key_service.create(
         user.id, APIKeyCreate(name="Inactive User Key")
     )
@@ -166,9 +169,9 @@ async def test_api_key_inactive_user(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_auth_method_api_key(client, db_session, test_user):
+async def test_auth_method_api_key(client, db, test_user):
     """API key authentication works end-to-end."""
-    api_key_service = APIKeyService(db_session)
+    api_key_service = APIKeyService()
     api_key_record, full_key = await api_key_service.create(
         test_user.id, APIKeyCreate(name="Auth Method Test Key")
     )

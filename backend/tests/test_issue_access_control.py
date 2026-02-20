@@ -6,11 +6,12 @@ no teams), and filter pass-through on assignee path.
 """
 import pytest
 import pytest_asyncio
-from app.models.issue import Issue, Label
-from app.models.sprint import Sprint
-from app.models.team import Team, TeamMember
-from app.models.project import Project
-from app.models.user import User
+from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.label import OxydeLabel
+from app.oxyde_models.sprint import OxydeSprint
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.user import OxydeUser
 from app.enums import IssueStatus, IssuePriority, SprintStatus, TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
@@ -20,55 +21,41 @@ from app.utils.security import get_password_hash, create_access_token
 # ─────────────────────────────────────────────────────────────────────
 
 @pytest_asyncio.fixture
-async def other_team(db_session):
+async def other_team(db):
     """Create a second team that test_user is NOT a member of."""
-    team = Team(name="Other Team", key="OTHER", description="Another team")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Other Team", key="OTHER", description="Another team")
     return team
 
 
 @pytest_asyncio.fixture
-async def other_user(db_session, other_team):
+async def other_user(db, other_team):
     """Create a user on the other team."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="other@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Other User",
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
+    member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
     return user
 
 
 @pytest_asyncio.fixture
-async def other_project(db_session, other_team):
+async def other_project(db, other_team):
     """Create a project on the other team."""
-    project = Project(
+    project = await OxydeProject.objects.create(
         team_id=other_team.id, name="Other Project", key="OTH",
         description="Other project", color="#ff0000",
     )
-    db_session.add(project)
-    await db_session.commit()
-    await db_session.refresh(project)
     return project
 
 
 @pytest_asyncio.fixture
-async def other_sprint(db_session, other_project):
+async def other_sprint(db, other_project):
     """Create a sprint on the other team's project."""
-    sprint = Sprint(
+    sprint = await OxydeSprint.objects.create(
         project_id=other_project.id, name="Other Sprint",
         status=SprintStatus.ACTIVE,
     )
-    db_session.add(sprint)
-    await db_session.commit()
-    await db_session.refresh(sprint)
     return sprint
 
 
@@ -103,12 +90,12 @@ class TestSprintPathAccessControl:
 
     @pytest.mark.asyncio
     async def test_sprint_path_success_authorized(
-        self, client, auth_headers, test_project, test_user, test_sprint, db_session
+        self, client, auth_headers, test_project, test_user, test_sprint, db
     ):
         """Sprint on user's team returns issues."""
         # Create an issue in the sprint
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
@@ -116,8 +103,6 @@ class TestSprintPathAccessControl:
             sprint_id=test_sprint.id,
             creator_id=test_user.id,
         )
-        db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?sprint_id={test_sprint.id}",
@@ -151,12 +136,12 @@ class TestAssigneePathAccessControl:
     @pytest.mark.asyncio
     async def test_assignee_path_scoped_to_user_teams(
         self, client, auth_headers, test_project, test_user, other_project,
-        other_user, db_session
+        other_user, db
     ):
         """Assignee path only returns issues from user's teams."""
         # Create issue assigned to test_user on their team
         test_project.issue_count += 1
-        own_issue = Issue(
+        own_issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
@@ -164,11 +149,10 @@ class TestAssigneePathAccessControl:
             assignee_id=test_user.id,
             creator_id=test_user.id,
         )
-        db_session.add(own_issue)
 
         # Create issue assigned to test_user but on OTHER team's project
         other_project.issue_count = (other_project.issue_count or 0) + 1
-        other_issue = Issue(
+        other_issue = await OxydeIssue.objects.create(
             project_id=other_project.id,
             identifier=f"{other_project.key}-{other_project.issue_count}",
             number=other_project.issue_count,
@@ -176,8 +160,6 @@ class TestAssigneePathAccessControl:
             assignee_id=test_user.id,
             creator_id=other_user.id,
         )
-        db_session.add(other_issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?assignee_id={test_user.id}",
@@ -192,11 +174,11 @@ class TestAssigneePathAccessControl:
 
     @pytest.mark.asyncio
     async def test_assignee_path_no_results_for_other_team_user(
-        self, client, auth_headers, other_project, other_user, db_session
+        self, client, auth_headers, other_project, other_user, db
     ):
         """Querying assignee on another team returns empty (scoped to caller's teams)."""
         other_project.issue_count = (other_project.issue_count or 0) + 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=other_project.id,
             identifier=f"{other_project.key}-{other_project.issue_count}",
             number=other_project.issue_count,
@@ -204,8 +186,6 @@ class TestAssigneePathAccessControl:
             assignee_id=other_user.id,
             creator_id=other_user.id,
         )
-        db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?assignee_id={other_user.id}",
@@ -217,12 +197,12 @@ class TestAssigneePathAccessControl:
 
     @pytest.mark.asyncio
     async def test_assignee_path_with_status_filter(
-        self, client, auth_headers, test_project, test_user, db_session
+        self, client, auth_headers, test_project, test_user, db
     ):
         """Status filter works on assignee path."""
         for i, status in enumerate(["backlog", "todo", "in_progress"]):
             test_project.issue_count += 1
-            issue = Issue(
+            issue = await OxydeIssue.objects.create(
                 project_id=test_project.id,
                 identifier=f"{test_project.key}-{test_project.issue_count}",
                 number=test_project.issue_count,
@@ -231,8 +211,6 @@ class TestAssigneePathAccessControl:
                 assignee_id=test_user.id,
                 creator_id=test_user.id,
             )
-            db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?assignee_id={test_user.id}&status=todo",
@@ -245,12 +223,12 @@ class TestAssigneePathAccessControl:
 
     @pytest.mark.asyncio
     async def test_assignee_path_with_priority_filter(
-        self, client, auth_headers, test_project, test_user, db_session
+        self, client, auth_headers, test_project, test_user, db
     ):
         """Priority filter works on assignee path."""
         for priority in ["low", "high", "urgent"]:
             test_project.issue_count += 1
-            issue = Issue(
+            issue = await OxydeIssue.objects.create(
                 project_id=test_project.id,
                 identifier=f"{test_project.key}-{test_project.issue_count}",
                 number=test_project.issue_count,
@@ -259,8 +237,6 @@ class TestAssigneePathAccessControl:
                 assignee_id=test_user.id,
                 creator_id=test_user.id,
             )
-            db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?assignee_id={test_user.id}&priority=urgent",
@@ -301,19 +277,17 @@ class TestProjectPathAccessControl:
 
     @pytest.mark.asyncio
     async def test_project_path_success(
-        self, client, auth_headers, test_project, test_user, db_session
+        self, client, auth_headers, test_project, test_user, db
     ):
         """Project on user's team returns issues."""
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
             title="Project Issue",
             creator_id=test_user.id,
         )
-        db_session.add(issue)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/issues?project_id={test_project.id}",
@@ -349,13 +323,10 @@ class TestLabelTeamValidation:
     """Tests that label_ids on create/update are validated for team membership."""
 
     @pytest_asyncio.fixture
-    async def other_team_label(self, db_session, other_team):
+    async def other_team_label(self, db, other_team):
         """Create a label on the other team."""
-        from app.models.issue import Label
-        label = Label(team_id=other_team.id, name="Foreign", color="#ff0000")
-        db_session.add(label)
-        await db_session.commit()
-        await db_session.refresh(label)
+        from app.oxyde_models.label import OxydeLabel
+        label = await OxydeLabel.objects.create(team_id=other_team.id, name="Foreign", color="#ff0000")
         return label
 
     @pytest.mark.asyncio
@@ -401,19 +372,17 @@ class TestLabelTeamValidation:
 
     @pytest.mark.asyncio
     async def test_update_with_other_team_label_fails(
-        self, client, auth_headers, test_project, test_user, other_team_label, db_session
+        self, client, auth_headers, test_project, test_user, other_team_label, db
     ):
         """Updating issue with label from another team returns 400."""
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
             title="Existing Issue",
             creator_id=test_user.id,
         )
-        db_session.add(issue)
-        await db_session.commit()
 
         response = await client.patch(
             f"/api/issues/{issue.id}",

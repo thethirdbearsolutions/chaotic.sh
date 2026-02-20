@@ -1,11 +1,14 @@
-"""Tests for issue sorting behavior and _apply_sort (CHT-268).
+"""Tests for issue sorting behavior (CHT-268).
 
 Tests CASE expression ordering for priority/status, sort_by/order query
 params on GET /issues, random shuffle, default fallback, and null handling.
+
+Note: _apply_sort unit tests removed — that method was a SQLAlchemy-specific
+internal replaced by raw SQL ordering in the Oxyde migration.
 """
 import pytest
 from datetime import datetime, timezone, timedelta
-from app.models.issue import Issue
+from app.oxyde_models.issue import OxydeIssue
 from app.enums import IssueStatus, IssuePriority
 
 
@@ -16,8 +19,13 @@ from app.enums import IssueStatus, IssuePriority
 async def _create_issue(db, project, user, *, number, title="Issue", status="backlog",
                         priority="no_priority", estimate=None, created_offset_hours=0):
     """Create an issue with controllable sort fields."""
-    project.issue_count += 1
-    issue = Issue(
+    from oxyde import execute_raw
+
+    await execute_raw(
+        "UPDATE projects SET issue_count = issue_count + 1 WHERE id = ?",
+        [project.id],
+    )
+    issue = await OxydeIssue.objects.create(
         project_id=project.id,
         identifier=f"{project.key}-{number}",
         number=number,
@@ -28,77 +36,7 @@ async def _create_issue(db, project, user, *, number, title="Issue", status="bac
         creator_id=user.id,
         created_at=datetime.now(timezone.utc) + timedelta(hours=created_offset_hours),
     )
-    db.add(issue)
-    await db.flush()
     return issue
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Unit tests: _apply_sort
-# ─────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_apply_sort_random_returns_needs_shuffle(db_session, test_project, test_user):
-    """sort_by='random' returns needs_shuffle=True and unsorted query."""
-    from app.services.issue_service import IssueService
-    from sqlalchemy import select
-
-    service = IssueService(db_session)
-    query = select(Issue)
-    result_query, needs_shuffle = service._apply_sort(query, sort_by="random")
-    assert needs_shuffle is True
-
-
-@pytest.mark.asyncio
-async def test_apply_sort_known_fields_no_shuffle(db_session, test_project, test_user):
-    """All recognized sort fields return needs_shuffle=False."""
-    from app.services.issue_service import IssueService
-    from sqlalchemy import select
-
-    service = IssueService(db_session)
-    query = select(Issue)
-
-    for field in ["created", "updated", "priority", "status", "title", "estimate"]:
-        _, needs_shuffle = service._apply_sort(query, sort_by=field)
-        assert needs_shuffle is False, f"sort_by={field} should not need shuffle"
-
-
-@pytest.mark.asyncio
-async def test_apply_sort_unrecognized_field_uses_default(db_session, test_project, test_user):
-    """Unrecognized sort_by falls back to default (created_at)."""
-    from app.services.issue_service import IssueService
-    from sqlalchemy import select
-
-    service = IssueService(db_session)
-    query = select(Issue)
-    result_query, needs_shuffle = service._apply_sort(query, sort_by="nonexistent")
-    assert needs_shuffle is False
-
-
-@pytest.mark.asyncio
-async def test_apply_sort_none_sort_by_uses_default(db_session, test_project, test_user):
-    """None sort_by falls back to default (created_at)."""
-    from app.services.issue_service import IssueService
-    from sqlalchemy import select
-
-    service = IssueService(db_session)
-    query = select(Issue)
-    result_query, needs_shuffle = service._apply_sort(query, sort_by=None)
-    assert needs_shuffle is False
-
-
-@pytest.mark.asyncio
-async def test_apply_sort_custom_default_field(db_session, test_project, test_user):
-    """default_field parameter overrides fallback when sort_by is None."""
-    from app.services.issue_service import IssueService
-    from sqlalchemy import select
-
-    service = IssueService(db_session)
-    query = select(Issue)
-    result_query, needs_shuffle = service._apply_sort(
-        query, sort_by=None, default_field=Issue.updated_at
-    )
-    assert needs_shuffle is False
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -106,19 +44,18 @@ async def test_apply_sort_custom_default_field(db_session, test_project, test_us
 # ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_sort_by_priority_desc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_priority_desc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by priority desc: urgent first, no_priority last."""
-    await _create_issue(db_session, test_project, test_user, number=10,
+    await _create_issue(db, test_project, test_user, number=10,
                         title="Low", priority="low")
-    await _create_issue(db_session, test_project, test_user, number=11,
+    await _create_issue(db, test_project, test_user, number=11,
                         title="Urgent", priority="urgent")
-    await _create_issue(db_session, test_project, test_user, number=12,
+    await _create_issue(db, test_project, test_user, number=12,
                         title="Medium", priority="medium")
-    await _create_issue(db_session, test_project, test_user, number=13,
+    await _create_issue(db, test_project, test_user, number=13,
                         title="High", priority="high")
-    await _create_issue(db_session, test_project, test_user, number=14,
+    await _create_issue(db, test_project, test_user, number=14,
                         title="None", priority="no_priority")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=priority&order=desc",
@@ -132,15 +69,14 @@ async def test_sort_by_priority_desc(client, auth_headers, test_project, test_us
 
 
 @pytest.mark.asyncio
-async def test_sort_by_priority_asc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_priority_asc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by priority asc: urgent first."""
-    await _create_issue(db_session, test_project, test_user, number=20,
+    await _create_issue(db, test_project, test_user, number=20,
                         title="Low", priority="low")
-    await _create_issue(db_session, test_project, test_user, number=21,
+    await _create_issue(db, test_project, test_user, number=21,
                         title="Urgent", priority="urgent")
-    await _create_issue(db_session, test_project, test_user, number=22,
+    await _create_issue(db, test_project, test_user, number=22,
                         title="Medium", priority="medium")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=priority&order=asc",
@@ -153,17 +89,16 @@ async def test_sort_by_priority_asc(client, auth_headers, test_project, test_use
 
 
 @pytest.mark.asyncio
-async def test_sort_by_status_desc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_status_desc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by status desc: canceled/done first (highest CASE value)."""
-    await _create_issue(db_session, test_project, test_user, number=30,
+    await _create_issue(db, test_project, test_user, number=30,
                         title="Backlog", status="backlog")
-    await _create_issue(db_session, test_project, test_user, number=31,
+    await _create_issue(db, test_project, test_user, number=31,
                         title="InProgress", status="in_progress")
-    await _create_issue(db_session, test_project, test_user, number=32,
+    await _create_issue(db, test_project, test_user, number=32,
                         title="Done", status="done")
-    await _create_issue(db_session, test_project, test_user, number=33,
+    await _create_issue(db, test_project, test_user, number=33,
                         title="Todo", status="todo")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=status&order=desc",
@@ -176,15 +111,14 @@ async def test_sort_by_status_desc(client, auth_headers, test_project, test_user
 
 
 @pytest.mark.asyncio
-async def test_sort_by_status_asc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_status_asc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by status asc: in_progress first."""
-    await _create_issue(db_session, test_project, test_user, number=40,
+    await _create_issue(db, test_project, test_user, number=40,
                         title="Done", status="done")
-    await _create_issue(db_session, test_project, test_user, number=41,
+    await _create_issue(db, test_project, test_user, number=41,
                         title="Todo", status="todo")
-    await _create_issue(db_session, test_project, test_user, number=42,
+    await _create_issue(db, test_project, test_user, number=42,
                         title="InProgress", status="in_progress")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=status&order=asc",
@@ -197,15 +131,14 @@ async def test_sort_by_status_asc(client, auth_headers, test_project, test_user,
 
 
 @pytest.mark.asyncio
-async def test_sort_by_title_asc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_title_asc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by title alphabetically ascending."""
-    await _create_issue(db_session, test_project, test_user, number=50,
+    await _create_issue(db, test_project, test_user, number=50,
                         title="Charlie")
-    await _create_issue(db_session, test_project, test_user, number=51,
+    await _create_issue(db, test_project, test_user, number=51,
                         title="Alpha")
-    await _create_issue(db_session, test_project, test_user, number=52,
+    await _create_issue(db, test_project, test_user, number=52,
                         title="Bravo")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=title&order=asc",
@@ -218,15 +151,14 @@ async def test_sort_by_title_asc(client, auth_headers, test_project, test_user, 
 
 
 @pytest.mark.asyncio
-async def test_sort_by_title_desc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_title_desc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by title alphabetically descending."""
-    await _create_issue(db_session, test_project, test_user, number=60,
+    await _create_issue(db, test_project, test_user, number=60,
                         title="Charlie")
-    await _create_issue(db_session, test_project, test_user, number=61,
+    await _create_issue(db, test_project, test_user, number=61,
                         title="Alpha")
-    await _create_issue(db_session, test_project, test_user, number=62,
+    await _create_issue(db, test_project, test_user, number=62,
                         title="Bravo")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=title&order=desc",
@@ -239,15 +171,14 @@ async def test_sort_by_title_desc(client, auth_headers, test_project, test_user,
 
 
 @pytest.mark.asyncio
-async def test_sort_by_estimate_asc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_estimate_asc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by estimate ascending (nulls sorted by SQLite default)."""
-    await _create_issue(db_session, test_project, test_user, number=70,
+    await _create_issue(db, test_project, test_user, number=70,
                         title="Big", estimate=8)
-    await _create_issue(db_session, test_project, test_user, number=71,
+    await _create_issue(db, test_project, test_user, number=71,
                         title="Small", estimate=1)
-    await _create_issue(db_session, test_project, test_user, number=72,
+    await _create_issue(db, test_project, test_user, number=72,
                         title="Medium", estimate=3)
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=estimate&order=asc",
@@ -260,15 +191,14 @@ async def test_sort_by_estimate_asc(client, auth_headers, test_project, test_use
 
 
 @pytest.mark.asyncio
-async def test_sort_by_estimate_desc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_estimate_desc(client, auth_headers, test_project, test_user, db):
     """Issues sorted by estimate descending."""
-    await _create_issue(db_session, test_project, test_user, number=80,
+    await _create_issue(db, test_project, test_user, number=80,
                         title="Big", estimate=8)
-    await _create_issue(db_session, test_project, test_user, number=81,
+    await _create_issue(db, test_project, test_user, number=81,
                         title="Small", estimate=1)
-    await _create_issue(db_session, test_project, test_user, number=82,
+    await _create_issue(db, test_project, test_user, number=82,
                         title="Medium", estimate=3)
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=estimate&order=desc",
@@ -281,13 +211,12 @@ async def test_sort_by_estimate_desc(client, auth_headers, test_project, test_us
 
 
 @pytest.mark.asyncio
-async def test_sort_by_estimate_with_nulls(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_by_estimate_with_nulls(client, auth_headers, test_project, test_user, db):
     """Issues with null estimate sort consistently."""
-    await _create_issue(db_session, test_project, test_user, number=90,
+    await _create_issue(db, test_project, test_user, number=90,
                         title="Estimated", estimate=5)
-    await _create_issue(db_session, test_project, test_user, number=91,
+    await _create_issue(db, test_project, test_user, number=91,
                         title="Unestimated", estimate=None)
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=estimate&order=asc",
@@ -302,13 +231,12 @@ async def test_sort_by_estimate_with_nulls(client, auth_headers, test_project, t
 
 
 @pytest.mark.asyncio
-async def test_sort_default_is_desc(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_default_is_desc(client, auth_headers, test_project, test_user, db):
     """Without explicit order, default is descending."""
-    await _create_issue(db_session, test_project, test_user, number=100,
+    await _create_issue(db, test_project, test_user, number=100,
                         title="Alpha")
-    await _create_issue(db_session, test_project, test_user, number=101,
+    await _create_issue(db, test_project, test_user, number=101,
                         title="Bravo")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=title",
@@ -341,12 +269,11 @@ async def test_sort_invalid_order_rejected(client, auth_headers, test_project):
 
 
 @pytest.mark.asyncio
-async def test_sort_random_returns_all_issues(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_random_returns_all_issues(client, auth_headers, test_project, test_user, db):
     """Random sort returns all issues (just in non-deterministic order)."""
     for i in range(5):
-        await _create_issue(db_session, test_project, test_user, number=110 + i,
+        await _create_issue(db, test_project, test_user, number=110 + i,
                             title=f"Issue {i}")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&sort_by=random",
@@ -358,15 +285,14 @@ async def test_sort_random_returns_all_issues(client, auth_headers, test_project
 
 
 @pytest.mark.asyncio
-async def test_sort_with_status_filter(client, auth_headers, test_project, test_user, db_session):
+async def test_sort_with_status_filter(client, auth_headers, test_project, test_user, db):
     """Sorting combined with status filter works correctly."""
-    await _create_issue(db_session, test_project, test_user, number=120,
+    await _create_issue(db, test_project, test_user, number=120,
                         title="Todo High", status="todo", priority="high")
-    await _create_issue(db_session, test_project, test_user, number=121,
+    await _create_issue(db, test_project, test_user, number=121,
                         title="Todo Low", status="todo", priority="low")
-    await _create_issue(db_session, test_project, test_user, number=122,
+    await _create_issue(db, test_project, test_user, number=122,
                         title="Done Medium", status="done", priority="medium")
-    await db_session.commit()
 
     response = await client.get(
         f"/api/issues?project_id={test_project.id}&status=todo&sort_by=priority&order=asc",

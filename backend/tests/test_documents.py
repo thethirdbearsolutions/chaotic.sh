@@ -1,9 +1,9 @@
 """Tests for document API endpoints."""
 import pytest
 import pytest_asyncio
-from app.models.document import Document, DocumentComment
-from app.models.team import Team, TeamMember
-from app.models.user import User
+from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.user import OxydeUser
 from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
@@ -100,18 +100,15 @@ class TestDocumentCRUD:
         assert data["sprint_id"] is None
 
     async def test_create_document_sprint_wrong_project(
-        self, client, auth_headers, test_team, test_project, test_sprint, db_session
+        self, client, auth_headers, test_team, test_project, test_sprint, db
     ):
         """Test creating document with sprint from different project."""
-        from app.models.project import Project
-        from app.models.sprint import Sprint
+        from app.oxyde_models.project import OxydeProject
+        from app.oxyde_models.sprint import OxydeSprint
         from app.enums import SprintStatus
 
         # Create a second project
-        project2 = Project(team_id=test_team.id, name="Other Project", key="OTH")
-        db_session.add(project2)
-        await db_session.commit()
-        await db_session.refresh(project2)
+        project2 = await OxydeProject.objects.create(team_id=test_team.id, name="Other Project", key="OTH")
 
         # test_sprint belongs to test_project, but we specify project2
         response = await client.post(
@@ -127,12 +124,10 @@ class TestDocumentCRUD:
         assert response.status_code == 400
         assert "Sprint must belong to the document's project" in response.json()["detail"]
 
-    async def test_list_documents(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_list_documents(self, client, auth_headers, test_team, db, test_user):
         """Test listing documents."""
-        doc1 = Document(team_id=test_team.id, author_id=test_user.id, title="Doc 1", content="Content 1")
-        doc2 = Document(team_id=test_team.id, author_id=test_user.id, title="Doc 2", content="Content 2")
-        db_session.add_all([doc1, doc2])
-        await db_session.commit()
+        doc1 = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Doc 1", content="Content 1")
+        doc2 = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Doc 2", content="Content 2")
 
         response = await client.get(
             f"/api/documents?team_id={test_team.id}",
@@ -154,17 +149,15 @@ class TestDocumentCRUD:
         )
         assert response.status_code == 403
 
-    async def test_list_documents_by_project(self, client, auth_headers, test_team, test_project, db_session, test_user):
+    async def test_list_documents_by_project(self, client, auth_headers, test_team, test_project, db, test_user):
         """Test listing documents filtered by project."""
-        doc = Document(
+        doc = await OxydeDocument.objects.create(
             team_id=test_team.id,
             author_id=test_user.id,
             project_id=test_project.id,
             title="Project Doc",
             content="Content",
         )
-        db_session.add(doc)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
@@ -176,9 +169,9 @@ class TestDocumentCRUD:
         # Verify our document is in results and has correct project
         assert any(d["title"] == "Project Doc" and d["project_id"] == test_project.id for d in data)
 
-    async def test_list_documents_by_sprint(self, client, auth_headers, test_team, test_project, test_sprint, db_session, test_user):
+    async def test_list_documents_by_sprint(self, client, auth_headers, test_team, test_project, test_sprint, db, test_user):
         """Test listing documents filtered by sprint."""
-        doc = Document(
+        doc = await OxydeDocument.objects.create(
             team_id=test_team.id,
             author_id=test_user.id,
             project_id=test_project.id,
@@ -186,8 +179,6 @@ class TestDocumentCRUD:
             title="Sprint Doc",
             content="Content",
         )
-        db_session.add(doc)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/documents?team_id={test_team.id}&sprint_id={test_sprint.id}",
@@ -208,17 +199,14 @@ class TestDocumentCRUD:
         assert response.status_code == 404
         assert "Sprint not found" in response.json()["detail"]
 
-    async def test_list_documents_search(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_list_documents_search(self, client, auth_headers, test_team, db, test_user):
         """Test searching documents."""
-        doc = Document(
+        doc = await OxydeDocument.objects.create(
             team_id=test_team.id,
             author_id=test_user.id,
             title="Unique Search Term Document",
             content="Content",
         )
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
 
         response = await client.get(
             f"/api/documents?team_id={test_team.id}&search=Unique%20Search%20Term",
@@ -318,12 +306,9 @@ class TestDocumentCRUD:
         assert response.status_code == 400
         assert "Sprint not found" in response.json()["detail"]
 
-    async def test_delete_document(self, client, auth_headers, test_team, db_session, test_user):
+    async def test_delete_document(self, client, auth_headers, test_team, db, test_user):
         """Test deleting a document."""
-        doc = Document(team_id=test_team.id, author_id=test_user.id, title="Delete Me", content="Content")
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
+        doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Delete Me", content="Content")
 
         response = await client.delete(
             f"/api/documents/{doc.id}",
@@ -339,14 +324,12 @@ class TestDocumentCRUD:
         )
         assert response.status_code == 404
 
-    async def test_delete_document_not_author(self, client, auth_headers2, test_document, db_session, test_user2, test_team):
+    async def test_delete_document_not_author(self, client, auth_headers2, test_document, db, test_user2, test_team):
         """Test deleting document when not the author (and not admin)."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-        db_session.add(member)
-        await db_session.commit()
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
         response = await client.delete(
             f"/api/documents/{test_document.id}",
@@ -460,40 +443,30 @@ class TestDocumentIssueLinks:
         assert response.status_code == 404
 
     async def test_link_document_to_issue_cross_team(
-        self, client, auth_headers, test_team, test_user, test_document, db_session
+        self, client, auth_headers, test_team, test_user, test_document, db
     ):
         """Test that linking document to issue from different team is forbidden."""
-        from app.models.team import Team, TeamMember
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
         from app.enums import TeamRole
-        from app.models.project import Project
-        from app.models.issue import Issue
+        from app.oxyde_models.project import OxydeProject
+        from app.oxyde_models.issue import OxydeIssue
 
         # Create a second team
-        team2 = Team(name="Other Team", key="OTH")
-        db_session.add(team2)
-        await db_session.commit()
-        await db_session.refresh(team2)
+        team2 = await OxydeTeam.objects.create(name="Other Team", key="OTH")
 
         # Add test_user as member of team2
-        member = TeamMember(team_id=team2.id, user_id=test_user.id, role=TeamRole.ADMIN)
-        db_session.add(member)
+        member = await OxydeTeamMember.objects.create(team_id=team2.id, user_id=test_user.id, role=TeamRole.ADMIN)
 
         # Create project and issue in team2
-        project2 = Project(team_id=team2.id, name="Other Project", key="OTH2")
-        db_session.add(project2)
-        await db_session.commit()
-        await db_session.refresh(project2)
+        project2 = await OxydeProject.objects.create(team_id=team2.id, name="Other Project", key="OTH2")
 
-        issue2 = Issue(
+        issue2 = await OxydeIssue.objects.create(
             project_id=project2.id,
             creator_id=test_user.id,
             number=1,
             identifier="OTH2-1",
             title="Other Issue",
         )
-        db_session.add(issue2)
-        await db_session.commit()
-        await db_session.refresh(issue2)
 
         # Try to link test_document (from test_team) to issue2 (from team2)
         response = await client.post(
@@ -570,28 +543,21 @@ class TestDocumentLabels:
         assert response.status_code == 403
 
     async def test_add_label_cross_team(
-        self, client, auth_headers, test_document, db_session, test_user
+        self, client, auth_headers, test_document, db, test_user
     ):
         """Test adding label from different team."""
-        from app.models.team import Team, TeamMember
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
         from app.enums import TeamRole
-        from app.models.issue import Label
+        from app.oxyde_models.label import OxydeLabel
 
         # Create a second team
-        team2 = Team(name="Other Team", key="OTH")
-        db_session.add(team2)
-        await db_session.commit()
-        await db_session.refresh(team2)
+        team2 = await OxydeTeam.objects.create(name="Other Team", key="OTH")
 
         # Add test_user as member of team2
-        member = TeamMember(team_id=team2.id, user_id=test_user.id, role=TeamRole.ADMIN)
-        db_session.add(member)
+        member = await OxydeTeamMember.objects.create(team_id=team2.id, user_id=test_user.id, role=TeamRole.ADMIN)
 
         # Create label in team2
-        label2 = Label(team_id=team2.id, name="Other Label")
-        db_session.add(label2)
-        await db_session.commit()
-        await db_session.refresh(label2)
+        label2 = await OxydeLabel.objects.create(team_id=team2.id, name="Other Label")
 
         # Try to add label2 (from team2) to test_document (from test_team)
         response = await client.post(
@@ -666,15 +632,13 @@ class TestDocumentComments:
         )
         assert response.status_code == 403
 
-    async def test_list_comments(self, client, auth_headers, test_document, db_session, test_user):
+    async def test_list_comments(self, client, auth_headers, test_document, db, test_user):
         """Test listing comments on a document."""
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=test_document.id,
             author_id=test_user.id,
             content="Test comment",
         )
-        db_session.add(comment)
-        await db_session.commit()
 
         response = await client.get(
             f"/api/documents/{test_document.id}/comments",
@@ -701,16 +665,13 @@ class TestDocumentComments:
         )
         assert response.status_code == 403
 
-    async def test_update_comment(self, client, auth_headers, test_document, db_session, test_user):
+    async def test_update_comment(self, client, auth_headers, test_document, db, test_user):
         """Test updating a comment."""
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=test_document.id,
             author_id=test_user.id,
             content="Original content",
         )
-        db_session.add(comment)
-        await db_session.commit()
-        await db_session.refresh(comment)
 
         response = await client.patch(
             f"/api/documents/{test_document.id}/comments/{comment.id}",
@@ -741,22 +702,18 @@ class TestDocumentComments:
         assert response.status_code == 404
         assert "Comment not found" in response.json()["detail"]
 
-    async def test_update_comment_not_author(self, client, auth_headers2, test_document, db_session, test_user, test_user2, test_team):
+    async def test_update_comment_not_author(self, client, auth_headers2, test_document, db, test_user, test_user2, test_team):
         """Test updating comment by non-author."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-        db_session.add(member)
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=test_document.id,
             author_id=test_user.id,
             content="Original",
         )
-        db_session.add(comment)
-        await db_session.commit()
-        await db_session.refresh(comment)
 
         response = await client.patch(
             f"/api/documents/{test_document.id}/comments/{comment.id}",
@@ -766,16 +723,13 @@ class TestDocumentComments:
         assert response.status_code == 403
         assert "Only the author" in response.json()["detail"]
 
-    async def test_delete_comment(self, client, auth_headers, test_document, db_session, test_user):
+    async def test_delete_comment(self, client, auth_headers, test_document, db, test_user):
         """Test deleting a comment."""
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=test_document.id,
             author_id=test_user.id,
             content="Delete me",
         )
-        db_session.add(comment)
-        await db_session.commit()
-        await db_session.refresh(comment)
 
         response = await client.delete(
             f"/api/documents/{test_document.id}/comments/{comment.id}",
@@ -801,22 +755,18 @@ class TestDocumentComments:
         assert response.status_code == 404
         assert "Comment not found" in response.json()["detail"]
 
-    async def test_delete_comment_not_author(self, client, auth_headers2, test_document, db_session, test_user, test_user2, test_team):
+    async def test_delete_comment_not_author(self, client, auth_headers2, test_document, db, test_user, test_user2, test_team):
         """Test deleting comment by non-author."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
-        member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-        db_session.add(member)
+        member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=test_document.id,
             author_id=test_user.id,
             content="Don't delete me",
         )
-        db_session.add(comment)
-        await db_session.commit()
-        await db_session.refresh(comment)
 
         response = await client.delete(
             f"/api/documents/{test_document.id}/comments/{comment.id}",
@@ -833,31 +783,23 @@ class TestDocumentComments:
 
 
 @pytest_asyncio.fixture
-async def other_team_for_docs(db_session):
+async def other_team_for_docs(db):
     """Team that test_user is NOT a member of."""
-    team = Team(name="Docs Other Team", key="DOT", description="Other team")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Docs Other Team", key="DOT", description="Other team")
     return team
 
 
 @pytest_asyncio.fixture
-async def cross_team_user(db_session, other_team_for_docs):
+async def cross_team_user(db, other_team_for_docs):
     """User on other_team (not test_team)."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="docs-cross@example.com",
         hashed_password=get_password_hash("test"),
         name="Cross Team User",
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(
+    member = await OxydeTeamMember.objects.create(
         team_id=other_team_for_docs.id, user_id=user.id, role=TeamRole.OWNER
     )
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
     return user
 
 
@@ -869,25 +811,22 @@ async def cross_team_headers(cross_team_user):
 
 
 @pytest_asyncio.fixture
-async def project_document(db_session, test_team, test_project, test_user):
+async def project_document(db, test_team, test_project, test_user):
     """Document linked to a project (not just team-level)."""
-    doc = Document(
+    doc = await OxydeDocument.objects.create(
         team_id=test_team.id,
         author_id=test_user.id,
         project_id=test_project.id,
         title="Project Document",
         content="Content linked to project",
     )
-    db_session.add(doc)
-    await db_session.commit()
-    await db_session.refresh(doc)
     return doc
 
 
 @pytest_asyncio.fixture
-async def agent_user_for_docs(db_session, test_team, test_user):
+async def agent_user_for_docs(db, test_team, test_user):
     """Agent user scoped to test_team."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="docs-agent@example.com",
         hashed_password=get_password_hash("test"),
         name="Docs Agent",
@@ -895,9 +834,6 @@ async def agent_user_for_docs(db_session, test_team, test_user):
         parent_user_id=test_user.id,
         agent_team_id=test_team.id,
     )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
     return user
 
 
@@ -990,18 +926,15 @@ class TestProjectDocumentAccessControl:
         assert response.status_code == 403
 
     async def test_delete_comment_on_project_document_cross_team_denied(
-        self, client, auth_headers, cross_team_headers, project_document, db_session, test_user
+        self, client, auth_headers, cross_team_headers, project_document, db, test_user
     ):
         """DELETE /documents/{id}/comments/{id} returns 403 for cross-team user."""
         # Create a comment first
-        comment = DocumentComment(
+        comment = await OxydeDocumentComment.objects.create(
             document_id=project_document.id,
             author_id=test_user.id,
             content="Test comment",
         )
-        db_session.add(comment)
-        await db_session.commit()
-        await db_session.refresh(comment)
 
         response = await client.delete(
             f"/api/documents/{project_document.id}/comments/{comment.id}",
@@ -1046,42 +979,40 @@ class TestProjectDocumentAccessControl:
 # --- Service-level coverage tests (CHT-924) ---
 
 @pytest.mark.asyncio
-async def test_document_service_link_issue_not_found(db_session):
+async def test_document_service_link_issue_not_found(db):
     """link_issue raises ValueError when document or issue doesn't exist (covers L218)."""
     from app.services.document_service import DocumentService
 
-    service = DocumentService(db_session)
+    service = DocumentService()
     with pytest.raises(ValueError, match="Document or issue not found"):
         await service.link_issue("nonexistent-doc", "nonexistent-issue")
 
 
 @pytest.mark.asyncio
-async def test_document_service_link_issue_idempotent(db_session, test_document, test_issue):
+async def test_document_service_link_issue_idempotent(db, test_document, test_issue):
     """link_issue is idempotent — linking twice doesn't raise (covers L231)."""
     from app.services.document_service import DocumentService
 
     # Ensure doc has a project (same team as issue)
     test_document.project_id = test_issue.project_id
-    await db_session.commit()
+    await test_document.save(update_fields={"project_id"})
 
-    service = DocumentService(db_session)
+    service = DocumentService()
     await service.link_issue(test_document.id, test_issue.id)
     # Link again — should be a no-op, not an error
     await service.link_issue(test_document.id, test_issue.id)
 
 
 @pytest.mark.asyncio
-async def test_document_service_add_label_idempotent(db_session, test_document):
+async def test_document_service_add_label_idempotent(db, test_document):
     """add_label is idempotent — adding twice doesn't raise (covers L280)."""
     from app.services.document_service import DocumentService
-    from app.models.document import Label
+    from app.oxyde_models.label import OxydeLabel
 
     # Create a label
-    label = Label(name="test-label", team_id=test_document.team_id)
-    db_session.add(label)
-    await db_session.flush()
+    label = await OxydeLabel.objects.create(name="test-label", team_id=test_document.team_id)
 
-    service = DocumentService(db_session)
+    service = DocumentService()
     await service.add_label(test_document.id, label.id)
     # Add again — should be a no-op
     await service.add_label(test_document.id, label.id)

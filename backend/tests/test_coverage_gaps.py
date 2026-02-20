@@ -6,7 +6,7 @@ api/sprints.py current sprint edge case, schemas/ritual.py validators.
 import pytest
 import pytest_asyncio
 from datetime import datetime, timezone
-from app.models.document import Document
+from app.oxyde_models.document import OxydeDocument
 from app.schemas.ritual import RitualCreate, CompletedRitualResponse, PendingRitualResponse
 
 
@@ -132,45 +132,33 @@ class TestDocumentBranchCoverage:
         )
         assert response.status_code == 404
 
-    async def test_get_document_no_project(self, client, auth_headers, db_session, test_team, test_user):
+    async def test_get_document_no_project(self, client, auth_headers, db, test_team, test_user):
         """Get a team-level document covers else branch (lines 177-182)."""
-        doc = Document(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
+        doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
 
         response = await client.get(f"/api/documents/{doc.id}", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["title"] == "Team Doc"
 
-    async def test_unlink_document_team_level(self, client, auth_headers, db_session, test_team, test_user, test_issue):
+    async def test_unlink_document_team_level(self, client, auth_headers, db, test_team, test_user, test_issue):
         """Unlink from team-level doc covers else branch (lines 408-413)."""
-        doc = Document(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
+        doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
 
         # Link, then unlink
         await client.post(f"/api/documents/{doc.id}/issues/{test_issue.id}", headers=auth_headers)
         response = await client.delete(f"/api/documents/{doc.id}/issues/{test_issue.id}", headers=auth_headers)
         assert response.status_code == 204
 
-    async def test_link_document_issue_not_authorized(self, client, auth_headers2, db_session, test_team, test_user, test_issue):
+    async def test_link_document_issue_not_authorized(self, client, auth_headers2, db, test_team, test_user, test_issue):
         """Link issue when not authorized for issue (line 370)."""
-        doc = Document(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
+        doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Team Doc", content="No project")
 
         response = await client.post(f"/api/documents/{doc.id}/issues/{test_issue.id}", headers=auth_headers2)
         assert response.status_code == 403
 
-    async def test_update_document_move_project(self, client, auth_headers, db_session, test_team, test_user, test_project):
+    async def test_update_document_move_project(self, client, auth_headers, db, test_team, test_user, test_project):
         """Update doc moving to project covers lines 219-225."""
-        doc = Document(team_id=test_team.id, author_id=test_user.id, title="Moveable Doc", content="Will move")
-        db_session.add(doc)
-        await db_session.commit()
-        await db_session.refresh(doc)
+        doc = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Moveable Doc", content="Will move")
 
         response = await client.patch(f"/api/documents/{doc.id}", headers=auth_headers, json={"project_id": test_project.id})
         assert response.status_code == 200

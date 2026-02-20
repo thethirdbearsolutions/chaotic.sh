@@ -159,18 +159,15 @@ async def test_delete_label_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_delete_label(client, auth_headers, test_team, db_session):
+async def test_delete_label(client, auth_headers, test_team, db):
     """Test deleting a label."""
-    from app.models.issue import Label
+    from app.oxyde_models.label import OxydeLabel
 
-    label = Label(
+    label = await OxydeLabel.objects.create(
         team_id=test_team.id,
         name="Delete Me",
         color="#000000",
     )
-    db_session.add(label)
-    await db_session.commit()
-    await db_session.refresh(label)
 
     response = await client.delete(
         f"/api/labels/{label.id}",
@@ -180,15 +177,13 @@ async def test_delete_label(client, auth_headers, test_team, db_session):
 
 
 @pytest.mark.asyncio
-async def test_delete_label_not_admin(client, auth_headers2, test_label, db_session, test_user2, test_team):
+async def test_delete_label_not_admin(client, auth_headers2, test_label, db, test_user2, test_team):
     """Test deleting label when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.delete(
         f"/api/labels/{test_label.id}",
@@ -215,19 +210,16 @@ async def test_issue_with_labels(client, auth_headers, test_project, test_label)
 
 
 @pytest.mark.asyncio
-async def test_update_issue_labels(client, auth_headers, test_issue, test_label, test_team, db_session):
+async def test_update_issue_labels(client, auth_headers, test_issue, test_label, test_team, db):
     """Test updating an issue's labels."""
-    from app.models.issue import Label
+    from app.oxyde_models.label import OxydeLabel
 
     # Create another label
-    label2 = Label(
+    label2 = await OxydeLabel.objects.create(
         team_id=test_team.id,
         name="Enhancement",
         color="#0066ff",
     )
-    db_session.add(label2)
-    await db_session.commit()
-    await db_session.refresh(label2)
 
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
@@ -242,9 +234,9 @@ async def test_update_issue_labels(client, auth_headers, test_issue, test_label,
 
 
 @pytest_asyncio.fixture
-async def agent_and_headers(db_session, test_user, test_team):
+async def agent_and_headers(db, test_user, test_team):
     """Create an agent and return (agent, auth_headers)."""
-    service = AgentService(db_session)
+    service = AgentService()
     agent, _, _ = await service.create(
         AgentCreate(name="Label Bot"), test_user, test_team.id
     )
@@ -355,26 +347,22 @@ async def test_remove_label_from_issue(client, auth_headers, test_issue, test_la
 
 
 @pytest.mark.asyncio
-async def test_batch_update_add_labels(client, auth_headers, test_project, test_label, test_user, db_session):
+async def test_batch_update_add_labels(client, auth_headers, test_project, test_label, test_user, db):
     """Test batch updating issues to add labels."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     # Create two issues
     issues = []
     for i in range(2):
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
             title=f"Batch Test {i}",
             creator_id=test_user.id,
         )
-        db_session.add(issue)
         issues.append(issue)
-    await db_session.commit()
-    for issue in issues:
-        await db_session.refresh(issue)
 
     response = await client.post(
         "/api/issues/batch-update",
@@ -416,21 +404,18 @@ async def test_agent_delete_no_info_disclosure(client, agent_and_headers):
 
 
 @pytest.mark.asyncio
-async def test_batch_update_label_ids_and_add_label_ids_conflict(client, auth_headers, test_project, test_label, test_user, db_session):
+async def test_batch_update_label_ids_and_add_label_ids_conflict(client, auth_headers, test_project, test_label, test_user, db):
     """Test that providing both label_ids and add_label_ids is rejected."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     test_project.issue_count += 1
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-{test_project.issue_count}",
         number=test_project.issue_count,
         title="Conflict Test",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
 
     response = await client.post(
         "/api/issues/batch-update",
@@ -445,21 +430,18 @@ async def test_batch_update_label_ids_and_add_label_ids_conflict(client, auth_he
 
 
 @pytest.mark.asyncio
-async def test_batch_update_nonexistent_label(client, auth_headers, test_project, test_user, db_session):
+async def test_batch_update_nonexistent_label(client, auth_headers, test_project, test_user, db):
     """Test that batch update with nonexistent label IDs returns an error."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     test_project.issue_count += 1
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-{test_project.issue_count}",
         number=test_project.issue_count,
         title="Bad Label Test",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
 
     response = await client.post(
         "/api/issues/batch-update",
@@ -474,21 +456,18 @@ async def test_batch_update_nonexistent_label(client, auth_headers, test_project
 
 
 @pytest.mark.asyncio
-async def test_batch_update_unauthorized(client, auth_headers2, test_project, test_user, db_session):
+async def test_batch_update_unauthorized(client, auth_headers2, test_project, test_user, db):
     """Test that unauthorized user cannot batch update issues."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     test_project.issue_count += 1
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-{test_project.issue_count}",
         number=test_project.issue_count,
         title="Unauthorized Batch Test",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
 
     response = await client.post(
         "/api/issues/batch-update",
@@ -502,25 +481,21 @@ async def test_batch_update_unauthorized(client, auth_headers2, test_project, te
 
 
 @pytest.mark.asyncio
-async def test_batch_update_priority(client, auth_headers, test_project, test_user, db_session):
+async def test_batch_update_priority(client, auth_headers, test_project, test_user, db):
     """Test batch updating issue priority."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     issues = []
     for i in range(2):
         test_project.issue_count += 1
-        issue = Issue(
+        issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier=f"{test_project.key}-{test_project.issue_count}",
             number=test_project.issue_count,
             title=f"Priority Test {i}",
             creator_id=test_user.id,
         )
-        db_session.add(issue)
         issues.append(issue)
-    await db_session.commit()
-    for issue in issues:
-        await db_session.refresh(issue)
 
     response = await client.post(
         "/api/issues/batch-update",
@@ -538,29 +513,25 @@ async def test_batch_update_priority(client, auth_headers, test_project, test_us
 
 
 @pytest.mark.asyncio
-async def test_label_batch_update_basic(client, auth_headers, test_project, test_user, test_label, db_session):
+async def test_label_batch_update_basic(client, auth_headers, test_project, test_user, test_label, db):
     """Test basic batch update of labels."""
-    from app.models.issue import Issue
+    from app.oxyde_models.issue import OxydeIssue
 
     # Create issues
-    issue1 = Issue(
+    issue1 = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-500",
         number=500,
         title="Issue 1",
         creator_id=test_user.id,
     )
-    issue2 = Issue(
+    issue2 = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-501",
         number=501,
         title="Issue 2",
         creator_id=test_user.id,
     )
-    db_session.add_all([issue1, issue2])
-    await db_session.commit()
-    await db_session.refresh(issue1)
-    await db_session.refresh(issue2)
 
     # Batch update to add labels
     response = await client.post(

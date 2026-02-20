@@ -8,39 +8,37 @@ Targets uncovered lines:
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock
-from app.models.issue import Issue
-from app.models.ritual import Ritual, RitualAttestation
-from app.models.ticket_limbo import TicketLimbo
-from app.models.user import User
-from app.models.team import TeamMember
-from app.models.project import Project
+from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
+from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.team import OxydeTeamMember
+from app.oxyde_models.project import OxydeProject
 from app.enums import IssueStatus, RitualTrigger, ApprovalMode, LimboType, TeamRole
-from app.models import Sprint, Label
+from app.oxyde_models.sprint import OxydeSprint
+from app.oxyde_models.label import OxydeLabel
 
 
 # === Helpers ===
 
 @pytest_asyncio.fixture
-async def second_project(db_session, test_team):
+async def second_project(db, test_team):
     """A second project in the same team."""
-    project = Project(
+    project = await OxydeProject.objects.create(
         team_id=test_team.id,
         name="Second Project",
         key="SEC",
         description="Second project",
         color="#22c55e",
     )
-    db_session.add(project)
-    await db_session.commit()
-    await db_session.refresh(project)
     return project
 
 
 @pytest_asyncio.fixture
-async def second_issue(db_session, second_project, test_user):
+async def second_issue(db, second_project, test_user):
     """An issue in the second project."""
     second_project.issue_count += 1
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=second_project.id,
         identifier=f"{second_project.key}-{second_project.issue_count}",
         number=second_project.issue_count,
@@ -48,26 +46,20 @@ async def second_issue(db_session, second_project, test_user):
         description="Related issue in second project",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
     return issue
 
 
 @pytest_asyncio.fixture
-async def agent_user(db_session, test_team):
+async def agent_user(db, test_team):
     """Agent user scoped to test_team."""
     from app.utils.security import get_password_hash, create_access_token
-    user = User(
+    user = await OxydeUser.objects.create(
         email="agent@example.com",
         hashed_password=get_password_hash("agentpass"),
         name="Agent Bot",
         is_agent=True,
         agent_team_id=test_team.id,
     )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
     return user
 
 
@@ -80,50 +72,41 @@ async def agent_headers(agent_user):
 
 
 @pytest_asyncio.fixture
-async def ticket_close_ritual(db_session, test_project):
+async def ticket_close_ritual(db, test_project):
     """A TICKET_CLOSE ritual."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="close-review",
         prompt="Review before closing",
         trigger=RitualTrigger.TICKET_CLOSE,
         approval_mode=ApprovalMode.GATE,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def ticket_claim_ritual(db_session, test_project):
+async def ticket_claim_ritual(db, test_project):
     """A TICKET_CLAIM ritual."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="claim-review",
         prompt="Review before claiming",
         trigger=RitualTrigger.TICKET_CLAIM,
         approval_mode=ApprovalMode.GATE,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
 @pytest_asyncio.fixture
-async def sprint_ritual(db_session, test_project):
+async def sprint_ritual(db, test_project):
     """An EVERY_SPRINT ritual to trigger limbo."""
-    ritual = Ritual(
+    ritual = await OxydeRitual.objects.create(
         project_id=test_project.id,
         name="sprint-report",
         prompt="Write a sprint report",
         trigger=RitualTrigger.EVERY_SPRINT,
         approval_mode=ApprovalMode.AUTO,
     )
-    db_session.add(ritual)
-    await db_session.commit()
-    await db_session.refresh(ritual)
     return ritual
 
 
@@ -167,11 +150,11 @@ class TestCreateIssueErrorBranches:
         assert "claim rituals" in detail["message"]
 
     async def test_create_issue_estimate_required(
-        self, client, agent_headers, db_session, test_project
+        self, client, agent_headers, db, test_project
     ):
         """Create as in_progress when project requires estimate → 400 (line 202)."""
         test_project.require_estimate_on_claim = True
-        await db_session.commit()
+        await test_project.save(update_fields={"require_estimate_on_claim"})
 
         response = await client.post(
             f"/api/issues?project_id={test_project.id}",
@@ -217,7 +200,7 @@ class TestCreateIssueErrorBranches:
         assert response.status_code == 201
 
     async def test_create_issue_cross_ref_exception_silenced(
-        self, client, auth_headers, test_project
+        self, client, auth_headers, test_project, test_user
     ):
         """Cross-reference exception is silenced on create (lines 249-250)."""
         with patch("app.api.issues.IssueService") as MockService:
@@ -226,11 +209,11 @@ class TestCreateIssueErrorBranches:
             from app.enums import IssuePriority, IssueType
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
-            mock_issue = Issue(
+            mock_issue = await OxydeIssue.objects.create(
                 id="fake-id", project_id=test_project.id, identifier="PROJ-99",
                 number=99, title="Test", status=IssueStatus.BACKLOG,
                 priority=IssuePriority.NO_PRIORITY, issue_type=IssueType.TASK,
-                creator_id="user-1", created_at=now, updated_at=now,
+                creator_id=test_user.id, created_at=now, updated_at=now,
             )
             mock_issue.labels = []
             mock_issue.creator = None
@@ -337,7 +320,7 @@ class TestActivitySprintNames:
     """Cover sprint name resolution in activity feeds."""
 
     async def test_issue_activity_with_sprint_move(
-        self, client, auth_headers, db_session, test_issue, test_sprint
+        self, client, auth_headers, db, test_issue, test_sprint
     ):
         """Move issue to sprint, check activity shows sprint name (lines 892-906)."""
         # Move issue to sprint
@@ -360,7 +343,7 @@ class TestActivitySprintNames:
         assert sprint_activities[0]["sprint_name"] == "Sprint 1"
 
     async def test_issue_activity_remove_from_sprint(
-        self, client, auth_headers, db_session, test_issue, test_sprint
+        self, client, auth_headers, db, test_issue, test_sprint
     ):
         """Remove issue from sprint, check activity (line 894, 905-906)."""
         # Add to sprint first
@@ -369,11 +352,11 @@ class TestActivitySprintNames:
             headers=auth_headers,
             json={"sprint_id": test_sprint.id},
         )
-        # Remove from sprint
+        # Remove from sprint (send null to clear the FK)
         response = await client.patch(
             f"/api/issues/{test_issue.id}",
             headers=auth_headers,
-            json={"sprint_id": ""},
+            json={"sprint_id": None},
         )
         assert response.status_code == 200
 
@@ -390,7 +373,7 @@ class TestActivitySprintNames:
         assert "removed_from_sprint" in types
 
     async def test_team_activity_feed_with_sprint(
-        self, client, auth_headers, db_session, test_team, test_issue, test_sprint
+        self, client, auth_headers, db, test_team, test_issue, test_sprint
     ):
         """Team activity feed resolves sprint names (lines 529-536, 541-543)."""
         # Move issue to sprint to create activity
@@ -448,32 +431,24 @@ class TestBatchUpdateEdgeCases:
     """Cover batch update team validation."""
 
     async def test_batch_update_issues_from_different_teams(
-        self, client, auth_headers, db_session, test_issue, test_user
+        self, client, auth_headers, db, test_issue, test_user
     ):
         """Batch update with issues from different teams → 400 (line 455)."""
-        from app.models.team import Team
+        from app.oxyde_models.team import OxydeTeam
         # Create a second team + project + issue
-        team2 = Team(name="Team 2", key="T2", description="Second team")
-        db_session.add(team2)
-        await db_session.flush()
-        member2 = TeamMember(team_id=team2.id, user_id=test_user.id, role=TeamRole.OWNER)
-        db_session.add(member2)
-        project2 = Project(
+        team2 = await OxydeTeam.objects.create(name="Team 2", key="T2", description="Second team")
+        member2 = await OxydeTeamMember.objects.create(team_id=team2.id, user_id=test_user.id, role=TeamRole.OWNER)
+        project2 = await OxydeProject.objects.create(
             team_id=team2.id, name="P2", key="P2", description="", color="#000"
         )
-        db_session.add(project2)
-        await db_session.flush()
         project2.issue_count = 1
-        issue2 = Issue(
+        issue2 = await OxydeIssue.objects.create(
             project_id=project2.id,
             identifier="P2-1",
             number=1,
             title="Other team issue",
             creator_id=test_user.id,
         )
-        db_session.add(issue2)
-        await db_session.commit()
-        await db_session.refresh(issue2)
 
         response = await client.post(
             "/api/issues/batch-update",
@@ -523,31 +498,34 @@ class TestAssigneeValidation:
     """Cover agent-scope assignee check."""
 
     async def test_assign_agent_wrong_team(
-        self, client, auth_headers, db_session, test_issue
+        self, client, auth_headers, db, test_issue
     ):
         """Assign agent scoped to wrong team → 400 (lines 57-58)."""
         from app.utils.security import get_password_hash
-        wrong_agent = User(
-            email="wrong-agent@test.com",
-            hashed_password=get_password_hash("pass"),
-            name="Wrong Agent",
-            is_agent=True,
-            agent_team_id="other-team-id",
+        from oxyde import execute_raw
+        import uuid
+
+        # Insert agent user with FK-violating agent_team_id via raw SQL
+        agent_id = str(uuid.uuid4())
+        now = "2026-01-01T00:00:00+00:00"
+        hashed = get_password_hash("pass")
+        await execute_raw("PRAGMA foreign_keys = OFF", [])
+        await execute_raw(
+            "INSERT INTO users (id, email, hashed_password, name, is_active, is_superuser, is_agent, agent_team_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [agent_id, "wrong-agent@test.com", hashed, "Wrong Agent", True, False, True, "other-team-id", now, now],
         )
-        db_session.add(wrong_agent)
-        await db_session.commit()
-        await db_session.refresh(wrong_agent)
+        await execute_raw("PRAGMA foreign_keys = ON", [])
 
         response = await client.patch(
             f"/api/issues/{test_issue.id}",
             headers=auth_headers,
-            json={"assignee_id": wrong_agent.id},
+            json={"assignee_id": agent_id},
         )
         assert response.status_code == 400
         assert "agent" in response.json()["detail"].lower()
 
     async def test_assign_non_member(
-        self, client, auth_headers, db_session, test_issue, test_user2
+        self, client, auth_headers, db, test_issue, test_user2
     ):
         """Assign non-member user → 400 (line 65)."""
         response = await client.patch(
@@ -567,31 +545,23 @@ class TestCrossTeamRelation:
     """Cover cross-team relation prevention."""
 
     async def test_create_relation_cross_team(
-        self, client, auth_headers, db_session, test_issue, test_user
+        self, client, auth_headers, db, test_issue, test_user
     ):
         """Create relation across teams → 403 (line 1209)."""
-        from app.models.team import Team
-        team2 = Team(name="Team X", key="TX", description="")
-        db_session.add(team2)
-        await db_session.flush()
-        member2 = TeamMember(team_id=team2.id, user_id=test_user.id, role=TeamRole.OWNER)
-        db_session.add(member2)
-        project2 = Project(
+        from app.oxyde_models.team import OxydeTeam
+        team2 = await OxydeTeam.objects.create(name="Team X", key="TX", description="")
+        member2 = await OxydeTeamMember.objects.create(team_id=team2.id, user_id=test_user.id, role=TeamRole.OWNER)
+        project2 = await OxydeProject.objects.create(
             team_id=team2.id, name="PX", key="PX", description="", color="#000"
         )
-        db_session.add(project2)
-        await db_session.flush()
         project2.issue_count = 1
-        issue2 = Issue(
+        issue2 = await OxydeIssue.objects.create(
             project_id=project2.id,
             identifier="PX-1",
             number=1,
             title="Cross team issue",
             creator_id=test_user.id,
         )
-        db_session.add(issue2)
-        await db_session.commit()
-        await db_session.refresh(issue2)
 
         response = await client.post(
             f"/api/issues/{test_issue.id}/relations",

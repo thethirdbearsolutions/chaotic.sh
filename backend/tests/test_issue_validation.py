@@ -5,54 +5,43 @@ _validate_parent, and create_issue error paths. All via HTTP client.
 """
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember
-from app.models.project import Project
-from app.models.sprint import Sprint
-from app.models.user import User
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.sprint import OxydeSprint
+from app.oxyde_models.user import OxydeUser
 from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 
 @pytest_asyncio.fixture
-async def other_team(db_session):
+async def other_team(db):
     """A second team that test_user is NOT a member of."""
-    team = Team(name="Validation Team", key="VAL", description="For validation tests")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Validation Team", key="VAL", description="For validation tests")
     return team
 
 
 @pytest_asyncio.fixture
-async def non_member_user(db_session, other_team):
+async def non_member_user(db, other_team):
     """User on other_team, not on test_team."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="nonmember@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Non Member",
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
+    member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
     return user
 
 
 @pytest_asyncio.fixture
-async def second_project(db_session, test_team):
+async def second_project(db, test_team):
     """A second project in test_team."""
-    project = Project(
+    project = await OxydeProject.objects.create(
         team_id=test_team.id,
         name="Second Project",
         key="SEC",
         description="Second project",
         color="#00ff00",
     )
-    db_session.add(project)
-    await db_session.commit()
-    await db_session.refresh(project)
     return project
 
 
@@ -111,16 +100,13 @@ class TestSprintValidation:
         assert "Sprint not found" in response.json()["detail"]
 
     async def test_create_issue_with_cross_project_sprint(
-        self, client, auth_headers, test_project, db_session, second_project
+        self, client, auth_headers, test_project, db, second_project
     ):
         """Creating issue with sprint from different project returns 400."""
-        sprint = Sprint(
+        sprint = await OxydeSprint.objects.create(
             project_id=second_project.id,
             name="Wrong Sprint",
         )
-        db_session.add(sprint)
-        await db_session.commit()
-        await db_session.refresh(sprint)
 
         response = await client.post(
             f"/api/issues?project_id={test_project.id}",
@@ -154,21 +140,18 @@ class TestParentValidation:
         assert "Parent issue not found" in response.json()["detail"]
 
     async def test_create_issue_with_cross_project_parent(
-        self, client, auth_headers, test_project, db_session, second_project, test_user
+        self, client, auth_headers, test_project, db, second_project, test_user
     ):
         """Creating issue with parent from different project returns 400."""
-        from app.models.issue import Issue
+        from app.oxyde_models.issue import OxydeIssue
         second_project.issue_count += 1
-        parent = Issue(
+        parent = await OxydeIssue.objects.create(
             project_id=second_project.id,
             identifier=f"{second_project.key}-{second_project.issue_count}",
             number=second_project.issue_count,
             title="Parent in other project",
             creator_id=test_user.id,
         )
-        db_session.add(parent)
-        await db_session.commit()
-        await db_session.refresh(parent)
 
         response = await client.post(
             f"/api/issues?project_id={test_project.id}",
@@ -201,16 +184,13 @@ class TestUpdateIssueValidation:
     """Test validation on the update (PATCH) path."""
 
     async def test_update_issue_with_cross_project_sprint(
-        self, client, auth_headers, test_issue, test_project, db_session, second_project
+        self, client, auth_headers, test_issue, test_project, db, second_project
     ):
         """Updating issue with sprint from different project returns 400."""
-        sprint = Sprint(
+        sprint = await OxydeSprint.objects.create(
             project_id=second_project.id,
             name="Wrong Sprint",
         )
-        db_session.add(sprint)
-        await db_session.commit()
-        await db_session.refresh(sprint)
 
         response = await client.patch(
             f"/api/issues/{test_issue.id}?project_id={test_project.id}",

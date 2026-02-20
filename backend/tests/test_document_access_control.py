@@ -6,39 +6,32 @@ All tests use HTTP client only — no direct ORM assertions.
 """
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember
-from app.models.project import Project
-from app.models.document import Document, DocumentComment
-from app.models.issue import Issue, Label
-from app.models.user import User
+from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
+from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.label import OxydeLabel
+from app.oxyde_models.user import OxydeUser
 from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 
 @pytest_asyncio.fixture
-async def other_team(db_session):
+async def other_team(db):
     """Team that test_user is NOT a member of."""
-    team = Team(name="Other Team", key="OTHER", description="Other team")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Other Team", key="OTHER", description="Other team")
     return team
 
 
 @pytest_asyncio.fixture
-async def other_user(db_session, other_team):
+async def other_user(db, other_team):
     """User on other_team (not test_user's team)."""
-    user = User(
+    user = await OxydeUser.objects.create(
         email="other@example.com",
         hashed_password=get_password_hash("testpassword123"),
         name="Other User",
     )
-    db_session.add(user)
-    await db_session.flush()
-    member = TeamMember(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(user)
+    member = await OxydeTeamMember.objects.create(team_id=other_team.id, user_id=user.id, role=TeamRole.OWNER)
     return user
 
 
@@ -50,63 +43,51 @@ async def other_auth_headers(other_user):
 
 
 @pytest_asyncio.fixture
-async def project_document(db_session, test_team, test_project, test_user):
+async def project_document(db, test_team, test_project, test_user):
     """Document scoped to test_project."""
-    doc = Document(
+    doc = await OxydeDocument.objects.create(
         team_id=test_team.id,
         project_id=test_project.id,
         author_id=test_user.id,
         title="Project Doc",
         content="Content",
     )
-    db_session.add(doc)
-    await db_session.commit()
-    await db_session.refresh(doc)
     return doc
 
 
 @pytest_asyncio.fixture
-async def project_document_comment(db_session, project_document, test_user):
+async def project_document_comment(db, project_document, test_user):
     """Comment on the project-scoped document."""
-    comment = DocumentComment(
+    comment = await OxydeDocumentComment.objects.create(
         document_id=project_document.id,
         author_id=test_user.id,
         content="A comment",
     )
-    db_session.add(comment)
-    await db_session.commit()
-    await db_session.refresh(comment)
     return comment
 
 
 @pytest_asyncio.fixture
-async def project_issue(db_session, test_project, test_user):
+async def project_issue(db, test_project, test_user):
     """Issue in test_project for linking tests."""
     test_project.issue_count += 1
-    issue = Issue(
+    issue = await OxydeIssue.objects.create(
         project_id=test_project.id,
         identifier=f"{test_project.key}-{test_project.issue_count}",
         number=test_project.issue_count,
         title="Link Target Issue",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
-    await db_session.refresh(issue)
     return issue
 
 
 @pytest_asyncio.fixture
-async def project_label(db_session, test_team):
+async def project_label(db, test_team):
     """Label on test_team for labeling tests."""
-    label = Label(
+    label = await OxydeLabel.objects.create(
         team_id=test_team.id,
         name="Access Test Label",
         color="#ff0000",
     )
-    db_session.add(label)
-    await db_session.commit()
-    await db_session.refresh(label)
     return label
 
 
@@ -288,28 +269,23 @@ class TestDocumentUpdateValidation:
     """Test document update validation edge cases."""
 
     async def test_update_document_cross_project_sprint(
-        self, client, auth_headers, db_session, test_team, test_project, project_document
+        self, client, auth_headers, db, test_team, test_project, project_document
     ):
         """PATCH /documents/{id} with sprint from different project returns 400."""
         # Create another project in same team with its own sprint
-        project2 = Project(
+        project2 = await OxydeProject.objects.create(
             team_id=test_team.id,
             name="Project 2",
             key="PRJ2",
             description="Second project",
             color="#00ff00",
         )
-        db_session.add(project2)
-        await db_session.flush()
 
-        from app.models.sprint import Sprint
-        sprint2 = Sprint(
+        from app.oxyde_models.sprint import OxydeSprint
+        sprint2 = await OxydeSprint.objects.create(
             project_id=project2.id,
             name="Other Sprint",
         )
-        db_session.add(sprint2)
-        await db_session.commit()
-        await db_session.refresh(sprint2)
 
         # Try to set sprint from project2 on a doc scoped to test_project
         response = await client.patch(

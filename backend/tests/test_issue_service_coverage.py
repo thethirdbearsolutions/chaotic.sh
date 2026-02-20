@@ -7,69 +7,65 @@ uncomplete issue (L648), and cross-reference edge cases (L1139, L1143, L1178).
 """
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from app.models.issue import (
-    Issue, Label,
-    IssueRelation, issue_labels,
+from app.oxyde_models.issue import (
+    OxydeIssue, OxydeIssueRelation, OxydeIssueLabel,
 )
-from app.models.project import Project
-from app.models.sprint import Sprint
+from app.oxyde_models.label import OxydeLabel
+from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.sprint import OxydeSprint
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, SprintStatus
 from app.services.issue_service import IssueService
 
 
-@pytest_asyncio.fixture
-async def issue_service(db_session):
-    return IssueService(db_session)
+async def _next_issue_number(project):
+    """Increment project issue_count in DB and return new number."""
+    from oxyde import execute_raw
+    await execute_raw(
+        "UPDATE projects SET issue_count = issue_count + 1 WHERE id = ?",
+        [project.id],
+    )
+    refreshed = await OxydeProject.objects.get(id=project.id)
+    return refreshed.issue_count
 
 
 @pytest_asyncio.fixture
-async def test_label2(db_session, test_team):
+async def issue_service(db):
+    return IssueService()
+
+
+@pytest_asyncio.fixture
+async def test_label2(db, test_team):
     """Create a second test label."""
-    label = Label(team_id=test_team.id, name="Enhancement", color="#00ff00")
-    db_session.add(label)
-    await db_session.commit()
-    await db_session.refresh(label)
+    label = await OxydeLabel.objects.create(team_id=test_team.id, name="Enhancement", color="#00ff00")
     return label
 
 
 @pytest_asyncio.fixture
-async def labeled_issue(db_session, test_project, test_user, test_label):
+async def labeled_issue(db, test_project, test_user, test_label):
     """Create an issue with a label attached."""
-    project = test_project
-    project.issue_count += 1
-    issue = Issue(
-        project_id=project.id,
-        identifier=f"{project.key}-{project.issue_count}",
-        number=project.issue_count,
+    number = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-{number}",
+        number=number,
         title="Labeled Issue",
         description="Has labels",
         creator_id=test_user.id,
     )
-    db_session.add(issue)
-    await db_session.flush()
-    # Use raw insert to avoid lazy-load on issue.labels
-    await db_session.execute(
-        issue_labels.insert().values(issue_id=issue.id, label_id=test_label.id)
-    )
-    await db_session.commit()
-    await db_session.refresh(issue)
+    # Create the M2M link via through table
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=test_label.id)
     return issue
 
 
 @pytest_asyncio.fixture
-async def active_sprint(db_session, test_project):
+async def active_sprint(db, test_project):
     """Create an active sprint for the test project."""
-    sprint = Sprint(
+    sprint = await OxydeSprint.objects.create(
         project_id=test_project.id,
         name="Active Sprint",
         status=SprintStatus.ACTIVE,
         budget=20,
     )
-    db_session.add(sprint)
-    await db_session.commit()
-    await db_session.refresh(sprint)
     return sprint
 
 
@@ -77,7 +73,7 @@ async def active_sprint(db_session, test_project):
 
 @pytest.mark.asyncio
 async def test_list_issues_filter_by_label(
-    db_session, issue_service, test_project, test_team, labeled_issue, test_label, test_issue
+    db, issue_service, test_project, test_team, labeled_issue, test_label, test_issue
 ):
     """list_issues with label_names filters to only labeled issues (covers L796-802)."""
     results = await issue_service.list_issues(
@@ -94,24 +90,22 @@ async def test_list_issues_filter_by_label(
 
 @pytest.mark.asyncio
 async def test_list_by_sprint_with_issue_type(
-    db_session, issue_service, test_project, test_user, active_sprint
+    db, issue_service, test_project, test_user, active_sprint
 ):
     """list_by_sprint filters by issue_type (covers L858)."""
     # Create a task and a bug in the sprint
-    test_project.issue_count += 1
-    task = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Task", creator_id=test_user.id,
+    num1 = await _next_issue_number(test_project)
+    task = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num1}",
+        number=num1, title="Task", creator_id=test_user.id,
         sprint_id=active_sprint.id, issue_type=IssueType.TASK,
     )
-    test_project.issue_count += 1
-    bug = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Bug", creator_id=test_user.id,
+    num2 = await _next_issue_number(test_project)
+    bug = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num2}",
+        number=num2, title="Bug", creator_id=test_user.id,
         sprint_id=active_sprint.id, issue_type=IssueType.BUG,
     )
-    db_session.add_all([task, bug])
-    await db_session.commit()
 
     results = await issue_service.list_by_sprint(active_sprint.id, issue_type=IssueType.BUG)
     assert all(r.issue_type == IssueType.BUG for r in results)
@@ -120,18 +114,16 @@ async def test_list_by_sprint_with_issue_type(
 
 @pytest.mark.asyncio
 async def test_list_by_sprint_shuffle_sort(
-    db_session, issue_service, test_project, test_user, active_sprint
+    db, issue_service, test_project, test_user, active_sprint
 ):
     """list_by_sprint with sort_by=random invokes shuffle (covers L864)."""
     from unittest.mock import patch
-    test_project.issue_count += 1
-    issue = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Shuffled", creator_id=test_user.id,
+    num = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num}",
+        number=num, title="Shuffled", creator_id=test_user.id,
         sprint_id=active_sprint.id,
     )
-    db_session.add(issue)
-    await db_session.commit()
 
     with patch("app.services.issue_service.random.shuffle") as mock_shuffle:
         results = await issue_service.list_by_sprint(active_sprint.id, sort_by="random")
@@ -143,18 +135,16 @@ async def test_list_by_sprint_shuffle_sort(
 
 @pytest.mark.asyncio
 async def test_list_by_assignee_with_type_and_shuffle(
-    db_session, issue_service, test_project, test_user
+    db, issue_service, test_project, test_user
 ):
     """list_by_assignee filters by issue_type and supports shuffle (covers L892, L898)."""
     from unittest.mock import patch
-    test_project.issue_count += 1
-    task = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="My Task", creator_id=test_user.id,
+    num = await _next_issue_number(test_project)
+    task = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num}",
+        number=num, title="My Task", creator_id=test_user.id,
         assignee_id=test_user.id, issue_type=IssueType.TASK,
     )
-    db_session.add(task)
-    await db_session.commit()
 
     with patch("app.services.issue_service.random.shuffle") as mock_shuffle:
         results = await issue_service.list_by_assignee(
@@ -169,7 +159,7 @@ async def test_list_by_assignee_with_type_and_shuffle(
 
 @pytest.mark.asyncio
 async def test_list_by_team_deprecated(
-    db_session, issue_service, test_team, test_issue
+    db, issue_service, test_team, test_issue
 ):
     """list_by_team delegates to list_issues (covers L916)."""
     results = await issue_service.list_by_team(test_team.id)
@@ -180,29 +170,25 @@ async def test_list_by_team_deprecated(
 
 @pytest.mark.asyncio
 async def test_list_relations_incoming_blocks(
-    db_session, issue_service, test_project, test_user
+    db, issue_service, test_project, test_user
 ):
     """list_relations shows incoming BLOCKS as blocked_by (covers L1252-1256)."""
-    test_project.issue_count += 1
-    blocker = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Blocker", creator_id=test_user.id,
+    num1 = await _next_issue_number(test_project)
+    blocker = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num1}",
+        number=num1, title="Blocker", creator_id=test_user.id,
     )
-    test_project.issue_count += 1
-    blocked = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Blocked", creator_id=test_user.id,
+    num2 = await _next_issue_number(test_project)
+    blocked = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num2}",
+        number=num2, title="Blocked", creator_id=test_user.id,
     )
-    db_session.add_all([blocker, blocked])
-    await db_session.flush()
 
     # Create a relation: blocker blocks blocked
-    relation = IssueRelation(
+    relation = await OxydeIssueRelation.objects.create(
         issue_id=blocker.id, related_issue_id=blocked.id,
         relation_type=IssueRelationType.BLOCKS,
     )
-    db_session.add(relation)
-    await db_session.commit()
 
     # View from the blocked issue's perspective - should show as "blocked_by"
     relations = await issue_service.list_relations(blocked.id)
@@ -216,7 +202,7 @@ async def test_list_relations_incoming_blocks(
 
 @pytest.mark.asyncio
 async def test_uncomplete_issue_clears_completed_at(
-    db_session, issue_service, test_issue, test_user
+    db, issue_service, test_issue, test_user
 ):
     """Changing status from DONE back clears completed_at (covers L648)."""
     from app.schemas.issue import IssueUpdate
@@ -226,29 +212,27 @@ async def test_uncomplete_issue_clears_completed_at(
     await issue_service.update(
         test_issue, update_done, user_id=test_user.id, is_human_request=True,
     )
-    assert test_issue.completed_at is not None
+    # Re-fetch to see the DB state
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
+    assert issue.completed_at is not None
 
     # Now move back to in_progress
     update_reopen = IssueUpdate(status=IssueStatus.IN_PROGRESS)
     await issue_service.update(
-        test_issue, update_reopen, user_id=test_user.id, is_human_request=True,
+        issue, update_reopen, user_id=test_user.id, is_human_request=True,
     )
-    assert test_issue.completed_at is None
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
+    assert issue.completed_at is None
 
 
 # --- Batch update with label replacement (L1346-1357) ---
 
 @pytest.mark.asyncio
 async def test_batch_update_replace_labels(
-    db_session, issue_service, test_issue, test_label
+    db, issue_service, test_issue, test_label
 ):
     """batch_update replaces labels when label_ids provided (covers L1346-1357, L1383)."""
-    # Reload issue with labels
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels), selectinload(Issue.creator))
-        .where(Issue.id == test_issue.id)
-    )
-    issue = result.scalar_one()
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
 
     updated = await issue_service.batch_update(
         [issue], update_data={}, label_ids=[test_label.id]
@@ -259,14 +243,10 @@ async def test_batch_update_replace_labels(
 
 @pytest.mark.asyncio
 async def test_batch_update_replace_labels_missing(
-    db_session, issue_service, test_issue
+    db, issue_service, test_issue
 ):
     """batch_update raises when replace label_ids include nonexistent (covers L1350-1353)."""
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels), selectinload(Issue.creator))
-        .where(Issue.id == test_issue.id)
-    )
-    issue = result.scalar_one()
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
 
     with pytest.raises(ValueError, match="Labels not found"):
         await issue_service.batch_update(
@@ -278,23 +258,15 @@ async def test_batch_update_replace_labels_missing(
 
 @pytest.mark.asyncio
 async def test_batch_update_add_label_wrong_team(
-    db_session, issue_service, test_issue, test_team
+    db, issue_service, test_issue, test_team
 ):
     """batch_update raises when add_label belongs to different team (covers L1342)."""
-    from app.models.team import Team
-    other_team = Team(name="Other Team", key="OTH", description="Other")
-    db_session.add(other_team)
-    await db_session.flush()
+    from app.oxyde_models.team import OxydeTeam
+    other_team = await OxydeTeam.objects.create(name="Other Team", key="OTH", description="Other")
 
-    other_label = Label(team_id=other_team.id, name="OtherLabel", color="#000000")
-    db_session.add(other_label)
-    await db_session.commit()
+    other_label = await OxydeLabel.objects.create(team_id=other_team.id, name="OtherLabel", color="#000000")
 
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels), selectinload(Issue.creator))
-        .where(Issue.id == test_issue.id)
-    )
-    issue = result.scalar_one()
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
 
     with pytest.raises(ValueError, match="does not belong to this team"):
         await issue_service.batch_update(
@@ -307,7 +279,7 @@ async def test_batch_update_add_label_wrong_team(
 # --- Cross-reference: source issue not found (L1139) ---
 
 @pytest.mark.asyncio
-async def test_cross_references_source_not_found(db_session, issue_service):
+async def test_cross_references_source_not_found(db, issue_service):
     """create_cross_references returns empty for nonexistent source (covers L1139)."""
     result = await issue_service.create_cross_references(
         "nonexistent-id", "see PROJ-999"
@@ -319,7 +291,7 @@ async def test_cross_references_source_not_found(db_session, issue_service):
 
 @pytest.mark.asyncio
 async def test_cross_references_self_reference_filtered(
-    db_session, issue_service, test_issue
+    db, issue_service, test_issue
 ):
     """create_cross_references filters out self-references (covers L1143)."""
     result = await issue_service.create_cross_references(
@@ -332,7 +304,7 @@ async def test_cross_references_self_reference_filtered(
 
 @pytest.mark.asyncio
 async def test_cross_references_target_not_found(
-    db_session, issue_service, test_issue
+    db, issue_service, test_issue
 ):
     """create_cross_references skips identifiers that don't exist (covers L1178)."""
     result = await issue_service.create_cross_references(
@@ -345,17 +317,15 @@ async def test_cross_references_target_not_found(
 
 @pytest.mark.asyncio
 async def test_list_issues_filter_by_type(
-    db_session, issue_service, test_team, test_project, test_user
+    db, issue_service, test_team, test_project, test_user
 ):
     """list_issues filters by issue_type (covers L773)."""
-    test_project.issue_count += 1
-    bug = Issue(
-        project_id=test_project.id, identifier=f"{test_project.key}-{test_project.issue_count}",
-        number=test_project.issue_count, title="Bug Issue", creator_id=test_user.id,
+    num = await _next_issue_number(test_project)
+    bug = await OxydeIssue.objects.create(
+        project_id=test_project.id, identifier=f"{test_project.key}-{num}",
+        number=num, title="Bug Issue", creator_id=test_user.id,
         issue_type=IssueType.BUG,
     )
-    db_session.add(bug)
-    await db_session.commit()
 
     results = await issue_service.list_issues(
         team_id=test_team.id, issue_type=IssueType.BUG,
@@ -367,7 +337,7 @@ async def test_list_issues_filter_by_type(
 
 @pytest.mark.asyncio
 async def test_list_issues_no_sprint_filter(
-    db_session, issue_service, test_team, test_issue
+    db, issue_service, test_team, test_issue
 ):
     """list_issues with sprint_id='no_sprint' returns unsprinted issues (covers L776)."""
     results = await issue_service.list_issues(
@@ -381,7 +351,7 @@ async def test_list_issues_no_sprint_filter(
 
 @pytest.mark.asyncio
 async def test_list_issues_unassigned_filter(
-    db_session, issue_service, test_team, test_issue
+    db, issue_service, test_team, test_issue
 ):
     """list_issues with assignee_id='unassigned' returns unassigned issues (covers L783)."""
     results = await issue_service.list_issues(
@@ -394,23 +364,15 @@ async def test_list_issues_unassigned_filter(
 
 @pytest.mark.asyncio
 async def test_batch_update_replace_label_wrong_team(
-    db_session, issue_service, test_issue, test_team
+    db, issue_service, test_issue, test_team
 ):
     """batch_update raises when replace label belongs to different team (covers L1355-1357)."""
-    from app.models.team import Team
-    other_team = Team(name="Replace Team", key="RPL", description="Other")
-    db_session.add(other_team)
-    await db_session.flush()
+    from app.oxyde_models.team import OxydeTeam
+    other_team = await OxydeTeam.objects.create(name="Replace Team", key="RPL", description="Other")
 
-    other_label = Label(team_id=other_team.id, name="Foreign", color="#000000")
-    db_session.add(other_label)
-    await db_session.commit()
+    other_label = await OxydeLabel.objects.create(team_id=other_team.id, name="Foreign", color="#000000")
 
-    result = await db_session.execute(
-        select(Issue).options(selectinload(Issue.labels), selectinload(Issue.creator))
-        .where(Issue.id == test_issue.id)
-    )
-    issue = result.scalar_one()
+    issue = await OxydeIssue.objects.get(id=test_issue.id)
 
     with pytest.raises(ValueError, match="does not belong to this team"):
         await issue_service.batch_update(

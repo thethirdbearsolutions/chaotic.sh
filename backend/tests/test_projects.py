@@ -106,17 +106,15 @@ async def test_update_project(client, auth_headers, test_project):
 
 
 @pytest.mark.asyncio
-async def test_delete_project(client, auth_headers, test_team, db_session):
+async def test_delete_project(client, auth_headers, test_team, db):
     """Test deleting a project."""
-    from app.models.project import Project
+    from app.oxyde_models.project import OxydeProject
 
-    project = Project(
+    project = await OxydeProject.objects.create(
         team_id=test_team.id,
         name="Delete Me",
         key="DEL",
     )
-    db_session.add(project)
-    await db_session.commit()
 
     response = await client.delete(
         f"/api/projects/{project.id}",
@@ -126,15 +124,13 @@ async def test_delete_project(client, auth_headers, test_team, db_session):
 
 
 @pytest.mark.asyncio
-async def test_delete_project_not_admin(client, auth_headers2, test_project, db_session, test_user2, test_team):
+async def test_delete_project_not_admin(client, auth_headers2, test_project, db, test_user2, test_team):
     """Test deleting project when not admin."""
-    from app.models.team import TeamMember
+    from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
     # Add user2 as member
-    member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
-    db_session.add(member)
-    await db_session.commit()
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.delete(
         f"/api/projects/{test_project.id}",
@@ -235,19 +231,17 @@ async def test_delete_project_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_list_projects_with_pagination(client, auth_headers, test_team, db_session):
+async def test_list_projects_with_pagination(client, auth_headers, test_team, db):
     """Test listing projects with skip and limit."""
-    from app.models.project import Project
+    from app.oxyde_models.project import OxydeProject
 
     # Create multiple projects
     for i in range(5):
-        project = Project(
+        project = await OxydeProject.objects.create(
             team_id=test_team.id,
             name=f"Project {i}",
             key=f"PRJ{i}",
         )
-        db_session.add(project)
-    await db_session.commit()
 
     response = await client.get(
         f"/api/projects?team_id={test_team.id}&skip=1&limit=2",
@@ -322,11 +316,11 @@ async def test_update_project_partial(client, auth_headers, test_project):
 # --- Service-level coverage tests (CHT-922) ---
 
 @pytest.mark.asyncio
-async def test_project_service_increment_issue_count(db_session, test_project):
+async def test_project_service_increment_issue_count(db, test_project):
     """Test ProjectService.increment_issue_count (covers project_service.py L79-82)."""
     from app.services.project_service import ProjectService
 
-    service = ProjectService(db_session)
+    service = ProjectService()
     original_count = test_project.issue_count
     new_count = await service.increment_issue_count(test_project)
 

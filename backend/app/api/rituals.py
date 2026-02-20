@@ -143,16 +143,16 @@ async def list_attestation_history(
         RitualAttestationHistoryItem(
             id=att.id,
             ritual_name=att.ritual.name if att.ritual else "Unknown",
-            ritual_trigger=RitualTrigger[att.ritual.trigger].value if att.ritual else "unknown",
-            approval_mode=ApprovalMode[att.ritual.approval_mode].value if att.ritual else "unknown",
+            ritual_trigger=att.ritual.trigger.value if isinstance(att.ritual.trigger, RitualTrigger) else RitualTrigger[att.ritual.trigger].value if att.ritual else "unknown",
+            approval_mode=att.ritual.approval_mode.value if isinstance(att.ritual.approval_mode, ApprovalMode) else ApprovalMode[att.ritual.approval_mode].value if att.ritual else "unknown",
             sprint_id=att.sprint_id,
             sprint_name=att.sprint.name if att.sprint else None,
             issue_id=att.issue_id,
             issue_identifier=att.issue.identifier if att.issue else None,
-            attested_by_name=att._attester.name if att._attester else "Unknown",
+            attested_by_name=att.attester.name if att.attester else "Unknown",
             attested_at=att.attested_at,
             note=att.note,
-            approved_by_name=att._approver.name if att._approver else None,
+            approved_by_name=att.approver.name if att.approver else None,
             approved_at=att.approved_at,
         )
         for att in attestations

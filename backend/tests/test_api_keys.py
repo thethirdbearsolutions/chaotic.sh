@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.services.api_key_service import APIKeyService, _prehash_key
 from app.schemas.api_key import APIKeyCreate
-from app.models.api_key import APIKey
+from app.oxyde_models.api_key import OxydeAPIKey
 from app.utils.security import get_password_hash, verify_password
 
 
@@ -42,24 +42,24 @@ class TestPrehashKey:
 class TestAPIKeyServiceKeyGeneration:
     """Tests for API key generation."""
 
-    def test_generate_key_format(self, db_session):
+    def test_generate_key_format(self, db):
         """Generated key should have correct format."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         key = service._generate_key()
 
         assert key.startswith("ck_")
         # ck_ + 64 hex chars = 67 total
         assert len(key) == 67
 
-    def test_generate_key_is_unique(self, db_session):
+    def test_generate_key_is_unique(self, db):
         """Each generated key should be unique."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         keys = [service._generate_key() for _ in range(100)]
         assert len(set(keys)) == 100
 
-    def test_get_prefix(self, db_session):
+    def test_get_prefix(self, db):
         """Prefix extraction should work correctly."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         key = "ck_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         prefix = service._get_prefix(key)
 
@@ -71,9 +71,9 @@ class TestAPIKeyServiceKeyGeneration:
 class TestAPIKeyServiceCreate:
     """Tests for API key creation."""
 
-    async def test_create_returns_key_and_model(self, db_session, test_user):
+    async def test_create_returns_key_and_model(self, db, test_user):
         """Create should return both the model and full key."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
 
         api_key, full_key = await service.create(test_user.id, api_key_in)
@@ -83,9 +83,9 @@ class TestAPIKeyServiceCreate:
         assert api_key.user_id == test_user.id
         assert full_key.startswith("ck_")
 
-    async def test_create_stores_hashed_key(self, db_session, test_user):
+    async def test_create_stores_hashed_key(self, db, test_user):
         """Created key should be stored as hash, not plaintext."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
 
         api_key, full_key = await service.create(test_user.id, api_key_in)
@@ -97,9 +97,9 @@ class TestAPIKeyServiceCreate:
         # But the hash should verify against the prehashed key
         assert verify_password(_prehash_key(full_key), api_key.key_hash)
 
-    async def test_create_stores_correct_prefix(self, db_session, test_user):
+    async def test_create_stores_correct_prefix(self, db, test_user):
         """Created key should have correct prefix stored."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
 
         api_key, full_key = await service.create(test_user.id, api_key_in)
@@ -111,9 +111,9 @@ class TestAPIKeyServiceCreate:
 class TestAPIKeyServiceValidation:
     """Tests for API key validation."""
 
-    async def test_validate_correct_key(self, db_session, test_user):
+    async def test_validate_correct_key(self, db, test_user):
         """Valid key should be accepted."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         _, full_key = await service.create(test_user.id, api_key_in)
 
@@ -122,9 +122,9 @@ class TestAPIKeyServiceValidation:
         assert result is not None
         assert result.name == "Test Key"
 
-    async def test_validate_wrong_key(self, db_session, test_user):
+    async def test_validate_wrong_key(self, db, test_user):
         """Wrong key should be rejected."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         await service.create(test_user.id, api_key_in)
 
@@ -132,17 +132,17 @@ class TestAPIKeyServiceValidation:
 
         assert result is None
 
-    async def test_validate_invalid_format(self, db_session):
+    async def test_validate_invalid_format(self, db):
         """Key without ck_ prefix should be rejected."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
 
         result = await service.validate_key("not_a_valid_key")
 
         assert result is None
 
-    async def test_validate_inactive_key(self, db_session, test_user):
+    async def test_validate_inactive_key(self, db, test_user):
         """Inactive key should be rejected."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, full_key = await service.create(test_user.id, api_key_in)
 
@@ -153,23 +153,23 @@ class TestAPIKeyServiceValidation:
 
         assert result is None
 
-    async def test_validate_expired_key(self, db_session, test_user):
+    async def test_validate_expired_key(self, db, test_user):
         """Expired key should be rejected."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, full_key = await service.create(test_user.id, api_key_in)
 
         # Set expiration to the past
         api_key.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
-        await db_session.commit()
+        await api_key.save(update_fields={"expires_at"})
 
         result = await service.validate_key(full_key)
 
         assert result is None
 
-    async def test_validate_updates_last_used(self, db_session, test_user):
+    async def test_validate_updates_last_used(self, db, test_user):
         """Successful validation should update last_used_at."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, full_key = await service.create(test_user.id, api_key_in)
 
@@ -184,9 +184,9 @@ class TestAPIKeyServiceValidation:
 class TestAPIKeyServiceOperations:
     """Tests for other API key operations."""
 
-    async def test_list_by_user(self, db_session, test_user, test_user2):
+    async def test_list_by_user(self, db, test_user, test_user2):
         """Should only list keys for the specified user."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
 
         # Create keys for both users
         await service.create(test_user.id, APIKeyCreate(name="User1 Key1"))
@@ -199,9 +199,9 @@ class TestAPIKeyServiceOperations:
         assert len(user1_keys) == 2
         assert len(user2_keys) == 1
 
-    async def test_revoke_deactivates_key(self, db_session, test_user):
+    async def test_revoke_deactivates_key(self, db, test_user):
         """Revoke should deactivate the key."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, _ = await service.create(test_user.id, api_key_in)
 
@@ -211,9 +211,9 @@ class TestAPIKeyServiceOperations:
 
         assert revoked.is_active is False
 
-    async def test_delete_removes_key(self, db_session, test_user):
+    async def test_delete_removes_key(self, db, test_user):
         """Delete should remove the key from database."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, _ = await service.create(test_user.id, api_key_in)
         key_id = api_key.id
@@ -233,9 +233,9 @@ class TestBcryptCompatibility:
     2. passlib/bcrypt version compatibility
     """
 
-    async def test_long_key_validation(self, db_session, test_user):
+    async def test_long_key_validation(self, db, test_user):
         """Even with prehashing, validation should work for any key length."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         _, full_key = await service.create(test_user.id, api_key_in)
 
@@ -243,18 +243,18 @@ class TestBcryptCompatibility:
         result = await service.validate_key(full_key)
         assert result is not None
 
-    async def test_hash_is_bcrypt_format(self, db_session, test_user):
+    async def test_hash_is_bcrypt_format(self, db, test_user):
         """Stored hash should be bcrypt format (starts with $2b$)."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key_in = APIKeyCreate(name="Test Key")
         api_key, _ = await service.create(test_user.id, api_key_in)
 
         # bcrypt hashes start with $2b$ (or $2a$, $2y$)
         assert api_key.key_hash.startswith("$2")
 
-    async def test_round_trip_create_validate(self, db_session, test_user):
+    async def test_round_trip_create_validate(self, db, test_user):
         """Full round trip: create key, validate it, ensure it works."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
 
         # Create multiple keys to ensure consistency
         for i in range(5):
@@ -285,9 +285,9 @@ class TestAPIKeyAPIEndpoints:
         assert data["key"].startswith("ck_")
         assert "key_prefix" in data
 
-    async def test_list_api_keys_endpoint(self, client, auth_headers, test_user, db_session):
+    async def test_list_api_keys_endpoint(self, client, auth_headers, test_user, db):
         """GET /api-keys should list API keys for the current user."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         await service.create(test_user.id, APIKeyCreate(name="List Test Key"))
 
         response = await client.get(
@@ -302,9 +302,9 @@ class TestAPIKeyAPIEndpoints:
         for key in data:
             assert "key" not in key or key.get("key") is None
 
-    async def test_revoke_api_key_endpoint(self, client, auth_headers, test_user, db_session):
+    async def test_revoke_api_key_endpoint(self, client, auth_headers, test_user, db):
         """DELETE /api-keys/{id} should revoke the API key."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key, _ = await service.create(test_user.id, APIKeyCreate(name="Revoke Me"))
 
         response = await client.delete(
@@ -313,9 +313,10 @@ class TestAPIKeyAPIEndpoints:
         )
         assert response.status_code == 204
 
-        # Verify key is revoked
-        await db_session.refresh(api_key)
-        assert api_key.is_active is False
+        # Re-fetch to verify key is revoked (Oxyde doesn't auto-refresh)
+        from app.oxyde_models.api_key import OxydeAPIKey
+        refreshed = await OxydeAPIKey.objects.get(id=api_key.id)
+        assert refreshed.is_active is False
 
     async def test_revoke_api_key_not_found(self, client, auth_headers):
         """DELETE /api-keys/{id} should return 404 for non-existent key."""
@@ -326,9 +327,9 @@ class TestAPIKeyAPIEndpoints:
         assert response.status_code == 404
         assert "API key not found" in response.json()["detail"]
 
-    async def test_revoke_api_key_not_owner(self, client, auth_headers2, test_user, db_session):
+    async def test_revoke_api_key_not_owner(self, client, auth_headers2, test_user, db):
         """DELETE /api-keys/{id} should return 403 when not the owner."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key, _ = await service.create(test_user.id, APIKeyCreate(name="Not Yours"))
 
         response = await client.delete(
@@ -359,9 +360,9 @@ class TestAPIKeyAPIEndpoints:
         assert response.status_code == 200
         assert response.json() == []
 
-    async def test_list_api_keys_isolated_between_users(self, client, auth_headers, auth_headers2, test_user, test_user2, db_session):
+    async def test_list_api_keys_isolated_between_users(self, client, auth_headers, auth_headers2, test_user, test_user2, db):
         """User should only see their own API keys."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         await service.create(test_user.id, APIKeyCreate(name="User1 Key"))
         await service.create(test_user2.id, APIKeyCreate(name="User2 Key"))
 
@@ -376,30 +377,30 @@ class TestAPIKeyAPIEndpoints:
 class TestAPIKeyServiceLookups:
     """Tests for get_by_id and get_by_prefix."""
 
-    async def test_get_by_id_found(self, db_session, test_user):
+    async def test_get_by_id_found(self, db, test_user):
         """get_by_id should return key when it exists."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key, _ = await service.create(test_user.id, APIKeyCreate(name="Lookup"))
         result = await service.get_by_id(api_key.id)
         assert result is not None
         assert result.name == "Lookup"
 
-    async def test_get_by_id_not_found(self, db_session):
+    async def test_get_by_id_not_found(self, db):
         """get_by_id should return None for nonexistent ID."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         result = await service.get_by_id("nonexistent-id")
         assert result is None
 
-    async def test_get_by_prefix_found(self, db_session, test_user):
+    async def test_get_by_prefix_found(self, db, test_user):
         """get_by_prefix should return key matching prefix."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="Prefix"))
         result = await service.get_by_prefix(full_key[:11])
         assert result is not None
         assert result.id == api_key.id
 
-    async def test_get_by_prefix_not_found(self, db_session):
+    async def test_get_by_prefix_not_found(self, db):
         """get_by_prefix should return None for unknown prefix."""
-        service = APIKeyService(db_session)
+        service = APIKeyService()
         result = await service.get_by_prefix("ck_unknown")
         assert result is None

@@ -1,8 +1,20 @@
 """Team schemas."""
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
+
+
+def _coerce_enum(enum_cls, v):
+    """Coerce enum name strings from Oxyde to enum members."""
+    if isinstance(v, enum_cls):
+        return v
+    if isinstance(v, str):
+        try:
+            return enum_cls[v]
+        except KeyError:
+            return enum_cls(v)
+    return v
 
 
 class TeamCreate(BaseModel):
@@ -48,6 +60,11 @@ class TeamMemberResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def coerce_role(cls, v):
+        return _coerce_enum(TeamRole, v)
+
 
 class TeamInvitationCreate(BaseModel):
     """Schema for creating a team invitation."""
@@ -68,3 +85,13 @@ class TeamInvitationResponse(BaseModel):
     expires_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def coerce_role(cls, v):
+        return _coerce_enum(TeamRole, v)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, v):
+        return _coerce_enum(InvitationStatus, v)

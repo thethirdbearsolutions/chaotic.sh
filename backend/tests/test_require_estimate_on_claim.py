@@ -9,7 +9,7 @@ from app.enums import IssueStatus
 
 @pytest.mark.asyncio
 async def test_human_can_claim_without_estimate_when_required(
-    client, auth_headers, test_project, test_issue, db_session
+    client, auth_headers, test_project, test_issue, db
 ):
     """Test that humans (JWT auth) can claim tickets without estimates even when require_estimate_on_claim is True."""
     # Enable require_estimate_on_claim
@@ -34,14 +34,14 @@ async def test_human_can_claim_without_estimate_when_required(
 
 @pytest.mark.asyncio
 async def test_agent_blocked_from_claiming_without_estimate(
-    client, test_project, test_issue, test_user, test_team, db_session
+    client, test_project, test_issue, test_user, test_team, db
 ):
     """Test that agents (API key auth) are blocked from claiming tickets without estimates when require_estimate_on_claim is True."""
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
 
     # Create an agent
-    agent_service = AgentService(db_session)
+    agent_service = AgentService()
     agent, api_key, _ = await agent_service.create(
         AgentCreate(name="Test Agent"),
         test_user,
@@ -70,14 +70,14 @@ async def test_agent_blocked_from_claiming_without_estimate(
 
 @pytest.mark.asyncio
 async def test_agent_can_claim_with_estimate(
-    client, test_project, test_issue, test_user, test_team, db_session
+    client, test_project, test_issue, test_user, test_team, db
 ):
     """Test that agents CAN claim tickets when they provide an estimate."""
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
 
     # Create an agent
-    agent_service = AgentService(db_session)
+    agent_service = AgentService()
     agent, api_key, _ = await agent_service.create(
         AgentCreate(name="Test Agent"),
         test_user,
@@ -108,7 +108,7 @@ async def test_agent_can_claim_with_estimate(
 
 @pytest.mark.asyncio
 async def test_human_can_create_without_estimate(
-    client, auth_headers, test_project, db_session
+    client, auth_headers, test_project, db
 ):
     """Test that humans can create tickets without estimates regardless of require_estimate_on_claim."""
     # Enable require_estimate_on_claim
@@ -134,14 +134,14 @@ async def test_human_can_create_without_estimate(
 
 @pytest.mark.asyncio
 async def test_agent_can_create_without_estimate(
-    client, test_project, test_user, test_team, db_session
+    client, test_project, test_user, test_team, db
 ):
     """Test that agents can create tickets without estimates regardless of require_estimate_on_claim."""
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
 
     # Create an agent
-    agent_service = AgentService(db_session)
+    agent_service = AgentService()
     agent, api_key, _ = await agent_service.create(
         AgentCreate(name="Test Agent"),
         test_user,
@@ -173,7 +173,7 @@ async def test_agent_can_create_without_estimate(
 
 @pytest.mark.asyncio
 async def test_human_can_claim_with_existing_estimate(
-    client, auth_headers, test_project, test_issue, db_session
+    client, auth_headers, test_project, test_issue, db
 ):
     """Test that humans can claim tickets that already have estimates."""
     # Enable require_estimate_on_claim
@@ -206,14 +206,14 @@ async def test_human_can_claim_with_existing_estimate(
 
 @pytest.mark.asyncio
 async def test_agent_can_claim_with_existing_estimate(
-    client, auth_headers, test_project, test_issue, test_user, test_team, db_session
+    client, auth_headers, test_project, test_issue, test_user, test_team, db
 ):
     """Test that agents can claim tickets that already have estimates."""
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
 
     # Create an agent
-    agent_service = AgentService(db_session)
+    agent_service = AgentService()
     agent, api_key, _ = await agent_service.create(
         AgentCreate(name="Test Agent"),
         test_user,
@@ -252,7 +252,7 @@ async def test_agent_can_claim_with_existing_estimate(
 
 @pytest.mark.asyncio
 async def test_human_can_update_status_after_claiming(
-    client, auth_headers, test_project, test_issue, db_session
+    client, auth_headers, test_project, test_issue, db
 ):
     """Test that humans can update status after claiming without estimate."""
     # Enable require_estimate_on_claim

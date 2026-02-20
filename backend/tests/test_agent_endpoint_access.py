@@ -11,9 +11,9 @@ from app.schemas.agent import AgentCreate
 
 
 @pytest_asyncio.fixture
-async def team_agent(db_session, test_user, test_team):
+async def team_agent(db, test_user, test_team):
     """Create a team-scoped agent and return (agent, api_key)."""
-    service = AgentService(db_session)
+    service = AgentService()
     agent, api_key, _ = await service.create(
         AgentCreate(name="Team Bot"), test_user, test_team.id
     )
@@ -28,14 +28,11 @@ async def agent_headers(team_agent):
 
 
 @pytest_asyncio.fixture
-async def other_team(db_session):
+async def other_team(db):
     """Create a second team with no members."""
-    from app.models import Team
+    from app.oxyde_models.team import OxydeTeam
 
-    team = Team(name="Other Team", key="OTHER")
-    db_session.add(team)
-    await db_session.commit()
-    await db_session.refresh(team)
+    team = await OxydeTeam.objects.create(name="Other Team", key="OTHER")
     return team
 
 
@@ -115,10 +112,10 @@ class TestAgentGetAgent:
     """Tests for agent accessing GET /agents/{agent_id}."""
 
     async def test_agent_can_get_same_team_agent(
-        self, client, agent_headers, test_team, db_session, test_user
+        self, client, agent_headers, test_team, db, test_user
     ):
         """Agent should access another agent in the same team."""
-        service = AgentService(db_session)
+        service = AgentService()
         other_agent, _, _ = await service.create(
             AgentCreate(name="Other Bot"), test_user, test_team.id
         )
@@ -142,20 +139,18 @@ class TestAgentGetAgent:
         assert response.json()["id"] == agent.id
 
     async def test_agent_cannot_get_other_team_agent(
-        self, client, agent_headers, other_team, db_session, test_user
+        self, client, agent_headers, other_team, db, test_user
     ):
         """Agent should be denied access to an agent in a different team."""
-        from app.models.team import TeamMember
+        from app.oxyde_models.team import OxydeTeamMember
         from app.enums import TeamRole
 
         # Make test_user a member of other_team so they can create an agent there
-        member = TeamMember(
+        member = await OxydeTeamMember.objects.create(
             team_id=other_team.id, user_id=test_user.id, role=TeamRole.OWNER
         )
-        db_session.add(member)
-        await db_session.commit()
 
-        service = AgentService(db_session)
+        service = AgentService()
         other_agent, _, _ = await service.create(
             AgentCreate(name="Other Team Bot"), test_user, other_team.id
         )
@@ -216,10 +211,10 @@ class TestAgentWriteOperations:
         assert response.status_code == 403
 
     async def test_agent_cannot_update_agent(
-        self, client, agent_headers, team_agent, test_team, db_session, test_user
+        self, client, agent_headers, team_agent, test_team, db, test_user
     ):
         """Agent should not be able to update another agent."""
-        service = AgentService(db_session)
+        service = AgentService()
         other_agent, _, _ = await service.create(
             AgentCreate(name="Other Bot"), test_user, test_team.id
         )
@@ -233,10 +228,10 @@ class TestAgentWriteOperations:
         assert response.status_code == 403
 
     async def test_agent_cannot_delete_agent(
-        self, client, agent_headers, team_agent, test_team, db_session, test_user
+        self, client, agent_headers, team_agent, test_team, db, test_user
     ):
         """Agent should not be able to delete another agent."""
-        service = AgentService(db_session)
+        service = AgentService()
         other_agent, _, _ = await service.create(
             AgentCreate(name="Other Bot"), test_user, test_team.id
         )
@@ -265,10 +260,10 @@ class TestProjectScopedAgent:
     """Tests for project-scoped agent access control."""
 
     async def test_project_agent_can_get_own_team(
-        self, client, test_user, test_team, test_project, db_session
+        self, client, test_user, test_team, test_project, db
     ):
         """Project-scoped agent should access its team."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Project Bot"), test_user, test_team.id, test_project.id
         )
@@ -282,10 +277,10 @@ class TestProjectScopedAgent:
         assert response.json()["id"] == test_team.id
 
     async def test_project_agent_cannot_get_other_team(
-        self, client, test_user, test_team, test_project, other_team, db_session
+        self, client, test_user, test_team, test_project, other_team, db
     ):
         """Project-scoped agent should be denied access to a different team."""
-        service = AgentService(db_session)
+        service = AgentService()
         agent, api_key, _ = await service.create(
             AgentCreate(name="Project Bot"), test_user, test_team.id, test_project.id
         )
