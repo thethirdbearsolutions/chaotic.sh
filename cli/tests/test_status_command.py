@@ -142,8 +142,8 @@ class TestStatus:
         assert result.exit_code == 0
         assert 'claude' in result.output
 
-    def test_status_with_pending_gates(self, cli_runner):
-        """status shows pending gate approvals."""
+    def test_status_with_pending_approvals(self, cli_runner):
+        """status shows pending approvals (gate and review)."""
         from cli.main import cli, client
 
         client.get_me = MagicMock(return_value={
@@ -151,10 +151,10 @@ class TestStatus:
         })
         client.get_team = MagicMock(return_value={"name": "Team", "key": "TM"})
         client.get_project = MagicMock(return_value={"name": "Chaotic", "key": "CHT"})
-        client.get_pending_gates = MagicMock(return_value=[
+        client.get_pending_approvals = MagicMock(return_value=[
             {
                 "identifier": "CHT-100", "title": "Fix bug",
-                "pending_gates": [{"ritual_name": "design-review"}],
+                "pending_approvals": [{"ritual_name": "design-review", "approval_mode": "gate"}],
             },
         ])
 
@@ -167,6 +167,7 @@ class TestStatus:
             result = cli_runner.invoke(cli, ['status'])
 
         assert result.exit_code == 0
+        assert 'awaiting approval' in result.output.lower()
         assert 'gate approval' in result.output.lower()
         assert 'CHT-100' in result.output
         assert 'design-review' in result.output

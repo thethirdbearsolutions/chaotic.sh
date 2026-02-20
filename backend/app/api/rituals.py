@@ -1,4 +1,6 @@
 """Ritual API routes."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.ritual import (
@@ -327,6 +329,62 @@ async def force_clear_limbo(
     }
 
 
+@router.post("/force-clear-ticket-limbo", status_code=status.HTTP_200_OK)
+async def force_clear_ticket_limbo(
+    issue_id: str,
+    current_user: CurrentUser,
+):
+    """Force-clear ticket-level limbo for a specific issue (admin only)."""
+    from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+
+    issue_service = IssueService()
+    team_service = TeamService()
+
+    issue = await issue_service.get_by_id(issue_id)
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Issue not found",
+        )
+
+    project_service = ProjectService()
+    project = await project_service.get_by_id(issue.project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    is_admin = await team_service.is_team_admin(project.team_id, current_user.id)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can force-clear limbo",
+        )
+
+    limbo_records = await OxydeTicketLimbo.objects.filter(
+        issue_id=issue_id,
+        cleared_at=None,
+    ).all()
+
+    if not limbo_records:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Issue has no pending ticket limbo",
+        )
+
+    now = datetime.now(timezone.utc)
+    for limbo in limbo_records:
+        limbo.cleared_at = now
+        limbo.cleared_by_id = current_user.id
+        await limbo.save()
+
+    return {
+        "message": f"Cleared {len(limbo_records)} ticket limbo record(s)",
+        "cleared_count": len(limbo_records),
+    }
+
+
 @router.get("/issue/{issue_id}/pending", response_model=TicketRitualsStatusResponse)
 async def get_pending_ticket_rituals(
     issue_id: str,
@@ -557,7 +615,7 @@ async def complete_gate_ritual_for_issue(
     if ritual.approval_mode != ApprovalMode.GATE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use attest-issue instead.",
+            detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use 'chaotic ritual attest' instead.",
         )
 
     attestation = await ritual_service.complete_gate_ritual_for_issue(

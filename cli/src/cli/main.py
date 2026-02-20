@@ -970,23 +970,36 @@ def status():
     else:
         console.print("  [dim]-[/dim] No project selected")
 
-    # Pending GATE approvals
+    # Pending approvals (GATE and REVIEW)
     if project_id:
         try:
-            pending_gates = client.get_pending_gates(project_id)
-            if pending_gates:
-                count = len(pending_gates)
-                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting gate approval")
-                for gate in pending_gates[:5]:
-                    ident = gate.get("identifier", "")
-                    title = gate.get("title", "")
-                    rituals = gate.get("pending_gates", [])
-                    ritual_names = ", ".join(r.get("ritual_name", "") for r in rituals)
+            pending = client.get_pending_approvals(project_id)
+            if pending:
+                gate_count = 0
+                review_count = 0
+                for item in pending:
+                    for appr in item.get("pending_approvals", []):
+                        if appr.get("approval_mode") == "gate":
+                            gate_count += 1
+                        else:
+                            review_count += 1
+                parts = []
+                if gate_count:
+                    parts.append(f"{gate_count} gate approval{'s' if gate_count != 1 else ''}")
+                if review_count:
+                    parts.append(f"{review_count} review{'s' if review_count != 1 else ''}")
+                count = len(pending)
+                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting approval ({', '.join(parts)})")
+                for item in pending[:5]:
+                    ident = item.get("identifier", "")
+                    title = item.get("title", "")
+                    approvals = item.get("pending_approvals", [])
+                    ritual_names = ", ".join(a.get("ritual_name", "") for a in approvals)
                     console.print(f"    [dim]•[/dim] {ident}: {title} [dim]({ritual_names})[/dim]")
                 if count > 5:
                     console.print(f"    [dim]... and {count - 5} more[/dim]")
         except Exception:
-            pass  # Don't fail status if gate check fails
+            pass  # Don't fail status if approval check fails
 
 
 @cli.command("whoami")

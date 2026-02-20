@@ -390,6 +390,9 @@ class Client:
     def force_clear_limbo(self, project_id: str) -> dict:
         return self._request("POST", f"/rituals/force-clear-limbo?project_id={project_id}", {})
 
+    def force_clear_ticket_limbo(self, issue_id: str) -> dict:
+        return self._request("POST", f"/rituals/force-clear-ticket-limbo?issue_id={issue_id}", {})
+
     def create_ritual(self, project_id: str, name: str, prompt: str, **kwargs) -> dict:
         data = {"name": name, "prompt": prompt, **kwargs}
         return self._request("POST", f"/rituals?project_id={project_id}", data)
