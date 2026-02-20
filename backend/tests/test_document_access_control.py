@@ -6,12 +6,12 @@ All tests use HTTP client only — no direct ORM assertions.
 """
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
 from app.models.project import Project
 from app.models.document import Document, DocumentComment
-from app.models.issue import Issue
-from app.models.issue import Label
+from app.models.issue import Issue, Label
 from app.models.user import User
+from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 

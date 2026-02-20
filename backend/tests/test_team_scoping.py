@@ -9,10 +9,11 @@ import pytest
 import pytest_asyncio
 from app.services.issue_service import IssueService
 from app.services.document_service import DocumentService
-from app.models.issue import Issue, IssueComment, IssueRelation, IssueRelationType
+from app.models.issue import Issue, IssueComment, IssueRelation
 from app.models.project import Project
 from app.models.document import Document
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
+from app.enums import IssueRelationType, TeamRole
 
 
 @pytest_asyncio.fixture

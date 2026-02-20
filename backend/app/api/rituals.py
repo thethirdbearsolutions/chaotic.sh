@@ -25,7 +25,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.models.ritual import ApprovalMode, RitualTrigger
+from app.enums import ApprovalMode, RitualTrigger
 from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 
@@ -142,13 +142,13 @@ async def list_attestation_history(
     return [
         RitualAttestationHistoryItem(
             id=att.id,
-            ritual_name=att._ritual.name if att._ritual else "Unknown",
-            ritual_trigger=RitualTrigger[att._ritual.trigger].value if att._ritual else "unknown",
-            approval_mode=ApprovalMode[att._ritual.approval_mode].value if att._ritual else "unknown",
+            ritual_name=att.ritual.name if att.ritual else "Unknown",
+            ritual_trigger=RitualTrigger[att.ritual.trigger].value if att.ritual else "unknown",
+            approval_mode=ApprovalMode[att.ritual.approval_mode].value if att.ritual else "unknown",
             sprint_id=att.sprint_id,
-            sprint_name=att._sprint.name if att._sprint else None,
+            sprint_name=att.sprint.name if att.sprint else None,
             issue_id=att.issue_id,
-            issue_identifier=att._issue.identifier if att._issue else None,
+            issue_identifier=att.issue.identifier if att.issue else None,
             attested_by_name=att._attester.name if att._attester else "Unknown",
             attested_at=att.attested_at,
             note=att.note,

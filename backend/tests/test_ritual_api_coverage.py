@@ -6,9 +6,10 @@ ritual CRUD access control. All via HTTP client.
 import datetime
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
 from app.models.user import User
-from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
+from app.models.ritual import Ritual, RitualAttestation
+from app.enums import TeamRole, RitualTrigger, ApprovalMode
 from app.models import Sprint
 from app.utils.security import get_password_hash, create_access_token
 
@@ -793,7 +794,8 @@ class TestCompleteGateEdgeCases:
 @pytest.mark.asyncio
 async def test_update_ritual_group_percentage_validation(client, auth_headers, test_project, db_session):
     """Updating ritual into PERCENTAGE group with invalid percentage raises error (covers L141-153)."""
-    from app.models.ritual import RitualGroup, SelectionMode
+    from app.models.ritual import RitualGroup
+    from app.enums import SelectionMode
 
     # Create a PERCENTAGE group
     group = RitualGroup(
@@ -830,7 +832,8 @@ async def test_update_ritual_group_percentage_validation(client, auth_headers, t
 @pytest.mark.asyncio
 async def test_update_ritual_group_weight_validation(client, auth_headers, test_project, db_session):
     """Updating ritual into RANDOM_ONE group with zero weight raises error (covers L151-156)."""
-    from app.models.ritual import RitualGroup, SelectionMode
+    from app.models.ritual import RitualGroup
+    from app.enums import SelectionMode
 
     # Create a RANDOM_ONE group
     group = RitualGroup(
@@ -868,7 +871,8 @@ async def test_update_ritual_group_weight_validation(client, auth_headers, test_
 @pytest.mark.asyncio
 async def test_duplicate_group_name_raises(client, auth_headers, test_project, db_session):
     """Creating a group with duplicate name raises ValueError (covers L203)."""
-    from app.models.ritual import RitualGroup, SelectionMode
+    from app.models.ritual import RitualGroup
+    from app.enums import SelectionMode
 
     group = RitualGroup(
         project_id=test_project.id,
@@ -1029,7 +1033,8 @@ async def test_select_random_one_no_seed(db_session):
 async def test_select_round_robin_empty(db_session):
     """_select_round_robin returns None for empty list (covers L368)."""
     from app.services.ritual_service import RitualService
-    from app.models.ritual import RitualGroup, SelectionMode
+    from app.models.ritual import RitualGroup
+    from app.enums import SelectionMode
 
     group = RitualGroup(id="g1", project_id="p1", name="rr", selection_mode=SelectionMode.ROUND_ROBIN)
 
@@ -1072,7 +1077,8 @@ async def test_apply_group_selection_deleted_group(db_session):
 async def test_apply_group_selection_no_active_rituals(db_session, test_project):
     """_apply_group_selection skips groups where all rituals are inactive (covers L311)."""
     from app.services.ritual_service import RitualService
-    from app.models.ritual import RitualGroup, SelectionMode
+    from app.models.ritual import RitualGroup
+    from app.enums import SelectionMode
 
     group = RitualGroup(
         id="g-inactive", project_id=test_project.id, name="inactive-group",

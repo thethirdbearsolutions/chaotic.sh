@@ -3,11 +3,12 @@ import pytest
 from datetime import datetime, timezone
 from pydantic import ValidationError
 
-from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
-from app.models.sprint import Sprint, SprintStatus
+from app.models.ritual import Ritual, RitualAttestation
+from app.models.sprint import Sprint
 from app.models.issue import Issue
 from app.models.project import Project
-from app.models.ticket_limbo import TicketLimbo, LimboType
+from app.models.ticket_limbo import TicketLimbo
+from app.enums import RitualTrigger, ApprovalMode, SprintStatus, LimboType
 from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.schemas.ritual import RitualCreate, RitualUpdate
@@ -143,7 +144,8 @@ class TestRitualGroupServiceValidation:
     async def test_create_ritual_in_other_project_group(self, db_session, test_project, test_team):
         """Test that creating a ritual in a group from another project fails."""
         from app.models.project import Project
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         # Create another project
         other_project = Project(team_id=test_team.id, name="Other", key="OTH")
@@ -174,7 +176,8 @@ class TestRitualGroupServiceValidation:
 
     async def test_create_ritual_in_percentage_group_requires_percentage(self, db_session, test_project):
         """Test that rituals in PERCENTAGE groups must have percentage > 0."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -207,7 +210,8 @@ class TestRitualGroupServiceValidation:
 
     async def test_create_ritual_in_random_group_requires_positive_weight(self, db_session, test_project):
         """Test that rituals in RANDOM_ONE groups must have weight > 0."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -231,7 +235,8 @@ class TestRitualGroupServiceValidation:
 
     async def test_create_ritual_in_round_robin_group_requires_positive_weight(self, db_session, test_project):
         """Test that rituals in ROUND_ROBIN groups must have weight > 0."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -271,7 +276,8 @@ class TestRitualGroupServiceValidation:
     async def test_update_ritual_to_other_project_group(self, db_session, test_project, test_team):
         """Test that updating a ritual to a group from another project fails."""
         from app.models.project import Project
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         other_project = Project(team_id=test_team.id, name="Other2", key="OT2")
         db_session.add(other_project)
@@ -301,7 +307,8 @@ class TestRitualGroupServiceValidation:
 
     async def test_update_ritual_remove_from_group(self, db_session, test_project):
         """Test that setting group_id to empty string removes from group."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -357,7 +364,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_random_one_selection_deterministic_with_seed(self, db_session, test_project):
         """Test that RANDOM_ONE selection is deterministic with same seed."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -396,7 +404,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_random_one_selection_respects_weights(self, db_session, test_project):
         """Test that RANDOM_ONE selection respects weights."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -439,7 +448,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_round_robin_advances_on_flag(self, db_session, test_project):
         """Test that ROUND_ROBIN advances state when advance flag is True."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -483,7 +493,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_percentage_selection_deterministic_with_seed(self, db_session, test_project):
         """Test that PERCENTAGE selection is deterministic with same seed."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -513,7 +524,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_percentage_selection_respects_percentage(self, db_session, test_project):
         """Test that PERCENTAGE selection respects the percentage value."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -543,7 +555,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_group_selection_skips_inactive_rituals(self, db_session, test_project):
         """Test that inactive rituals are skipped in group selection."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -582,7 +595,8 @@ class TestRitualGroupSelectionLogic:
 
     async def test_group_selection_deleted_group_includes_all(self, db_session, test_project):
         """Test that rituals from deleted groups are all included."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -1392,7 +1406,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_close_on_done_issue_fails(self, db_session, test_project, test_user):
         """Test that TICKET_CLOSE attestation fails for already-done issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create an issue that's already done
         done_issue = Issue(
@@ -1423,7 +1437,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_close_on_canceled_issue_fails(self, db_session, test_project, test_user):
         """Test that TICKET_CLOSE attestation fails for canceled issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         canceled_issue = Issue(
             project_id=test_project.id,
@@ -1453,7 +1467,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_close_on_in_progress_works(self, db_session, test_project, test_user):
         """Test that TICKET_CLOSE attestation works for in-progress issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         in_progress_issue = Issue(
             project_id=test_project.id,
@@ -1484,7 +1498,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_claim_on_in_progress_fails(self, db_session, test_project, test_user):
         """Test that TICKET_CLAIM attestation fails for in-progress issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         in_progress_issue = Issue(
             project_id=test_project.id,
@@ -1514,7 +1528,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_claim_on_done_fails(self, db_session, test_project, test_user):
         """Test that TICKET_CLAIM attestation fails for done issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         done_issue = Issue(
             project_id=test_project.id,
@@ -1544,7 +1558,7 @@ class TestTicketCloseRituals:
 
     async def test_attest_ticket_claim_on_backlog_works(self, db_session, test_project, test_user):
         """Test that TICKET_CLAIM attestation works for backlog issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         backlog_issue = Issue(
             project_id=test_project.id,
@@ -2173,7 +2187,7 @@ class TestRitualConditions:
     async def test_priority_in_condition(self, db_session, test_project, test_user):
         """Test priority__in condition."""
         import json
-        from app.models.issue import IssuePriority
+        from app.enums import IssuePriority
 
         # Create high priority issue
         high_issue = Issue(
@@ -2225,7 +2239,7 @@ class TestRitualConditions:
     async def test_multiple_conditions_and_logic(self, db_session, test_project, test_user):
         """Test that multiple conditions use AND logic."""
         import json
-        from app.models.issue import IssuePriority
+        from app.enums import IssuePriority
 
         # Create issue that meets both conditions
         matching_issue = Issue(
@@ -2446,7 +2460,7 @@ class TestRitualConditions:
     async def test_issue_type_eq_condition(self, db_session, test_project, test_user):
         """Test issue_type__eq condition."""
         import json
-        from app.models.issue import IssueType
+        from app.enums import IssueType
 
         # Create feature issue
         feature_issue = Issue(
@@ -2496,7 +2510,7 @@ class TestRitualConditions:
     async def test_status_in_condition(self, db_session, test_project, test_user):
         """Test status__in condition."""
         import json
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create in_progress issue
         progress_issue = Issue(
@@ -2850,7 +2864,7 @@ class TestTicketClaimRituals:
         """Test that claiming an issue is blocked when there are pending claim rituals."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create TICKET_CLAIM ritual
         ritual = Ritual(
@@ -2879,7 +2893,7 @@ class TestTicketClaimRituals:
         """Test that claiming is allowed after claim rituals are completed."""
         from app.services.issue_service import IssueService
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create TICKET_CLAIM ritual
         ritual = Ritual(
@@ -2965,7 +2979,7 @@ class TestTicketClaimRituals:
         """Test that humans can skip claim rituals when human_rituals_required is False."""
         from app.services.issue_service import IssueService
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Ensure project has human_rituals_required = False (default)
         assert test_project.human_rituals_required is False
@@ -2994,7 +3008,7 @@ class TestTicketClaimRituals:
         """Test that humans are blocked by claim rituals when human_rituals_required is True."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Set project to require rituals for humans
         test_project.human_rituals_required = True
@@ -3045,7 +3059,7 @@ class TestTicketClaimRituals:
         """Test TICKET_CLAIM ritual in REVIEW mode stays pending until approved."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create TICKET_CLAIM ritual in REVIEW mode
         ritual = Ritual(
@@ -3099,7 +3113,7 @@ class TestTicketClaimRituals:
         """Test that humans can complete GATE mode TICKET_CLAIM rituals."""
         from app.services.issue_service import IssueService
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
 
         # Create TICKET_CLAIM ritual in GATE mode
         ritual = Ritual(
@@ -3146,7 +3160,8 @@ class TestGateRitualAgentBlocking:
         """Test that agent users get 403 when trying to complete GATE ritual for issue."""
         from app.models.user import User
         from app.utils.security import get_password_hash, create_access_token
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         # Create an agent user
         agent = User(
@@ -3253,7 +3268,8 @@ class TestGateRitualAgentBlocking:
         """Test that agent users get 403 when trying to complete sprint GATE ritual."""
         from app.models.user import User
         from app.utils.security import get_password_hash, create_access_token
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         # Create an agent user
         agent = User(
@@ -3326,8 +3342,9 @@ class TestTicketLimbo:
         """Test that a limbo record is created when claim is blocked by GATE ritual."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.enums import IssueStatus
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Set project to require rituals for humans
         test_project.human_rituals_required = True
@@ -3371,8 +3388,9 @@ class TestTicketLimbo:
         """Test that a limbo record is created when close is blocked by GATE ritual."""
         from app.services.issue_service import IssueService, TicketRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.enums import IssueStatus
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Set project to require rituals for humans
         test_project.human_rituals_required = True
@@ -3427,7 +3445,8 @@ class TestTicketLimbo:
     ):
         """Test that limbo records are cleared when GATE ritual is completed."""
         from app.services.ritual_service import RitualService
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
         from datetime import datetime, timezone
 
         # Create issue
@@ -3488,8 +3507,9 @@ class TestTicketLimbo:
     ):
         """Test that get_issues_with_pending_gates only returns issues in limbo."""
         from app.services.ritual_service import RitualService
-        from app.models.ticket_limbo import TicketLimbo, LimboType
-        from app.models.issue import IssueStatus
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
+        from app.enums import IssueStatus
 
         # Create two issues in in_progress status
         issue_in_limbo = Issue(
@@ -3552,7 +3572,7 @@ class TestTicketLimbo:
         """Test that AUTO mode rituals don't create limbo records (user can complete themselves)."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
         from app.models.ticket_limbo import TicketLimbo
 
         # Set project to require rituals for humans
@@ -3616,7 +3636,8 @@ class TestRitualAPIEndpoints:
 
     async def test_create_ritual_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot create rituals."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         # Add user2 as a regular member (not admin)
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -3744,7 +3765,8 @@ class TestRitualAPIEndpoints:
 
     async def test_update_ritual_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot update rituals."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -3783,7 +3805,8 @@ class TestRitualAPIEndpoints:
 
     async def test_delete_ritual_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot delete rituals."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4277,7 +4300,8 @@ class TestForceClearLimboAPI:
 
     async def test_force_clear_limbo_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot force-clear limbo."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4305,7 +4329,8 @@ class TestPendingGatesAPI:
 
     async def test_get_issues_with_pending_gates_api(self, client, auth_headers, test_project, test_issue, db_session, test_user):
         """Test getting issues with pending GATE rituals via API."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Create a GATE ritual
         ritual = Ritual(
@@ -4372,7 +4397,8 @@ class TestRitualGroupsAPI:
 
     async def test_create_ritual_group_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot create ritual groups."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4387,7 +4413,8 @@ class TestRitualGroupsAPI:
 
     async def test_list_ritual_groups_api(self, client, auth_headers, test_project, db_session):
         """Test listing ritual groups via API."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group1 = RitualGroup(
             project_id=test_project.id,
@@ -4415,7 +4442,8 @@ class TestRitualGroupsAPI:
 
     async def test_get_ritual_group_api(self, client, auth_headers, test_project, db_session):
         """Test getting a single ritual group via API."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -4444,7 +4472,8 @@ class TestRitualGroupsAPI:
 
     async def test_update_ritual_group_api(self, client, auth_headers, test_project, db_session):
         """Test updating a ritual group via API."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -4467,8 +4496,10 @@ class TestRitualGroupsAPI:
 
     async def test_update_ritual_group_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot update ritual groups."""
-        from app.models.team import TeamMember, TeamRole
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4491,7 +4522,8 @@ class TestRitualGroupsAPI:
 
     async def test_delete_ritual_group_api(self, client, auth_headers, test_project, db_session):
         """Test deleting a ritual group via API."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -4517,8 +4549,10 @@ class TestRitualGroupsAPI:
 
     async def test_delete_ritual_group_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot delete ritual groups."""
-        from app.models.team import TeamMember, TeamRole
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4565,7 +4599,8 @@ class TestRitualGroupsAPI:
 
     async def test_get_ritual_group_api_not_member(self, client, auth_headers2, test_project, db_session):
         """Test getting ritual group when not a team member."""
-        from app.models.ritual import RitualGroup, SelectionMode
+        from app.models.ritual import RitualGroup
+        from app.enums import SelectionMode
 
         group = RitualGroup(
             project_id=test_project.id,
@@ -4723,7 +4758,8 @@ class TestRitualAPIEdgeCases:
 
     async def test_approve_attestation_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot approve attestations."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -4826,7 +4862,8 @@ class TestRitualAPIEdgeCases:
 
     async def test_complete_gate_ritual_api_not_admin(self, client, auth_headers2, test_project, test_user2, db_session, test_team):
         """Test that non-admins cannot complete GATE rituals."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -5057,7 +5094,8 @@ class TestTicketRitualAPIEdgeCases:
 
     async def test_complete_gate_ritual_for_issue_api_not_admin(self, client, auth_headers2, test_project, test_issue, test_user2, db_session, test_team):
         """Test that non-admins cannot complete GATE ticket rituals."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -5201,7 +5239,8 @@ class TestTicketRitualAPIEdgeCases:
 
     async def test_approve_issue_attestation_api_not_admin(self, client, auth_headers2, test_project, test_issue, test_user2, db_session, test_team):
         """Test that non-admins cannot approve ticket attestations."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -5430,7 +5469,8 @@ class TestForceClearLimboAPIEdgeCases:
         self, client, auth_headers2, test_project, test_user2, test_team, db_session
     ):
         """Test that non-admins cannot force-clear limbo."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         # Add user2 as member
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -5542,7 +5582,8 @@ class TestPendingGatesAPISuccessPaths:
         self, client, auth_headers, test_project, test_user, db_session
     ):
         """Test getting issues with pending GATE rituals."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Create a GATE ritual
         ritual = Ritual(
@@ -5612,7 +5653,8 @@ class TestOrphanedLimboCleanup:
         self, client, auth_headers, test_project, test_user, db_session
     ):
         """Orphaned limbo records should be cleared when querying pending gates."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
         from app.models.user import User
         from app.utils.security import get_password_hash
 
@@ -5696,7 +5738,8 @@ class TestOrphanedLimboCleanup:
         self, client, auth_headers, test_project, test_user, db_session
     ):
         """Limbo records without approved attestation should NOT be cleared."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Create a GATE ritual
         ritual = Ritual(
@@ -5756,7 +5799,8 @@ class TestOrphanedLimboCleanup:
         self, client, auth_headers, test_project, test_user, db_session
     ):
         """Limbo records with unapproved attestation should NOT be cleared."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
 
         # Create a REVIEW ritual
         ritual = Ritual(
@@ -5818,7 +5862,8 @@ class TestOrphanedLimboCleanup:
         self, client, auth_headers, test_project, test_user, db_session
     ):
         """If cleanup fails, pending gates query should still return correct results."""
-        from app.models.ticket_limbo import TicketLimbo, LimboType
+        from app.models.ticket_limbo import TicketLimbo
+        from app.enums import LimboType
         from unittest.mock import patch, AsyncMock
 
         # Create a GATE ritual and issue with limbo (no attestation = not orphaned)
@@ -6043,7 +6088,7 @@ class TestGetIssuesWithPendingApprovals:
 
     async def test_excludes_done_issues(self, db_session, test_project, test_user):
         """Pending approvals for DONE issues should not appear."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
         service = RitualService(db_session)
 
         # Create a done issue
@@ -6087,7 +6132,7 @@ class TestGateCompletionEdgeCases:
 
     async def test_rejects_done_issue_for_ticket_close(self, db_session, test_project, test_user):
         """TICKET_CLOSE rituals cannot be completed for already-done issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
         service = RitualService(db_session)
 
         ritual = Ritual(
@@ -6121,7 +6166,7 @@ class TestGateCompletionEdgeCases:
 
     async def test_rejects_in_progress_issue_for_ticket_claim(self, db_session, test_project, test_user):
         """TICKET_CLAIM rituals cannot be completed for in-progress issues."""
-        from app.models.issue import IssueStatus
+        from app.enums import IssueStatus
         service = RitualService(db_session)
 
         ritual = Ritual(

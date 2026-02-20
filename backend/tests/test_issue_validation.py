@@ -5,10 +5,11 @@ _validate_parent, and create_issue error paths. All via HTTP client.
 """
 import pytest
 import pytest_asyncio
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
 from app.models.project import Project
 from app.models.sprint import Sprint
 from app.models.user import User
+from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 

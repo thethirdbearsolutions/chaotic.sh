@@ -1,16 +1,10 @@
 """TicketLimbo model for tracking tickets blocked by GATE rituals."""
 from datetime import datetime, timezone
-from enum import Enum
 from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.enums import LimboType
 import uuid
-
-
-class LimboType(str, Enum):
-    """Type of limbo - what action was blocked."""
-    CLAIM = "claim"  # User tried to move ticket to in_progress
-    CLOSE = "close"  # User tried to move ticket to done/cancelled
 
 
 class TicketLimbo(Base):

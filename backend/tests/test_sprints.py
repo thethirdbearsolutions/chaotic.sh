@@ -5,10 +5,10 @@ Sprints are now created automatically via the cadence system (ensure_sprints_exi
 Service-level tests for SprintService.create() remain to test the internal method.
 """
 import pytest
-from app.models.sprint import Sprint, SprintStatus
+from app.models.sprint import Sprint
 from app.models.issue import Issue
-from app.models.team import TeamMember, TeamRole
-from app.models.project import UnestimatedHandling
+from app.models.team import TeamMember
+from app.enums import SprintStatus, TeamRole, UnestimatedHandling
 
 
 @pytest.mark.asyncio
@@ -601,7 +601,8 @@ async def test_close_sprint_moves_incomplete_issues(db_session, test_project, te
     await db_session.refresh(next_sprint)
 
     # Create incomplete issue in current sprint
-    from app.models.issue import Issue, IssueStatus
+    from app.models.issue import Issue
+    from app.enums import IssueStatus
     issue = Issue(
         project_id=test_project.id,
         sprint_id=current_sprint.id,
@@ -850,7 +851,8 @@ async def test_update_sprint_budget(client, auth_headers, test_project, db_sessi
 @pytest.mark.asyncio
 async def test_close_sprint_with_rituals_enters_limbo_via_api(client, auth_headers, test_project, db_session):
     """Test closing sprint via API enters limbo when rituals exist."""
-    from app.models.ritual import Ritual, RitualTrigger, ApprovalMode
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger, ApprovalMode
 
     # Create a ritual for the project
     ritual = Ritual(
@@ -1146,7 +1148,7 @@ async def test_budget_transaction_no_duplicate_on_status_unchanged(client, auth_
     no new BudgetTransaction should be created.
     """
     from app.models.budget_transaction import BudgetTransaction
-    from app.models.issue import IssueStatus
+    from app.enums import IssueStatus
     from sqlalchemy import select, func
 
     # Create an active sprint

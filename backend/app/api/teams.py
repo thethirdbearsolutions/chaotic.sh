@@ -13,7 +13,7 @@ from app.schemas.team import (
 )
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
-from app.models.team import TeamRole
+from app.enums import TeamRole
 
 router = APIRouter()
 

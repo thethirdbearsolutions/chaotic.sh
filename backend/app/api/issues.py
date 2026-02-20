@@ -36,8 +36,8 @@ from app.services.team_service import TeamService
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
-from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.models.document import DocumentActivityType
+from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import DocumentActivityType
 
 
 def _activity_type_value(raw, enum_cls):

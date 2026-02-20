@@ -5,13 +5,13 @@ import random
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
-from app.models.ritual import (
+from app.enums import (
     ApprovalMode,
     RitualTrigger,
     SelectionMode,
 )
-from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.models.ticket_limbo import LimboType
+from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
@@ -75,30 +75,18 @@ class RitualService:
 
     async def get_by_id(self, ritual_id: str, include_inactive: bool = False) -> OxydeRitual | None:
         """Get ritual by ID."""
-        query = OxydeRitual.objects.filter(id=ritual_id)
+        query = OxydeRitual.objects.join("group").filter(id=ritual_id)
         if not include_inactive:
             query = query.filter(is_active=True)
         ritual = await query.first()
-        if ritual:
-            # Load group for group_name property
-            if ritual.group_id:
-                group = await OxydeRitualGroup.objects.get_or_none(id=ritual.group_id)
-                ritual._group = group
-            else:
-                ritual._group = None
         return ritual
 
     async def get_by_name(self, project_id: str, name: str, include_inactive: bool = False) -> OxydeRitual | None:
         """Get ritual by name within a project."""
-        query = OxydeRitual.objects.filter(project_id=project_id, name=name)
+        query = OxydeRitual.objects.join("group").filter(project_id=project_id, name=name)
         if not include_inactive:
             query = query.filter(is_active=True)
         ritual = await query.first()
-        if ritual and ritual.group_id:
-            group = await OxydeRitualGroup.objects.get_or_none(id=ritual.group_id)
-            ritual._group = group
-        elif ritual:
-            ritual._group = None
         return ritual
 
     async def update(self, ritual: OxydeRitual, ritual_in: RitualUpdate) -> OxydeRitual:
@@ -160,22 +148,11 @@ class RitualService:
 
     async def list_by_project(self, project_id: str, include_inactive: bool = False) -> list[OxydeRitual]:
         """List all rituals for a project."""
-        query = OxydeRitual.objects.filter(project_id=project_id)
+        query = OxydeRitual.objects.join("group").filter(project_id=project_id)
         if not include_inactive:
             query = query.filter(is_active=True)
         query = query.order_by("created_at")
         rituals = await query.all()
-
-        # Batch-load groups
-        group_ids = {r.group_id for r in rituals if r.group_id}
-        groups = {}
-        if group_ids:
-            for gid in group_ids:
-                g = await OxydeRitualGroup.objects.get_or_none(id=gid)
-                if g:
-                    groups[gid] = g
-        for r in rituals:
-            r._group = groups.get(r.group_id)
 
         return rituals
 
@@ -195,7 +172,7 @@ class RitualService:
             selection_mode=group_in.selection_mode,
         )
         # Attach empty rituals list for response compat
-        group._rituals = []
+        group.rituals = []
         return group
 
     async def get_group_by_id(self, group_id: str) -> OxydeRitualGroup | None:
@@ -203,7 +180,7 @@ class RitualService:
         group = await OxydeRitualGroup.objects.get_or_none(id=group_id)
         if group:
             rituals = await OxydeRitual.objects.filter(group_id=group_id, is_active=True).all()
-            group._rituals = rituals
+            group.rituals = rituals
         return group
 
     async def get_group_by_name(self, project_id: str, name: str) -> OxydeRitualGroup | None:
@@ -211,7 +188,7 @@ class RitualService:
         group = await OxydeRitualGroup.objects.filter(project_id=project_id, name=name).first()
         if group:
             rituals = await OxydeRitual.objects.filter(group_id=group.id, is_active=True).all()
-            group._rituals = rituals
+            group.rituals = rituals
         return group
 
     async def list_groups_by_project(self, project_id: str) -> list[OxydeRitualGroup]:
@@ -221,7 +198,7 @@ class RitualService:
         ).order_by("created_at").all()
         for group in groups:
             rituals = await OxydeRitual.objects.filter(group_id=group.id, is_active=True).all()
-            group._rituals = rituals
+            group.rituals = rituals
         return groups
 
     async def update_group(self, group: OxydeRitualGroup, group_in: RitualGroupUpdate) -> OxydeRitualGroup:
@@ -1098,10 +1075,12 @@ class RitualService:
         if not ritual_map:
             return []
 
-        # Get attestations for these rituals
+        # Get attestations for these rituals with FK joins
         all_attestations = []
         for ritual_id in ritual_map:
-            atts = await OxydeRitualAttestation.objects.filter(ritual_id=ritual_id).all()
+            atts = await OxydeRitualAttestation.objects.join(
+                "ritual", "sprint", "issue"
+            ).filter(ritual_id=ritual_id).all()
             all_attestations.extend(atts)
 
         # Sort by attested_at descending
@@ -1110,18 +1089,12 @@ class RitualService:
         # Apply pagination
         paginated = all_attestations[skip:skip + limit]
 
-        # Build rich response dicts
+        # Build rich response dicts — attester/approver are raw string IDs, load manually
         results = []
         for att in paginated:
-            ritual = ritual_map.get(att.ritual_id)
-            sprint = await OxydeSprint.objects.get_or_none(id=att.sprint_id) if att.sprint_id else None
-            issue = await OxydeIssue.objects.get_or_none(id=att.issue_id) if att.issue_id else None
             attester = await OxydeUser.objects.get_or_none(id=att.attested_by) if att.attested_by else None
             approver = await OxydeUser.objects.get_or_none(id=att.approved_by) if att.approved_by else None
 
-            att._ritual = ritual
-            att._sprint = sprint
-            att._issue = issue
             att._attester = attester
             att._approver = approver
             results.append(att)

@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
-from app.models.sprint import SprintStatus
+from app.enums import SprintStatus
 from app.oxyde_models.enums import DbEnum
 
 

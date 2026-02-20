@@ -13,7 +13,7 @@ from app.oxyde_models.document import (
 )
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
-from app.models.document import DocumentActivityType
+from app.enums import DocumentActivityType
 from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentCommentCreate, DocumentCommentUpdate
 
 # Type aliases for API compatibility

@@ -1,7 +1,7 @@
 """Sprint schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from app.models.sprint import SprintStatus
+from app.enums import SprintStatus
 from app.utils import DateTimeUTC
 
 

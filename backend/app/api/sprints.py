@@ -6,7 +6,7 @@ from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
 from app.services.ritual_service import RitualService
-from app.models.sprint import SprintStatus
+from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
 
 router = APIRouter()

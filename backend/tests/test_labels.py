@@ -182,7 +182,8 @@ async def test_delete_label(client, auth_headers, test_team, db_session):
 @pytest.mark.asyncio
 async def test_delete_label_not_admin(client, auth_headers2, test_label, db_session, test_user2, test_team):
     """Test deleting label when not admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)

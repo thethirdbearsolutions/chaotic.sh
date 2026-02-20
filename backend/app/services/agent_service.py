@@ -65,46 +65,21 @@ class AgentService:
 
     async def get_by_id(self, agent_id: str) -> OxydeUser | None:
         """Get agent by ID."""
-        agent = await OxydeUser.objects.filter(
+        return await OxydeUser.objects.join("parent_user").filter(
             id=agent_id, is_agent=True
         ).first()
-        if agent:
-            # Load parent user data (replaces selectinload)
-            parent = await OxydeUser.objects.get_or_none(id=agent.parent_user_id)
-            agent._parent_user = parent
-        return agent
 
     async def list_by_team(self, team_id: str) -> list[OxydeUser]:
         """List all agents for a team (includes project-scoped agents)."""
-        agents = await OxydeUser.objects.filter(
+        return await OxydeUser.objects.join("parent_user").filter(
             is_agent=True, agent_team_id=team_id
         ).order_by("-created_at").all()
-        # Batch-load parent users
-        parent_ids = list({a.parent_user_id for a in agents if a.parent_user_id})
-        if parent_ids:
-            parents = await OxydeUser.objects.filter(id__in=parent_ids).all()
-            parent_map = {p.id: p for p in parents}
-        else:
-            parent_map = {}
-        for agent in agents:
-            agent._parent_user = parent_map.get(agent.parent_user_id)
-        return agents
 
     async def list_by_project(self, project_id: str) -> list[OxydeUser]:
         """List agents scoped to a specific project."""
-        agents = await OxydeUser.objects.filter(
+        return await OxydeUser.objects.join("parent_user").filter(
             is_agent=True, agent_project_id=project_id
         ).order_by("-created_at").all()
-        # Batch-load parent users
-        parent_ids = list({a.parent_user_id for a in agents if a.parent_user_id})
-        if parent_ids:
-            parents = await OxydeUser.objects.filter(id__in=parent_ids).all()
-            parent_map = {p.id: p for p in parents}
-        else:
-            parent_map = {}
-        for agent in agents:
-            agent._parent_user = parent_map.get(agent.parent_user_id)
-        return agents
 
     async def list_by_parent(self, parent_user_id: str) -> list[OxydeUser]:
         """List all agents created by a specific user."""
@@ -118,11 +93,8 @@ class AgentService:
         for field, value in update_data.items():
             setattr(agent, field, value)
         await agent.save(update_fields=set(update_data.keys()))
-        await agent.refresh()
-        # Reload parent user for response
-        parent = await OxydeUser.objects.get_or_none(id=agent.parent_user_id)
-        agent._parent_user = parent
-        return agent
+        # Re-query with join to load parent_user for response
+        return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 
     async def delete(self, agent: OxydeUser) -> None:
         """Delete an agent and its API keys."""

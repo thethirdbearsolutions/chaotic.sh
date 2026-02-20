@@ -20,10 +20,10 @@ from app.oxyde_models.issue import (
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
-from app.models.project import UnestimatedHandling
-from app.models.ticket_limbo import LimboType
-from app.models.ritual import ApprovalMode, RitualTrigger
+from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.enums import UnestimatedHandling
+from app.enums import LimboType
+from app.enums import ApprovalMode, RitualTrigger
 from app.services.ritual_service import RitualService
 from app.schemas.issue import (
     IssueCreate,
