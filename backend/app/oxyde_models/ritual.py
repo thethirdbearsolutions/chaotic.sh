@@ -22,6 +22,15 @@ class OxydeRitualGroup(OxydeModel):
     last_selected_ritual_id: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @property
+    def rituals(self) -> list:
+        """Child rituals. Requires manual loading (no reverse FK in Oxyde)."""
+        return getattr(self, '_rituals', [])
+
+    @rituals.setter
+    def rituals(self, value: list):
+        self._rituals = value
+
     class Meta:
         is_table = True
         table_name = "ritual_groups"
@@ -38,7 +47,7 @@ class OxydeRitual(OxydeModel):
     approval_mode: DbEnum(ApprovalMode) = Field(default=ApprovalMode.AUTO)
     note_required: bool = Field(default=True)
     conditions: str | None = Field(default=None)
-    group_id: str | None = Field(default=None)
+    group: OxydeRitualGroup | None = Field(default=None, db_on_delete="SET NULL")
     weight: float = Field(default=1.0)
     percentage: float | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -47,12 +56,8 @@ class OxydeRitual(OxydeModel):
 
     @property
     def group_name(self) -> str | None:
-        """Get the group name if ritual is in a group.
-
-        Requires manual loading of _group via join or separate query.
-        """
-        group = getattr(self, '_group', None)
-        return group.name if group else None
+        """Get the group name if ritual is in a group. Requires .join('group')."""
+        return self.group.name if self.group else None
 
     class Meta:
         is_table = True
@@ -63,9 +68,9 @@ class OxydeRitualAttestation(OxydeModel):
     """Record of a ritual being attested for a specific sprint or ticket."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    ritual_id: str = Field()
-    sprint_id: str | None = Field(default=None)
-    issue_id: str | None = Field(default=None)
+    ritual: OxydeRitual | None = Field(default=None, db_on_delete="CASCADE")
+    sprint: OxydeSprint | None = Field(default=None, db_on_delete="CASCADE")
+    issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
     attested_by: str | None = Field(default=None)
     attested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     note: str | None = Field(default=None)

@@ -19,7 +19,7 @@ class OxydeUser(OxydeModel):
 
     # Agent-specific fields
     is_agent: bool = Field(default=False)
-    parent_user_id: str | None = Field(default=None)
+    parent_user: "OxydeUser | None" = Field(default=None, db_on_delete="SET NULL")
     agent_team_id: str | None = Field(default=None)
     agent_project_id: str | None = Field(default=None)
 
