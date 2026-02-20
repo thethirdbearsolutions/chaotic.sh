@@ -700,34 +700,54 @@ def register(cli):
 
     @ritual.command("force-clear")
     @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+    @click.option("--ticket", default=None, help="Clear ticket-level limbo for a specific issue")
     @_main().require_project
     @_main().handle_error
-    def ritual_force_clear(yes):
+    def ritual_force_clear(yes, ticket):
         """Force-clear limbo without completing rituals (admin only).
 
-        This allows admins to skip rituals if the team decides to abort a limbo cycle.
-        The sprint will be completed and the next sprint activated without attestations.
+        Without --ticket: clears sprint-level limbo (completes the limbo sprint
+        and activates the next sprint without attestations).
+
+        With --ticket: clears ticket-level limbo for a specific issue, allowing
+        it to proceed with its blocked action (claim/close).
         """
         m = _main()
         project_id = m.get_current_project()
 
-        # Check if in limbo
-        status = _client().get_limbo_status(project_id)
-        if not status["in_limbo"]:
-            console.print("[yellow]Project is not in limbo.[/yellow]")
-            return
+        if ticket:
+            # Ticket-level limbo clearing
+            from cli.commands.shared import resolve_issue_id
+            team_id = m.get_current_team()
+            issue_id = resolve_issue_id(ticket, team_id)
 
-        pending_count = len(status["pending_rituals"])
+            if not yes:
+                console.print(f"[yellow]Warning: This will force-clear ticket limbo for {ticket}.[/yellow]")
+                if not m.confirm_action("Are you sure?"):
+                    console.print("[dim]Cancelled.[/dim]")
+                    return
 
-        if not yes:
-            console.print(f"[yellow]Warning: This will skip {pending_count} pending ritual(s).[/yellow]")
-            if not m.confirm_action("Are you sure you want to force-clear limbo?"):
-                console.print("[dim]Cancelled.[/dim]")
+            result = _client().force_clear_ticket_limbo(issue_id)
+            cleared = result.get("cleared_count", 0)
+            console.print(f"[green]Cleared {cleared} ticket limbo record(s) for {ticket}.[/green]")
+        else:
+            # Sprint-level limbo clearing (existing behavior)
+            status = _client().get_limbo_status(project_id)
+            if not status["in_limbo"]:
+                console.print("[yellow]Project is not in limbo.[/yellow]")
                 return
 
-        result = _client().force_clear_limbo(project_id)
-        next_name = result.get("next_sprint_name", "the next sprint")
-        console.print(f"[green]Limbo cleared. {next_name} is now active.[/green]")
+            pending_count = len(status["pending_rituals"])
+
+            if not yes:
+                console.print(f"[yellow]Warning: This will skip {pending_count} pending ritual(s).[/yellow]")
+                if not m.confirm_action("Are you sure you want to force-clear limbo?"):
+                    console.print("[dim]Cancelled.[/dim]")
+                    return
+
+            result = _client().force_clear_limbo(project_id)
+            next_name = result.get("next_sprint_name", "the next sprint")
+            console.print(f"[green]Limbo cleared. {next_name} is now active.[/green]")
 
     # Ritual Group commands
     @ritual.group("group")

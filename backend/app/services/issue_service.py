@@ -1058,7 +1058,7 @@ class IssueService:
                 "id": row["id"],
                 "issue_id": row["issue_id"],
                 "related_issue_id": row["related_issue_id"],
-                "relation_type": row["relation_type"],
+                "relation_type": row["relation_type"].lower(),
                 "direction": "outgoing",
                 "created_at": row["created_at"],
                 "related_issue_identifier": row["rel_identifier"],
@@ -1067,7 +1067,7 @@ class IssueService:
             })
 
         for row in incoming_rows:
-            display_type = row["relation_type"]
+            display_type = row["relation_type"].lower()
             if display_type == "blocks":
                 display_type = "blocked_by"
 
