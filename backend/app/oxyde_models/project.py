@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
-from app.models.project import EstimateScale, UnestimatedHandling
+from app.enums import EstimateScale, UnestimatedHandling
 from app.oxyde_models.enums import DbEnum
 
 

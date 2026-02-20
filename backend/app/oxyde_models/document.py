@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
-from app.models.document import DocumentActivityType
+from app.enums import DocumentActivityType
 from app.oxyde_models.enums import DbEnum
 
 

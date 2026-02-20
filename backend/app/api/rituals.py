@@ -25,7 +25,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.models.ritual import ApprovalMode, RitualTrigger
+from app.enums import ApprovalMode, RitualTrigger
 from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 

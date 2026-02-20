@@ -1,31 +1,10 @@
 """Ritual model for sprint transition ceremonies."""
 from datetime import datetime, timezone
-from enum import Enum
 from sqlalchemy import String, DateTime, ForeignKey, Text, Enum as SQLEnum, Boolean, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.enums import RitualTrigger, ApprovalMode, SelectionMode
 import uuid
-
-
-class RitualTrigger(str, Enum):
-    """When a ritual is required."""
-    EVERY_SPRINT = "every_sprint"  # Required every sprint close
-    TICKET_CLOSE = "ticket_close"  # Required when closing a ticket
-    TICKET_CLAIM = "ticket_claim"  # Required when claiming a ticket (→ in_progress)
-
-
-class ApprovalMode(str, Enum):
-    """How ritual attestation is approved."""
-    AUTO = "auto"        # Agent attestation clears immediately
-    REVIEW = "review"    # Human must approve attestation
-    GATE = "gate"        # Human must perform (agent cannot attest)
-
-
-class SelectionMode(str, Enum):
-    """How rituals in a group are selected."""
-    RANDOM_ONE = "random_one"      # Pick one ritual randomly (weighted)
-    ROUND_ROBIN = "round_robin"    # Rotate through rituals per sprint
-    PERCENTAGE = "percentage"      # Each ritual has independent X% chance
 
 
 class RitualGroup(Base):

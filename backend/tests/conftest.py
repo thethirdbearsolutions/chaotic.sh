@@ -8,7 +8,7 @@ from app.main import app
 from app.database import Base, get_db
 from app.models import User, Team, TeamMember, Project, Issue, Sprint, Document, Label
 from app.utils.security import get_password_hash, create_access_token
-from app.models.team import TeamRole
+from app.enums import TeamRole
 
 # Test database
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"

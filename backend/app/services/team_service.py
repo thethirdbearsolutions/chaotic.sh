@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitation
-from app.models.team import TeamRole, InvitationStatus
+from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
 from oxyde import atomic
 

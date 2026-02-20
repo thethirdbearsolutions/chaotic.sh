@@ -6,11 +6,12 @@ no teams), and filter pass-through on assignee path.
 """
 import pytest
 import pytest_asyncio
-from app.models.issue import Issue, IssueStatus, IssuePriority, Label
-from app.models.sprint import Sprint, SprintStatus
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.issue import Issue, Label
+from app.models.sprint import Sprint
+from app.models.team import Team, TeamMember
 from app.models.project import Project
 from app.models.user import User
+from app.enums import IssueStatus, IssuePriority, SprintStatus, TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 

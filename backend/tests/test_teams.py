@@ -1,6 +1,6 @@
 """Tests for team endpoints."""
 import pytest
-from app.models.team import TeamRole, InvitationStatus
+from app.enums import TeamRole, InvitationStatus
 
 
 @pytest.mark.asyncio
@@ -99,7 +99,8 @@ async def test_update_team(client, auth_headers, test_team):
 @pytest.mark.asyncio
 async def test_update_team_not_admin(client, auth_headers2, test_team, db_session, test_user2):
     """Test updating team when not admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -118,7 +119,8 @@ async def test_update_team_not_admin(client, auth_headers2, test_team, db_sessio
 async def test_delete_team(client, auth_headers, db_session):
     """Test deleting a team."""
     # Create a team to delete
-    from app.models.team import Team, TeamMember, TeamRole
+    from app.models.team import Team, TeamMember
+    from app.enums import TeamRole
     from app.services.user_service import UserService
 
     team = Team(name="Delete Me", key="DELETE")
@@ -223,7 +225,8 @@ async def test_accept_invitation(client, auth_headers2, test_team, db_session, t
 @pytest.mark.asyncio
 async def test_remove_member(client, auth_headers, test_team, db_session, test_user2):
     """Test removing a team member."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -267,7 +270,8 @@ async def test_update_team_partial(client, auth_headers, test_team):
 @pytest.mark.asyncio
 async def test_remove_member_as_admin(client, auth_headers, test_team, test_user2, db_session):
     """Test removing a team member as admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -305,7 +309,8 @@ async def test_update_team_not_found(client, auth_headers):
 @pytest.mark.asyncio
 async def test_delete_team_not_owner(client, auth_headers2, test_team, db_session, test_user2):
     """Test deleting team when not owner (only admin)."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as admin (not owner)
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.ADMIN)
@@ -335,7 +340,8 @@ async def test_list_team_members_not_member(client, auth_headers2, test_team):
 @pytest.mark.asyncio
 async def test_update_member_role(client, auth_headers, test_team, test_user2, db_session):
     """Test updating a member's role."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -354,7 +360,8 @@ async def test_update_member_role(client, auth_headers, test_team, test_user2, d
 @pytest.mark.asyncio
 async def test_update_member_role_not_admin(client, auth_headers2, test_team, test_user2, db_session):
     """Test updating member role when not admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -411,7 +418,8 @@ async def test_remove_owner_fails(client, auth_headers, test_team, test_user):
 @pytest.mark.asyncio
 async def test_remove_member_not_admin(client, auth_headers2, test_team, test_user, db_session, test_user2):
     """Test removing member when not admin (and not self)."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -429,7 +437,8 @@ async def test_remove_member_not_admin(client, auth_headers2, test_team, test_us
 @pytest.mark.asyncio
 async def test_remove_self_as_member(client, auth_headers2, test_team, db_session, test_user2):
     """Test that a member can remove themselves."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -458,7 +467,8 @@ async def test_create_invitation_team_not_found(client, auth_headers):
 @pytest.mark.asyncio
 async def test_create_invitation_not_admin(client, auth_headers2, test_team, db_session, test_user2):
     """Test creating invitation when not admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -488,7 +498,8 @@ async def test_create_invitation_already_member(client, auth_headers, test_team,
 @pytest.mark.asyncio
 async def test_list_invitations_not_admin(client, auth_headers2, test_team, db_session, test_user2):
     """Test listing invitations when not admin."""
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -663,7 +674,8 @@ async def test_create_invitation_for_existing_non_member(client, auth_headers, t
 async def test_team_service_add_member(db_session, test_team, test_user2):
     """Test TeamService.add_member directly (covers team_service.py L109-117)."""
     from app.services.team_service import TeamService
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     service = TeamService(db_session)
     member = await service.add_member(test_team, test_user2, TeamRole.MEMBER)

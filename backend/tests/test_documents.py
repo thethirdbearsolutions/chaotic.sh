@@ -2,8 +2,9 @@
 import pytest
 import pytest_asyncio
 from app.models.document import Document, DocumentComment
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
 from app.models.user import User
+from app.enums import TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 
@@ -103,7 +104,8 @@ class TestDocumentCRUD:
     ):
         """Test creating document with sprint from different project."""
         from app.models.project import Project
-        from app.models.sprint import Sprint, SprintStatus
+        from app.models.sprint import Sprint
+        from app.enums import SprintStatus
 
         # Create a second project
         project2 = Project(team_id=test_team.id, name="Other Project", key="OTH")
@@ -339,7 +341,8 @@ class TestDocumentCRUD:
 
     async def test_delete_document_not_author(self, client, auth_headers2, test_document, db_session, test_user2, test_team):
         """Test deleting document when not the author (and not admin)."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -460,7 +463,8 @@ class TestDocumentIssueLinks:
         self, client, auth_headers, test_team, test_user, test_document, db_session
     ):
         """Test that linking document to issue from different team is forbidden."""
-        from app.models.team import Team, TeamMember, TeamRole
+        from app.models.team import Team, TeamMember
+        from app.enums import TeamRole
         from app.models.project import Project
         from app.models.issue import Issue
 
@@ -569,7 +573,8 @@ class TestDocumentLabels:
         self, client, auth_headers, test_document, db_session, test_user
     ):
         """Test adding label from different team."""
-        from app.models.team import Team, TeamMember, TeamRole
+        from app.models.team import Team, TeamMember
+        from app.enums import TeamRole
         from app.models.issue import Label
 
         # Create a second team
@@ -738,7 +743,8 @@ class TestDocumentComments:
 
     async def test_update_comment_not_author(self, client, auth_headers2, test_document, db_session, test_user, test_user2, test_team):
         """Test updating comment by non-author."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)
@@ -797,7 +803,8 @@ class TestDocumentComments:
 
     async def test_delete_comment_not_author(self, client, auth_headers2, test_document, db_session, test_user, test_user2, test_team):
         """Test deleting comment by non-author."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
         db_session.add(member)

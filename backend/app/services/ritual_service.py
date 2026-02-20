@@ -5,13 +5,13 @@ import random
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
-from app.models.ritual import (
+from app.enums import (
     ApprovalMode,
     RitualTrigger,
     SelectionMode,
 )
-from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.models.ticket_limbo import LimboType
+from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint

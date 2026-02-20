@@ -1,7 +1,7 @@
 """Team schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from app.models.team import TeamRole, InvitationStatus
+from app.enums import TeamRole, InvitationStatus
 from app.utils import DateTimeUTC
 
 

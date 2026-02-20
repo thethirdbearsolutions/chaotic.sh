@@ -1,9 +1,9 @@
 """Tests for issue endpoints."""
 import pytest
 import pytest_asyncio
-from app.models.issue import IssueStatus, IssuePriority
-from app.models.team import Team, TeamMember, TeamRole
+from app.models.team import Team, TeamMember
 from app.models.user import User
+from app.enums import IssueStatus, IssuePriority, TeamRole
 from app.utils.security import get_password_hash, create_access_token
 
 
@@ -216,7 +216,7 @@ async def test_claim_no_op_status_transition(client, auth_headers, test_project,
     Edge case: If an issue is already IN_PROGRESS and we update it to IN_PROGRESS again,
     the estimate check should not trigger since it's not a status change.
     """
-    from app.models.issue import IssueStatus
+    from app.enums import IssueStatus
 
     # Enable require_estimate_on_claim
     test_project.require_estimate_on_claim = True
@@ -600,7 +600,8 @@ async def test_update_comment(client, auth_headers, test_issue, db_session, test
 async def test_update_comment_not_author(client, auth_headers2, test_issue, db_session, test_user, test_team, test_user2):
     """Test updating comment when not author."""
     from app.models.issue import IssueComment
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -722,7 +723,7 @@ async def test_search_rejects_cross_team_project_id(client, auth_headers, test_t
     """
     from app.models.project import Project
     from app.models.team import Team, TeamMember
-    from app.models.team import TeamRole
+    from app.enums import TeamRole
 
     # Create a second team with a project
     other_team = Team(name="Other Team", key="OTHER")
@@ -851,8 +852,10 @@ async def test_apply_sort_random(db_session, test_project, test_user):
 async def test_check_sprint_limbo_blocks_operations(db_session, test_project, test_user):
     """Test that sprint limbo blocks issue operations."""
     from app.services.issue_service import IssueService, SprintInLimboError
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint
     sprint = Sprint(
@@ -887,7 +890,8 @@ async def test_check_sprint_limbo_blocks_operations(db_session, test_project, te
 async def test_check_sprint_arrears_blocks_operations(db_session, test_project, test_user):
     """Test that sprint arrears blocks issue operations."""
     from app.services.issue_service import IssueService, SprintInArrearsError
-    from app.models.sprint import Sprint, SprintStatus
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
 
     # Create sprint in arrears (spent > budget)
     sprint = Sprint(
@@ -915,7 +919,8 @@ async def test_check_sprint_arrears_blocks_operations(db_session, test_project, 
 async def test_check_ticket_rituals_blocks_completion(db_session, test_project, test_user, test_issue):
     """Test that pending ticket rituals block issue completion."""
     from app.services.issue_service import IssueService, TicketRitualsError
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create TICKET_CLOSE ritual
     ritual = Ritual(
@@ -941,7 +946,8 @@ async def test_check_ticket_rituals_blocks_completion(db_session, test_project, 
 async def test_check_ticket_rituals_humans_can_skip(db_session, test_project, test_user, test_issue):
     """Test that humans can skip ticket rituals when configured."""
     from app.services.issue_service import IssueService
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Set project to allow humans to skip rituals
     test_project.human_rituals_required = False
@@ -967,7 +973,8 @@ async def test_check_ticket_rituals_humans_can_skip(db_session, test_project, te
 async def test_list_by_project_with_filters(db_session, test_project, test_user):
     """Test listing issues with various filters."""
     from app.services.issue_service import IssueService
-    from app.models.issue import Issue, IssueStatus, IssuePriority
+    from app.models.issue import Issue
+    from app.enums import IssueStatus, IssuePriority
 
     # Create issues with different attributes
     issue1 = Issue(
@@ -1022,7 +1029,7 @@ async def test_update_issue_activity_logging(db_session, test_project, test_user
     """Test that updating issues creates activity logs."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import IssueStatus, IssuePriority, ActivityType
+    from app.enums import IssueStatus, IssuePriority, ActivityType
     from sqlalchemy import select
     from app.models.issue import IssueActivity
 
@@ -1057,7 +1064,7 @@ async def test_update_issue_assignee_activity(db_session, test_project, test_use
     """Test that assigning/unassigning creates activity logs."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import ActivityType
+    from app.enums import ActivityType
     from sqlalchemy import select
     from app.models.issue import IssueActivity
 
@@ -1091,8 +1098,9 @@ async def test_update_issue_sprint_activity(db_session, test_project, test_user,
     """Test that moving to/from sprint creates activity logs."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import ActivityType
-    from app.models.sprint import Sprint, SprintStatus
+    from app.enums import ActivityType
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
     from sqlalchemy import select
     from app.models.issue import IssueActivity
 
@@ -1136,7 +1144,7 @@ async def test_list_activities(db_session, test_project, test_user, test_issue):
     """Test listing activities for an issue."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import IssueStatus
+    from app.enums import IssueStatus
 
     service = IssueService(db_session)
 
@@ -1157,7 +1165,7 @@ async def test_list_team_activities(db_session, test_team, test_project, test_us
     """Test listing activities for a team."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import IssueStatus
+    from app.enums import IssueStatus
 
     service = IssueService(db_session)
 
@@ -1173,7 +1181,8 @@ async def test_list_team_activities(db_session, test_team, test_project, test_us
 @pytest.mark.asyncio
 async def test_list_issues_with_multiple_statuses(client, auth_headers, test_project, test_user, db_session):
     """Test listing issues with multiple status filters."""
-    from app.models.issue import Issue, IssueStatus
+    from app.models.issue import Issue
+    from app.enums import IssueStatus
 
     # Create issues with different statuses
     issue1 = Issue(
@@ -1296,7 +1305,8 @@ async def test_create_issue_with_parent(client, auth_headers, test_project, test
 async def test_list_issues_with_sprint_filter(client, auth_headers, test_project, test_user, db_session):
     """Test listing issues filtered by sprint."""
     from app.models.issue import Issue
-    from app.models.sprint import Sprint, SprintStatus
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
 
     # Create sprint
     sprint = Sprint(
@@ -1480,7 +1490,8 @@ async def test_add_label_not_found(client, auth_headers, test_issue):
 @pytest.mark.asyncio
 async def test_add_label_wrong_team(client, auth_headers, test_issue, db_session, test_user):
     """Test adding label from different team."""
-    from app.models.team import Team, TeamMember, TeamRole
+    from app.models.team import Team, TeamMember
+    from app.enums import TeamRole
     from app.models.issue import Label
 
     # Create another team with a label
@@ -1741,7 +1752,8 @@ async def test_create_self_relation(client, auth_headers, test_issue):
 @pytest.mark.asyncio
 async def test_list_relations(client, auth_headers, test_project, test_user, db_session):
     """Test listing relations for an issue."""
-    from app.models.issue import Issue, IssueRelation, IssueRelationType
+    from app.models.issue import Issue, IssueRelation
+    from app.enums import IssueRelationType
 
     # Create issues
     issue1 = Issue(
@@ -1794,7 +1806,8 @@ async def test_list_relations_issue_not_found(client, auth_headers):
 @pytest.mark.asyncio
 async def test_delete_relation(client, auth_headers, test_project, test_user, db_session):
     """Test deleting a relation."""
-    from app.models.issue import Issue, IssueRelation, IssueRelationType
+    from app.models.issue import Issue, IssueRelation
+    from app.enums import IssueRelationType
 
     # Create issues and relation
     issue1 = Issue(
@@ -1843,7 +1856,8 @@ async def test_delete_relation_not_found(client, auth_headers, test_issue):
 @pytest.mark.asyncio
 async def test_delete_relation_wrong_issue(client, auth_headers, test_project, test_user, db_session):
     """Test deleting relation from wrong issue."""
-    from app.models.issue import Issue, IssueRelation, IssueRelationType
+    from app.models.issue import Issue, IssueRelation
+    from app.enums import IssueRelationType
 
     # Create issues
     issue1 = Issue(
@@ -1938,7 +1952,7 @@ async def test_list_issue_activities(client, auth_headers, test_issue, db_sessio
     """Test listing activities for an issue."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
-    from app.models.issue import IssueStatus
+    from app.enums import IssueStatus
 
     service = IssueService(db_session)
     update = IssueUpdate(status=IssueStatus.IN_PROGRESS)
@@ -1998,7 +2012,8 @@ async def test_list_issues_by_team(client, auth_headers, test_team, test_project
 async def test_list_issues_by_sprint_only(client, auth_headers, test_project, test_user, db_session):
     """Test listing issues by sprint only (without project_id or team_id)."""
     from app.models.issue import Issue
-    from app.models.sprint import Sprint, SprintStatus
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
 
     # Create sprint
     sprint = Sprint(
@@ -2202,8 +2217,10 @@ async def test_update_issue_not_found(client, auth_headers):
 @pytest.mark.asyncio
 async def test_update_issue_sprint_limbo_error(client, auth_headers, test_project, test_issue, db_session):
     """Test that sprint limbo blocks issue updates."""
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2236,8 +2253,10 @@ async def test_update_issue_sprint_limbo_error(client, auth_headers, test_projec
 @pytest.mark.asyncio
 async def test_complete_issue_blocked_during_limbo(client, auth_headers, test_project, test_issue, db_session):
     """Test that completing an issue (status → DONE) is blocked during limbo (CHT-95)."""
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2270,8 +2289,10 @@ async def test_complete_issue_blocked_during_limbo(client, auth_headers, test_pr
 @pytest.mark.asyncio
 async def test_cancel_issue_blocked_during_limbo(client, auth_headers, test_project, test_issue, db_session):
     """Test that canceling an issue (status → CANCELED) is blocked during limbo (CHT-95)."""
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2304,8 +2325,10 @@ async def test_cancel_issue_blocked_during_limbo(client, auth_headers, test_proj
 @pytest.mark.asyncio
 async def test_create_issue_with_done_status_blocked_during_limbo(client, auth_headers, test_project, db_session):
     """Test that creating an issue with DONE status is blocked during limbo (CHT-95)."""
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2341,8 +2364,10 @@ async def test_create_issue_with_done_status_blocked_during_limbo(client, auth_h
 @pytest.mark.asyncio
 async def test_create_issue_with_in_progress_status_blocked_during_limbo(client, auth_headers, test_project, db_session):
     """Test that creating an issue with IN_PROGRESS status is blocked during limbo (CHT-95)."""
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2382,8 +2407,10 @@ async def test_allowed_operations_during_limbo(client, auth_headers, test_projec
     Fail-closed means blocking dangerous operations, not all operations.
     Title/description updates and creating backlog issues should still work.
     """
-    from app.models.sprint import Sprint, SprintStatus
-    from app.models.ritual import Ritual, RitualTrigger
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger
 
     # Create limbo sprint with a ritual
     sprint = Sprint(
@@ -2428,7 +2455,8 @@ async def test_allowed_operations_during_limbo(client, auth_headers, test_projec
 @pytest.mark.asyncio
 async def test_update_issue_sprint_arrears_error(client, auth_headers, test_project, test_issue, db_session):
     """Test that sprint arrears blocks issue updates."""
-    from app.models.sprint import Sprint, SprintStatus
+    from app.models.sprint import Sprint
+    from app.enums import SprintStatus
 
     # Create sprint in arrears
     sprint = Sprint(
@@ -2523,7 +2551,8 @@ async def test_delete_comment_nonexistent_comment(client, auth_headers, test_iss
 async def test_delete_comment_not_author(client, auth_headers2, test_issue, db_session, test_user, test_user2, test_team):
     """Test deleting comment when not author."""
     from app.models.issue import IssueComment
-    from app.models.team import TeamMember, TeamRole
+    from app.models.team import TeamMember
+    from app.enums import TeamRole
 
     # Add user2 as member
     member = TeamMember(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
@@ -2963,7 +2992,8 @@ async def test_create_issue_with_done_status_checks_rituals(
     """
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
-    from app.models.ritual import Ritual, RitualTrigger, ApprovalMode
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger, ApprovalMode
 
     # Create a TICKET_CLOSE ritual
     ritual = Ritual(
@@ -3027,7 +3057,8 @@ async def test_ticket_rituals_error_response_structure(
     """
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
-    from app.models.ritual import Ritual, RitualTrigger, ApprovalMode
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger, ApprovalMode
 
     # Create a TICKET_CLOSE ritual with a specific prompt
     ritual = Ritual(
@@ -3087,7 +3118,8 @@ async def test_ticket_rituals_error_multiple_rituals(
     """Test that TicketRitualsError includes all pending rituals (CHT-158)."""
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
-    from app.models.ritual import Ritual, RitualTrigger, ApprovalMode
+    from app.models.ritual import Ritual
+    from app.enums import RitualTrigger, ApprovalMode
 
     # Create multiple TICKET_CLOSE rituals
     ritual1 = Ritual(

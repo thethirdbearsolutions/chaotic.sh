@@ -1,47 +1,10 @@
 """Issue and related models."""
 from datetime import datetime, timezone
-from enum import Enum
 from sqlalchemy import String, DateTime, ForeignKey, Integer, Text, Enum as SQLEnum, Table, Column, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
 import uuid
-
-
-class IssueStatus(str, Enum):
-    """Issue status."""
-    BACKLOG = "backlog"
-    TODO = "todo"
-    IN_PROGRESS = "in_progress"
-    IN_REVIEW = "in_review"
-    DONE = "done"
-    CANCELED = "canceled"
-
-
-class IssuePriority(str, Enum):
-    """Issue priority."""
-    NO_PRIORITY = "no_priority"
-    URGENT = "urgent"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-class IssueType(str, Enum):
-    """Issue type."""
-    TASK = "task"
-    BUG = "bug"
-    FEATURE = "feature"
-    CHORE = "chore"
-    DOCS = "docs"
-    TECH_DEBT = "tech_debt"
-    EPIC = "epic"
-
-
-class IssueRelationType(str, Enum):
-    """Type of relationship between issues."""
-    BLOCKS = "blocks"
-    RELATES_TO = "relates_to"
-    DUPLICATES = "duplicates"
 
 
 # Association table for issue labels
@@ -156,22 +119,6 @@ class IssueComment(Base):
     # Relationships
     issue: Mapped["Issue"] = relationship("Issue", back_populates="comments")
     author: Mapped["User"] = relationship("User", back_populates="comments")
-
-
-class ActivityType(str, Enum):
-    """Type of activity."""
-    CREATED = "created"
-    UPDATED = "updated"
-    STATUS_CHANGED = "status_changed"
-    PRIORITY_CHANGED = "priority_changed"
-    ASSIGNED = "assigned"
-    UNASSIGNED = "unassigned"
-    COMMENTED = "commented"
-    LABELED = "labeled"
-    UNLABELED = "unlabeled"
-    MOVED_TO_SPRINT = "moved_to_sprint"
-    REMOVED_FROM_SPRINT = "removed_from_sprint"
-    RITUAL_ATTESTED = "ritual_attested"
 
 
 class IssueActivity(Base):

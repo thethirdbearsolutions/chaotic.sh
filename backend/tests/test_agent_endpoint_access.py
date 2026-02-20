@@ -145,7 +145,8 @@ class TestAgentGetAgent:
         self, client, agent_headers, other_team, db_session, test_user
     ):
         """Agent should be denied access to an agent in a different team."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         # Make test_user a member of other_team so they can create an agent there
         member = TeamMember(

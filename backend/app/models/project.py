@@ -1,24 +1,10 @@
 """Project model."""
 from datetime import datetime, timezone
-from enum import Enum
 from sqlalchemy import String, DateTime, ForeignKey, Integer, Boolean, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.enums import EstimateScale, UnestimatedHandling
 import uuid
-
-
-class EstimateScale(str, Enum):
-    """Available estimation scales for projects."""
-    FIBONACCI = "fibonacci"           # 1, 2, 3, 5, 8, 13, 21
-    LINEAR = "linear"                 # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-    POWERS_OF_2 = "powers_of_2"       # 1, 2, 4, 8, 16, 32, 64
-    TSHIRT = "tshirt"                 # XS, S, M, L, XL (stored as 1, 2, 3, 5, 8)
-
-
-class UnestimatedHandling(str, Enum):
-    """How to handle unestimated issues for sprint budget."""
-    DEFAULT_ONE_POINT = "default_one_point"      # Count as 1 point
-    BLOCK_UNTIL_ESTIMATED = "block_until_estimated"  # Block completion
 
 
 class Project(Base):

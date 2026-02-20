@@ -8,12 +8,13 @@ Targets uncovered lines:
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock
-from app.models.issue import Issue, IssueStatus
-from app.models.ritual import Ritual, RitualTrigger, ApprovalMode, RitualAttestation
-from app.models.ticket_limbo import TicketLimbo, LimboType
+from app.models.issue import Issue
+from app.models.ritual import Ritual, RitualAttestation
+from app.models.ticket_limbo import TicketLimbo
 from app.models.user import User
-from app.models.team import TeamMember, TeamRole
+from app.models.team import TeamMember
 from app.models.project import Project
+from app.enums import IssueStatus, RitualTrigger, ApprovalMode, LimboType, TeamRole
 from app.models import Sprint, Label
 
 
@@ -222,7 +223,7 @@ class TestCreateIssueErrorBranches:
         with patch("app.api.issues.IssueService") as MockService:
             mock_svc = AsyncMock()
             # create() needs to return a realistic issue for issue_to_response
-            from app.models.issue import IssuePriority, IssueType
+            from app.enums import IssuePriority, IssueType
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             mock_issue = Issue(

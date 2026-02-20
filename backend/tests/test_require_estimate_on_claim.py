@@ -4,7 +4,7 @@ This setting should only enforce estimate requirements for AGENTS claiming ticke
 not for HUMANS creating or claiming tickets through the web UI.
 """
 import pytest
-from app.models.issue import IssueStatus
+from app.enums import IssueStatus
 
 
 @pytest.mark.asyncio

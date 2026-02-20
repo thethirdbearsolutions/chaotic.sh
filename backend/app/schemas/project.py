@@ -1,7 +1,7 @@
 """Project schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from app.models.project import EstimateScale, UnestimatedHandling
+from app.enums import EstimateScale, UnestimatedHandling
 from app.utils import DateTimeUTC
 
 

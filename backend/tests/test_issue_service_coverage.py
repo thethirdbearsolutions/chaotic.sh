@@ -10,11 +10,12 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.models.issue import (
-    Issue, IssueStatus, IssuePriority, IssueType, Label,
-    IssueRelation, IssueRelationType, issue_labels,
+    Issue, Label,
+    IssueRelation, issue_labels,
 )
 from app.models.project import Project
-from app.models.sprint import Sprint, SprintStatus
+from app.models.sprint import Sprint
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, SprintStatus
 from app.services.issue_service import IssueService
 
 

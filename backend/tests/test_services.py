@@ -12,8 +12,7 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.schemas.issue import IssueCreate, IssueUpdate, IssueCommentCreate, LabelCreate
 from app.schemas.sprint import SprintCreate, SprintUpdate
 from app.schemas.document import DocumentCreate, DocumentUpdate
-from app.models.team import TeamRole
-from app.models.issue import IssueStatus, IssuePriority
+from app.enums import TeamRole, IssueStatus, IssuePriority
 
 
 # User Service Tests

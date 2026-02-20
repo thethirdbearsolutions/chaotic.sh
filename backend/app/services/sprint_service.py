@@ -5,8 +5,8 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 from oxyde import atomic, execute_raw
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
-from app.models.sprint import SprintStatus
-from app.models.issue import IssueStatus
+from app.enums import SprintStatus
+from app.enums import IssueStatus
 from app.schemas.sprint import SprintCreate, SprintUpdate
 
 # Type alias for API compatibility

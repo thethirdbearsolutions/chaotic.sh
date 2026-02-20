@@ -1,7 +1,7 @@
 """Issue schemas."""
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from app.models.issue import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.utils import DateTimeUTC
 
 

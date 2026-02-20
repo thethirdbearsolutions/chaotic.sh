@@ -8,7 +8,7 @@ from oxyde import OxydeModel, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
-from app.models.ritual import RitualTrigger, ApprovalMode, SelectionMode
+from app.enums import RitualTrigger, ApprovalMode, SelectionMode
 from app.oxyde_models.enums import DbEnum
 
 

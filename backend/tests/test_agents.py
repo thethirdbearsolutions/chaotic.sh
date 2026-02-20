@@ -416,7 +416,8 @@ class TestAgentAPIEndpoints:
 
     async def test_update_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db_session, test_user):
         """PATCH /agents/{agent_id} should return 403 for unauthorized users."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         service = AgentService(db_session)
         agent, _, _ = await service.create(
@@ -447,7 +448,8 @@ class TestAgentAPIEndpoints:
 
     async def test_delete_agent_not_authorized(self, client, auth_headers2, test_team, test_user2, db_session, test_user):
         """DELETE /agents/{agent_id} should return 403 for unauthorized users."""
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         service = AgentService(db_session)
         agent, _, _ = await service.create(
@@ -545,7 +547,8 @@ class TestAgentAPIEndpoints:
 
         Covers agents.py L42-46: the is_agent check that fires after membership passes.
         """
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         service = AgentService(db_session)
         agent, api_key, _ = await service.create(
@@ -596,7 +599,8 @@ class TestAgentAPIEndpoints:
 
         Covers agents.py L99-103: the is_agent check for project-scoped agent creation.
         """
-        from app.models.team import TeamMember, TeamRole
+        from app.models.team import TeamMember
+        from app.enums import TeamRole
 
         service = AgentService(db_session)
         agent, api_key, _ = await service.create(

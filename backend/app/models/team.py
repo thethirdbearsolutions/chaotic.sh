@@ -1,25 +1,10 @@
 """Team models."""
 from datetime import datetime, timezone
-from enum import Enum
 from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+from app.enums import TeamRole, InvitationStatus
 import uuid
-
-
-class TeamRole(str, Enum):
-    """Team member roles."""
-    OWNER = "owner"
-    ADMIN = "admin"
-    MEMBER = "member"
-
-
-class InvitationStatus(str, Enum):
-    """Invitation status."""
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    DECLINED = "declined"
-    EXPIRED = "expired"
 
 
 class Team(Base):

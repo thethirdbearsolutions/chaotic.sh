@@ -5,7 +5,8 @@ params on GET /issues, random shuffle, default fallback, and null handling.
 """
 import pytest
 from datetime import datetime, timezone, timedelta
-from app.models.issue import Issue, IssueStatus, IssuePriority
+from app.models.issue import Issue
+from app.enums import IssueStatus, IssuePriority
 
 
 # ─────────────────────────────────────────────────────────────────────
