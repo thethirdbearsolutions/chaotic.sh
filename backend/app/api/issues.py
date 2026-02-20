@@ -1214,7 +1214,7 @@ async def create_relation(
         "id": relation.id,
         "issue_id": relation.issue_id,
         "related_issue_id": relation.related_issue_id,
-        "relation_type": relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name,
+        "relation_type": (relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name).lower(),
         "created_at": relation.created_at,
     }
 
