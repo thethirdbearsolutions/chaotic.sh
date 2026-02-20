@@ -159,8 +159,8 @@ def resolve_document_id(doc_value: str, team_id: str) -> str:
 
     Raises ClickException on ambiguity or not found.
     """
-    # Fetch all documents for resolution
-    documents = _client().get_documents(team_id)
+    # Fetch all documents for resolution (high limit to avoid pagination cutoff)
+    documents = _client().get_documents(team_id, limit=10000)
     if not documents:
         raise click.ClickException("No documents exist. Create one with 'chaotic doc create'.")
 
