@@ -381,9 +381,6 @@ class Client:
     def get_ritual_history(self, project_id: str, skip: int = 0, limit: int = 50) -> list:
         return self._request("GET", f"/rituals/history?project_id={project_id}&skip={skip}&limit={limit}")
 
-    def get_pending_gates(self, project_id: str) -> list:
-        return self._request("GET", f"/rituals/pending-gates?project_id={project_id}")
-
     def get_limbo_status(self, project_id: str) -> dict:
         return self._request("GET", f"/rituals/limbo?project_id={project_id}")
 

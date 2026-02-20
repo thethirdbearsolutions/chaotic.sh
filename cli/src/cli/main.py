@@ -989,7 +989,8 @@ def status():
                 if review_count:
                     parts.append(f"{review_count} review{'s' if review_count != 1 else ''}")
                 count = len(pending)
-                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting approval ({', '.join(parts)})")
+                suffix = f" ({', '.join(parts)})" if parts else ""
+                console.print(f"\n  [yellow]⚠[/yellow] [bold]{count}[/bold] issue{'s' if count != 1 else ''} awaiting approval{suffix}")
                 for item in pending[:5]:
                     ident = item.get("identifier", "")
                     title = item.get("title", "")
