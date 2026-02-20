@@ -112,6 +112,7 @@ async def list_documents(
     limit: int = 100,
 ):
     """List documents for a team."""
+    limit = min(limit, 10000)
     document_service = DocumentService()
 
     if not await check_user_team_access(current_user, team_id):

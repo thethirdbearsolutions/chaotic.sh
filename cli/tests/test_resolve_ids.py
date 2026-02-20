@@ -85,6 +85,7 @@ class TestResolveDocumentIdExactMatch:
         result = resolve_document_id("abc12345-1111-2222-3333-444444444444", "team-123")
 
         assert result == "abc12345-1111-2222-3333-444444444444"
+        client.get_documents.assert_called_with("team-123", limit=10000)
 
 
 class TestResolveDocumentIdTitleMatch:

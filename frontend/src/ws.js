@@ -131,7 +131,7 @@ export function handleWebSocketMessage(message) {
             }
 
             if (getCurrentView() === 'my-issues') {
-                loadDashboardActivity();
+                loadDashboardActivity({ showLoading: false });
             }
 
             // Re-render board/sprints when issues are created (CHT-237)
@@ -166,7 +166,7 @@ export function handleWebSocketMessage(message) {
                 renderIssues();
             } else if (getCurrentView() === 'my-issues') {
                 renderMyIssues();
-                loadDashboardActivity();
+                loadDashboardActivity({ showLoading: false });
             } else if (getCurrentView() === 'board') {
                 // Re-render board when issues change (CHT-237)
                 renderBoard();
@@ -190,7 +190,7 @@ export function handleWebSocketMessage(message) {
                 renderIssues();
             } else if (getCurrentView() === 'my-issues') {
                 renderMyIssues();
-                loadDashboardActivity();
+                loadDashboardActivity({ showLoading: false });
             } else if (getCurrentView() === 'board') {
                 // Re-render board when issues change (CHT-237)
                 renderBoard();
@@ -207,7 +207,7 @@ export function handleWebSocketMessage(message) {
         }
     } else if (entity === 'comment') {
         if (getCurrentView() === 'my-issues') {
-            loadDashboardActivity();
+            loadDashboardActivity({ showLoading: false });
         }
         // Refresh issue detail if viewing the commented issue (CHT-71)
         if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
@@ -234,7 +234,7 @@ export function handleWebSocketMessage(message) {
         // Activity event (CHT-359) - reload dashboard activity
         // TODO: In the future, prepend data directly instead of refetching
         if (getCurrentView() === 'my-issues') {
-            loadDashboardActivity();
+            loadDashboardActivity({ showLoading: false });
         }
         // Also refresh issue detail if viewing an affected issue
         if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {

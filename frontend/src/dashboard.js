@@ -91,14 +91,16 @@ export async function loadMyIssues() {
 
 /**
  * Load recent activity for the dashboard.
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.showLoading=true] - Whether to show loading state (skip for WS updates to avoid FOUC)
  */
-export async function loadDashboardActivity() {
+export async function loadDashboardActivity({ showLoading = true } = {}) {
     const currentTeam = deps.getCurrentTeam();
 
     if (!currentTeam) return;
 
     const container = document.getElementById('dashboard-activity-list');
-    if (container) {
+    if (showLoading && container) {
         container.innerHTML = `
             <div class="activity-item">
                 <div class="activity-icon">⏳</div>

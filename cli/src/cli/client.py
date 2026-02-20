@@ -300,7 +300,7 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/documents?team_id={team_id}", data)
 
-    def get_documents(self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None) -> list:
+    def get_documents(self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None, limit: int = None) -> list:
         url = f"/documents?team_id={team_id}"
         if project_id:
             url += f"&project_id={project_id}"
@@ -308,6 +308,8 @@ class Client:
             url += f"&sprint_id={sprint_id}"
         if search:
             url += f"&search={search}"
+        if limit is not None:
+            url += f"&limit={limit}"
         return self._request("GET", url)
 
     def get_document(self, document_id: str) -> dict:

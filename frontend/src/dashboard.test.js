@@ -184,6 +184,17 @@ describe('dashboard module', () => {
             expect(container.innerHTML).toContain('Loading activity');
         });
 
+        it('skips loading state when showLoading is false', async () => {
+            const container = document.getElementById('dashboard-activity-list');
+            container.innerHTML = '<div>Existing content</div>';
+            api.getTeamActivities.mockImplementation(() => new Promise(() => {}));
+
+            loadDashboardActivity({ showLoading: false });
+
+            expect(container.innerHTML).toContain('Existing content');
+            expect(container.innerHTML).not.toContain('Loading activity');
+        });
+
         it('shows error message on failure', async () => {
             api.getTeamActivities.mockRejectedValue(new Error('Failed'));
 
