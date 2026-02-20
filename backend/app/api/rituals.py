@@ -377,7 +377,7 @@ async def force_clear_ticket_limbo(
     for limbo in limbo_records:
         limbo.cleared_at = now
         limbo.cleared_by_id = current_user.id
-        await limbo.save()
+        await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
 
     return {
         "message": f"Cleared {len(limbo_records)} ticket limbo record(s)",

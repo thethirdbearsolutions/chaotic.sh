@@ -207,7 +207,7 @@ class RitualService:
         update_data = group_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(group, field, value)
-        await group.save()
+        await group.save(update_fields=set(update_data.keys()))
         return await self.get_group_by_id(group.id)
 
     async def delete_group(self, group: OxydeRitualGroup) -> None:
@@ -305,7 +305,7 @@ class RitualService:
 
         if advance and group.last_selected_ritual_id != selected.id:
             group.last_selected_ritual_id = selected.id
-            await group.save()
+            await group.save(update_fields={"last_selected_ritual_id"})
 
         return selected
 
@@ -778,7 +778,7 @@ class RitualService:
         for limbo in limbo_records:
             limbo.cleared_at = now
             limbo.cleared_by_id = cleared_by_id
-            await limbo.save()
+            await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
 
     async def _cleanup_orphaned_ticket_limbo(self, project_id: str) -> int:
         """Clear orphaned ticket limbo records where attestation already exists."""
@@ -805,7 +805,7 @@ class RitualService:
             if attestation and attestation.approved_at is not None:
                 limbo.cleared_at = datetime.now(timezone.utc)
                 limbo.cleared_by_id = attestation.approved_by
-                await limbo.save()
+                await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
                 cleared_count += 1
 
         if cleared_count:
@@ -918,7 +918,7 @@ class RitualService:
             oxyde_sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
             if oxyde_sprint:
                 oxyde_sprint.limbo = True
-                await oxyde_sprint.save()
+                await oxyde_sprint.save(update_fields={"limbo"})
             return selected_rituals
         return []
 
