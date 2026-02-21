@@ -1,4 +1,5 @@
 """Ritual management commands."""
+import json as json_module
 import sys
 
 import click
@@ -122,6 +123,76 @@ def register(cli):
         if not rituals:
             console.print("[yellow]No rituals configured for this project.[/yellow]")
             console.print("[dim]Create rituals with 'chaotic ritual create'.[/dim]")
+
+    @ritual.command("show")
+    @click.argument("ritual_name")
+    @_main().json_option
+    @_main().require_project
+    @_main().handle_error
+    def ritual_show(ritual_name):
+        """Show details for a specific ritual.
+
+        RITUAL_NAME is the name of the ritual to inspect.
+        """
+        m = _main()
+        project_id = m.get_current_project()
+
+        # Find ritual by name, case-insensitive (include inactive so we can
+        # show deleted ones too)
+        rituals = _client().get_rituals(project_id, include_inactive=True)
+        rit = next((r for r in rituals if r["name"].lower() == ritual_name.lower()), None)
+
+        if not rit:
+            console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
+            console.print("Run `chaotic ritual list` to see available rituals.")
+            raise SystemExit(1)
+
+        if m.is_json_output():
+            m.output_json(rit)
+            return
+
+        # Header
+        active_badge = "" if rit.get("is_active", True) else " [red](deleted)[/red]"
+        console.print(f"[bold]{rit['name']}[/bold]{active_badge}")
+
+        # Trigger
+        trigger_desc = {
+            "every_sprint": "Sprint close",
+            "ticket_close": "Ticket close",
+            "ticket_claim": "Ticket claim",
+        }.get(rit.get("trigger", "every_sprint"), rit.get("trigger", "every_sprint"))
+        console.print(f"  Trigger: {trigger_desc}")
+
+        # Mode
+        mode_desc = {
+            "auto": "Auto (agent clears immediately)",
+            "review": "Review (agent attests, human approves)",
+            "gate": "Gate (human only)",
+        }.get(rit.get("approval_mode", "auto"), rit.get("approval_mode", "auto"))
+        console.print(f"  Mode: {mode_desc}")
+
+        # Note required
+        note_req = rit.get("note_required", True)
+        console.print(f"  Note required: {'yes' if note_req else 'no'}")
+
+        # Prompt
+        console.print(f"  Prompt: \"{rit.get('prompt', '')}\"")
+
+        # Conditions
+        conditions = rit.get("conditions")
+        if conditions:
+            console.print(f"  Conditions: {json_module.dumps(conditions)}")
+
+        # Group
+        if rit.get("group_id"):
+            groups = _client().get_ritual_groups(project_id)
+            group = next((g for g in groups if g["id"] == rit["group_id"]), None)
+            group_name = group["name"] if group else rit["group_id"][:8]
+            console.print(f"  Group: {group_name}")
+            if rit.get("weight") is not None:
+                console.print(f"  Weight: {rit['weight']}")
+            if rit.get("percentage") is not None:
+                console.print(f"  Percentage: {rit['percentage']}%")
 
     @ritual.command("pending")
     @click.argument("ticket_id", required=False)

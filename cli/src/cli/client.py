@@ -292,6 +292,10 @@ class Client:
             url += f"&sprint_status={status}"
         return self._request("GET", url)
 
+    def create_sprint(self, project_id: str, name: str, **kwargs) -> dict:
+        data = {"name": name, **kwargs}
+        return self._request("POST", f"/sprints?project_id={project_id}", data)
+
     def get_sprint(self, sprint_id: str) -> dict:
         return self._request("GET", f"/sprints/{sprint_id}")
 

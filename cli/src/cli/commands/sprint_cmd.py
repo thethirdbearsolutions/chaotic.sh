@@ -21,6 +21,39 @@ def register(cli):
         """Sprint management commands."""
         pass
 
+    @sprint.command("create")
+    @click.argument("name")
+    @click.option("--budget", type=int, help="Point budget for the sprint")
+    @click.option("--no-budget", is_flag=True, help="Explicitly unlimited budget (ignore project default)")
+    @click.option("--description", help="Sprint description")
+    @_main().json_option
+    @_main().require_project
+    @_main().handle_error
+    def sprint_create(name, budget, no_budget, description):
+        """Create a new sprint.
+
+        NAME is the sprint name (e.g., "Sprint 61" or "Frontend Polish").
+        Budget defaults to the project's default budget if set.
+        """
+        m = _main()
+        project_id = m.get_current_project()
+
+        kwargs = {}
+        if description:
+            kwargs["description"] = description
+        if no_budget:
+            kwargs["explicit_unlimited"] = True
+        elif budget is not None:
+            kwargs["budget"] = budget
+
+        result = _client().create_sprint(project_id, name, **kwargs)
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        budget = result.get("budget")
+        budget_info = f" (budget: {budget} pts)" if budget is not None else ""
+        console.print(f"[green]Sprint '{result['name']}' created{budget_info}.[/green]")
+
     @sprint.command("list")
     @click.option("--status", type=click.Choice(["planned", "active", "completed"]))
     @_main().json_option

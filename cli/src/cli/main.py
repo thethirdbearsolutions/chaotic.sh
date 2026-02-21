@@ -277,8 +277,47 @@ def resolve_assignee_id(assignee_value: str) -> str:
     return candidates[0][0]
 
 
+class ProfileGroup(click.Group):
+    """Custom Group that extracts --profile from anywhere in the arg list.
+
+    Click normally only parses parent-group options that appear before the
+    subcommand name.  This override lets users write either:
+        chaotic --profile opus sprint show
+        chaotic sprint show --profile opus
+
+    Only the long-form ``--profile`` is pre-extracted.  The short ``-p`` alias
+    is NOT handled here because it collides with subcommand flags (e.g.,
+    ``agent create -p``).  ``-p`` still works in the normal Click position
+    (before the subcommand name).
+    """
+
+    _profile_from_args = None  # set by parse_args, read by cli()
+
+    def parse_args(self, ctx, args):
+        # Pre-extract --profile (long form only) so it works after subcommand
+        # names (CHT-771).  We skip -p to avoid stealing flags from subcommands.
+        new_args = []
+        profile_val = None
+        i = 0
+        while i < len(args):
+            if args[i] == '--profile' and i + 1 < len(args):
+                profile_val = args[i + 1]
+                i += 2
+            elif args[i].startswith('--profile='):
+                profile_val = args[i].split('=', 1)[1]
+                i += 1
+            else:
+                new_args.append(args[i])
+                i += 1
+        if profile_val:
+            set_profile(profile_val)
+            # Stash so cli() knows not to override with envvar fallback
+            ProfileGroup._profile_from_args = profile_val
+        return super().parse_args(ctx, new_args)
+
+
 # Main CLI group
-@click.group(invoke_without_command=True)
+@click.group(cls=ProfileGroup, invoke_without_command=True)
 @click.version_option(package_name="chaotic-cli")
 @click.option(
     '--profile', '-p',
@@ -303,8 +342,14 @@ def cli(ctx, profile, json_output, yes):
     ctx.obj['json'] = json_output
     ctx.obj['yes'] = yes
 
-    # Set profile before any config loading happens
-    if profile:
+    # Set profile before any config loading happens.
+    # ProfileGroup may have already set it from a post-subcommand --profile;
+    # in that case the CLI flag should take precedence over envvar fallback.
+    if ProfileGroup._profile_from_args:
+        # Already handled by ProfileGroup.parse_args — don't let the envvar
+        # fallback (which Click puts in `profile`) override the explicit flag.
+        pass
+    elif profile:
         set_profile(profile)
 
     # Check for profile ambiguity (fail closed when multiple profiles exist)
