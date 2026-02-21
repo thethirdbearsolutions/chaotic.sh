@@ -4,6 +4,8 @@ import logging
 import random
 from datetime import datetime, timezone
 
+from oxyde import IntegrityError
+
 logger = logging.getLogger(__name__)
 from app.enums import (
     ApprovalMode,
@@ -551,7 +553,7 @@ class RitualService:
 
         try:
             attestation = await OxydeRitualAttestation.objects.create(**data)
-        except Exception:
+        except IntegrityError:
             # Race condition — check if another request created it
             existing = await self.get_attestation(ritual_id, sprint_id)
             if existing:
@@ -643,7 +645,7 @@ class RitualService:
                 field_name=ritual_name,
                 new_value=note,
             )
-        except Exception:
+        except IntegrityError:
             existing = await self.get_issue_attestation(ritual_id, issue_id)
             if existing:
                 return existing
@@ -716,7 +718,7 @@ class RitualService:
                 field_name=ritual_name,
                 new_value=note,
             )
-        except Exception:
+        except IntegrityError:
             existing = await self.get_issue_attestation(ritual_id, issue_id)
             if existing:
                 return existing
@@ -848,7 +850,7 @@ class RitualService:
                 approved_at=now,
                 note=note,
             )
-        except Exception:
+        except IntegrityError:
             existing = await self.get_attestation(ritual_id, sprint_id)
             if existing:
                 return existing
