@@ -151,6 +151,9 @@ class Client:
     def remove_member(self, team_id: str, user_id: str):
         return self._request("DELETE", f"/teams/{team_id}/members/{user_id}")
 
+    def update_member_role(self, team_id: str, user_id: str, role: str) -> dict:
+        return self._request("PATCH", f"/teams/{team_id}/members/{user_id}", {"role": role})
+
     # Invitations
     def invite_member(self, team_id: str, email: str, role: str = "member") -> dict:
         return self._request("POST", f"/teams/{team_id}/invitations", {"email": email, "role": role})
