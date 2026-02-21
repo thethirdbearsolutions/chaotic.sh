@@ -143,4 +143,75 @@ def register(cli):
         result = _client().accept_invitation(token)
         console.print(f"[green]Joined team successfully![/green]")
 
+    @team.command("remove-member")
+    @click.argument("user")
+    @_main().require_team
+    @_main().handle_error
+    def team_remove_member(user):
+        """Remove a member from the team.
+
+        USER can be a user ID, name, or email.
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        user_id = m.resolve_assignee_id(user)
+        if not m.confirm_action(f"Remove this member from the team?"):
+            raise SystemExit(0)
+        _client().remove_member(team_id, user_id)
+        console.print(f"[green]Member removed from team.[/green]")
+
+    @team.command("role")
+    @click.argument("user")
+    @click.argument("role", type=click.Choice(["member", "admin"], case_sensitive=False))
+    @_main().require_team
+    @_main().handle_error
+    def team_role(user, role):
+        """Change a team member's role.
+
+        USER can be a user ID, name, or email.
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        user_id = m.resolve_assignee_id(user)
+        _client().update_member_role(team_id, user_id, role)
+        console.print(f"[green]Member role updated to {role}.[/green]")
+
+    @team.command("invitations")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def team_invitations():
+        """List pending team invitations."""
+        m = _main()
+        invitations = _client().get_invitations(m.get_current_team())
+        if m.is_json_output():
+            m.output_json(invitations)
+            return
+        if not invitations:
+            console.print("[yellow]No pending invitations.[/yellow]")
+            return
+        table = Table(title="Pending Invitations")
+        table.add_column("ID", style="dim")
+        table.add_column("Email")
+        table.add_column("Role")
+        table.add_column("Created")
+        for inv in invitations:
+            table.add_row(
+                inv["id"],
+                inv.get("email", ""),
+                inv.get("role", "member"),
+                inv.get("created_at", ""),
+            )
+        console.print(table)
+
+    @team.command("cancel-invite")
+    @click.argument("invitation_id")
+    @_main().require_team
+    @_main().handle_error
+    def team_cancel_invite(invitation_id):
+        """Cancel a pending team invitation."""
+        m = _main()
+        _client().delete_invitation(m.get_current_team(), invitation_id)
+        console.print(f"[green]Invitation cancelled.[/green]")
+
     return team
