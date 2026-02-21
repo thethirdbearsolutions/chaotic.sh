@@ -208,6 +208,41 @@ def register(cli):
         _client().create_document_comment(document_id, content)
         console.print("[green]Comment added.[/green]")
 
+    @doc.command("comment-edit")
+    @click.argument("document_id")
+    @click.argument("comment_id")
+    @click.argument("content")
+    @_main().require_auth
+    @_main().handle_error
+    def doc_comment_edit(document_id, comment_id, content):
+        """Edit a comment on a document.
+
+        DOCUMENT_ID can be a full ID, title, or a prefix.
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        document_id = m.resolve_document_id(document_id, team_id)
+        _client().update_document_comment(document_id, comment_id, content)
+        console.print("[green]Comment updated.[/green]")
+
+    @doc.command("comment-delete")
+    @click.argument("document_id")
+    @click.argument("comment_id")
+    @_main().require_auth
+    @_main().handle_error
+    def doc_comment_delete(document_id, comment_id):
+        """Delete a comment on a document.
+
+        DOCUMENT_ID can be a full ID, title, or a prefix.
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        if not m.confirm_action("Are you sure you want to delete this comment?"):
+            raise SystemExit(0)
+        document_id = m.resolve_document_id(document_id, team_id)
+        _client().delete_document_comment(document_id, comment_id)
+        console.print("[green]Comment deleted.[/green]")
+
     @doc.command("update")
     @click.argument("document_id")
     @click.option("--title")

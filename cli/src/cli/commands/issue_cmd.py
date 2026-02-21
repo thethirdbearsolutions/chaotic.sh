@@ -659,6 +659,32 @@ def register(cli):
             _client().update_issue(iss["id"], assignee_id=assignee_id)
             console.print(f"[green]Issue {identifier} assigned.[/green]")
 
+    @issue.command("comment-edit")
+    @click.argument("identifier")
+    @click.argument("comment_id")
+    @click.argument("content")
+    @_main().require_auth
+    @_main().handle_error
+    def issue_comment_edit(identifier, comment_id, content):
+        """Edit a comment on an issue."""
+        iss = _client().get_issue_by_identifier(identifier)
+        _client().update_comment(iss["id"], comment_id, content)
+        console.print(f"[green]Comment updated on {identifier}.[/green]")
+
+    @issue.command("comment-delete")
+    @click.argument("identifier")
+    @click.argument("comment_id")
+    @_main().require_auth
+    @_main().handle_error
+    def issue_comment_delete(identifier, comment_id):
+        """Delete a comment on an issue."""
+        m = _main()
+        if not m.confirm_action("Are you sure you want to delete this comment?"):
+            raise SystemExit(0)
+        iss = _client().get_issue_by_identifier(identifier)
+        _client().delete_comment(iss["id"], comment_id)
+        console.print(f"[green]Comment deleted from {identifier}.[/green]")
+
     @issue.command("delete")
     @click.argument("identifier")
     @_main().require_auth
