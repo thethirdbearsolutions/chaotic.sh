@@ -786,26 +786,34 @@ class RitualService:
         """Clear orphaned ticket limbo records where attestation already exists."""
         # Get all issues in this project
         issues = await OxydeIssue.objects.filter(project_id=project_id).all()
-        issue_ids = {i.id for i in issues}
+        issue_ids = [i.id for i in issues]
 
         if not issue_ids:
             return 0
 
-        # Get uncleared limbo records for these issues
-        all_limbo = []
-        for issue_id in issue_ids:
-            records = await OxydeTicketLimbo.objects.filter(
-                issue_id=issue_id, cleared_at=None,
-            ).all()
-            all_limbo.extend(records)
+        # Get all uncleared limbo records for these issues in one query
+        all_limbo = await OxydeTicketLimbo.objects.filter(
+            issue_id__in=issue_ids, cleared_at=None,
+        ).all()
+
+        if not all_limbo:
+            return 0
+
+        # Batch-fetch all relevant attestations in one query per unique (ritual, issue) pair
+        limbo_keys = {(l.ritual_id, l.issue_id) for l in all_limbo}
+        ritual_ids = list({k[0] for k in limbo_keys})
+        limbo_issue_ids = list({k[1] for k in limbo_keys})
+        attestations = await OxydeRitualAttestation.objects.filter(
+            ritual_id__in=ritual_ids, issue_id__in=limbo_issue_ids,
+        ).all()
+        att_map = {(a.ritual_id, a.issue_id): a for a in attestations}
 
         cleared_count = 0
+        now = datetime.now(timezone.utc)
         for limbo in all_limbo:
-            attestation = await self.get_issue_attestation(
-                limbo.ritual_id, limbo.issue_id
-            )
+            attestation = att_map.get((limbo.ritual_id, limbo.issue_id))
             if attestation and attestation.approved_at is not None:
-                limbo.cleared_at = datetime.now(timezone.utc)
+                limbo.cleared_at = now
                 limbo.cleared_by_id = attestation.approved_by
                 await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
                 cleared_count += 1
@@ -1104,18 +1112,15 @@ class RitualService:
 
         # Get all ritual IDs for this project
         rituals = await OxydeRitual.objects.filter(project_id=project_id).all()
-        ritual_map = {r.id: r for r in rituals}
+        ritual_ids = [r.id for r in rituals]
 
-        if not ritual_map:
+        if not ritual_ids:
             return []
 
-        # Get attestations for these rituals with FK joins
-        all_attestations = []
-        for ritual_id in ritual_map:
-            atts = await OxydeRitualAttestation.objects.join(
-                "ritual", "sprint", "issue"
-            ).filter(ritual_id=ritual_id).all()
-            all_attestations.extend(atts)
+        # Get all attestations for these rituals in one query with FK joins
+        all_attestations = await OxydeRitualAttestation.objects.join(
+            "ritual", "sprint", "issue"
+        ).filter(ritual_id__in=ritual_ids).all()
 
         # Sort by attested_at descending
         all_attestations.sort(key=lambda a: a.attested_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
@@ -1123,14 +1128,23 @@ class RitualService:
         # Apply pagination
         paginated = all_attestations[skip:skip + limit]
 
-        # Build rich response dicts — attester/approver are raw string IDs, load manually
+        # Batch-fetch all attester/approver users in one query
+        user_ids = set()
+        for att in paginated:
+            if att.attested_by:
+                user_ids.add(att.attested_by)
+            if att.approved_by:
+                user_ids.add(att.approved_by)
+
+        user_map = {}
+        if user_ids:
+            users = await OxydeUser.objects.filter(id__in=list(user_ids)).all()
+            user_map = {u.id: u for u in users}
+
         results = []
         for att in paginated:
-            attester = await OxydeUser.objects.get_or_none(id=att.attested_by) if att.attested_by else None
-            approver = await OxydeUser.objects.get_or_none(id=att.approved_by) if att.approved_by else None
-
-            att.attester = attester
-            att.approver = approver
+            att.attester = user_map.get(att.attested_by)
+            att.approver = user_map.get(att.approved_by)
             results.append(att)
 
         return results
