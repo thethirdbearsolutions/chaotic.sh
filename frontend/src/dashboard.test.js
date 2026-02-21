@@ -10,6 +10,7 @@ vi.mock('./api.js', () => ({
     api: {
         getTeamIssues: vi.fn(),
         getTeamActivities: vi.fn(),
+        getIssues: vi.fn(),
     },
 }));
 
@@ -52,6 +53,10 @@ describe('dashboard module', () => {
         document.body.innerHTML = `
             <div id="my-issues-list"></div>
             <div id="dashboard-activity-list"></div>
+            <select id="dashboard-project-filter">
+                <option value="">All Projects</option>
+                <option value="proj-1">Project 1</option>
+            </select>
             <select id="my-issues-status-filter">
                 <option value="">All</option>
                 <option value="todo">Todo</option>
@@ -159,6 +164,33 @@ describe('dashboard module', () => {
             await loadMyIssues();
 
             expect(api.getTeamIssues).not.toHaveBeenCalled();
+        });
+
+        it('uses getIssues with project_id when project filter is set (CHT-853)', async () => {
+            document.getElementById('dashboard-project-filter').value = 'proj-1';
+            const mockIssues = [{ id: 'issue-1', title: 'Filtered' }];
+            api.getIssues.mockResolvedValue(mockIssues);
+
+            await loadMyIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith({
+                assignee_id: 'user-1',
+                status: undefined,
+                limit: 1000,
+                project_id: 'proj-1',
+            });
+            expect(api.getTeamIssues).not.toHaveBeenCalled();
+            expect(getMyIssues()).toEqual(mockIssues);
+        });
+
+        it('uses getTeamIssues when project filter is empty (CHT-853)', async () => {
+            document.getElementById('dashboard-project-filter').value = '';
+            api.getTeamIssues.mockResolvedValue([]);
+
+            await loadMyIssues();
+
+            expect(api.getTeamIssues).toHaveBeenCalled();
+            expect(api.getIssues).not.toHaveBeenCalled();
         });
     });
 
