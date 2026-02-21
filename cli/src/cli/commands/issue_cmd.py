@@ -644,14 +644,20 @@ def register(cli):
     @click.argument("identifier")
     @click.argument("content")
     @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)")
+    @click.option("--assign-to", help="Also assign the issue (use 'me', a user ID, or name/email)")
     @_main().require_auth
     @_main().handle_error
-    def issue_comment(identifier, content, note):
+    def issue_comment(identifier, content, note, assign_to):
         """Add a comment to an issue."""
+        m = _main()
         body = "\n".join([content, note]) if note else content
         iss = _client().get_issue_by_identifier(identifier)
         _client().create_comment(iss["id"], body)
         console.print(f"[green]Comment added to {identifier}.[/green]")
+        if assign_to:
+            assignee_id = m.resolve_assignee_id(assign_to)
+            _client().update_issue(iss["id"], assignee_id=assignee_id)
+            console.print(f"[green]Issue {identifier} assigned.[/green]")
 
     @issue.command("delete")
     @click.argument("identifier")
@@ -818,9 +824,10 @@ def register(cli):
     @issue.command("assign")
     @click.argument("identifier")
     @click.argument("assignee", required=False)
+    @click.option("--comment", "comment_text", help="Also add a comment to the issue")
     @_main().require_auth
     @_main().handle_error
-    def issue_assign(identifier, assignee):
+    def issue_assign(identifier, assignee, comment_text):
         """Assign an issue to a user.
 
         ASSIGNEE can be 'me' (assign to yourself), a user/agent ID, or a name/email.
@@ -836,6 +843,9 @@ def register(cli):
             assignee_id = m.resolve_assignee_id(assignee)
             _client().update_issue(iss["id"], assignee_id=assignee_id)
             console.print(f"[green]Issue {identifier} assigned.[/green]")
+        if comment_text:
+            _client().create_comment(iss["id"], comment_text)
+            console.print(f"[green]Comment added to {identifier}.[/green]")
 
     @issue.command("move")
     @click.argument("identifier")
