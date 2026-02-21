@@ -24,11 +24,7 @@ async def get_user(user_id: str, current_user: CurrentUser):
     if user.id != current_user.id:
         # Otherwise, require shared team membership
         team_service = TeamService()
-        current_teams = await team_service.get_user_teams(current_user.id)
-        target_teams = await team_service.get_user_teams(user_id)
-        current_team_ids = {t.id for t in current_teams}
-        target_team_ids = {t.id for t in target_teams}
-        if not current_team_ids & target_team_ids:
+        if not await team_service.shares_team(current_user.id, user_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this user",

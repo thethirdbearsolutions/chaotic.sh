@@ -881,7 +881,7 @@ class TestProjectDocumentAccessControl:
             headers=cross_team_headers,
         )
         assert response.status_code == 403
-        assert "not authorized" in response.json()["detail"].lower()
+        assert "not a member" in response.json()["detail"].lower()
 
     async def test_get_project_document_issues_cross_team_denied(
         self, client, cross_team_headers, project_document

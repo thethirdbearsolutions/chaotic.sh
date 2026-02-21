@@ -128,6 +128,29 @@ async def test_get_other_user_no_shared_team(client, auth_headers, test_user2):
         headers=auth_headers,
     )
     assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_self_no_teams(client, db, test_user):
+    """Users can look up themselves even with no team memberships."""
+    from app.utils.security import create_access_token
+
+    # Create a user with no teams
+    from app.oxyde_models.user import OxydeUser
+    from app.utils.security import get_password_hash
+
+    loner = await OxydeUser.objects.create(
+        email="loner@example.com",
+        hashed_password=get_password_hash("testpassword123"),
+        name="Loner User",
+    )
+    token = create_access_token(data={"sub": loner.id})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.get(f"/api/users/{loner.id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["id"] == loner.id
 
 
 @pytest.mark.asyncio

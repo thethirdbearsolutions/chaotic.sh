@@ -262,7 +262,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this team",
+            detail="Not a member of this team",
         )
 
     # Only author or team admin can delete
