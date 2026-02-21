@@ -73,16 +73,25 @@ export async function loadMyIssues() {
     if (!currentTeam || !currentUser) return;
 
     const statusFilter = document.getElementById('my-issues-status-filter')?.value;
+    const projectFilter = document.getElementById('dashboard-project-filter')?.value;
 
     // Show loading skeleton
     showMyIssuesLoadingSkeleton();
 
     try {
-        myIssues = await api.getTeamIssues(currentTeam.id, {
+        const params = {
             assignee_id: currentUser.id,
             status: statusFilter || undefined,
             limit: 1000,
-        });
+        };
+        let issues;
+        if (projectFilter) {
+            // Fetch from specific project (CHT-853)
+            issues = await api.getIssues({ ...params, project_id: projectFilter });
+        } else {
+            issues = await api.getTeamIssues(currentTeam.id, params);
+        }
+        myIssues = issues;
         renderMyIssues();
     } catch (e) {
         showToast(e.message, 'error');

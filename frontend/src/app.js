@@ -751,13 +751,37 @@ function renderGateApprovals() {
     const pendingItems = getPendingGates();
     const hasSprintLimbo = sprintLimboApprovals.length > 0;
 
+    // First-use explainer (CHT-766) — shown once, dismissed via localStorage
+    const explainerKey = 'chaotic_approvals_explainer_dismissed';
+    const showExplainer = !localStorage.getItem(explainerKey);
+
     if (pendingItems.length === 0 && !hasSprintLimbo) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <h3>No pending approvals</h3>
-                <p>All rituals have been completed. Nice work!</p>
-            </div>
-        `;
+        if (showExplainer) {
+            container.innerHTML = `
+                <div class="empty-state approvals-explainer">
+                    <h3>Welcome to Approvals</h3>
+                    <p>This is where you'll review and approve ritual attestations from your team.</p>
+                    <div class="explainer-details">
+                        <p><strong>What are rituals?</strong> Rituals are configurable checks that run when sprints close, tickets are claimed, or tickets are closed. They ensure your team follows processes like running tests, updating docs, or getting code reviewed.</p>
+                        <p><strong>How approvals work:</strong></p>
+                        <ul>
+                            <li><strong>Gate</strong> rituals require a human to complete them directly — agents cannot attest.</li>
+                            <li><strong>Review</strong> rituals are attested by agents but need human approval before they count.</li>
+                            <li><strong>Auto</strong> rituals are cleared immediately by agents (they won't appear here).</li>
+                        </ul>
+                        <p>To set up rituals, go to a project's settings and configure them under the ritual tabs.</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="dismissApprovalsExplainer()">Got it!</button>
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h3>No pending approvals</h3>
+                    <p>All rituals have been completed. Nice work!</p>
+                </div>
+            `;
+        }
         return;
     }
 
@@ -921,6 +945,14 @@ function renderGateApprovals() {
             completeGateRitual(btn.dataset.ritualId, btn.dataset.projectId, btn.dataset.ritualName);
         });
     });
+}
+
+/**
+ * Dismiss the approvals first-use explainer (CHT-766).
+ */
+function dismissApprovalsExplainer() {
+    localStorage.setItem('chaotic_approvals_explainer_dismissed', '1');
+    renderGateApprovals();
 }
 
 function renderApprovalIssue(approvalIssue) {
@@ -2251,6 +2283,10 @@ Object.assign(window, {
     // Epics
     onEpicsProjectChange,
     showCreateEpicModal,
+
+    // Approvals
+    dismissApprovalsExplainer,
+    loadGateApprovals,
 
     // Rituals top-level view
     loadRitualsView,

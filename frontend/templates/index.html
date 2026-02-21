@@ -186,6 +186,9 @@
                     <div class="view-header">
                         <h2>Dashboard</h2>
                         <div class="view-actions">
+                            <select id="dashboard-project-filter" onchange="filterMyIssues()">
+                                <option value="">All Projects</option>
+                            </select>
                             <select id="my-issues-status-filter" onchange="filterMyIssues()">
                                 <option value="">All Statuses</option>
                                 <option value="backlog">Backlog</option>
