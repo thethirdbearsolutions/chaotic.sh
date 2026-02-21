@@ -5,6 +5,7 @@ lookups), display helpers, and other shared utilities. Decorators and resolvers
 that call config functions (get_current_team, get_token, etc.) remain in
 cli.main because existing tests patch those via the cli.main namespace.
 """
+import re
 import sys
 
 import click
@@ -94,9 +95,10 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     1. "current" → active sprint ID
     2. "next" → planned sprint ID
     3. Full UUID → passed through
-    4. Sprint name → exact match, case-insensitive
-    5. Sprint name → substring match, case-insensitive
-    6. UUID prefix → matched against project sprints
+    4. Sprint number → bare number matches sprint name containing that number
+    5. Sprint name → exact match, case-insensitive
+    6. Sprint name → substring match, case-insensitive
+    7. UUID prefix → matched against project sprints
 
     Raises ClickException on ambiguity or not found.
     """
@@ -119,6 +121,19 @@ def resolve_sprint_id(sprint_value: str, project_id: str) -> str:
     exact = [s for s in sprints if s["id"] == sprint_value]
     if exact:
         return exact[0]["id"]
+
+    # Try sprint number match — bare "44" matches "Sprint 44" etc. (CHT-892)
+    if sprint_value.isdigit():
+        pattern = r'\b' + re.escape(sprint_value) + r'\b'
+        num_matches = [
+            s for s in sprints
+            if re.search(pattern, s.get("name") or "")
+        ]
+        if len(num_matches) == 1:
+            return num_matches[0]["id"]
+        if len(num_matches) > 1:
+            names = "\n".join(f"  {s['id']}  ({s['name']})" for s in num_matches)
+            raise click.ClickException(f"Ambiguous sprint number '{sprint_value}'. Matches:\n{names}")
 
     # Try matching by name (case-insensitive, with null-safety)
     # Note: (s.get("name") or "") handles both missing keys AND None values

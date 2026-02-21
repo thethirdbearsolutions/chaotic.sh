@@ -605,9 +605,11 @@ async def get_issue_by_identifier(
     project = await project_service.get_by_id(issue.project_id)
     has_access = await check_user_project_access(current_user, issue.project_id, project.team_id)
     if not has_access:
+        # Return 404 (not 403) to prevent identifier oracle — don't reveal
+        # whether an identifier exists in another team (CHT-809).
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this project",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Issue not found",
         )
 
     return issue_to_response(issue)

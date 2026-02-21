@@ -76,7 +76,7 @@ def register(cli):
     @doc.command("create")
     @click.argument("title_words", nargs=-1)
     @click.option("--title", "title_opt", help="Document title (alternative to positional argument)")
-    @click.option("--content", "--body", default="")
+    @click.option("--content", "--body", "--description", default="")
     @click.option("--icon", default="")
     @click.option("--project", help="Project to attach doc to (ID, key, or name). Omit for global/team-wide.")
     @click.option("--sprint", help="Sprint to attach doc to (ID, name, or 'current')")

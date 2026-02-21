@@ -1,7 +1,7 @@
 """Sprint API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_project_access
-from app.schemas.sprint import SprintUpdate, SprintResponse
+from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
@@ -39,6 +39,33 @@ async def list_sprints(
 
     sprints = await sprint_service.list_by_project(project_id, skip, limit, sprint_status)
     return sprints
+
+
+@router.post("", response_model=SprintResponse, status_code=status.HTTP_201_CREATED)
+async def create_sprint(
+    project_id: str,
+    sprint_in: SprintCreate,
+    current_user: CurrentUser,
+):
+    """Create a new sprint."""
+    project_service = ProjectService()
+    sprint_service = SprintService()
+
+    project = await project_service.get_by_id(project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    if not await check_user_project_access(current_user, project_id, project.team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this team",
+        )
+
+    sprint = await sprint_service.create(sprint_in, project_id)
+    return sprint
 
 
 # NOTE: /current must come BEFORE /{sprint_id} for route matching to work

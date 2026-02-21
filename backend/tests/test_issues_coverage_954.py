@@ -289,12 +289,14 @@ class TestIssueAccessControl954:
     async def test_get_issue_by_identifier_denied(
         self, client, auth_headers2, test_issue
     ):
-        """Non-member can't get issue by identifier (line 607)."""
+        """Non-member can't get issue by identifier — returns 404 to prevent
+        identifier oracle (CHT-809)."""
         response = await client.get(
             f"/api/issues/identifier/{test_issue.identifier}",
             headers=auth_headers2,
         )
-        assert response.status_code == 403
+        # Returns 404 (not 403) to avoid leaking identifier existence
+        assert response.status_code == 404
 
     async def test_create_relation_denied_related_issue(
         self, client, auth_headers2, test_issue, second_issue
