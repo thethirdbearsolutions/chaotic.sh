@@ -19,9 +19,11 @@ from .config import (
     get_current_project, set_current_project,
     get_api_key, set_api_key, has_local_config,
     find_local_config, get_local_config_path,
-    load_config, DEFAULT_PORT,
+    load_config, load_global_config, save_global_config,
+    get_global_config_file, DEFAULT_PORT,
     set_profile, get_profile, get_effective_profile,
-    list_profiles, check_profile_ambiguity, ProfileAmbiguityError,
+    list_profiles, check_profile_ambiguity,
+    ProfileAmbiguityError, ProfileError,
 )
 from .client import client, APIError
 from .system import system
@@ -1007,8 +1009,6 @@ def status():
 @handle_error
 def whoami():
     """Show current authenticated identity."""
-    from .config import get_global_config_file
-
     if not (get_token() or get_api_key()):
         console.print("[red]Not authenticated.[/red] Run `chaotic login` or set an API key.")
         raise SystemExit(1)

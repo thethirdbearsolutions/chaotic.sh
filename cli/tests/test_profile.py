@@ -365,3 +365,293 @@ class TestProfileCommandsBypassAmbiguityCheck:
         assert 'Multiple profiles' in str(exc_info.value)
         assert 'claude' in str(exc_info.value)
         assert 'default' in str(exc_info.value)
+
+
+class TestProfileCreateCommand:
+    """Tests for 'chaotic profile create' command."""
+
+    def test_create_new_profile(self, temp_chaotic_home):
+        """profile create creates a new profile JSON file."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'create', 'newagent'])
+
+        assert result.exit_code == 0
+        assert "created" in result.output.lower()
+        assert (temp_chaotic_home / "newagent.json").exists()
+
+    def test_create_with_options(self, temp_chaotic_home):
+        """profile create accepts --api-url and --api-key."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, [
+                    'profile', 'create', 'myagent',
+                    '--api-url', 'http://localhost:9999/api',
+                    '--api-key', 'ck_test123',
+                ])
+
+        assert result.exit_code == 0
+        cfg = json.loads((temp_chaotic_home / "myagent.json").read_text())
+        assert cfg["api_url"] == "http://localhost:9999/api"
+        assert cfg["api_key"] == "ck_test123"
+
+    def test_create_existing_profile_fails(self, temp_chaotic_home):
+        """profile create fails if profile already exists."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "claude.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'create', 'claude'])
+
+        assert result.exit_code == 1
+        assert "already exists" in result.output.lower()
+
+    def test_create_invalid_name_fails(self, temp_chaotic_home):
+        """profile create rejects invalid profile names."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'create', '../evil'])
+
+        assert result.exit_code == 1
+
+
+class TestProfileShowCommand:
+    """Tests for 'chaotic profile show' command."""
+
+    def test_show_existing_profile(self, temp_chaotic_home):
+        """profile show displays profile configuration."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "claude.json").write_text(json.dumps({
+            "api_url": "http://localhost:24267/api",
+            "api_key": "ck_test1234567890",
+        }))
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'show', 'claude'])
+
+        assert result.exit_code == 0
+        assert 'claude' in result.output
+        assert 'http://localhost:24267/api' in result.output
+        assert 'ck_test1' in result.output  # Masked key prefix
+
+    def test_show_nonexistent_profile_fails(self, temp_chaotic_home):
+        """profile show fails for nonexistent profile."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'show', 'nonexistent'])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+
+class TestProfileDeleteCommand:
+    """Tests for 'chaotic profile delete' command."""
+
+    def test_delete_profile(self, temp_chaotic_home):
+        """profile delete removes the profile file."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "claude.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'delete', 'claude', '--yes'])
+
+        assert result.exit_code == 0
+        assert "deleted" in result.output.lower()
+        assert not (temp_chaotic_home / "claude.json").exists()
+
+    def test_delete_nonexistent_fails(self, temp_chaotic_home):
+        """profile delete fails for nonexistent profile."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'delete', 'ghost', '--yes'])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_delete_active_profile_fails(self, temp_chaotic_home):
+        """profile delete prevents deleting the active profile."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'claude'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "claude.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'delete', 'claude', '--yes'])
+
+        assert result.exit_code == 1
+        assert "active profile" in result.output.lower() or "cannot delete" in result.output.lower()
+        # File should still exist
+        assert (temp_chaotic_home / "claude.json").exists()
+
+    def test_delete_default_rejected(self, temp_chaotic_home):
+        """profile delete rejects 'default' name."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'claude'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "claude.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'delete', 'default', '--yes'])
+
+        assert result.exit_code == 1
+
+    def test_delete_with_confirmation_prompt(self, temp_chaotic_home):
+        """profile delete prompts for confirmation without --yes."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "agent.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                # Confirm with 'y'
+                result = runner.invoke(cli, ['profile', 'delete', 'agent'], input='y\n')
+
+        assert result.exit_code == 0
+        assert not (temp_chaotic_home / "agent.json").exists()
+
+    def test_delete_confirmation_cancelled(self, temp_chaotic_home):
+        """profile delete cancels when user says no."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "agent.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'delete', 'agent'], input='n\n')
+
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+        assert (temp_chaotic_home / "agent.json").exists()
+
+
+class TestProfileCreateDefaultRejection:
+    """Tests for 'default' name rejection in profile create."""
+
+    def test_create_default_rejected(self, temp_chaotic_home):
+        """profile create rejects 'default' as a name."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'create', 'default'])
+
+        assert result.exit_code == 1
+        assert "reserved" in result.output.lower()
+
+
+class TestProfileShowBranches:
+    """Tests for show command display branches."""
+
+    def test_show_with_token(self, temp_chaotic_home):
+        """profile show displays JWT token auth."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "agent.json").write_text(json.dumps({
+            "token": "eyJhbGciOiJIUzI1NiJ9.test",
+        }))
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'show', 'agent'])
+
+        assert result.exit_code == 0
+        assert 'JWT token' in result.output
+
+    def test_show_with_team_and_project(self, temp_chaotic_home):
+        """profile show displays team and project IDs."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "agent.json").write_text(json.dumps({
+            "api_key": "ck_longapikey12345678",
+            "current_team": "team-uuid-123",
+            "current_project": "project-uuid-456",
+        }))
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'show', 'agent'])
+
+        assert result.exit_code == 0
+        assert 'team-uuid-123' in result.output
+        assert 'project-uuid-456' in result.output
+
+    def test_show_unconfigured_hint(self, temp_chaotic_home):
+        """profile show hints at configuration for empty profiles."""
+        from cli.main import cli
+
+        runner = CliRunner(env={'CHAOTIC_PROFILE': 'default'})
+
+        (temp_chaotic_home / "config.json").write_text('{}')
+        (temp_chaotic_home / "empty.json").write_text('{}')
+
+        with patch('cli.config.get_chaotic_home', return_value=temp_chaotic_home):
+            with patch('cli.config.GLOBAL_CONFIG_DIR', temp_chaotic_home):
+                result = runner.invoke(cli, ['profile', 'show', 'empty'])
+
+        assert result.exit_code == 0
+        assert 'auth login' in result.output.lower()
