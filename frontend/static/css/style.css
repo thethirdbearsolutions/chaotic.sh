@@ -442,7 +442,7 @@ textarea {
     justify-content: center;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     cursor: pointer;
-    z-index: 100;
+    z-index: 140;
     transition: background 0.15s ease, transform 0.15s ease;
 }
 
@@ -452,6 +452,11 @@ textarea {
 
 .mobile-fab:active {
     transform: scale(0.95);
+}
+
+.mobile-fab:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
 }
 
 /* Main Content */
@@ -3916,6 +3921,7 @@ input[type="checkbox"] {
         max-width: 100vw;
         padding: 0.75rem;
         padding-top: 0;
+        padding-bottom: 5rem; /* Space for mobile FAB (CHT-873) */
     }
 
     /* Mobile header with hamburger */
