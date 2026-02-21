@@ -103,8 +103,14 @@ async def test_delete_me_unauthenticated(client):
 
 
 @pytest.mark.asyncio
-async def test_get_other_user(client, auth_headers, test_user2):
-    """Users should be able to get other users by ID."""
+async def test_get_other_user_same_team(client, auth_headers, test_user2, test_team):
+    """Users can look up teammates by ID."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    await OxydeTeamMember.objects.create(
+        team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+    )
     response = await client.get(
         f"/api/users/{test_user2.id}",
         headers=auth_headers,
@@ -112,7 +118,16 @@ async def test_get_other_user(client, auth_headers, test_user2):
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == test_user2.id
-    assert data["email"] == test_user2.email
+
+
+@pytest.mark.asyncio
+async def test_get_other_user_no_shared_team(client, auth_headers, test_user2):
+    """Users cannot look up users outside their teams."""
+    response = await client.get(
+        f"/api/users/{test_user2.id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

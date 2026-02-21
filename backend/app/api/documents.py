@@ -257,6 +257,14 @@ async def delete_document(document_id: str, current_user: CurrentUser):
             detail="Document not found",
         )
 
+    # Verify user is a member of the document's team
+    has_access = await check_user_team_access(current_user, document.team_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this team",
+        )
+
     # Only author or team admin can delete
     is_admin = await team_service.is_team_admin(document.team_id, current_user.id)
     if document.author_id != current_user.id and not is_admin:
