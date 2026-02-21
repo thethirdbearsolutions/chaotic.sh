@@ -145,13 +145,16 @@ export function renderEpics(epics, container) {
         </table>
     `;
 
-    // Event delegation for row clicks
-    container.addEventListener('click', (e) => {
-        const row = e.target.closest('.epic-row');
-        if (row && row.dataset.identifier) {
-            navigateToEpicByIdentifier(row.dataset.identifier);
-        }
-    });
+    // Event delegation for row clicks — attach once per container
+    if (!container._epicClickHandler) {
+        container._epicClickHandler = (e) => {
+            const row = e.target.closest('.epic-row');
+            if (row && row.dataset.identifier) {
+                navigateToEpicByIdentifier(row.dataset.identifier);
+            }
+        };
+        container.addEventListener('click', container._epicClickHandler);
+    }
 }
 
 /**

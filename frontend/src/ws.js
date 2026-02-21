@@ -237,10 +237,11 @@ export function handleWebSocketMessage(message) {
         }
     } else if (entity === 'project') {
         // Project event (CHT-876) - refresh project list and filters
-        loadProjects();
-        if (getCurrentView() === 'projects') {
-            renderProjects();
-        }
+        loadProjects().then(() => {
+            if (getCurrentView() === 'projects') {
+                renderProjects();
+            }
+        });
         if (type === 'created') {
             showToast(`New project: ${data.name}`, 'info');
         } else if (type === 'deleted') {
