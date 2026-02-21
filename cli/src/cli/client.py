@@ -279,6 +279,9 @@ class Client:
     def get_comments(self, issue_id: str) -> list:
         return self._request("GET", f"/issues/{issue_id}/comments")
 
+    def update_comment(self, issue_id: str, comment_id: str, content: str) -> dict:
+        return self._request("PATCH", f"/issues/{issue_id}/comments/{comment_id}", {"content": content})
+
     def delete_comment(self, issue_id: str, comment_id: str):
         return self._request("DELETE", f"/issues/{issue_id}/comments/{comment_id}")
 
@@ -339,6 +342,12 @@ class Client:
 
     def create_document_comment(self, document_id: str, content: str) -> dict:
         return self._request("POST", f"/documents/{document_id}/comments", {"content": content})
+
+    def update_document_comment(self, document_id: str, comment_id: str, content: str) -> dict:
+        return self._request("PATCH", f"/documents/{document_id}/comments/{comment_id}", {"content": content})
+
+    def delete_document_comment(self, document_id: str, comment_id: str):
+        return self._request("DELETE", f"/documents/{document_id}/comments/{comment_id}")
 
     def get_issue_documents(self, issue_id: str) -> list:
         return self._request("GET", f"/issues/{issue_id}/documents")
