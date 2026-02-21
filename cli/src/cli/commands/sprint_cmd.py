@@ -324,6 +324,43 @@ def register(cli):
 
         console.print(table)
 
+    @sprint.command("transactions")
+    @click.argument("sprint_id", required=False)
+    @_main().json_option
+    @_main().require_project
+    @_main().handle_error
+    def sprint_transactions(sprint_id):
+        """Show budget transactions for a sprint.
+
+        Omit SPRINT_ID to show transactions for the current sprint.
+        """
+        m = _main()
+        if not sprint_id:
+            project_id = m.get_current_project()
+            sprints = _client().get_sprints(project_id, status="active")
+            if not sprints:
+                console.print("[yellow]No active sprint found.[/yellow]")
+                return
+            sprint_id = sprints[0]["id"]
+
+        txns = _client().get_sprint_transactions(sprint_id)
+        if m.is_json_output():
+            m.output_json(txns or [])
+            return
+        if not txns:
+            console.print("[yellow]No transactions found.[/yellow]")
+            return
+
+        table = Table(title="Sprint Transactions")
+        table.add_column("Date")
+        table.add_column("Issue")
+        table.add_column("Title")
+        table.add_column("Points", justify="right")
+        for t in txns:
+            date = t.get("created_at", "")[:10]
+            table.add_row(date, t.get("issue_identifier", ""), t.get("issue_title", ""), str(t.get("points", 0)))
+        console.print(table)
+
     # Also register the 'budget' shortcut at the CLI root level
     @cli.command("budget")
     @_main().require_project
