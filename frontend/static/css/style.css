@@ -1190,6 +1190,36 @@ textarea {
     margin-bottom: 0.5rem;
 }
 
+/* Approvals explainer (CHT-766) */
+.approvals-explainer {
+    text-align: left;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.approvals-explainer h3 {
+    text-align: center;
+}
+
+.approvals-explainer .explainer-details {
+    margin: 1rem 0;
+    line-height: 1.6;
+}
+
+.approvals-explainer .explainer-details ul {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0;
+}
+
+.approvals-explainer .explainer-details li {
+    margin-bottom: 0.3rem;
+}
+
+.approvals-explainer .btn {
+    display: block;
+    margin: 1rem auto 0;
+}
+
 /* Toast */
 #toast-container {
     position: fixed;

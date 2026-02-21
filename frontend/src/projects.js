@@ -140,12 +140,14 @@ export function updateProjectFilters() {
   const sprintProjectFilter = document.getElementById('sprint-project-filter');
   const boardProjectFilter = document.getElementById('board-project-filter');
   const docProjectFilter = document.getElementById('doc-project-filter');
+  const dashboardProjectFilter = document.getElementById('dashboard-project-filter');
 
   // Save current selections
   const currentProjectSelection = projectFilter?.value;
   const currentSprintProjectSelection = sprintProjectFilter?.value;
   const currentBoardProjectSelection = boardProjectFilter?.value;
   const currentDocProjectSelection = docProjectFilter?.value;
+  const currentDashboardProjectSelection = dashboardProjectFilter?.value;
 
   const options =
     '<option value="">All Projects</option>' +
@@ -210,6 +212,15 @@ export function updateProjectFilters() {
       docProjectFilter.value = currentDocProjectSelection;
     }
     // Default to "All Projects" (empty value) for docs
+  }
+
+  if (dashboardProjectFilter) {
+    dashboardProjectFilter.innerHTML = options;
+    // Preserve current selection if valid (CHT-853)
+    if (currentDashboardProjectSelection && projects.some((p) => p.id === currentDashboardProjectSelection)) {
+      dashboardProjectFilter.value = currentDashboardProjectSelection;
+    }
+    // Default to "All Projects" (empty value) for dashboard
   }
 }
 
