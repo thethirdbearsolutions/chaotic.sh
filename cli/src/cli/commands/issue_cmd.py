@@ -17,6 +17,43 @@ def _main():
 # Priority levels in order (lowest to highest)
 PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 
+# Canonical issue types and aliases
+ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"]
+ISSUE_TYPE_ALIASES = {
+    "feat": "feature",
+    "improvement": "feature",
+    "doc": "docs",
+    "debt": "tech_debt",
+    "techdebt": "tech_debt",
+    "tech-debt": "tech_debt",
+}
+
+
+class IssueTypeChoice(click.ParamType):
+    """Click type that accepts issue types with aliases."""
+
+    name = "issue_type"
+
+    def get_metavar(self, param):
+        return "[" + "|".join(ISSUE_TYPES) + "]"
+
+    def convert(self, value, param, ctx):
+        if value is None:
+            return None
+        lower = value.lower()
+        if lower in ISSUE_TYPES:
+            return lower
+        if lower in ISSUE_TYPE_ALIASES:
+            return ISSUE_TYPE_ALIASES[lower]
+        choices_str = ", ".join(ISSUE_TYPES)
+        aliases_str = ", ".join(f"{k}→{v}" for k, v in ISSUE_TYPE_ALIASES.items())
+        self.fail(
+            f"'{value}' is not a valid issue type.\n"
+            f"  Valid types: {choices_str}\n"
+            f"  Aliases: {aliases_str}",
+            param, ctx,
+        )
+
 
 def register(cli):
     """Register issue commands on the CLI group."""
@@ -236,7 +273,7 @@ def register(cli):
     @click.option("--description", default="")
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
-    @click.option("--type", "issue_type", default="task", type=click.Choice(["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"], case_sensitive=False), help="Issue type")
+    @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
     @click.option("--estimate", "--points", type=int, help="Story point estimate")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
@@ -501,7 +538,7 @@ def register(cli):
     @click.option("--description")
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
     @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
-    @click.option("--type", "issue_type", type=click.Choice(["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"], case_sensitive=False), help="Issue type")
+    @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
     @click.option("--estimate", "--points", type=int, help="Story point estimate")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
