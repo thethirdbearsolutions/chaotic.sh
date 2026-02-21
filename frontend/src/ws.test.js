@@ -36,6 +36,12 @@ vi.mock('./sprints.js', () => ({
     loadSprints: vi.fn(),
 }));
 
+// Mock projects.js
+vi.mock('./projects.js', () => ({
+    loadProjects: vi.fn(() => Promise.resolve()),
+    renderProjects: vi.fn(),
+}));
+
 // Mock issue-detail-view.js
 vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
@@ -56,6 +62,7 @@ import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from 
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints } from './sprints.js';
+import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
@@ -418,6 +425,59 @@ describe('ws.js', () => {
 
                 handleWebSocketMessage({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
                 expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            });
+        });
+
+        describe('project entity', () => {
+            it('refreshes projects on created event', async () => {
+                getCurrentView.mockReturnValue('projects');
+                handleWebSocketMessage({ type: 'created', entity: 'project', data: { name: 'New Project' } });
+                expect(loadProjects).toHaveBeenCalled();
+                expect(showToast).toHaveBeenCalledWith('New project: New Project', 'info');
+                // Wait for loadProjects promise to resolve
+                await vi.waitFor(() => expect(renderProjects).toHaveBeenCalled());
+            });
+
+            it('refreshes projects on deleted event', async () => {
+                getCurrentView.mockReturnValue('issues');
+                handleWebSocketMessage({ type: 'deleted', entity: 'project', data: { name: 'Old Project' } });
+                expect(loadProjects).toHaveBeenCalled();
+                expect(showToast).toHaveBeenCalledWith('Project Old Project deleted', 'info');
+            });
+
+            it('does not show toast on updated event', () => {
+                getCurrentView.mockReturnValue('issues');
+                handleWebSocketMessage({ type: 'updated', entity: 'project', data: { name: 'Updated' } });
+                expect(loadProjects).toHaveBeenCalled();
+                expect(showToast).not.toHaveBeenCalled();
+            });
+
+            it('renders projects when on projects view', async () => {
+                getCurrentView.mockReturnValue('projects');
+                handleWebSocketMessage({ type: 'updated', entity: 'project', data: { name: 'Updated' } });
+                await vi.waitFor(() => expect(renderProjects).toHaveBeenCalled());
+            });
+
+            it('does not render projects when on other view', async () => {
+                getCurrentView.mockReturnValue('issues');
+                handleWebSocketMessage({ type: 'updated', entity: 'project', data: { name: 'Updated' } });
+                // Wait a tick for the promise
+                await new Promise(r => setTimeout(r, 10));
+                expect(renderProjects).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('sprint entity', () => {
+            it('reloads sprints when on sprints view', () => {
+                getCurrentView.mockReturnValue('sprints');
+                handleWebSocketMessage({ type: 'created', entity: 'sprint', data: { id: 's1' } });
+                expect(loadSprints).toHaveBeenCalled();
+            });
+
+            it('does not reload sprints when on other view', () => {
+                getCurrentView.mockReturnValue('issues');
+                handleWebSocketMessage({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+                expect(loadSprints).not.toHaveBeenCalled();
             });
         });
 

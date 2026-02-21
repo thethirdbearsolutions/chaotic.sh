@@ -12,6 +12,7 @@ import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from 
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints } from './sprints.js';
+import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
@@ -233,6 +234,23 @@ export function handleWebSocketMessage(message) {
         // Also refresh issue detail if viewing an affected issue
         if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
             viewIssue(data.issue_id, false);
+        }
+    } else if (entity === 'project') {
+        // Project event (CHT-876) - refresh project list and filters
+        loadProjects().then(() => {
+            if (getCurrentView() === 'projects') {
+                renderProjects();
+            }
+        });
+        if (type === 'created') {
+            showToast(`New project: ${data.name}`, 'info');
+        } else if (type === 'deleted') {
+            showToast(`Project ${data.name} deleted`, 'info');
+        }
+    } else if (entity === 'sprint') {
+        // Sprint event (CHT-877) - refresh sprints view
+        if (getCurrentView() === 'sprints') {
+            loadSprints();
         }
     }
 }

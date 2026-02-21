@@ -4,6 +4,7 @@ from app.api.deps import CurrentUser, check_user_team_access, check_user_project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
+from app.websocket import broadcast_project_event
 
 router = APIRouter()
 
@@ -31,7 +32,9 @@ async def create_project(
         )
 
     project = await project_service.create(project_in, team_id)
-    return project
+    response = ProjectResponse.model_validate(project, from_attributes=True)
+    await broadcast_project_event(team_id, "created", response.model_dump(mode="json"))
+    return response
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -98,7 +101,9 @@ async def update_project(
         )
 
     project = await project_service.update(project, project_in)
-    return project
+    response = ProjectResponse.model_validate(project, from_attributes=True)
+    await broadcast_project_event(project.team_id, "updated", response.model_dump(mode="json"))
+    return response
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -120,4 +125,7 @@ async def delete_project(project_id: str, current_user: CurrentUser):
             detail="Only admins can delete projects",
         )
 
+    team_id = project.team_id
+    project_data = {"id": project.id, "name": project.name, "key": project.key}
     await project_service.delete(project)
+    await broadcast_project_event(team_id, "deleted", project_data)

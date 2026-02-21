@@ -7,6 +7,7 @@ import { escapeHtml, escapeAttr } from './utils.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { getProjects, loadProjects, getSavedProjectId, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { showModal, closeModal, showToast } from './ui.js';
 
 /**
  * Populate the epics project filter dropdown and auto-select saved project.
@@ -65,7 +66,7 @@ export async function loadEpics() {
             listEl.innerHTML = `
                 <div class="empty-state">
                     <p>No epics found.</p>
-                    <p class="empty-state-hint">Create one from the CLI: <code>chaotic epic create "Epic title"</code></p>
+                    <p class="empty-state-hint">Click "+ New Epic" above or use the CLI: <code>chaotic epic create "Epic title"</code></p>
                 </div>
             `;
             return;
@@ -144,11 +145,86 @@ export function renderEpics(epics, container) {
         </table>
     `;
 
-    // Event delegation for row clicks
-    container.addEventListener('click', (e) => {
-        const row = e.target.closest('.epic-row');
-        if (row && row.dataset.identifier) {
-            navigateToEpicByIdentifier(row.dataset.identifier);
-        }
-    });
+    // Event delegation for row clicks — attach once per container
+    if (!container._epicClickHandler) {
+        container._epicClickHandler = (e) => {
+            const row = e.target.closest('.epic-row');
+            if (row && row.dataset.identifier) {
+                navigateToEpicByIdentifier(row.dataset.identifier);
+            }
+        };
+        container.addEventListener('click', container._epicClickHandler);
+    }
+}
+
+/**
+ * Show the create epic modal (CHT-833).
+ * A simplified issue creation form with type preset to "epic".
+ */
+export function showCreateEpicModal() {
+    const projectId = document.getElementById('epics-project-filter')?.value;
+
+    // Build project options
+    const projectOptions = getProjects().map(p => `
+        <option value="${escapeAttr(p.id)}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>
+    `).join('');
+
+    document.getElementById('modal-title').textContent = 'Create Epic';
+    document.getElementById('modal-content').innerHTML = `
+        <form id="create-epic-form">
+            <div class="form-group">
+                <label for="create-epic-project">Project</label>
+                <select id="create-epic-project" required>
+                    <option value="">Select project</option>
+                    ${projectOptions}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="create-epic-title">Title</label>
+                <input type="text" id="create-epic-title" placeholder="Epic title" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="create-epic-description">Description</label>
+                <textarea id="create-epic-description" placeholder="Add description..." rows="4"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Epic</button>
+        </form>
+    `;
+    showModal();
+
+    document.getElementById('create-epic-form').addEventListener('submit', handleCreateEpic);
+    document.getElementById('create-epic-title').focus();
+}
+
+/**
+ * Handle epic creation form submission.
+ */
+async function handleCreateEpic(event) {
+    event.preventDefault();
+
+    const projectId = document.getElementById('create-epic-project').value;
+    const title = document.getElementById('create-epic-title').value.trim();
+    const description = document.getElementById('create-epic-description').value.trim();
+
+    if (!projectId) {
+        showToast('Please select a project', 'error');
+        return;
+    }
+    if (!title) {
+        showToast('Please enter a title', 'error');
+        return;
+    }
+
+    try {
+        const issue = await api.createIssue(projectId, {
+            title,
+            description: description || null,
+            issue_type: 'epic',
+        });
+        closeModal();
+        showToast(`Created epic ${issue.identifier}`, 'success');
+        loadEpics();
+    } catch (e) {
+        showToast(`Failed to create epic: ${e.message}`, 'error');
+    }
 }

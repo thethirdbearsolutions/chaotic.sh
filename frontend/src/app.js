@@ -55,7 +55,7 @@ import {
     getGroupByValue,
 } from './issues-view.js';
 import { completeGateFromList, approveReviewFromList } from './gate-approvals.js';
-import { updateEpicsProjectFilter, onEpicsProjectChange } from './epics.js';
+import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
 import {
     setDependencies as setEpicDetailViewDependencies,
     viewEpicByPath,
@@ -2250,6 +2250,7 @@ Object.assign(window, {
 
     // Epics
     onEpicsProjectChange,
+    showCreateEpicModal,
 
     // Rituals top-level view
     loadRitualsView,
