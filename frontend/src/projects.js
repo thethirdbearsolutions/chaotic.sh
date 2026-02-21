@@ -769,7 +769,7 @@ export async function showCreateProjectRitualModal(triggerType) {
       </div>
       <div class="form-group">
         <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger">
+        <select id="ritual-trigger" onchange="toggleRitualConditions()">
           <option value="every_sprint" ${triggerType === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${triggerType === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
           <option value="ticket_claim" ${triggerType === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
@@ -827,7 +827,9 @@ export async function showCreateProjectRitualModal(triggerType) {
         <input type="number" id="ritual-percentage" value="" min="0" max="100" step="1" placeholder="e.g., 50">
         <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
       </div>
-      ${window.renderConditionBuilder ? window.renderConditionBuilder(null) : ''}
+      <div id="ritual-conditions-section"${triggerType === 'every_sprint' ? ' style="display: none;"' : ''}>
+        ${window.renderConditionBuilder ? window.renderConditionBuilder(null) : ''}
+      </div>
       <button type="submit" class="btn btn-primary">Create Ritual</button>
     </form>
   `;
@@ -838,6 +840,18 @@ export async function showCreateProjectRitualModal(triggerType) {
  * Handle group dropdown change in ritual create/edit modals.
  * Shows/hides the inline create form and weight/percentage fields.
  */
+/**
+ * Show/hide the condition builder based on trigger type (CHT-764).
+ * Conditions only apply to ticket-level rituals, not sprint rituals.
+ */
+export function toggleRitualConditions() {
+  const trigger = document.getElementById('ritual-trigger')?.value;
+  const section = document.getElementById('ritual-conditions-section');
+  if (section) {
+    section.style.display = (trigger === 'every_sprint') ? 'none' : '';
+  }
+}
+
 export function onRitualGroupChange() {
   const select = document.getElementById('ritual-group');
   const createInline = document.getElementById('ritual-group-create-inline');
@@ -965,7 +979,7 @@ export async function showEditProjectRitualModal(ritualId) {
       </div>
       <div class="form-group">
         <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger">
+        <select id="ritual-trigger" onchange="toggleRitualConditions()">
           <option value="every_sprint" ${!ritual.trigger || ritual.trigger === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${ritual.trigger === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
           <option value="ticket_claim" ${ritual.trigger === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
@@ -1020,7 +1034,9 @@ export async function showEditProjectRitualModal(ritualId) {
         <input type="number" id="ritual-percentage" value="${ritual.percentage != null ? ritual.percentage : ''}" min="0" max="100" step="1" placeholder="e.g., 50">
         <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
       </div>
-      ${window.renderConditionBuilder ? window.renderConditionBuilder(ritual.conditions) : ''}
+      <div id="ritual-conditions-section"${!ritual.trigger || ritual.trigger === 'every_sprint' ? ' style="display: none;"' : ''}>
+        ${window.renderConditionBuilder ? window.renderConditionBuilder(ritual.conditions) : ''}
+      </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
     </form>
   `;

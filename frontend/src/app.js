@@ -86,6 +86,7 @@ import {
     getEstimateOptions,
     formatEstimate,
     setGlobalProjectSelection,
+    toggleRitualConditions,
 } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
@@ -170,6 +171,8 @@ import {
     toggleCreateIssueLabelSelection,
     updateCreateIssueLabelsLabel,
     renderCreateIssueLabelDropdown,
+    handleLabelCreateKey,
+    handleCreateIssueLabelKey,
 } from './inline-dropdown.js';
 import {
     setDependencies as setIssueDetailViewDependencies,
@@ -2252,6 +2255,7 @@ Object.assign(window, {
     loadRitualsView,
     onRitualsProjectChange,
     switchRitualsTab,
+    toggleRitualConditions,
 
     // Rituals (pending rituals approval)
     approveRitual,
@@ -2277,4 +2281,8 @@ Object.assign(window, {
     // Issue creation helpers (called from HTML onchange handlers)
     applyIssueTemplate,
     updateCreateIssueProject,
+
+    // Inline dropdown key handlers (CHT-717)
+    handleLabelCreateKey,
+    handleCreateIssueLabelKey,
 });

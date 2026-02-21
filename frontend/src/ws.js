@@ -146,20 +146,14 @@ export function handleWebSocketMessage(message) {
                 viewIssue(window.currentDetailIssue.id, false);
             }
         } else if (type === 'updated') {
-            // Update in local arrays
-            const issuesForUpdate = getIssues();
-            const issueIndex = issuesForUpdate.findIndex(i => i.id === data.id);
-            if (issueIndex >= 0) {
-                const updatedIssues = [...issuesForUpdate];
-                updatedIssues[issueIndex] = data;
-                setIssues(updatedIssues);
+            // Update in local arrays — use map for clean immutable updates (CHT-797)
+            const currentIssues = getIssues();
+            if (currentIssues.some(i => i.id === data.id)) {
+                setIssues(currentIssues.map(i => i.id === data.id ? data : i));
             }
-            const myIssuesForUpdate = getMyIssues();
-            const myIndex = myIssuesForUpdate.findIndex(i => i.id === data.id);
-            if (myIndex >= 0) {
-                const updatedMyIssues = [...myIssuesForUpdate];
-                updatedMyIssues[myIndex] = data;
-                setMyIssues(updatedMyIssues);
+            const currentMyIssues = getMyIssues();
+            if (currentMyIssues.some(i => i.id === data.id)) {
+                setMyIssues(currentMyIssues.map(i => i.id === data.id ? data : i));
             }
             // Re-render if on issues view
             if (getCurrentView() === 'issues') {
