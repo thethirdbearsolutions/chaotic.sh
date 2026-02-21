@@ -8,7 +8,7 @@ from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember, OxydeTeamInvitation
 from app.enums import TeamRole, InvitationStatus
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
-from oxyde import atomic
+from oxyde import atomic, execute_raw
 
 # Type aliases for API compatibility
 Team = OxydeTeam
@@ -183,6 +183,16 @@ class TeamService:
     async def delete_invitation(self, invitation: OxydeTeamInvitation) -> None:
         """Delete an invitation."""
         await invitation.delete()
+
+    async def shares_team(self, user_id_a: str, user_id_b: str) -> bool:
+        """Check if two users share at least one team (single query)."""
+        rows = await execute_raw(
+            "SELECT 1 FROM team_members m1 "
+            "JOIN team_members m2 ON m1.team_id = m2.team_id "
+            "WHERE m1.user_id = ? AND m2.user_id = ? LIMIT 1",
+            [user_id_a, user_id_b],
+        )
+        return len(rows) > 0
 
     async def is_team_admin(self, team_id: str, user_id: str) -> bool:
         """Check if user is team admin or owner."""

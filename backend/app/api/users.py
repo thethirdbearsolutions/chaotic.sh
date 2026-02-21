@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser
 from app.schemas.user import UserUpdate, UserResponse
 from app.services.user_service import UserService
+from app.services.team_service import TeamService
 
 router = APIRouter()
 
@@ -18,6 +19,16 @@ async def get_user(user_id: str, current_user: CurrentUser):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+
+    # Users can always look up themselves
+    if user.id != current_user.id:
+        # Otherwise, require shared team membership
+        team_service = TeamService()
+        if not await team_service.shares_team(current_user.id, user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this user",
+            )
 
     return user
 
