@@ -301,6 +301,9 @@ class Client:
     def close_sprint(self, sprint_id: str) -> dict:
         return self._request("POST", f"/sprints/{sprint_id}/close")
 
+    def get_sprint_transactions(self, sprint_id: str) -> list:
+        return self._request("GET", f"/sprints/{sprint_id}/transactions")
+
     # Documents
     def create_document(self, team_id: str, title: str, **kwargs) -> dict:
         data = {"title": title, **kwargs}

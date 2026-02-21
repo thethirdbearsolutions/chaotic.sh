@@ -122,7 +122,7 @@ def register(cli):
     @click.argument("document_id")
     @click.option("--no-comments", is_flag=True, help="Hide document comments")
     @_main().json_option
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_show(document_id, no_comments):
         """Show document content.
@@ -195,7 +195,7 @@ def register(cli):
     @doc.command("comment")
     @click.argument("document_id")
     @click.argument("content")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_comment(document_id, content):
         """Add a comment to a document.
@@ -212,7 +212,7 @@ def register(cli):
     @click.argument("document_id")
     @click.argument("comment_id")
     @click.argument("content")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_comment_edit(document_id, comment_id, content):
         """Edit a comment on a document.
@@ -228,7 +228,7 @@ def register(cli):
     @doc.command("comment-delete")
     @click.argument("document_id")
     @click.argument("comment_id")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_comment_delete(document_id, comment_id):
         """Delete a comment on a document.
@@ -252,7 +252,7 @@ def register(cli):
     @click.option("--sprint", help="Attach to sprint (name, 'current', 'next', or ID)")
     @click.option("--no-sprint", "no_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--global", "is_global", is_flag=True, help="Make global (remove from project)")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_update(document_id, title, content, icon, project, sprint, no_sprint, is_global):
         """Update a document.
@@ -292,7 +292,7 @@ def register(cli):
 
     @doc.command("delete")
     @click.argument("document_id")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_delete(document_id):
         """Delete a document.
@@ -311,7 +311,7 @@ def register(cli):
     @doc.command("link")
     @click.argument("document_id")
     @click.argument("issue_identifier")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_link(document_id, issue_identifier):
         """Link a document to an issue.
@@ -333,7 +333,7 @@ def register(cli):
     @doc.command("unlink")
     @click.argument("document_id")
     @click.argument("issue_identifier")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_unlink(document_id, issue_identifier):
         """Unlink a document from an issue.
@@ -354,7 +354,7 @@ def register(cli):
 
     @doc.command("open")
     @click.argument("document_id")
-    @_main().require_auth
+    @_main().require_team
     @_main().handle_error
     def doc_open(document_id):
         """Open document in browser.
