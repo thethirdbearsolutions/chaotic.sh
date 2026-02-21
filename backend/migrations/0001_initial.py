@@ -116,6 +116,14 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_document_activities_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -183,6 +191,14 @@ def upgrade(ctx):
                 'ref_columns': [
                     'id'
                 ],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_team_members_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
             }
@@ -334,6 +350,22 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_users_agent_team_id',
+                'columns': ['agent_team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_users_agent_project_id',
+                'columns': ['agent_project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -344,7 +376,9 @@ def upgrade(ctx):
             "document_id" TEXT NOT NULL,
             "issue_id" TEXT NOT NULL,
             "created_at" TIMESTAMP NOT NULL,
-            PRIMARY KEY ("document_id", "issue_id")
+            PRIMARY KEY ("document_id", "issue_id"),
+            FOREIGN KEY ("document_id") REFERENCES "documents" ("id") ON DELETE CASCADE,
+            FOREIGN KEY ("issue_id") REFERENCES "issues" ("id") ON DELETE CASCADE
         )
     """)
     ctx.create_table(
@@ -637,6 +671,24 @@ def upgrade(ctx):
                 'auto_increment': False
             }
         ],
+        foreign_keys=[
+            {
+                'name': 'fk_api_keys_user_id',
+                'columns': ['user_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_api_keys_agent_user_id',
+                'columns': ['agent_user_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            }
+        ],
     )
     ctx.create_table(
         "team_invitations",
@@ -744,6 +796,14 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_team_invitations_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -799,6 +859,24 @@ def upgrade(ctx):
                 'unique': False,
                 'default': None,
                 'auto_increment': False
+            }
+        ],
+        foreign_keys=[
+            {
+                'name': 'fk_issue_relations_issue_id',
+                'columns': ['issue_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issue_relations_related_issue_id',
+                'columns': ['related_issue_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -906,6 +984,32 @@ def upgrade(ctx):
                 'auto_increment': False
             }
         ],
+        foreign_keys=[
+            {
+                'name': 'fk_budget_transactions_sprint_id',
+                'columns': ['sprint_id'],
+                'ref_table': 'sprints',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_budget_transactions_issue_id',
+                'columns': ['issue_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_budget_transactions_user_id',
+                'columns': ['user_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            }
+        ],
     )
     ctx.create_table(
         "ritual_groups",
@@ -971,6 +1075,16 @@ def upgrade(ctx):
                 'auto_increment': False
             }
         ],
+        foreign_keys=[
+            {
+                'name': 'fk_ritual_groups_project_id',
+                'columns': ['project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            }
+        ],
     )
     ctx.create_table(
         "labels",
@@ -1034,6 +1148,16 @@ def upgrade(ctx):
                 'unique': False,
                 'default': None,
                 'auto_increment': False
+            }
+        ],
+        foreign_keys=[
+            {
+                'name': 'fk_labels_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -1153,6 +1277,30 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_documents_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_documents_project_id',
+                'columns': ['project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_documents_sprint_id',
+                'columns': ['sprint_id'],
+                'ref_table': 'sprints',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -1240,6 +1388,40 @@ def upgrade(ctx):
                 'auto_increment': False
             }
         ],
+        foreign_keys=[
+            {
+                'name': 'fk_ticket_limbo_issue_id',
+                'columns': ['issue_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_ticket_limbo_ritual_id',
+                'columns': ['ritual_id'],
+                'ref_table': 'rituals',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_ticket_limbo_requested_by_id',
+                'columns': ['requested_by_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_ticket_limbo_cleared_by_id',
+                'columns': ['cleared_by_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            }
+        ],
     )
     ctx.create_table(
         "document_comments",
@@ -1315,6 +1497,14 @@ def upgrade(ctx):
                 'ref_columns': [
                     'id'
                 ],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_document_comments_document_id',
+                'columns': ['document_id'],
+                'ref_table': 'documents',
+                'ref_columns': ['id'],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
             }
@@ -1516,6 +1706,38 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issues_project_id',
+                'columns': ['project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issues_assignee_id',
+                'columns': ['assignee_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issues_sprint_id',
+                'columns': ['sprint_id'],
+                'ref_table': 'sprints',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issues_parent_id',
+                'columns': ['parent_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -1661,6 +1883,16 @@ def upgrade(ctx):
                 'unique': False,
                 'default': None,
                 'auto_increment': False
+            }
+        ],
+        foreign_keys=[
+            {
+                'name': 'fk_sprints_project_id',
+                'columns': ['project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -1820,6 +2052,14 @@ def upgrade(ctx):
                 ],
                 'on_delete': 'SET NULL',
                 'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_rituals_project_id',
+                'columns': ['project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
             }
         ],
     )
@@ -1897,6 +2137,14 @@ def upgrade(ctx):
                 'ref_columns': [
                     'id'
                 ],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_issue_comments_issue_id',
+                'columns': ['issue_id'],
+                'ref_table': 'issues',
+                'ref_columns': ['id'],
                 'on_delete': 'CASCADE',
                 'on_update': 'CASCADE'
             }
@@ -2031,6 +2279,22 @@ def upgrade(ctx):
                     'id'
                 ],
                 'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_ritual_attestations_attested_by',
+                'columns': ['attested_by'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_ritual_attestations_approved_by',
+                'columns': ['approved_by'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
                 'on_update': 'CASCADE'
             }
         ],
@@ -2250,6 +2514,24 @@ def upgrade(ctx):
                 'auto_increment': False
             }
         ],
+        foreign_keys=[
+            {
+                'name': 'fk_projects_team_id',
+                'columns': ['team_id'],
+                'ref_table': 'teams',
+                'ref_columns': ['id'],
+                'on_delete': 'CASCADE',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_projects_lead_id',
+                'columns': ['lead_id'],
+                'ref_table': 'users',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            }
+        ],
     )
     ctx.create_table(
         "issue_labels",
@@ -2302,6 +2584,7 @@ def upgrade(ctx):
             }
         ],
     )
+    ctx.execute('CREATE UNIQUE INDEX IF NOT EXISTS "uq_issue_relation" ON "issue_relations" ("issue_id", "related_issue_id")')
 
 
 def downgrade(ctx):
