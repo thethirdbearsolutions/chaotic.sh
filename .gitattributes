@@ -1,0 +1,2 @@
+# Mark generated bundle as generated so it's collapsed in PR diffs
+frontend/static/js/app.bundle.js linguist-generated=true
