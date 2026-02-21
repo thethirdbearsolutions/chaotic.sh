@@ -8,6 +8,7 @@ from app.services.project_service import ProjectService
 from app.services.ritual_service import RitualService
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
+from app.websocket import broadcast_sprint_event
 
 router = APIRouter()
 
@@ -65,7 +66,9 @@ async def create_sprint(
         )
 
     sprint = await sprint_service.create(sprint_in, project_id)
-    return sprint
+    response = SprintResponse.model_validate(sprint, from_attributes=True)
+    await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"))
+    return response
 
 
 # NOTE: /current must come BEFORE /{sprint_id} for route matching to work
@@ -143,7 +146,9 @@ async def update_sprint(
         )
 
     sprint = await sprint_service.update(sprint, sprint_in)
-    return sprint
+    response = SprintResponse.model_validate(sprint, from_attributes=True)
+    await broadcast_sprint_event(project.team_id, "updated", response.model_dump(mode="json"))
+    return response
 
 
 @router.post("/{sprint_id}/close", response_model=SprintResponse)
@@ -190,7 +195,9 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser):
     has_rituals = len(rituals) > 0
 
     sprint = await sprint_service.close_sprint(sprint, has_rituals=has_rituals)
-    return sprint
+    response = SprintResponse.model_validate(sprint, from_attributes=True)
+    await broadcast_sprint_event(project.team_id, "closed", response.model_dump(mode="json"))
+    return response
 
 
 @router.get("/{sprint_id}/transactions", response_model=list[BudgetTransactionResponse])
