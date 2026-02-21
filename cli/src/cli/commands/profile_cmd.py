@@ -105,6 +105,12 @@ def register(cli):
         """
         m = _main()
 
+        # Reject "default" — it maps to config.json, not default.json
+        if name == "default":
+            console.print("[red]Error: 'default' is reserved (it maps to config.json).[/red]")
+            console.print("[dim]Use a descriptive name like 'claude' or 'codex'.[/dim]")
+            raise SystemExit(1)
+
         # Check if profile already exists
         existing = m.list_profiles()
         if name in existing:
@@ -114,7 +120,7 @@ def register(cli):
         # Validate the name by attempting to resolve the config file path
         try:
             m.set_profile(name)
-            config_file = m.get_global_config_file()
+            m.get_global_config_file()
         except m.ProfileError as e:
             console.print(f"[red]Error: {e}[/red]")
             raise SystemExit(1)
@@ -132,6 +138,9 @@ def register(cli):
         m.set_profile(name)
         try:
             m.save_global_config(config)
+        except (OSError, PermissionError) as e:
+            console.print(f"[red]Error writing profile: {e}[/red]")
+            raise SystemExit(1)
         finally:
             m.set_profile(None)
 
@@ -161,6 +170,10 @@ def register(cli):
 
         _show_profile_details(name, cfg)
 
+        # Hint for unconfigured profiles
+        if not cfg.get("api_key") and not cfg.get("token"):
+            console.print(f"\n[dim]Configure with: CHAOTIC_PROFILE={name} chaotic auth login[/dim]")
+
     @profile.command("delete")
     @click.argument("name")
     @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
@@ -171,6 +184,11 @@ def register(cli):
         Removes ~/.chaotic/{name}.json. Cannot delete the currently active profile.
         """
         m = _main()
+
+        # Reject "default" — it maps to config.json, not default.json
+        if name == "default":
+            console.print("[red]Error: Cannot delete 'default' profile (it maps to config.json).[/red]")
+            raise SystemExit(1)
 
         # Check profile exists
         existing = m.list_profiles()
@@ -195,8 +213,9 @@ def register(cli):
         finally:
             m.set_profile(None)
 
-        # Confirm unless --yes
-        if not yes and not ctx.obj.get("yes") if ctx.obj else not yes:
+        # Confirm unless --yes or global --yes
+        skip_confirm = yes or (ctx.obj and ctx.obj.get("yes"))
+        if not skip_confirm:
             if not click.confirm(f"Delete profile '{name}'?"):
                 console.print("[dim]Cancelled.[/dim]")
                 return
