@@ -356,7 +356,15 @@ def upgrade(ctx):
                 'columns': ['agent_team_id'],
                 'ref_table': 'teams',
                 'ref_columns': ['id'],
-                'on_delete': 'CASCADE',
+                'on_delete': 'SET NULL',
+                'on_update': 'CASCADE'
+            },
+            {
+                'name': 'fk_users_agent_project_id',
+                'columns': ['agent_project_id'],
+                'ref_table': 'projects',
+                'ref_columns': ['id'],
+                'on_delete': 'SET NULL',
                 'on_update': 'CASCADE'
             }
         ],
