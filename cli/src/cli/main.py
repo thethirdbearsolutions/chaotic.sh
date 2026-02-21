@@ -31,9 +31,6 @@ from .commands.shared import (  # noqa: F401 – re-exported for backward compat
     resolve_team_id, print_sprint_panel,
     format_ritual_line, print_ritual_prompt,
 )
-# Backward-compatible aliases for old internal names
-_format_ritual_line = format_ritual_line  # noqa: F841
-_print_ritual_prompt = print_ritual_prompt  # noqa: F841
 
 
 def is_json_output() -> bool:
