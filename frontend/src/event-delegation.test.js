@@ -126,8 +126,54 @@ describe('event-delegation', () => {
         });
     });
 
-    describe('input dispatch', () => {
-        it('dispatches input events to action handler', () => {
+    // input dispatch tests moved to 'input dispatch from form controls' section below
+
+    describe('keydown dispatch', () => {
+        it('dispatches keydown events to action handler on the element itself', () => {
+            const handler = vi.fn();
+            registerActions({ 'key-handler': handler });
+
+            document.body.innerHTML = '<input data-action="key-handler" type="text">';
+            const input = document.querySelector('input');
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(handler.mock.calls[0][0].key).toBe('Enter');
+        });
+
+        it('does NOT fire parent data-action on keydown from textarea (CHT-1100)', () => {
+            const handler = vi.fn();
+            registerActions({ 'add-comment': handler });
+
+            document.body.innerHTML = `
+                <form data-action="add-comment">
+                    <textarea id="comment">typing here</textarea>
+                </form>
+            `;
+            const textarea = document.querySelector('textarea');
+            textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+
+            expect(handler).not.toHaveBeenCalled();
+        });
+
+        it('does NOT fire parent data-action on keydown from input', () => {
+            const handler = vi.fn();
+            registerActions({ 'search-form': handler });
+
+            document.body.innerHTML = `
+                <div data-action="search-form">
+                    <input type="text">
+                </div>
+            `;
+            const input = document.querySelector('input');
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }));
+
+            expect(handler).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('input dispatch from form controls does not bubble to parent action', () => {
+        it('dispatches input events when element itself has data-action', () => {
             const handler = vi.fn();
             registerActions({ 'search-input': handler });
 
@@ -138,19 +184,20 @@ describe('event-delegation', () => {
 
             expect(handler).toHaveBeenCalledTimes(1);
         });
-    });
 
-    describe('keydown dispatch', () => {
-        it('dispatches keydown events to action handler', () => {
+        it('does NOT fire parent data-action on input from textarea', () => {
             const handler = vi.fn();
-            registerActions({ 'key-handler': handler });
+            registerActions({ 'parent-action': handler });
 
-            document.body.innerHTML = '<input data-action="key-handler" type="text">';
-            const input = document.querySelector('input');
-            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            document.body.innerHTML = `
+                <div data-action="parent-action">
+                    <textarea>typing</textarea>
+                </div>
+            `;
+            const textarea = document.querySelector('textarea');
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-            expect(handler).toHaveBeenCalledTimes(1);
-            expect(handler.mock.calls[0][0].key).toBe('Enter');
+            expect(handler).not.toHaveBeenCalled();
         });
     });
 
