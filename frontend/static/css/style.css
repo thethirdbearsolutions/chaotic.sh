@@ -1,5 +1,37 @@
-/* CSS Variables */
+/* ============================================================================
+   CHAOTIC DESIGN SYSTEM
+   ============================================================================
+
+   Table of Contents:
+   ------------------
+   1.  Design Tokens (CSS custom properties)
+   2.  Reset & Base
+   3.  Layout (app shell, sidebar, main content)
+   4.  Auth & Onboarding
+   5.  Forms & Buttons
+   6.  Navigation & Dropdowns
+   7.  Lists & Grids
+   8.  Modals & Overlays
+   9.  Issue Views (list, detail, kanban board)
+   10. Documents
+   11. Epics & Sprints
+   12. Settings & API Keys
+   13. Comments & Activity
+   14. Filter Bar & Chips
+   15. Badges, Labels & Toasts
+   16. Command Palette
+   17. Gate Approvals & Rituals
+   18. Animations & Transitions
+   19. Utilities
+   20. Responsive Breakpoints
+   ============================================================================ */
+
+/* ============================================================================
+   1. DESIGN TOKENS
+   ============================================================================ */
+
 :root {
+    /* Colors */
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
     --bg-tertiary: #21262d;
@@ -13,7 +45,42 @@
     --success-color: #238636;
     --warning-color: #d29922;
     --error-color: #f85149;
+
+    /* Spacing scale (4px base) */
+    --space-xs: 4px;
+    --space-sm: 6px;
+    --space-md: 8px;
+    --space-lg: 12px;
+    --space-xl: 16px;
+    --space-2xl: 24px;
+
+    /* Border radius */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-pill: 9999px;
+    --radius-circle: 50%;
+
+    /* Font sizes */
+    --font-xs: 11px;
+    --font-sm: 12px;
+    --font-base: 13px;
+    --font-md: 14px;
+    --font-lg: 16px;
+    --font-xl: 18px;
+    --font-2xl: 24px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    /* Layout */
     --sidebar-width: 240px;
+
+    /* Transitions */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.2s ease;
 }
 
 body.theme-light {
@@ -32,7 +99,9 @@ body.theme-light {
     --error-color: #dc2626;
 }
 
-/* Reset */
+/* ============================================================================
+   2. RESET & BASE
+   ============================================================================ */
 * {
     margin: 0;
     padding: 0;
@@ -91,7 +160,9 @@ a:hover {
     text-decoration: underline;
 }
 
-/* App Layout */
+/* ============================================================================
+   3. LAYOUT
+   ============================================================================ */
 #app {
     min-height: 100vh;
 }
@@ -104,7 +175,9 @@ a:hover {
     display: none !important;
 }
 
-/* Auth Screen */
+/* ============================================================================
+   4. AUTH & ONBOARDING
+   ============================================================================ */
 .auth-container {
     display: flex;
     flex-direction: column;
@@ -133,7 +206,7 @@ a:hover {
 .auth-form {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 2rem;
     width: 100%;
     max-width: 400px;
@@ -150,7 +223,9 @@ a:hover {
     color: var(--text-secondary);
 }
 
-/* Form Elements */
+/* ============================================================================
+   5. FORMS & BUTTONS
+   ============================================================================ */
 .form-group {
     margin-bottom: 1rem;
 }
@@ -182,7 +257,7 @@ input, textarea, select {
     padding: 0.75rem;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: 0.875rem;
 }
@@ -263,7 +338,7 @@ textarea {
     gap: 6px;
     padding: 0.5rem 1rem;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
@@ -328,7 +403,7 @@ textarea {
     align-items: center;
     justify-content: space-between;
     padding: 0.5rem;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.2s;
 }
@@ -374,7 +449,7 @@ textarea {
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.2s;
 }
@@ -408,14 +483,16 @@ textarea {
     color: var(--text-primary);
 }
 
-/* Dropdown */
+/* ============================================================================
+   6. NAVIGATION & DROPDOWNS
+   ============================================================================ */
 .dropdown {
     position: absolute;
     left: 0.5rem;
     right: 0.5rem;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     z-index: 100;
 }
@@ -545,7 +622,9 @@ textarea {
     height: 20px;
 }
 
-/* Lists */
+/* ============================================================================
+   7. LISTS & GRIDS
+   ============================================================================ */
 .list {
     display: flex;
     flex-direction: column;
@@ -559,7 +638,7 @@ textarea {
     padding: 1rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -643,7 +722,7 @@ textarea {
     padding: 1.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -667,7 +746,7 @@ textarea {
     padding: 6px;
     cursor: pointer;
     color: var(--text-muted);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     opacity: 0;
     transition: opacity 0.15s ease, background 0.15s ease;
 }
@@ -684,7 +763,7 @@ textarea {
 .grid-item-icon {
     width: 40px;
     height: 40px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -728,7 +807,7 @@ textarea {
     height: 28px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
@@ -768,7 +847,7 @@ textarea {
     padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     margin-bottom: 1rem;
 }
 
@@ -789,7 +868,7 @@ textarea {
     padding: 0.375rem 0.625rem;
     background: var(--bg-secondary);
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: 0.8125rem;
     cursor: pointer;
@@ -812,7 +891,7 @@ textarea {
     display: inline-flex;
     align-items: center;
     padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-size: 0.75rem;
     font-weight: 500;
 }
@@ -834,7 +913,9 @@ textarea {
 .badge-sprint-active { background: #1e3a5f; color: #60a5fa; }
 .badge-sprint-completed { background: #14532d; color: #4ade80; }
 
-/* Modal */
+/* ============================================================================
+   8. MODALS & OVERLAYS
+   ============================================================================ */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -851,7 +932,7 @@ textarea {
 .modal {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     width: 100%;
     max-width: 500px;
     max-height: 90vh;
@@ -902,7 +983,9 @@ textarea {
     margin-top: 1rem;
 }
 
-/* Issue Detail */
+/* ============================================================================
+   9. ISSUE VIEWS
+   ============================================================================ */
 .issue-detail-header {
     display: flex;
     align-items: flex-start;
@@ -943,7 +1026,7 @@ textarea {
 .issue-description {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     padding: 1rem;
     margin-bottom: 1.5rem;
     white-space: pre-wrap;
@@ -960,7 +1043,7 @@ textarea {
 .comment {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     padding: 1rem;
     margin-bottom: 0.75rem;
 }
@@ -994,7 +1077,7 @@ textarea {
     margin-top: 8px;
     padding: 8px;
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--bg-secondary);
     display: flex;
     flex-direction: column;
@@ -1014,7 +1097,7 @@ textarea {
     border: 1px solid transparent;
     color: var(--text-primary);
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
     font-size: 13px;
@@ -1030,7 +1113,9 @@ textarea {
     font-size: 12px;
 }
 
-/* Document Detail */
+/* ============================================================================
+   10. DOCUMENTS
+   ============================================================================ */
 .document-title {
     font-size: 2rem;
     font-weight: 600;
@@ -1099,7 +1184,7 @@ textarea {
 .document-content.markdown-body code {
     background: var(--bg-tertiary);
     padding: 0.2em 0.4em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     font-size: 0.9em;
 }
@@ -1107,7 +1192,7 @@ textarea {
 .document-content.markdown-body pre {
     background: var(--bg-tertiary);
     padding: 1em;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     overflow-x: auto;
     margin-bottom: 1em;
 }
@@ -1190,7 +1275,7 @@ textarea {
     gap: 0.75rem;
     padding: 0.5rem 0.75rem;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .linked-item-id {
@@ -1226,7 +1311,7 @@ textarea {
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background 0.15s;
 }
@@ -1255,7 +1340,7 @@ textarea {
     margin-bottom: 1rem;
     background: var(--bg-secondary);
     border: 1px solid var(--success);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .selected-issue-label {
@@ -1310,6 +1395,10 @@ textarea {
     margin: 1rem auto 0;
 }
 
+/* ============================================================================
+   15. BADGES, LABELS & TOASTS
+   ============================================================================ */
+
 /* Toast */
 #toast-container {
     position: fixed;
@@ -1325,7 +1414,7 @@ textarea {
     padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     animation: slideIn 0.3s ease;
 }
@@ -1368,7 +1457,9 @@ textarea {
     animation: slideOut 0.25s ease forwards;
 }
 
-/* Command Palette */
+/* ============================================================================
+   16. COMMAND PALETTE
+   ============================================================================ */
 .command-palette-overlay {
     position: fixed;
     top: 0;
@@ -1461,7 +1552,7 @@ textarea {
     align-items: center;
     gap: 12px;
     padding: 10px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.1s;
 }
@@ -1505,7 +1596,7 @@ textarea {
 .command-item-shortcut kbd {
     background: var(--bg-tertiary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-family: inherit;
 }
 
@@ -1515,7 +1606,9 @@ textarea {
     color: var(--text-muted);
 }
 
-/* Smooth transitions everywhere */
+/* ============================================================================
+   18. ANIMATIONS & TRANSITIONS
+   ============================================================================ */
 * {
     transition-property: background-color, border-color, color, opacity;
     transition-duration: 0.15s;
@@ -1587,7 +1680,7 @@ input, textarea, select, .command-input {
     appearance: none;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 2px 8px;
     font-size: 12px;
     cursor: pointer;
@@ -1615,7 +1708,7 @@ input, textarea, select, .command-input {
 
 .gate-approval-issue {
     background: var(--bg-tertiary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     padding: 0.75rem 1rem;
 }
 
@@ -1699,7 +1792,7 @@ select:focus-visible {
     padding: 0 6px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 11px;
     font-family: inherit;
     color: var(--text-muted);
@@ -1728,7 +1821,7 @@ select:focus-visible {
     padding: 12px 16px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     margin-bottom: 16px;
     cursor: text;
     transition: all 0.15s ease;
@@ -1816,7 +1909,7 @@ select:focus-visible {
 
 ::-webkit-scrollbar-thumb {
     background: var(--bg-hover);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -1837,7 +1930,7 @@ select:focus-visible {
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 @keyframes shimmer {
@@ -1852,7 +1945,7 @@ select:focus-visible {
     padding: 1rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     margin-bottom: 0.5rem;
 }
 
@@ -1870,7 +1963,7 @@ select:focus-visible {
 .skeleton-list-item .skeleton-badge {
     height: 20px;
     width: 70px;
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
 }
 
 /* List item enter animation */
@@ -2047,7 +2140,7 @@ select:focus-visible {
     justify-content: center;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -2118,7 +2211,7 @@ select:focus-visible {
     padding: 4px 10px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
@@ -2156,7 +2249,7 @@ select:focus-visible {
     height: 18px;
     padding: 0 5px;
     background: var(--bg-tertiary);
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-size: 11px;
     font-weight: 500;
     color: var(--text-secondary);
@@ -2217,7 +2310,7 @@ input[type="checkbox"] {
     padding: 4px 8px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 11px;
     color: var(--text-primary);
     white-space: nowrap;
@@ -2241,7 +2334,7 @@ input[type="checkbox"] {
     padding: 6px 12px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     min-width: 150px;
     max-width: 250px;
     flex-shrink: 1;
@@ -2275,12 +2368,12 @@ input[type="checkbox"] {
 .search-hint {
     padding: 2px 6px;
     background: var(--bg-hover);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 11px;
     color: var(--text-muted);
 }
 
-/* Kanban Board */
+/* --- Kanban Board --- */
 .kanban-board {
     display: flex;
     gap: 16px;
@@ -2293,7 +2386,7 @@ input[type="checkbox"] {
     flex: 0 0 280px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 150px);
@@ -2320,7 +2413,7 @@ input[type="checkbox"] {
 .kanban-column-count {
     background: var(--bg-hover);
     padding: 2px 8px;
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-size: 11px;
     color: var(--text-muted);
 }
@@ -2338,7 +2431,7 @@ input[type="checkbox"] {
     padding: 12px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: all 0.15s ease;
 }
@@ -2515,7 +2608,7 @@ input[type="checkbox"] {
     flex-direction: column;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
 }
 
@@ -2576,7 +2669,7 @@ input[type="checkbox"] {
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     transition: all 0.1s ease;
     flex-shrink: 0;
 }
@@ -2599,7 +2692,7 @@ input[type="checkbox"] {
     color: var(--text-secondary);
     background: var(--bg-secondary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .estimate-btn:hover .estimate-badge {
@@ -2619,7 +2712,7 @@ input[type="checkbox"] {
     color: var(--text-secondary);
     background: var(--bg-secondary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     white-space: nowrap;
     max-width: 100px;
     overflow: hidden;
@@ -2639,7 +2732,7 @@ input[type="checkbox"] {
     gap: 12px;
     padding: 8px 16px;
     background: var(--bg-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     margin: 0 0 8px 0;
     font-size: 13px;
     color: var(--text-secondary);
@@ -2780,7 +2873,7 @@ input[type="checkbox"] {
 .issue-label {
     font-size: 11px;
     padding: 2px 8px;
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-weight: 500;
     white-space: nowrap;
 }
@@ -2788,7 +2881,7 @@ input[type="checkbox"] {
 .issue-type-badge {
     font-size: 11px;
     padding: 2px 8px;
-    border-radius: 9999px;
+    border-radius: var(--radius-pill);
     font-weight: 600;
     white-space: nowrap;
     background: var(--bg-tertiary);
@@ -2827,7 +2920,7 @@ input[type="checkbox"] {
     flex: 1;
     padding: 6px 8px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     background: var(--bg-secondary);
     color: var(--text-primary);
     font-size: 12px;
@@ -2889,7 +2982,7 @@ input[type="checkbox"] {
     max-width: 280px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     overflow: hidden;
     animation: dropdownEnter 0.15s ease;
@@ -2954,7 +3047,7 @@ input[type="checkbox"] {
     color: var(--text-muted);
     background: var(--bg-tertiary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .dropdown-empty {
@@ -3005,7 +3098,7 @@ input[type="checkbox"] {
     cursor: pointer;
     padding: 4px 8px;
     margin-left: -8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     transition: all 0.15s ease;
 }
 
@@ -3028,7 +3121,7 @@ input[type="checkbox"] {
     height: 28px;
     background: none;
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     padding: 0;
@@ -3115,7 +3208,7 @@ input[type="checkbox"] {
 .description-content code {
     background: var(--bg-tertiary);
     padding: 0.2em 0.4em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     font-size: 0.9em;
 }
@@ -3123,7 +3216,7 @@ input[type="checkbox"] {
 .description-content pre {
     background: var(--bg-tertiary);
     padding: 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     overflow-x: auto;
     margin: 8px 0;
 }
@@ -3239,7 +3332,7 @@ input[type="checkbox"] {
     line-height: 1.5;
     padding: 8px 12px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     background: var(--bg-secondary);
     color: var(--text-primary);
 }
@@ -3267,7 +3360,7 @@ input[type="checkbox"] {
     gap: 8px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 4px;
     width: fit-content;
 }
@@ -3278,7 +3371,7 @@ input[type="checkbox"] {
     color: var(--text-secondary);
     font-size: 13px;
     padding: 6px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
 }
@@ -3297,7 +3390,7 @@ input[type="checkbox"] {
     padding: 12px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
 }
 
 .issue-detail-section {
@@ -3309,7 +3402,7 @@ input[type="checkbox"] {
     padding: 16px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
 }
 
 .dashboard-activity .section-header {
@@ -3345,7 +3438,7 @@ input[type="checkbox"] {
     padding: 6px 8px;
     margin: 0 -8px;
     border-bottom: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
 }
 
@@ -3372,7 +3465,7 @@ input[type="checkbox"] {
     font-size: 13px;
     cursor: pointer;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .property-value:hover {
@@ -3419,7 +3512,7 @@ input[type="checkbox"] {
     margin-top: 4px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 4px;
     min-width: 160px;
     z-index: 100;
@@ -3436,7 +3529,7 @@ input[type="checkbox"] {
     background: transparent;
     color: var(--text-primary);
     font-size: 13px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
 }
@@ -3468,7 +3561,9 @@ input[type="checkbox"] {
     background: rgba(248, 81, 73, 0.1);
 }
 
-/* Comments */
+/* ============================================================================
+   13. COMMENTS & ACTIVITY
+   ============================================================================ */
 .comments-list {
     display: flex;
     flex-direction: column;
@@ -3534,7 +3629,7 @@ input[type="checkbox"] {
 .comment-content code {
     background: var(--bg-tertiary);
     padding: 0.2em 0.4em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     font-size: 0.9em;
 }
@@ -3542,7 +3637,7 @@ input[type="checkbox"] {
 .comment-content pre {
     background: var(--bg-tertiary);
     padding: 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     overflow-x: auto;
     margin: 8px 0;
 }
@@ -3647,7 +3742,7 @@ input[type="checkbox"] {
 .comment-attestation {
     background: var(--bg-secondary);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     border-left: 3px solid var(--success-color);
 }
 
@@ -3661,7 +3756,7 @@ input[type="checkbox"] {
     padding: 2px 6px;
     background: var(--success-color);
     color: white;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-weight: 500;
 }
 
@@ -3685,7 +3780,7 @@ input[type="checkbox"] {
     z-index: 10000;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 12px;
     min-width: 250px;
     max-width: 350px;
@@ -3872,7 +3967,7 @@ input[type="checkbox"] {
     gap: 8px;
     padding: 8px 12px;
     background: var(--bg-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.15s ease;
 }
@@ -3908,7 +4003,7 @@ input[type="checkbox"] {
     color: var(--text-muted);
     background: var(--bg-primary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
 }
 
@@ -3962,7 +4057,7 @@ input[type="checkbox"] {
     gap: 8px;
     padding: 8px 12px;
     background: var(--bg-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     transition: background 0.15s ease;
 }
 
@@ -4020,7 +4115,7 @@ input[type="checkbox"] {
     padding: 4px;
     cursor: pointer;
     color: var(--text-muted);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4044,7 +4139,9 @@ input[type="checkbox"] {
     margin-top: 4px;
 }
 
-/* Tablet adjustments */
+/* ============================================================================
+   20. RESPONSIVE BREAKPOINTS
+   ============================================================================ */
 @media (max-width: 1024px) {
     :root {
         --sidebar-width: 200px;
@@ -4149,7 +4246,7 @@ input[type="checkbox"] {
         height: 44px;
         background: none;
         border: 1px solid var(--border-color);
-        border-radius: 6px;
+        border-radius: var(--radius-md);
         color: var(--text-primary);
         cursor: pointer;
         flex-shrink: 0;
@@ -4276,7 +4373,7 @@ input[type="checkbox"] {
 
     .filter-menu-category {
         padding: 6px 10px;
-        border-radius: 6px;
+        border-radius: var(--radius-md);
         font-size: 12px;
     }
 
@@ -4385,7 +4482,7 @@ input[type="checkbox"] {
     /* Onboarding */
     .onboarding-container {
         padding: 24px 20px;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
     }
 
     .onboarding-overlay {
@@ -4515,7 +4612,7 @@ input[type="checkbox"] {
 .project-select {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 6px 10px;
     font-size: 13px;
     color: var(--text-primary);
@@ -4576,7 +4673,7 @@ input[type="checkbox"] {
 .create-issue-template select {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     padding: 8px 10px;
     color: var(--text-primary);
     font-size: 13px;
@@ -4624,7 +4721,7 @@ input[type="checkbox"] {
 .create-issue-date-input {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     padding: 8px 10px;
     color: var(--text-primary);
     font-size: 13px;
@@ -4660,7 +4757,7 @@ input[type="checkbox"] {
     padding: 6px 10px;
     background: transparent;
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font-size: 13px;
     cursor: pointer;
@@ -4751,7 +4848,7 @@ input[type="checkbox"] {
     background: var(--accent-color);
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -4767,7 +4864,9 @@ input[type="checkbox"] {
     height: 16px;
 }
 
-/* Settings Page */
+/* ============================================================================
+   12. SETTINGS & API KEYS
+   ============================================================================ */
 .settings-tabs {
     display: flex;
     gap: 0;
@@ -4875,7 +4974,7 @@ input[type="checkbox"] {
     padding: 16px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
 }
 
 .api-key-item.revoked {
@@ -4904,7 +5003,7 @@ input[type="checkbox"] {
 .api-key-prefix {
     background: var(--bg-tertiary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-family: monospace;
     font-size: 12px;
 }
@@ -4919,7 +5018,7 @@ input[type="checkbox"] {
     border: 1px solid var(--danger-color);
     color: var(--danger-color);
     padding: 6px 12px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -4947,7 +5046,7 @@ input[type="checkbox"] {
     gap: 12px;
     background: var(--bg-tertiary);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     margin-bottom: 16px;
 }
 
@@ -4958,7 +5057,7 @@ input[type="checkbox"] {
     text-align: left;
     background: var(--bg-secondary);
     padding: 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     display: block;
     overflow-x: auto;
     white-space: nowrap;
@@ -4968,7 +5067,7 @@ input[type="checkbox"] {
     text-align: left;
     background: var(--bg-tertiary);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     margin-bottom: 16px;
 }
 
@@ -5010,7 +5109,7 @@ input[type="checkbox"] {
     padding: 10px 12px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     user-select: none;
     transition: background-color 0.15s;
@@ -5089,7 +5188,7 @@ input[type="checkbox"] {
     padding: 6px 12px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
@@ -5123,7 +5222,7 @@ input[type="checkbox"] {
     min-width: 180px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     z-index: 100;
     padding: 6px 0;
@@ -5199,7 +5298,7 @@ input[type="checkbox"] {
     z-index: 50;
     background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
     border: 1px solid #b91c1c;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     margin-bottom: 16px;
     overflow: hidden;
 }
@@ -5294,7 +5393,7 @@ input[type="checkbox"] {
     gap: 12px;
     padding: 12px;
     background: var(--bg-tertiary);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
 }
 
@@ -5359,7 +5458,7 @@ input[type="checkbox"] {
 .limbo-ritual-detail-item {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 12px;
 }
 
@@ -5417,7 +5516,7 @@ input[type="checkbox"] {
     padding: 8px 12px;
     background: var(--bg-secondary);
     border-left: 3px solid var(--success-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
 }
 
@@ -5487,7 +5586,7 @@ input[type="checkbox"] {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-left: 3px solid var(--text-muted);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
 }
 
 .ritual-item:hover {
@@ -5644,7 +5743,7 @@ input[type="checkbox"] {
     background: transparent;
     color: var(--text-muted);
     padding: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -5677,7 +5776,7 @@ input[type="checkbox"] {
 .ticket-ritual-item {
     padding: 12px;
     background: var(--bg-tertiary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
 }
 
@@ -5722,7 +5821,7 @@ input[type="checkbox"] {
     margin: 8px 0 0 22px;
     padding: 8px;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
 }
 
@@ -5758,11 +5857,15 @@ input[type="checkbox"] {
     margin-top: 4px;
 }
 
+/* ============================================================================
+   11. EPICS & SPRINTS
+   ============================================================================ */
+
 /* Sprint Cards - Now/Next Model */
 .sprint-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 20px;
     margin-bottom: 16px;
 }
@@ -5879,7 +5982,7 @@ input[type="checkbox"] {
     margin-top: 16px;
     padding: 16px;
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--bg-secondary);
 }
 
@@ -6010,7 +6113,7 @@ input[type="checkbox"] {
 .agent-scope {
     background: var(--bg-tertiary);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 /* Agent badge for activity feeds */
@@ -6033,6 +6136,10 @@ input[type="checkbox"] {
    Linear-Style Filter Bar
    ======================================== */
 
+/* ============================================================================
+   14. FILTER BAR & CHIPS
+   ============================================================================ */
+
 /* Hide original filter controls */
 .hidden-filter-controls {
     display: none !important;
@@ -6054,7 +6161,7 @@ input[type="checkbox"] {
     padding: 6px 12px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
@@ -6106,7 +6213,7 @@ input[type="checkbox"] {
     min-width: 400px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     z-index: 200;
     overflow: hidden;
@@ -6185,7 +6292,7 @@ input[type="checkbox"] {
     border: none;
     cursor: pointer;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .filter-options-clear:hover {
@@ -6266,7 +6373,7 @@ input[type="checkbox"] {
     min-width: 200px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     z-index: 200;
     padding: 6px 0;
@@ -6387,7 +6494,7 @@ input[type="checkbox"] {
     border: none;
     cursor: pointer;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     transition: all 0.15s ease;
 }
 
@@ -6404,7 +6511,9 @@ input[type="checkbox"] {
     font-size: 13px;
 }
 
-/* GATE Approvals View */
+/* ============================================================================
+   17. GATE APPROVALS & RITUALS
+   ============================================================================ */
 .view-subtitle {
     color: var(--text-muted);
     font-size: 14px;
@@ -6436,7 +6545,7 @@ input[type="checkbox"] {
 .gate-issue-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     padding: 16px;
 }
 
@@ -6492,7 +6601,7 @@ input[type="checkbox"] {
     gap: 12px;
     padding: 12px;
     background: var(--bg-tertiary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
 }
 
 .gate-ritual-info {
@@ -6534,7 +6643,7 @@ input[type="checkbox"] {
     margin-top: 4px;
     padding: 6px 8px;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border-left: 3px solid var(--accent-color);
 }
 
@@ -6544,7 +6653,7 @@ input[type="checkbox"] {
     margin-top: 8px;
     padding: 8px 12px;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border-left: 3px solid var(--accent-color);
 }
 
@@ -6603,7 +6712,7 @@ input[type="checkbox"] {
 .stat-card {
     background: var(--bg-primary);
     padding: 16px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     text-align: center;
 }
@@ -6674,7 +6783,7 @@ input[type="checkbox"] {
     gap: 12px;
     padding: 12px;
     background: var(--bg-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background 0.15s ease;
 }
@@ -6736,7 +6845,7 @@ input[type="checkbox"] {
     padding: 24px;
     text-align: center;
     background: var(--bg-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
 }
 
 .sprint-budget-section {
@@ -6747,7 +6856,7 @@ input[type="checkbox"] {
 .budget-ledger {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
 }
 
@@ -6991,7 +7100,7 @@ input[type="checkbox"] {
     align-items: center;
     gap: 0.25rem;
     padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 0.8rem;
 }
 
@@ -7027,7 +7136,7 @@ input[type="checkbox"] {
 .view-toggle {
     display: flex;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     overflow: hidden;
     flex-shrink: 0;
 }
@@ -7058,7 +7167,7 @@ input[type="checkbox"] {
     border-right: 1px solid var(--border-color);
 }
 
-/* Onboarding overlay */
+/* --- Onboarding overlay --- */
 .onboarding-overlay {
     position: fixed;
     inset: 0;
@@ -7144,7 +7253,7 @@ input[type="checkbox"] {
     padding: 8px 12px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: 14px;
     box-sizing: border-box;
@@ -7211,7 +7320,7 @@ input[type="checkbox"] {
     margin: 20px 0;
     padding: 16px;
     background: var(--bg-primary);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
 }
 
 .onboarding-tips h3 {
@@ -7237,7 +7346,7 @@ input[type="checkbox"] {
     padding: 2px 8px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: 12px;
     text-align: center;
     font-family: inherit;
