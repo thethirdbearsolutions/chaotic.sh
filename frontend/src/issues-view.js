@@ -456,7 +456,16 @@ function closeFilterMenuOnOutsideClick(e) {
     const filterDropdown = document.getElementById('filter-menu-dropdown');
     const displayDropdown = document.getElementById('display-menu-dropdown');
 
-    if (!e.target.closest('.filter-menu-container') && !e.target.closest('.display-menu-container')) {
+    // Use composedPath() instead of e.target.closest() because data-action
+    // handlers may re-render innerHTML before this handler fires, detaching
+    // the original click target from the DOM and breaking closest() traversal.
+    const path = e.composedPath();
+    const filterContainer = document.querySelector('.filter-menu-container');
+    const displayContainer = document.querySelector('.display-menu-container');
+    const insideFilter = filterContainer && path.includes(filterContainer);
+    const insideDisplay = displayContainer && path.includes(displayContainer);
+
+    if (!insideFilter && !insideDisplay) {
         if (filterDropdown) filterDropdown.classList.add('hidden');
         if (displayDropdown) displayDropdown.classList.add('hidden');
         document.removeEventListener('click', closeFilterMenuOnOutsideClick);
