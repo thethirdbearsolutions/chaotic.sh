@@ -44,6 +44,7 @@ import {
     clearProjectFilter,
     toggleStatusOption,
     clearStatusFilterNew,
+    setStatusPreset,
     togglePriorityOption,
     clearPriorityFilterNew,
     setTypeFilter,
@@ -715,6 +716,7 @@ Object.assign(window, {
     clearProjectFilter,
     toggleStatusOption,
     clearStatusFilterNew,
+    setStatusPreset,
     togglePriorityOption,
     clearPriorityFilterNew,
     setTypeFilter,
@@ -730,7 +732,7 @@ Object.assign(window, {
     clearAllFilters,
     updateFilterChips,
     updateFilterCountBadge,
-    
+
     // Board (functions in board.js)
     loadBoard,
     onBoardProjectChange,
