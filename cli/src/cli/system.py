@@ -654,6 +654,12 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
     except subprocess.CalledProcessError as e:
         output = (e.stderr or "") + (e.stdout or "")
         if "already exists" in output:
+            if fake_initial:
+                return False, (
+                    "Migration failed: tables already exist even after --fake-initial.\n"
+                    "A migration beyond 0001_initial is trying to create existing tables.\n"
+                    "Manual intervention required — check 'oxyde showmigrations' in the backend directory."
+                )
             return False, (
                 "Migration failed: tables already exist.\n"
                 "This usually means the database predates the Oxyde migration system.\n"
@@ -1216,28 +1222,34 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
 
+    # Confirm action
+    if not yes:
+        if already_current:
+            action = "Run migrations with --fake-initial?"
+        else:
+            action = f"Upgrade from {current_version} to {target_version}?"
+        if not _confirm_action(f"\n{action}"):
+            console.print("[yellow]Cancelled.[/yellow]")
+            if was_running:
+                start_service()
+            raise SystemExit(0)
+
+    console.print()
+
+    # Backup database (now safe since server is stopped)
     backup_path = None
+    if not no_backup and DATABASE_PATH.exists():
+        console.print("Backing up database...")
+        backup_path = create_backup()
+        if backup_path:
+            console.print(f"  [dim]{backup_path}[/dim]")
+            cleanup_old_backups()
+        else:
+            console.print("  [dim]No database to backup[/dim]")
+
     if already_current:
         console.print("Already on latest code. Running migrations...")
     else:
-        # Confirm upgrade
-        if not yes:
-            if not _confirm_action(f"\nUpgrade from {current_version} to {target_version}?"):
-                console.print("[yellow]Upgrade cancelled.[/yellow]")
-                if was_running:
-                    start_service()
-                raise SystemExit(0)
-
-        console.print()
-        if not no_backup and DATABASE_PATH.exists():
-            console.print("Backing up database...")
-            backup_path = create_backup()
-            if backup_path:
-                console.print(f"  [dim]{backup_path}[/dim]")
-                cleanup_old_backups()
-            else:
-                console.print("  [dim]No database to backup[/dim]")
-
         # Checkout new version (force to handle dirty state from uv sync etc.)
         console.print(f"Checking out {target_version}...")
         ok, err = checkout_version(target_version, force=True)
