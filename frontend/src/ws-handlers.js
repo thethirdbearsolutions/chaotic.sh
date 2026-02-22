@@ -200,7 +200,7 @@ function handleProject(data, { type }) {
         if (getCurrentView() === 'projects') {
             renderProjects();
         }
-    });
+    }).catch(e => console.error('Failed to reload projects:', e));
     if (type === 'created') {
         showToast(`New project: ${data.name}`, 'info');
     } else if (type === 'deleted') {

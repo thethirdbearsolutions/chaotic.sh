@@ -272,6 +272,42 @@ describe('ws-handlers.js', () => {
         });
     });
 
+    describe('attestation', () => {
+        it('refreshes issue detail if viewing attested issue', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            window.currentDetailIssue = { id: 'issue-1' };
+
+            dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+
+        it('calls loadGateApprovals on gate-approvals view', () => {
+            getCurrentView.mockReturnValue('gate-approvals');
+            window.loadGateApprovals = vi.fn();
+
+            dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
+            expect(window.loadGateApprovals).toHaveBeenCalled();
+
+            delete window.loadGateApprovals;
+        });
+    });
+
+    describe('activity', () => {
+        it('loads dashboard activity on my-issues view', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            expect(loadDashboardActivity).toHaveBeenCalled();
+        });
+
+        it('refreshes issue detail if viewing the activity issue', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            window.currentDetailIssue = { id: 'issue-1' };
+
+            dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+    });
+
     describe('unknown entity', () => {
         it('does nothing for unknown entities', () => {
             dispatch({ type: 'created', entity: 'unknown', data: {} });

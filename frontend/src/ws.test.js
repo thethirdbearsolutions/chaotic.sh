@@ -152,7 +152,7 @@ describe('ws.js', () => {
             expect(avg3).toBeGreaterThan(avg0);
         });
 
-        it('caps at 30 seconds', () => {
+        it('caps base at 30 seconds (37.5s with jitter)', () => {
             for (let i = 0; i < 20; i++) {
                 const delay = getReconnectDelay(100);
                 expect(delay).toBeLessThanOrEqual(37500); // 30000 + 25% jitter
@@ -218,6 +218,20 @@ describe('ws.js', () => {
             expect(badHandler).toHaveBeenCalled();
             expect(goodHandler).toHaveBeenCalled();
             expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('issue:created'), expect.any(Error));
+            consoleSpy.mockRestore();
+        });
+
+        it('ignores messages with missing type or entity', () => {
+            const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const handler = vi.fn();
+            subscribe('*', handler);
+
+            dispatch({ data: { id: '1' } });
+            dispatch({ type: 'created', data: { id: '2' } });
+            dispatch({ entity: 'issue', data: { id: '3' } });
+
+            expect(handler).not.toHaveBeenCalled();
+            expect(consoleSpy).toHaveBeenCalledTimes(3);
             consoleSpy.mockRestore();
         });
 

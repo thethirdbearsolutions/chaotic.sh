@@ -124,6 +124,10 @@ export function connectWebSocket(teamId) {
  */
 export function dispatch(message) {
     const { type, entity, data } = message;
+    if (!type || !entity) {
+        console.warn('WebSocket: ignoring message with missing type/entity', message);
+        return;
+    }
     const context = { type, entity };
 
     // Notify specific subscribers (e.g., "issue:created")
@@ -155,9 +159,9 @@ export function dispatch(message) {
     if (global) {
         for (const handler of global) {
             try {
-                handler(data, { ...context, entity });
+                handler(data, context);
             } catch (e) {
-                console.error('WebSocket handler error (*):' , e);
+                console.error('WebSocket handler error (*):', e);
             }
         }
     }
