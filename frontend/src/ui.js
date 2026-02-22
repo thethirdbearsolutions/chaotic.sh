@@ -43,7 +43,10 @@ export function showToast(message, type = 'success') {
   container.appendChild(toast);
 
   setTimeout(() => {
-    toast.remove();
+    toast.classList.add('toast-exit');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    // Fallback removal if animationend never fires (e.g. CSS not loaded)
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
   }, 3000);
 }
 

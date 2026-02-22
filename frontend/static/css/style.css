@@ -58,11 +58,19 @@ body.theme-light {
     to { opacity: 1; }
 }
 
-/* Reduce motion: disable view transitions for users who prefer it */
+/* Reduce motion: disable animations and transitions for users who prefer it */
 @media (prefers-reduced-motion: reduce) {
     ::view-transition-old(root),
     ::view-transition-new(root) {
         animation: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
 
@@ -1345,6 +1353,21 @@ textarea {
     }
 }
 
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+.toast.toast-exit {
+    animation: slideOut 0.25s ease forwards;
+}
+
 /* Command Palette */
 .command-palette-overlay {
     position: fixed;
@@ -2329,6 +2352,7 @@ input[type="checkbox"] {
 .kanban-card.dragging {
     opacity: 0.5;
     transform: rotate(2deg);
+    transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .kanban-card.drag-over {
@@ -4182,15 +4206,20 @@ input[type="checkbox"] {
 
     /* Sidebar backdrop overlay */
     .sidebar-backdrop {
-        display: none;
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, 0.5);
         z-index: 150;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.25s ease, visibility 0.25s ease;
     }
 
     body.sidebar-open .sidebar-backdrop {
-        display: block;
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
     }
 
     /* View header stacking on mobile */
