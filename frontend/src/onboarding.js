@@ -3,9 +3,9 @@
  * Shows a multi-step wizard when user has no teams after login.
  */
 
-/* global api */
-
+import { api } from './api.js';
 import { isOnboardingComplete, setOnboardingComplete, clearOnboarding } from './storage.js';
+import { registerActions } from './event-delegation.js';
 
 let onboardingOverlay = null;
 let currentStep = 0;
@@ -69,10 +69,10 @@ function getSetupSteps() {
                 <p class="onboarding-subtitle">A lightweight issue tracker built for teams that ship from the command line.</p>
                 <p class="onboarding-description">Let's set up your workspace. This takes about 30 seconds.</p>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" onclick="window._onboardingNext()">Get Started</button>
+                    <button class="btn btn-primary" data-action="onboarding-next">Get Started</button>
                 </div>
                 <div class="onboarding-skip">
-                    <a href="#" onclick="window._onboardingSkip(); return false;">Skip setup</a>
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
                 </div>
             `
         },
@@ -81,7 +81,7 @@ function getSetupSteps() {
             html: `
                 <h2>Create Your Team</h2>
                 <p class="onboarding-subtitle">Teams organize your people and projects.</p>
-                <form id="onboarding-team-form" onsubmit="window._onboardingCreateTeam(event); return false;">
+                <form id="onboarding-team-form" data-action="onboarding-create-team">
                     <div class="form-group">
                         <label for="onboarding-team-name">Team Name</label>
                         <input type="text" id="onboarding-team-name" class="form-input" placeholder="e.g. Engineering" required>
@@ -96,7 +96,7 @@ function getSetupSteps() {
                     </div>
                 </form>
                 <div class="onboarding-skip">
-                    <a href="#" onclick="window._onboardingSkip(); return false;">Skip setup</a>
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
                 </div>
             `,
             onMount() {
@@ -118,7 +118,7 @@ function getSetupSteps() {
             html: `
                 <h2>Create Your First Project</h2>
                 <p class="onboarding-subtitle">Projects group related issues. One per repo or component.</p>
-                <form id="onboarding-project-form" onsubmit="window._onboardingCreateProject(event); return false;">
+                <form id="onboarding-project-form" data-action="onboarding-create-project">
                     <div class="form-group">
                         <label for="onboarding-project-name">Project Name</label>
                         <input type="text" id="onboarding-project-name" class="form-input" placeholder="e.g. Backend API" required>
@@ -133,7 +133,7 @@ function getSetupSteps() {
                     </div>
                 </form>
                 <div class="onboarding-skip">
-                    <a href="#" onclick="window._onboardingSkip(); return false;">Skip setup</a>
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
                 </div>
             `,
             onMount() {
@@ -155,7 +155,7 @@ function getSetupSteps() {
             html: `
                 <h2>Create Your First Issue</h2>
                 <p class="onboarding-subtitle">What's the first thing your team needs to work on?</p>
-                <form id="onboarding-issue-form" onsubmit="window._onboardingCreateIssue(event); return false;">
+                <form id="onboarding-issue-form" data-action="onboarding-create-issue">
                     <div class="form-group">
                         <label for="onboarding-issue-title">Issue Title</label>
                         <input type="text" id="onboarding-issue-title" class="form-input" placeholder="e.g. Set up CI pipeline" required>
@@ -166,7 +166,7 @@ function getSetupSteps() {
                     </div>
                 </form>
                 <div class="onboarding-skip">
-                    <a href="#" onclick="window._onboardingSkip(); return false;">Skip setup</a>
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
                 </div>
             `,
             onMount() {
@@ -198,7 +198,7 @@ function getSetupSteps() {
                     <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
                 </div>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" onclick="window._onboardingFinish()">Go to Dashboard</button>
+                    <button class="btn btn-primary" data-action="onboarding-finish">Go to Dashboard</button>
                 </div>
             `,
             onMount() {
@@ -214,7 +214,7 @@ function getSetupSteps() {
 }
 
 function getTourSteps() {
-    const closeLink = '<div class="onboarding-skip"><a href="#" onclick="window._onboardingFinish(); return false;">Close tour</a></div>';
+    const closeLink = '<div class="onboarding-skip"><a href="#" data-action="onboarding-finish">Close tour</a></div>';
     return [
         {
             html: `
@@ -225,7 +225,7 @@ function getTourSteps() {
                     <p class="onboarding-description">The dashboard shows your assigned issues and recent activity across all projects.</p>
                 </div>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
+                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
                 </div>
                 ${closeLink}
             `
@@ -242,7 +242,7 @@ function getTourSteps() {
                     <div class="onboarding-tip"><kbd>D</kbd> Go to dashboard</div>
                 </div>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" onclick="window._onboardingNext()">Next</button>
+                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
                 </div>
                 ${closeLink}
             `
@@ -258,7 +258,7 @@ function getTourSteps() {
                     <div class="onboarding-tip"><code>chaotic status</code> Show current context</div>
                 </div>
                 <div class="onboarding-actions">
-                    <button class="btn btn-primary" onclick="window._onboardingFinish()">Got it!</button>
+                    <button class="btn btn-primary" data-action="onboarding-finish">Got it!</button>
                 </div>
                 ${closeLink}
             `
@@ -391,6 +391,34 @@ export function resetOnboarding() {
     clearOnboarding();
     showOnboarding(true);
 }
+
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+    'onboarding-next': (event) => {
+        event.preventDefault();
+        window._onboardingNext();
+    },
+    'onboarding-skip': (event) => {
+        event.preventDefault();
+        window._onboardingSkip();
+    },
+    'onboarding-finish': (event) => {
+        event.preventDefault();
+        window._onboardingFinish();
+    },
+    'onboarding-create-team': (event) => {
+        window._onboardingCreateTeam(event);
+    },
+    'onboarding-create-project': (event) => {
+        window._onboardingCreateProject(event);
+    },
+    'onboarding-create-issue': (event) => {
+        window._onboardingCreateIssue(event);
+    },
+});
 
 // Expose for window access
 window.showOnboarding = showOnboarding;

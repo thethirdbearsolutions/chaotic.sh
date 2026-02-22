@@ -1,9 +1,113 @@
 /**
  * Tests for issue-detail-view.js module (CHT-668)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock dependencies
+vi.mock('./api.js', () => ({
+    api: {
+        getIssue: vi.fn(),
+        getIssueByIdentifier: vi.fn(),
+        getComments: vi.fn().mockResolvedValue([]),
+        getActivities: vi.fn().mockResolvedValue([]),
+        getSubIssues: vi.fn().mockResolvedValue([]),
+        getRelations: vi.fn().mockResolvedValue([]),
+        getTicketRitualsStatus: vi.fn().mockResolvedValue({ pending_rituals: [], completed_rituals: [] }),
+        getSprints: vi.fn().mockResolvedValue([]),
+        createComment: vi.fn().mockResolvedValue({}),
+        updateIssue: vi.fn().mockResolvedValue({}),
+        searchIssues: vi.fn().mockResolvedValue([]),
+        createRelation: vi.fn().mockResolvedValue({}),
+        deleteRelation: vi.fn().mockResolvedValue({}),
+    },
+}));
+
+vi.mock('./ui.js', () => ({
+    showToast: vi.fn(),
+    showModal: vi.fn(),
+    closeModal: vi.fn(),
+}));
+
+vi.mock('./router.js', () => ({
+    navigateTo: vi.fn(),
+}));
+
+vi.mock('./projects.js', () => ({
+    getProjects: vi.fn(() => []),
+    formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
+}));
+
+vi.mock('./teams.js', () => ({
+    getMembers: vi.fn(() => []),
+}));
+
+vi.mock('./assignees.js', () => ({
+    getAssigneeById: vi.fn(() => null),
+    formatAssigneeName: vi.fn((a) => a?.name || ''),
+}));
+
+vi.mock('./utils.js', () => ({
+    formatStatus: vi.fn((s) => s),
+    formatPriority: vi.fn((p) => p),
+    formatIssueType: vi.fn((t) => t || 'task'),
+    formatTimeAgo: vi.fn(() => '1h ago'),
+    escapeHtml: vi.fn((text) => text || ''),
+    escapeAttr: vi.fn((text) => text || ''),
+    sanitizeColor: vi.fn((c) => c || '#888'),
+    renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
+}));
+
+vi.mock('./issue-list.js', () => ({
+    getStatusIcon: vi.fn(() => '<svg></svg>'),
+    getPriorityIcon: vi.fn(() => '<svg></svg>'),
+}));
+
+vi.mock('./gate-approvals.js', () => ({
+    renderMarkdown: vi.fn((content) => content),
+}));
+
+vi.mock('./inline-dropdown.js', () => ({
+    showDetailDropdown: vi.fn(),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./issue-creation.js', () => ({
+    showCreateSubIssueModal: vi.fn(),
+}));
+
+vi.mock('./mention-autocomplete.js', () => ({
+    setupMentionAutocomplete: vi.fn(),
+}));
+
+vi.mock('./rituals-view.js', () => ({
+    renderTicketRitualActions: vi.fn(() => ''),
+}));
+
+vi.mock('./state.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        getCurrentView: vi.fn(() => 'my-issues'),
+        getIssues: vi.fn(() => []),
+    };
+});
+
+import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getIssues } from './state.js';
+import { api } from './api.js';
+import { showToast, showModal, closeModal } from './ui.js';
+import { navigateTo } from './router.js';
+import { getProjects, formatEstimate } from './projects.js';
+import { getAssigneeById, formatAssigneeName } from './assignees.js';
+import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { getStatusIcon, getPriorityIcon } from './issue-list.js';
+import { renderMarkdown } from './gate-approvals.js';
+import { showDetailDropdown } from './inline-dropdown.js';
+import { setupMentionAutocomplete } from './mention-autocomplete.js';
+import { renderTicketRitualActions } from './rituals-view.js';
 import {
-    setDependencies,
     getActivityIcon,
     formatActivityActor,
     formatActivityText,
@@ -27,59 +131,50 @@ import {
 } from './issue-detail-view.js';
 
 describe('issue-detail-view', () => {
-    let mockApi;
-    let mockDeps;
-
     beforeEach(() => {
         // Reset state
         setTicketRitualsCollapsed(true);
 
-        // Mock API
-        mockApi = {
-            getIssue: vi.fn(),
-            getIssueByIdentifier: vi.fn(),
-            getComments: vi.fn().mockResolvedValue([]),
-            getActivities: vi.fn().mockResolvedValue([]),
-            getSubIssues: vi.fn().mockResolvedValue([]),
-            getRelations: vi.fn().mockResolvedValue([]),
-            getTicketRitualsStatus: vi.fn().mockResolvedValue({ pending_rituals: [], completed_rituals: [] }),
-            getSprints: vi.fn().mockResolvedValue([]),
-            createComment: vi.fn().mockResolvedValue({}),
-            updateIssue: vi.fn().mockResolvedValue({}),
-            searchIssues: vi.fn().mockResolvedValue([]),
-            createRelation: vi.fn().mockResolvedValue({}),
-            deleteRelation: vi.fn().mockResolvedValue({}),
-        };
+        // Reset mocks to defaults
+        api.getIssue.mockReset();
+        api.getIssueByIdentifier.mockReset();
+        api.getComments.mockReset().mockResolvedValue([]);
+        api.getActivities.mockReset().mockResolvedValue([]);
+        api.getSubIssues.mockReset().mockResolvedValue([]);
+        api.getRelations.mockReset().mockResolvedValue([]);
+        api.getTicketRitualsStatus.mockReset().mockResolvedValue({ pending_rituals: [], completed_rituals: [] });
+        api.getSprints.mockReset().mockResolvedValue([]);
+        api.createComment.mockReset().mockResolvedValue({});
+        api.updateIssue.mockReset().mockResolvedValue({});
+        api.searchIssues.mockReset().mockResolvedValue([]);
+        api.createRelation.mockReset().mockResolvedValue({});
+        api.deleteRelation.mockReset().mockResolvedValue({});
 
-        // Mock dependencies
-        mockDeps = {
-            api: mockApi,
-            getCurrentView: vi.fn(() => 'my-issues'),
-            showToast: vi.fn(),
-            navigateTo: vi.fn(),
-            getProjects: vi.fn(() => []),
-            getAssigneeById: vi.fn(() => null),
-            formatAssigneeName: vi.fn((a) => a?.name || ''),
-            formatStatus: vi.fn((s) => s),
-            formatPriority: vi.fn((p) => p),
-            formatIssueType: vi.fn((t) => t || 'task'),
-            formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
-            formatTimeAgo: vi.fn(() => '1h ago'),
-            getStatusIcon: vi.fn(() => '<svg></svg>'),
-            getPriorityIcon: vi.fn(() => '<svg></svg>'),
-            renderMarkdown: vi.fn((content) => content),
-            renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
-            escapeHtml: vi.fn((text) => text || ''),
-            escapeAttr: vi.fn((text) => text || ''),
-            sanitizeColor: vi.fn((c) => c || '#888'),
-            showDetailDropdown: vi.fn(),
-            setupMentionAutocomplete: vi.fn(),
-            showModal: vi.fn(),
-            closeModal: vi.fn(),
-            escapeJsString: vi.fn((text) => text || ''),
-        };
+        showToast.mockClear();
+        showModal.mockClear();
+        closeModal.mockClear();
+        navigateTo.mockClear();
+        getProjects.mockReset().mockReturnValue([]);
+        formatEstimate.mockReset().mockImplementation((e) => e ? `${e}pt` : 'None');
+        getAssigneeById.mockReset().mockReturnValue(null);
+        formatAssigneeName.mockReset().mockImplementation((a) => a?.name || '');
+        formatStatus.mockReset().mockImplementation((s) => s);
+        formatPriority.mockReset().mockImplementation((p) => p);
+        formatIssueType.mockReset().mockImplementation((t) => t || 'task');
+        formatTimeAgo.mockReset().mockReturnValue('1h ago');
+        escapeHtml.mockReset().mockImplementation((text) => text || '');
+        escapeAttr.mockReset().mockImplementation((text) => text || '');
 
-        setDependencies(mockDeps);
+        sanitizeColor.mockReset().mockImplementation((c) => c || '#888');
+        renderAvatar.mockReset().mockReturnValue('<span class="avatar"></span>');
+        getStatusIcon.mockReset().mockReturnValue('<svg></svg>');
+        getPriorityIcon.mockReset().mockReturnValue('<svg></svg>');
+        renderMarkdown.mockReset().mockImplementation((content) => content);
+        showDetailDropdown.mockClear();
+        setupMentionAutocomplete.mockClear();
+        renderTicketRitualActions.mockReset().mockReturnValue('');
+        getCurrentView.mockReset().mockReturnValue('my-issues');
+        getIssues.mockReset().mockReturnValue([]);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -94,7 +189,12 @@ describe('issue-detail-view', () => {
             <div id="modal-content"></div>
             <textarea id="new-comment"></textarea>
         `;
-        window.currentTeam = { id: 'team-1' };
+        setCurrentTeam({ id: 'team-1' });
+    });
+
+    afterEach(() => {
+        setCurrentTeam(null);
+        setCurrentDetailIssue(null);
     });
 
     describe('getActivityIcon', () => {
@@ -167,7 +267,7 @@ describe('issue-detail-view', () => {
 
         it('escapes sprint_name in moved_to_sprint (XSS)', () => {
             const xss = '<img src=x onerror=alert(1)>';
-            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;img&gt;' : (text || ''));
+            escapeHtml.mockImplementation((text) => text === xss ? '&lt;img&gt;' : (text || ''));
             const activity = { activity_type: 'moved_to_sprint', sprint_name: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;img&gt;');
@@ -176,7 +276,7 @@ describe('issue-detail-view', () => {
 
         it('escapes sprint_name in removed_from_sprint (XSS)', () => {
             const xss = '<script>alert(1)</script>';
-            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
+            escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
             const activity = { activity_type: 'removed_from_sprint', sprint_name: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;script&gt;');
@@ -185,7 +285,7 @@ describe('issue-detail-view', () => {
 
         it('escapes field_name in ritual_attested (XSS)', () => {
             const xss = '<img src=x onerror=alert(1)>';
-            mockDeps.escapeHtml.mockImplementation((text) => {
+            escapeHtml.mockImplementation((text) => {
                 if (text === xss) return '&lt;img&gt;';
                 return text || '';
             });
@@ -197,7 +297,7 @@ describe('issue-detail-view', () => {
 
         it('escapes unknown field_name in updated activity (XSS)', () => {
             const xss = '<script>evil()</script>';
-            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
+            escapeHtml.mockImplementation((text) => text === xss ? '&lt;script&gt;' : (text || ''));
             const activity = { activity_type: 'updated', field_name: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;script&gt;');
@@ -213,7 +313,7 @@ describe('issue-detail-view', () => {
 
         it('escapes unknown field_name in default/unknown activity type (XSS)', () => {
             const xss = '"><script>alert(1)</script>';
-            mockDeps.escapeHtml.mockImplementation((text) => text === xss ? '&quot;&gt;&lt;script&gt;' : (text || ''));
+            escapeHtml.mockImplementation((text) => text === xss ? '&quot;&gt;&lt;script&gt;' : (text || ''));
             const activity = { activity_type: 'some_future_type', field_name: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('&quot;&gt;&lt;script&gt;');
@@ -222,26 +322,26 @@ describe('issue-detail-view', () => {
 
         it('uses escapeAttr for comment preview title attribute (CHT-894)', () => {
             const xss = '" onmouseover="alert(1)';
-            mockDeps.escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onmouseover=&quot;alert(1)' : (text || ''));
+            escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onmouseover=&quot;alert(1)' : (text || ''));
             const activity = { activity_type: 'commented', new_value: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('title="&quot; onmouseover=&quot;alert(1)');
-            expect(mockDeps.escapeAttr).toHaveBeenCalled();
+            expect(escapeAttr).toHaveBeenCalled();
         });
 
         it('uses escapeAttr for ritual_attested note preview title (CHT-894)', () => {
             const xss = '" onclick="alert(1)';
-            mockDeps.escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onclick=&quot;alert(1)' : (text || ''));
-            mockDeps.escapeHtml.mockImplementation((text) => text || '');
+            escapeAttr.mockImplementation((text) => text.startsWith(xss) ? '&quot; onclick=&quot;alert(1)' : (text || ''));
+            escapeHtml.mockImplementation((text) => text || '');
             const activity = { activity_type: 'ritual_attested', field_name: 'test-ritual', new_value: xss };
             const result = formatActivityText(activity);
             expect(result).toContain('title="&quot; onclick=&quot;alert(1)');
-            expect(mockDeps.escapeAttr).toHaveBeenCalled();
+            expect(escapeAttr).toHaveBeenCalled();
         });
 
         it('escapes formatStatus output in status_changed (CHT-895)', () => {
-            mockDeps.formatStatus.mockImplementation(() => '<img src=x>');
-            mockDeps.escapeHtml.mockImplementation((text) => text === '<img src=x>' ? '&lt;img src=x&gt;' : (text || ''));
+            formatStatus.mockImplementation(() => '<img src=x>');
+            escapeHtml.mockImplementation((text) => text === '<img src=x>' ? '&lt;img src=x&gt;' : (text || ''));
             const activity = { activity_type: 'status_changed', old_value: 'todo', new_value: 'done' };
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;img src=x&gt;');
@@ -249,8 +349,8 @@ describe('issue-detail-view', () => {
         });
 
         it('escapes formatPriority output in priority_changed (CHT-895)', () => {
-            mockDeps.formatPriority.mockImplementation(() => '<script>x</script>');
-            mockDeps.escapeHtml.mockImplementation((text) => text === '<script>x</script>' ? '&lt;script&gt;' : (text || ''));
+            formatPriority.mockImplementation(() => '<script>x</script>');
+            escapeHtml.mockImplementation((text) => text === '<script>x</script>' ? '&lt;script&gt;' : (text || ''));
             const activity = { activity_type: 'priority_changed', old_value: 'low', new_value: 'high' };
             const result = formatActivityText(activity);
             expect(result).toContain('&lt;script&gt;');
@@ -265,9 +365,9 @@ describe('issue-detail-view', () => {
         });
 
         it('renders markdown content', () => {
-            mockDeps.renderMarkdown.mockReturnValue('<p>Hello world</p>');
+            renderMarkdown.mockReturnValue('<p>Hello world</p>');
             const _result = renderCommentContent('Hello world');
-            expect(mockDeps.renderMarkdown).toHaveBeenCalledWith('Hello world');
+            expect(renderMarkdown).toHaveBeenCalledWith('Hello world');
         });
     });
 
@@ -278,9 +378,9 @@ describe('issue-detail-view', () => {
         });
 
         it('renders markdown for description', () => {
-            mockDeps.renderMarkdown.mockReturnValue('<p>Description</p>');
+            renderMarkdown.mockReturnValue('<p>Description</p>');
             const _result = renderDescriptionContent('Description');
-            expect(mockDeps.renderMarkdown).toHaveBeenCalledWith('Description');
+            expect(renderMarkdown).toHaveBeenCalledWith('Description');
         });
     });
 
@@ -298,16 +398,16 @@ describe('issue-detail-view', () => {
         };
 
         beforeEach(() => {
-            mockApi.getIssue.mockResolvedValue(mockIssue);
-            mockDeps.getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
+            api.getIssue.mockResolvedValue(mockIssue);
+            getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
         });
 
         it('fetches issue data from API', async () => {
             await viewIssue('issue-1');
 
-            expect(mockApi.getIssue).toHaveBeenCalledWith('issue-1');
-            expect(mockApi.getComments).toHaveBeenCalledWith('issue-1');
-            expect(mockApi.getActivities).toHaveBeenCalledWith('issue-1');
+            expect(api.getIssue).toHaveBeenCalledWith('issue-1');
+            expect(api.getComments).toHaveBeenCalledWith('issue-1');
+            expect(api.getActivities).toHaveBeenCalledWith('issue-1');
         });
 
         it('shows detail view and hides other views', async () => {
@@ -333,22 +433,22 @@ describe('issue-detail-view', () => {
             expect(pushStateSpy).not.toHaveBeenCalled();
         });
 
-        it('sets window.currentDetailIssue', async () => {
+        it('sets currentDetailIssue in state', async () => {
             await viewIssue('issue-1');
 
-            expect(window.currentDetailIssue).toEqual(mockIssue);
+            expect(getCurrentDetailIssue()).toEqual(mockIssue);
         });
 
         it('shows error toast on API failure', async () => {
-            mockApi.getIssue.mockRejectedValue(new Error('API Error'));
+            api.getIssue.mockRejectedValue(new Error('API Error'));
 
             await viewIssue('issue-1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load issue: API Error', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to load issue: API Error', 'error');
         });
 
         it('renders attestation info for pending rituals (CHT-901)', async () => {
-            mockApi.getTicketRitualsStatus.mockResolvedValue({
+            api.getTicketRitualsStatus.mockResolvedValue({
                 pending_rituals: [{
                     id: 'r1',
                     name: 'Code Review',
@@ -379,7 +479,7 @@ describe('issue-detail-view', () => {
         });
 
         it('renders pending rituals without attestation (CHT-901)', async () => {
-            mockApi.getTicketRitualsStatus.mockResolvedValue({
+            api.getTicketRitualsStatus.mockResolvedValue({
                 pending_rituals: [{
                     id: 'r1',
                     name: 'Run Tests',
@@ -408,7 +508,7 @@ describe('issue-detail-view', () => {
             ];
 
             it('renders prev/next buttons when issue is in list', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -418,7 +518,7 @@ describe('issue-detail-view', () => {
             });
 
             it('prev button links to previous issue', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -428,7 +528,7 @@ describe('issue-detail-view', () => {
             });
 
             it('next button links to next issue', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -438,8 +538,8 @@ describe('issue-detail-view', () => {
             });
 
             it('disables prev button on first issue', async () => {
-                setDependencies({ getIssues: () => issueList });
-                mockApi.getIssue.mockResolvedValue({
+                getIssues.mockReturnValue(issueList);
+                api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-a',
                 });
@@ -452,8 +552,8 @@ describe('issue-detail-view', () => {
             });
 
             it('disables next button on last issue', async () => {
-                setDependencies({ getIssues: () => issueList });
-                mockApi.getIssue.mockResolvedValue({
+                getIssues.mockReturnValue(issueList);
+                api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-c',
                 });
@@ -466,7 +566,7 @@ describe('issue-detail-view', () => {
             });
 
             it('hides nav arrows when issue not in list', async () => {
-                setDependencies({ getIssues: () => [] });
+                getIssues.mockReturnValue([]);
 
                 await viewIssue('issue-1');
 
@@ -475,11 +575,11 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard ArrowRight to navigate next', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
-                mockApi.getIssue.mockClear();
-                mockApi.getIssue.mockResolvedValue({
+                api.getIssue.mockClear();
+                api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-c',
                 });
@@ -487,15 +587,15 @@ describe('issue-detail-view', () => {
                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
                 await new Promise(r => setTimeout(r, 10));
 
-                expect(mockApi.getIssue).toHaveBeenCalledWith('issue-c');
+                expect(api.getIssue).toHaveBeenCalledWith('issue-c');
             });
 
             it('handles keyboard ArrowLeft to navigate prev', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
-                mockApi.getIssue.mockClear();
-                mockApi.getIssue.mockResolvedValue({
+                api.getIssue.mockClear();
+                api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-a',
                 });
@@ -503,14 +603,14 @@ describe('issue-detail-view', () => {
                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
                 await new Promise(r => setTimeout(r, 10));
 
-                expect(mockApi.getIssue).toHaveBeenCalledWith('issue-a');
+                expect(api.getIssue).toHaveBeenCalledWith('issue-a');
             });
 
             it('ignores keyboard nav when detail view is hidden', async () => {
-                setDependencies({ getIssues: () => issueList });
+                getIssues.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
-                mockApi.getIssue.mockClear();
+                api.getIssue.mockClear();
 
                 // Simulate navigating away from detail view
                 document.getElementById('issue-detail-view').classList.add('hidden');
@@ -518,7 +618,7 @@ describe('issue-detail-view', () => {
                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
                 await new Promise(r => setTimeout(r, 10));
 
-                expect(mockApi.getIssue).not.toHaveBeenCalled();
+                expect(api.getIssue).not.toHaveBeenCalled();
             });
         });
     });
@@ -526,25 +626,25 @@ describe('issue-detail-view', () => {
     describe('viewIssueByPath', () => {
         it('fetches issue by identifier when path contains hyphen', async () => {
             const mockIssue = { id: 'issue-1' };
-            mockApi.getIssueByIdentifier.mockResolvedValue(mockIssue);
-            mockApi.getIssue.mockResolvedValue(mockIssue);
-            mockApi.getComments.mockResolvedValue([]);
-            mockApi.getActivities.mockResolvedValue([]);
-            mockApi.getSubIssues.mockResolvedValue([]);
-            mockApi.getRelations.mockResolvedValue([]);
-            mockDeps.getProjects.mockReturnValue([]);
+            api.getIssueByIdentifier.mockResolvedValue(mockIssue);
+            api.getIssue.mockResolvedValue(mockIssue);
+            api.getComments.mockResolvedValue([]);
+            api.getActivities.mockResolvedValue([]);
+            api.getSubIssues.mockResolvedValue([]);
+            api.getRelations.mockResolvedValue([]);
+            getProjects.mockReturnValue([]);
 
             await viewIssueByPath('TEST-1');
 
-            expect(mockApi.getIssueByIdentifier).toHaveBeenCalledWith('TEST-1');
+            expect(api.getIssueByIdentifier).toHaveBeenCalledWith('TEST-1');
         });
 
         it('navigates to my-issues on error', async () => {
-            mockApi.getIssueByIdentifier.mockRejectedValue(new Error('Not found'));
+            api.getIssueByIdentifier.mockRejectedValue(new Error('Not found'));
 
             await viewIssueByPath('TEST-999');
 
-            expect(mockDeps.navigateTo).toHaveBeenCalledWith('my-issues', false);
+            expect(navigateTo).toHaveBeenCalledWith('my-issues', false);
         });
     });
 
@@ -593,27 +693,27 @@ describe('issue-detail-view', () => {
     describe('handleAddComment', () => {
         it('creates comment and refreshes issue', async () => {
             const mockIssue = { id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' };
-            mockApi.getIssue.mockResolvedValue(mockIssue);
-            mockApi.createComment.mockResolvedValue({});
+            api.getIssue.mockResolvedValue(mockIssue);
+            api.createComment.mockResolvedValue({});
             document.getElementById('new-comment').value = 'Hello world';
 
             await handleAddComment({ preventDefault: vi.fn() }, 'i1');
 
-            expect(mockApi.createComment).toHaveBeenCalledWith('i1', 'Hello world');
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Comment added!', 'success');
+            expect(api.createComment).toHaveBeenCalledWith('i1', 'Hello world');
+            expect(showToast).toHaveBeenCalledWith('Comment added!', 'success');
         });
 
         it('shows error toast on failure', async () => {
-            mockApi.createComment.mockRejectedValue(new Error('forbidden'));
+            api.createComment.mockRejectedValue(new Error('forbidden'));
 
             await handleAddComment({ preventDefault: vi.fn() }, 'i1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to add comment: forbidden', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to add comment: forbidden', 'error');
         });
 
         it('clears comment draft on successful submit (CHT-1041)', async () => {
-            mockApi.createComment.mockResolvedValue({});
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            api.createComment.mockResolvedValue({});
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
             localStorage.setItem('chaotic_comment_draft_i1', 'draft text');
             document.getElementById('new-comment').value = 'Hello';
 
@@ -623,7 +723,7 @@ describe('issue-detail-view', () => {
         });
 
         it('restores comment draft on failure (CHT-1041)', async () => {
-            mockApi.createComment.mockRejectedValue(new Error('fail'));
+            api.createComment.mockRejectedValue(new Error('fail'));
             document.getElementById('new-comment').value = 'My comment';
 
             await handleAddComment({ preventDefault: vi.fn() }, 'i1');
@@ -644,7 +744,7 @@ describe('issue-detail-view', () => {
         });
 
         it('opens inline description editor', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Current desc' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
 
             await editDescription('i1');
 
@@ -654,17 +754,17 @@ describe('issue-detail-view', () => {
         });
 
         it('falls back to API when no cached issue', async () => {
-            window.currentDetailIssue = null;
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', description: 'API desc' });
+            setCurrentDetailIssue(null);
+            api.getIssue.mockResolvedValue({ id: 'i1', description: 'API desc' });
 
             await editDescription('i1');
 
-            expect(mockApi.getIssue).toHaveBeenCalledWith('i1');
+            expect(api.getIssue).toHaveBeenCalledWith('i1');
             expect(document.getElementById('edit-description').value).toBe('API desc');
         });
 
         it('restores description draft from localStorage (CHT-1041)', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             localStorage.setItem('chaotic_description_draft_i1', 'Draft content');
 
             await editDescription('i1');
@@ -674,7 +774,7 @@ describe('issue-detail-view', () => {
         });
 
         it('clears description draft on cancel (CHT-1041)', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             localStorage.setItem('chaotic_description_draft_i1', 'Draft');
 
             await editDescription('i1');
@@ -692,7 +792,7 @@ describe('issue-detail-view', () => {
                     <div class="description-content markdown-body">Test</div>
                 </div>
             `;
-            window.currentDetailIssue = { id: 'i1', description: 'Test' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Test' });
             await editDescription('i1');
         });
 
@@ -718,7 +818,7 @@ describe('issue-detail-view', () => {
 
     describe('editDescription inline', () => {
         it('replaces description content with inline editor', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Old desc' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Old desc' });
             // Set up the description section in DOM
             document.body.innerHTML += `
                 <div class="issue-detail-description">
@@ -738,7 +838,7 @@ describe('issue-detail-view', () => {
         });
 
         it('cancel restores original content', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             document.body.innerHTML += `
                 <div class="issue-detail-description">
                     <div class="section-header"><h3>Description</h3></div>
@@ -754,14 +854,14 @@ describe('issue-detail-view', () => {
         });
 
         it('save calls updateIssue and shows toast', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Old' });
             document.body.innerHTML += `
                 <div class="issue-detail-description">
                     <div class="section-header"><h3>Description</h3></div>
                     <div class="description-content markdown-body">Old</div>
                 </div>
             `;
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium', description: 'New' });
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium', description: 'New' });
 
             await editDescription('i1');
             document.getElementById('edit-description').value = 'New';
@@ -770,8 +870,8 @@ describe('issue-detail-view', () => {
             // Wait for async save
             await new Promise(r => setTimeout(r, 0));
 
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('i1', { description: 'New' });
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Description updated', 'success');
+            expect(api.updateIssue).toHaveBeenCalledWith('i1', { description: 'New' });
+            expect(showToast).toHaveBeenCalledWith('Description updated', 'success');
         });
     });
 
@@ -779,7 +879,7 @@ describe('issue-detail-view', () => {
         it('opens relation modal with search', () => {
             showAddRelationModal('i1');
 
-            expect(mockDeps.showModal).toHaveBeenCalled();
+            expect(showModal).toHaveBeenCalled();
             expect(document.getElementById('modal-title').textContent).toBe('Add Relation');
             expect(document.getElementById('relation-type')).toBeTruthy();
             expect(document.getElementById('relation-issue-search')).toBeTruthy();
@@ -788,7 +888,7 @@ describe('issue-detail-view', () => {
 
     describe('searchIssuesToRelate', () => {
         it('searches and renders results', async () => {
-            mockApi.searchIssues.mockResolvedValue([
+            api.searchIssues.mockResolvedValue([
                 { id: 'i2', identifier: 'CHT-2', title: 'Other Issue' },
             ]);
             showAddRelationModal('i1');
@@ -801,7 +901,7 @@ describe('issue-detail-view', () => {
         });
 
         it('filters out current issue from results', async () => {
-            mockApi.searchIssues.mockResolvedValue([
+            api.searchIssues.mockResolvedValue([
                 { id: 'i1', identifier: 'CHT-1', title: 'Self' },
                 { id: 'i2', identifier: 'CHT-2', title: 'Other' },
             ]);
@@ -849,24 +949,24 @@ describe('issue-detail-view', () => {
         it('creates relation and shows success', async () => {
             showAddRelationModal('i1');
             selectIssueForRelation('i2', 'CHT-2', 'Other');
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
 
             await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
 
-            expect(mockApi.createRelation).toHaveBeenCalledWith('i1', 'i2', 'blocks');
-            expect(mockDeps.closeModal).toHaveBeenCalled();
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Relation added', 'success');
+            expect(api.createRelation).toHaveBeenCalledWith('i1', 'i2', 'blocks');
+            expect(closeModal).toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith('Relation added', 'success');
         });
 
         it('reverses direction for blocked_by', async () => {
             showAddRelationModal('i1');
             document.getElementById('relation-type').value = 'blocked_by';
             selectIssueForRelation('i2', 'CHT-2', 'Other');
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
 
             await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
 
-            expect(mockApi.createRelation).toHaveBeenCalledWith('i2', 'i1', 'blocks');
+            expect(api.createRelation).toHaveBeenCalledWith('i2', 'i1', 'blocks');
         });
 
         it('shows error when no issue selected', async () => {
@@ -874,26 +974,26 @@ describe('issue-detail-view', () => {
 
             await handleAddRelation({ preventDefault: vi.fn() }, 'i1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Please select an issue', 'error');
+            expect(showToast).toHaveBeenCalledWith('Please select an issue', 'error');
         });
     });
 
     describe('deleteRelation', () => {
         it('deletes relation and refreshes', async () => {
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            api.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
 
             await deleteRelation('i1', 'r1');
 
-            expect(mockApi.deleteRelation).toHaveBeenCalledWith('i1', 'r1');
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Relation removed', 'success');
+            expect(api.deleteRelation).toHaveBeenCalledWith('i1', 'r1');
+            expect(showToast).toHaveBeenCalledWith('Relation removed', 'success');
         });
 
         it('shows error on failure', async () => {
-            mockApi.deleteRelation.mockRejectedValue(new Error('not found'));
+            api.deleteRelation.mockRejectedValue(new Error('not found'));
 
             await deleteRelation('i1', 'r1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to remove relation: not found', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to remove relation: not found', 'error');
         });
     });
 });

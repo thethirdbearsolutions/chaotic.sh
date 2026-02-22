@@ -4,9 +4,11 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor, formatTimeAgo } from './utils.js';
+import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
+import { getCurrentTeam } from './state.js';
+import { registerActions } from './event-delegation.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -89,7 +91,7 @@ export function enterSelectionMode() {
   const selectBtn = document.getElementById('doc-select-btn');
   if (selectBtn) {
     selectBtn.textContent = 'Cancel';
-    selectBtn.onclick = exitSelectionMode;
+    selectBtn.dataset.action = 'exit-selection-mode';
   }
 
   // Re-render to show checkboxes
@@ -108,7 +110,7 @@ export function exitSelectionMode() {
   const selectBtn = document.getElementById('doc-select-btn');
   if (selectBtn) {
     selectBtn.textContent = 'Select';
-    selectBtn.onclick = enterSelectionMode;
+    selectBtn.dataset.action = 'enter-selection-mode';
   }
 
   // Re-render to hide checkboxes
@@ -178,19 +180,19 @@ function updateDocFilterChips() {
   const chips = [];
 
   if (searchTerm) {
-    chips.push(`<span class="filter-chip">Search: "${escapeHtml(searchTerm)}" <button class="chip-clear" onclick="clearDocSearch()">×</button></span>`);
+    chips.push(`<span class="filter-chip">Search: "${escapeHtml(searchTerm)}" <button class="chip-clear" data-action="clear-doc-search">×</button></span>`);
   }
 
   if (projectFilter) {
     const projectSelect = document.getElementById('doc-project-filter');
     const projectName = projectSelect?.options[projectSelect.selectedIndex]?.text || 'Project';
-    chips.push(`<span class="filter-chip">Project: ${escapeHtml(projectName)} <button class="chip-clear" onclick="clearDocProjectFilter()">×</button></span>`);
+    chips.push(`<span class="filter-chip">Project: ${escapeHtml(projectName)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`);
   }
 
   if (chips.length > 0) {
     let html = chips.join(' ');
     if (chips.length > 1) {
-      html += ` <button class="btn btn-secondary btn-tiny" onclick="clearAllDocFilters()">Clear all</button>`;
+      html += ` <button class="btn btn-secondary btn-tiny" data-action="clear-all-doc-filters">Clear all</button>`;
     }
     chipsRow.innerHTML = html;
     chipsRow.classList.remove('hidden');
@@ -252,7 +254,7 @@ export function filterDocuments() {
  * Re-fetches documents from server with new project filter, then re-renders.
  */
 export async function onDocProjectFilterChange() {
-  const teamId = currentTeamId || window.currentTeam?.id;
+  const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
 
   const projectFilter = document.getElementById('doc-project-filter')?.value || null;
@@ -271,8 +273,8 @@ export async function onDocProjectFilterChange() {
  */
 export async function loadDocuments(teamId, projectId = null) {
   if (!teamId) {
-    // Fall back to window.currentTeam for backward compat
-    teamId = window.currentTeam?.id;
+    // Fall back to getCurrentTeam() for backward compat
+    teamId = getCurrentTeam()?.id;
   }
   if (!teamId) return;
 
@@ -338,17 +340,17 @@ function renderDocumentCard(doc) {
     ? `<div class="grid-item-labels">${renderLabelBadges(doc.labels)}</div>`
     : '';
   return `
-    <div class="grid-item" data-doc-id="${escapeAttr(doc.id)}" onclick="viewDocument('${escapeJsString(doc.id)}')">
+    <div class="grid-item" data-doc-id="${escapeAttr(doc.id)}" data-action="view-document" data-document-id="${escapeAttr(doc.id)}">
       <div class="grid-item-header">
         <div class="grid-item-icon" style="background: var(--bg-tertiary)">
-          ${escapeHtml(doc.icon) || '📄'}
+          ${escapeHtml(doc.icon) || '\u{1F4C4}'}
         </div>
         <div class="grid-item-title">${escapeHtml(doc.title)}</div>
       </div>
       ${labelsHtml}
       <div class="grid-item-description">${doc.content ? escapeHtml(stripMarkdown(doc.content).substring(0, 100)) + '...' : 'No content'}</div>
       <div class="grid-item-footer">
-        <span>${doc.project_id ? '' : '<span class="badge badge-secondary" title="Team-wide document">Global</span> '}${doc.sprint_id ? '<span class="badge badge-info" title="Sprint document">Sprint</span> ' : ''}${doc.author_name ? `By ${escapeHtml(doc.author_name)} · ` : ''}Updated ${new Date(doc.updated_at).toLocaleDateString()}</span>
+        <span>${doc.project_id ? '' : '<span class="badge badge-secondary" title="Team-wide document">Global</span> '}${doc.sprint_id ? '<span class="badge badge-info" title="Sprint document">Sprint</span> ' : ''}${doc.author_name ? `By ${escapeHtml(doc.author_name)} \u00B7 ` : ''}Updated ${new Date(doc.updated_at).toLocaleDateString()}</span>
       </div>
     </div>
   `;
@@ -376,20 +378,18 @@ function renderDocumentListItem(doc) {
 
   // Checkbox for selection mode
   const checkboxHtml = isSelectionMode
-    ? `<div class="document-list-checkbox" onclick="event.stopPropagation(); toggleDocSelection('${escapeJsString(doc.id)}')">
+    ? `<div class="document-list-checkbox" data-action="toggle-doc-selection" data-doc-id="${escapeAttr(doc.id)}">
          <input type="checkbox" id="doc-check-${doc.id}" ${selectedDocIds.has(doc.id) ? 'checked' : ''}>
        </div>`
     : '';
 
   const selectedClass = isSelectionMode && selectedDocIds.has(doc.id) ? ' selected' : '';
-  const clickHandler = isSelectionMode
-    ? `toggleDocSelection('${escapeJsString(doc.id)}')`
-    : `viewDocument('${escapeJsString(doc.id)}')`;
+  const actionName = isSelectionMode ? 'toggle-doc-selection' : 'view-document';
 
   return `
-    <div class="list-item document-list-item${selectedClass}" onclick="${clickHandler}">
+    <div class="list-item document-list-item${selectedClass}" data-action="${actionName}" data-document-id="${escapeAttr(doc.id)}" data-doc-id="${escapeAttr(doc.id)}">
       ${checkboxHtml}
-      <div class="document-list-icon">${escapeHtml(doc.icon) || '📄'}</div>
+      <div class="document-list-icon">${escapeHtml(doc.icon) || '\u{1F4C4}'}</div>
       <div class="document-list-main">
         <div class="document-list-title">${escapeHtml(doc.title)}</div>
         <div class="document-list-snippet text-muted">${escapeHtml(snippet)}${doc.content && doc.content.length > 80 ? '...' : ''}</div>
@@ -553,17 +553,17 @@ function updateBulkActionsBar() {
     if (selectedDocIds.size > 0) {
       bar.innerHTML = `
         <span class="bulk-count">${selectedDocIds.size} selected</span>
-        <button class="btn btn-secondary btn-small" onclick="showBulkMoveModal()">Move to Project</button>
-        <button class="btn btn-danger btn-small" onclick="bulkDeleteDocuments()">Delete</button>
-        <button class="btn btn-secondary btn-small" onclick="selectAllDocs()">Select All</button>
-        <button class="btn btn-secondary btn-small" onclick="clearDocSelection()">Clear</button>
-        <button class="btn btn-secondary btn-small" onclick="exitSelectionMode()">Done</button>
+        <button class="btn btn-secondary btn-small" data-action="show-bulk-move-modal">Move to Project</button>
+        <button class="btn btn-danger btn-small" data-action="bulk-delete-documents">Delete</button>
+        <button class="btn btn-secondary btn-small" data-action="select-all-docs">Select All</button>
+        <button class="btn btn-secondary btn-small" data-action="clear-doc-selection">Clear</button>
+        <button class="btn btn-secondary btn-small" data-action="exit-selection-mode">Done</button>
       `;
     } else {
       bar.innerHTML = `
         <span class="bulk-count">Select documents</span>
-        <button class="btn btn-secondary btn-small" onclick="selectAllDocs()">Select All</button>
-        <button class="btn btn-secondary btn-small" onclick="exitSelectionMode()">Done</button>
+        <button class="btn btn-secondary btn-small" data-action="select-all-docs">Select All</button>
+        <button class="btn btn-secondary btn-small" data-action="exit-selection-mode">Done</button>
       `;
     }
   } else {
@@ -588,7 +588,7 @@ export async function showBulkMoveModal() {
 
   document.getElementById('modal-title').textContent = `Move ${selectedDocIds.size} Document${selectedDocIds.size > 1 ? 's' : ''}`;
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleBulkMove(event)">
+    <form data-action="handle-bulk-move">
       <div class="form-group">
         <label for="bulk-move-project">Move to Project</label>
         <select id="bulk-move-project" required>
@@ -636,7 +636,7 @@ export async function handleBulkMove(event) {
   }
 
   // Reload documents
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   await loadDocuments(teamId);
 
   return false;
@@ -679,7 +679,7 @@ export async function bulkDeleteDocuments() {
   }
 
   // Reload documents
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   await loadDocuments(teamId);
 }
 
@@ -713,21 +713,21 @@ export async function viewDocument(documentId, pushHistory = true) {
           <div class="linked-item">
             <span class="linked-item-id">${escapeHtml(issue.identifier)}</span>
             <span class="linked-item-title">${escapeHtml(issue.title)}</span>
-            <button class="btn btn-danger btn-tiny" onclick="unlinkDocumentFromIssue('${escapeJsString(doc.id)}', '${escapeJsString(issue.id)}')" title="Unlink">×</button>
+            <button class="btn btn-danger btn-tiny" data-action="unlink-document-issue" data-document-id="${escapeAttr(doc.id)}" data-issue-id="${escapeAttr(issue.id)}" title="Unlink">×</button>
           </div>
         `).join('');
         linkedIssuesHtml = `
           <div class="linked-issues-section">
             <h3>Linked Issues</h3>
             <div class="linked-items-list">${issueItems}</div>
-            <button class="btn btn-secondary btn-small" onclick="showLinkIssueModal('${escapeJsString(doc.id)}')">+ Link Issue</button>
+            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}">+ Link Issue</button>
           </div>
         `;
       } else {
         linkedIssuesHtml = `
           <div class="linked-issues-section">
             <h3>Linked Issues</h3>
-            <button class="btn btn-secondary btn-small" onclick="showLinkIssueModal('${escapeJsString(doc.id)}')">+ Link Issue</button>
+            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}">+ Link Issue</button>
           </div>
         `;
       }
@@ -758,7 +758,7 @@ export async function viewDocument(documentId, pushHistory = true) {
         <div class="comments-section">
           <h3>Comments</h3>
           <div class="comments-list">${commentsListHtml}</div>
-          <form class="comment-form" onsubmit="return handleAddDocumentComment(event, '${escapeJsString(doc.id)}')">
+          <form class="comment-form" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
             <textarea id="new-doc-comment" placeholder="Write a comment..." rows="3"></textarea>
             <button type="submit" class="btn btn-primary">Comment</button>
           </form>
@@ -803,21 +803,21 @@ export async function viewDocument(documentId, pushHistory = true) {
       const labelItems = doc.labels.map(label => `
         <span class="label-badge" style="background-color: ${sanitizeColor(label.color)}; color: white;">
           ${escapeHtml(label.name)}
-          <button class="btn-remove-label" onclick="removeLabelFromDoc('${escapeJsString(doc.id)}', '${escapeJsString(label.id)}')" title="Remove label">×</button>
+          <button class="btn-remove-label" data-action="remove-label-from-doc" data-document-id="${escapeAttr(doc.id)}" data-label-id="${escapeAttr(label.id)}" title="Remove label">×</button>
         </span>
       `).join(' ');
       labelsHtml = `
         <div class="document-labels-section">
           <h3>Labels</h3>
           <div class="document-labels">${labelItems}</div>
-          <button class="btn btn-secondary btn-small" onclick="showAddLabelToDocModal('${escapeJsString(doc.id)}')">+ Add Label</button>
+          <button class="btn btn-secondary btn-small" data-action="show-add-label-to-doc-modal" data-document-id="${escapeAttr(doc.id)}">+ Add Label</button>
         </div>
       `;
     } else {
       labelsHtml = `
         <div class="document-labels-section">
           <h3>Labels</h3>
-          <button class="btn btn-secondary btn-small" onclick="showAddLabelToDocModal('${escapeJsString(doc.id)}')">+ Add Label</button>
+          <button class="btn btn-secondary btn-small" data-action="show-add-label-to-doc-modal" data-document-id="${escapeAttr(doc.id)}">+ Add Label</button>
         </div>
       `;
     }
@@ -830,20 +830,20 @@ export async function viewDocument(documentId, pushHistory = true) {
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `
-      <div class="back-button" onclick="navigateTo('documents')">
-        ← Back to Documents
+      <div class="back-button" data-action="navigate-to" data-view="documents">
+        \u2190 Back to Documents
       </div>
       <div class="document-detail-header">
         <div class="document-detail-header-top">
           <div>
             <h2 class="document-title">${escapeHtml(doc.title)}</h2>
             <div class="document-meta">
-              ${scopeInfo}${doc.author_name ? ` · By ${escapeHtml(doc.author_name)}` : ''} · Last updated ${new Date(doc.updated_at).toLocaleString()}
+              ${scopeInfo}${doc.author_name ? ` \u00B7 By ${escapeHtml(doc.author_name)}` : ''} \u00B7 Last updated ${new Date(doc.updated_at).toLocaleString()}
             </div>
           </div>
           <div class="document-actions">
-            <button class="btn btn-secondary btn-small" onclick="showEditDocumentModal('${escapeJsString(doc.id)}')">Edit</button>
-            <button class="btn btn-danger btn-small" onclick="deleteDocument('${escapeJsString(doc.id)}')">Delete</button>
+            <button class="btn btn-secondary btn-small" data-action="show-edit-document-modal" data-document-id="${escapeAttr(doc.id)}">Edit</button>
+            <button class="btn btn-danger btn-small" data-action="delete-document" data-document-id="${escapeAttr(doc.id)}">Delete</button>
           </div>
         </div>
       </div>
@@ -909,14 +909,14 @@ export async function showCreateDocumentModal() {
 
   document.getElementById('modal-title').textContent = 'Create Document';
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleCreateDocument(event)">
+    <form data-action="create-document">
       <div class="form-group">
         <label for="doc-title">Title</label>
         <input type="text" id="doc-title" required>
       </div>
       <div class="form-group">
         <label for="doc-project">Project</label>
-        <select id="doc-project" onchange="updateDocSprintDropdown('doc-sprint', this.value)">
+        <select id="doc-project" data-action="update-doc-sprint-dropdown" data-sprint-select="doc-sprint">
           <option value="">Global (Team-wide)</option>
           ${projectOptions}
         </select>
@@ -933,7 +933,7 @@ export async function showCreateDocumentModal() {
       </div>
       <div class="form-group">
         <label for="doc-icon">Icon (emoji)</label>
-        <input type="text" id="doc-icon" placeholder="📄" maxlength="2">
+        <input type="text" id="doc-icon" placeholder="\u{1F4C4}" maxlength="2">
       </div>
       <button type="submit" class="btn btn-primary">Create Document</button>
     </form>
@@ -953,7 +953,7 @@ export async function showCreateDocumentModal() {
 export async function handleCreateDocument(event) {
   event.preventDefault();
 
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   if (!teamId) {
     showToast('No team selected', 'error');
     return false;
@@ -996,14 +996,14 @@ export async function showEditDocumentModal(documentId) {
 
     document.getElementById('modal-title').textContent = 'Edit Document';
     document.getElementById('modal-content').innerHTML = `
-      <form onsubmit="return handleUpdateDocument(event, '${escapeJsString(documentId)}')">
+      <form data-action="update-document" data-document-id="${escapeAttr(documentId)}">
         <div class="form-group">
           <label for="edit-doc-title">Title</label>
           <input type="text" id="edit-doc-title" value="${escapeAttr(doc.title)}" required>
         </div>
         <div class="form-group">
           <label for="edit-doc-project">Project</label>
-          <select id="edit-doc-project" onchange="updateDocSprintDropdown('edit-doc-sprint', this.value)">
+          <select id="edit-doc-project" data-action="update-doc-sprint-dropdown" data-sprint-select="edit-doc-sprint">
             <option value="" ${!doc.project_id ? 'selected' : ''}>Global (Team-wide)</option>
             ${projectOptions}
           </select>
@@ -1074,7 +1074,7 @@ export async function deleteDocument(documentId) {
 
   try {
     await api.deleteDocument(documentId);
-    const teamId = window.currentTeam?.id;
+    const teamId = getCurrentTeam()?.id;
     await loadDocuments(teamId);
     // Use window.navigateTo for backward compat
     if (window.navigateTo) {
@@ -1098,10 +1098,10 @@ function updateDocSprintDropdown(selectId, projectId) {
 export async function showLinkIssueModal(documentId) {
   document.getElementById('modal-title').textContent = 'Link Issue';
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleLinkIssue(event, '${escapeJsString(documentId)}')">
+    <form>
       <div class="form-group">
         <label for="link-issue-search">Search Issues</label>
-        <input type="text" id="link-issue-search" placeholder="Search by title or ID..." oninput="searchIssuesToLink(this.value, '${escapeJsString(documentId)}')">
+        <input type="text" id="link-issue-search" placeholder="Search by title or ID..." data-action="search-issues-to-link" data-document-id="${escapeAttr(documentId)}">
       </div>
       <div id="link-issue-results" class="link-results">
         <p class="empty-state-small">Enter a search term to find issues</p>
@@ -1124,7 +1124,7 @@ async function searchIssuesToLink(query, documentId) {
   }
 
   try {
-    const teamId = window.currentTeam?.id;
+    const teamId = getCurrentTeam()?.id;
     const issues = await api.searchIssues(teamId, query);
     if (issues.length === 0) {
       resultsDiv.innerHTML = '<p class="empty-state-small">No issues found</p>';
@@ -1132,7 +1132,7 @@ async function searchIssuesToLink(query, documentId) {
     }
 
     resultsDiv.innerHTML = issues.map(issue => `
-      <div class="link-result-item" onclick="linkToIssue('${escapeJsString(documentId)}', '${escapeJsString(issue.id)}')">
+      <div class="link-result-item" data-action="link-to-issue" data-document-id="${escapeAttr(documentId)}" data-issue-id="${escapeAttr(issue.id)}">
         <span class="link-result-id">${escapeHtml(issue.identifier)}</span>
         <span class="link-result-title">${escapeHtml(issue.title)}</span>
       </div>
@@ -1208,7 +1208,7 @@ export async function handleAddDocumentComment(event, documentId) {
  * @param {string} documentId - Document ID
  */
 export async function showAddLabelToDocModal(documentId) {
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   if (!teamId) {
     showToast('No team selected', 'error');
     return;
@@ -1226,7 +1226,7 @@ export async function showAddLabelToDocModal(documentId) {
     }
 
     const labelItems = labels.map(label => `
-      <div class="label-select-item" onclick="addLabelToDoc('${escapeJsString(documentId)}', '${escapeJsString(label.id)}')" style="cursor: pointer; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+      <div class="label-select-item" data-action="add-label-to-doc" data-document-id="${escapeAttr(documentId)}" data-label-id="${escapeAttr(label.id)}" style="cursor: pointer; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
         <span class="badge" style="background-color: ${sanitizeColor(label.color)}; color: white;">${escapeHtml(label.name)}</span>
         ${label.description ? `<span class="text-muted">${escapeHtml(label.description)}</span>` : ''}
       </div>
@@ -1272,6 +1272,90 @@ async function removeLabelFromDoc(documentId, labelId) {
     showToast(e.message, 'error');
   }
 }
+
+// ============================================================================
+// Event delegation actions
+// ============================================================================
+
+registerActions({
+    'view-document': (event, data) => {
+        event.preventDefault();
+        viewDocument(data.documentId);
+    },
+    'toggle-doc-selection': (event, data) => {
+        event.stopPropagation();
+        toggleDocSelection(data.docId);
+    },
+    'clear-doc-search': () => {
+        clearDocSearch();
+    },
+    'clear-doc-project-filter': () => {
+        clearDocProjectFilter();
+    },
+    'clear-all-doc-filters': () => {
+        clearAllDocFilters();
+    },
+    'show-bulk-move-modal': () => {
+        showBulkMoveModal();
+    },
+    'bulk-delete-documents': () => {
+        bulkDeleteDocuments();
+    },
+    'select-all-docs': () => {
+        selectAllDocs();
+    },
+    'clear-doc-selection': () => {
+        clearDocSelection();
+    },
+    'exit-selection-mode': () => {
+        exitSelectionMode();
+    },
+    'enter-selection-mode': () => {
+        enterSelectionMode();
+    },
+    'handle-bulk-move': (event) => {
+        handleBulkMove(event);
+    },
+    'unlink-document-issue': (_event, data) => {
+        unlinkDocumentFromIssue(data.documentId, data.issueId);
+    },
+    'show-link-issue-modal': (_event, data) => {
+        showLinkIssueModal(data.documentId);
+    },
+    'add-document-comment': (event, data) => {
+        handleAddDocumentComment(event, data.documentId);
+    },
+    'remove-label-from-doc': (_event, data) => {
+        removeLabelFromDoc(data.documentId, data.labelId);
+    },
+    'show-add-label-to-doc-modal': (_event, data) => {
+        showAddLabelToDocModal(data.documentId);
+    },
+    'show-edit-document-modal': (_event, data) => {
+        showEditDocumentModal(data.documentId);
+    },
+    'delete-document': (_event, data) => {
+        deleteDocument(data.documentId);
+    },
+    'create-document': (event) => {
+        handleCreateDocument(event);
+    },
+    'update-doc-sprint-dropdown': (_event, data, target) => {
+        updateDocSprintDropdown(data.sprintSelect, target.value);
+    },
+    'update-document': (event, data) => {
+        handleUpdateDocument(event, data.documentId);
+    },
+    'search-issues-to-link': (_event, data, target) => {
+        searchIssuesToLink(target.value, data.documentId);
+    },
+    'link-to-issue': (_event, data) => {
+        linkToIssue(data.documentId, data.issueId);
+    },
+    'add-label-to-doc': (_event, data) => {
+        addLabelToDoc(data.documentId, data.labelId);
+    },
+});
 
 // Attach to window for backward compatibility with HTML handlers
 Object.assign(window, {

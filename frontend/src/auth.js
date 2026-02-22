@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import { escapeAttr } from './utils.js';
+import { setCurrentTeam } from './state.js';
 
 // DOM element references (cached on first use)
 let authScreen = null;
@@ -115,7 +116,7 @@ export async function handleSignup(event) {
 export function logout() {
   api.logout();
   window.currentUser = null;
-  window.currentTeam = null;
+  setCurrentTeam(null);
   showAuthScreen();
   showToast('Signed out', 'success');
 }

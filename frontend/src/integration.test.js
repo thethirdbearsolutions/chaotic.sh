@@ -135,11 +135,6 @@ describe('Integration smoke test', () => {
         expect(missing).toEqual([]);
     });
 
-    it('exports API client to window', () => {
-        expect(window.api).toBeDefined();
-        expect(typeof window.api.request).toBe('function');
-    });
-
     it('has no initialization errors', () => {
         // C4: Check all console.error calls for error objects or error-like messages
         const realErrors = errorSpy.mock.calls.filter(args => {

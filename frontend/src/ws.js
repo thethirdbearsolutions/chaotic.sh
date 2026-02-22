@@ -8,9 +8,8 @@
  * CHT-1039: Pub/sub event registry replacing monolithic handler
  */
 
-/* global api -- provided via window by main.js entry point */
-
-import { getWebsocket, setWebsocket } from './state.js';
+import { api } from './api.js';
+import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
 
 let wsFailCount = 0;
@@ -104,7 +103,7 @@ export function connectWebSocket(teamId) {
             const delay = getReconnectDelay(wsFailCount - 1);
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
-                if (window.currentTeam && window.currentTeam.id === teamId) {
+                if (getCurrentTeam() && getCurrentTeam().id === teamId) {
                     connectWebSocket(teamId);
                 }
             }, delay);

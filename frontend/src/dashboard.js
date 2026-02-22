@@ -5,31 +5,15 @@
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { escapeHtml, escapeJsString, formatTimeAgo } from './utils.js';
-
+import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
+import { getCurrentUser, getCurrentTeam } from './state.js';
+import { renderIssueRow } from './issue-list.js';
+import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
+import { navigateToIssueByIdentifier } from './router.js';
+import { registerActions } from './event-delegation.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
-
-// Dependencies (injected for testability)
-let deps = {
-    getCurrentUser: () => null,
-    getCurrentTeam: () => null,
-    renderIssueRow: () => '',
-    formatActivityText: () => '',
-    formatActivityActor: () => '',
-    getActivityIcon: () => '📝',
-    navigateToIssueByIdentifier: () => {},
-    viewDocument: () => {},
-};
-
-/**
- * Set dependencies for the dashboard module.
- * @param {Object} dependencies - Dependency functions
- */
-export function setDependencies(dependencies) {
-    deps = { ...deps, ...dependencies };
-}
 
 /**
  * Get the current my-issues list.
@@ -67,8 +51,8 @@ export function setDashboardActivities(activities) {
  * Load issues assigned to the current user.
  */
 export async function loadMyIssues() {
-    const currentTeam = deps.getCurrentTeam();
-    const currentUser = deps.getCurrentUser();
+    const currentTeam = getCurrentTeam();
+    const currentUser = getCurrentUser();
 
     if (!currentTeam || !currentUser) return;
 
@@ -104,7 +88,7 @@ export async function loadMyIssues() {
  * @param {boolean} [options.showLoading=true] - Whether to show loading state (skip for WS updates to avoid FOUC)
  */
 export async function loadDashboardActivity({ showLoading = true } = {}) {
-    const currentTeam = deps.getCurrentTeam();
+    const currentTeam = getCurrentTeam();
 
     if (!currentTeam) return;
 
@@ -146,10 +130,10 @@ export function renderDashboardActivity() {
         // Determine the target link based on activity type
         let targetLink = '';
         if (activity.issue_identifier) {
-            targetLink = ` on <a href="#" class="activity-issue-link" onclick="navigateToIssueByIdentifier('${escapeJsString(activity.issue_identifier)}'); return false;"><strong>${escapeHtml(activity.issue_identifier)}</strong></a>`;
+            targetLink = ` on <a href="#" class="activity-issue-link" data-action="navigate-to-issue-by-identifier" data-identifier="${escapeAttr(activity.issue_identifier)}"><strong>${escapeHtml(activity.issue_identifier)}</strong></a>`;
         } else if (activity.document_id && activity.document_title) {
             const docIcon = activity.document_icon || '📄';
-            targetLink = ` <a href="#" class="activity-doc-link" onclick="viewDocument('${escapeJsString(activity.document_id)}'); return false;"><strong>${docIcon} ${escapeHtml(activity.document_title)}</strong></a>`;
+            targetLink = ` <a href="#" class="activity-doc-link" data-action="view-document" data-document-id="${escapeAttr(activity.document_id)}"><strong>${docIcon} ${escapeHtml(activity.document_title)}</strong></a>`;
         } else if (activity.document_title) {
             // Deleted document - no link, just show title
             const docIcon = activity.document_icon || '📄';
@@ -158,10 +142,10 @@ export function renderDashboardActivity() {
 
         return `
         <div class="activity-item">
-            <div class="activity-icon">${deps.getActivityIcon(activity.activity_type)}</div>
+            <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
             <div class="activity-content">
-                <span class="activity-text">${deps.formatActivityText(activity)}${targetLink}</span>
-                <span class="activity-actor">by ${escapeHtml(deps.formatActivityActor(activity))}</span>
+                <span class="activity-text">${formatActivityText(activity)}${targetLink}</span>
+                <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
                 <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
             </div>
         </div>
@@ -212,8 +196,18 @@ export function renderMyIssues() {
         return;
     }
 
-    list.innerHTML = myIssues.map(issue => deps.renderIssueRow(issue)).join('');
+    list.innerHTML = myIssues.map(issue => renderIssueRow(issue)).join('');
 }
 
-// Window exports for onclick handlers
-window.filterMyIssues = filterMyIssues;
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+    'filter-my-issues': () => filterMyIssues(),
+    'navigate-to-issue-by-identifier': (event, dataset) => {
+        event.preventDefault();
+        navigateToIssueByIdentifier(dataset.identifier);
+    },
+    // view-document action is registered in documents.js
+});

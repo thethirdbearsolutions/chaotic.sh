@@ -20,12 +20,42 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
-    escapeJsString: vi.fn((text) => text ? String(text).replace(/'/g, "\\'") : ''),
+    escapeAttr: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
     formatTimeAgo: vi.fn(() => '2h ago'),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./state.js', () => ({
+    getCurrentUser: vi.fn(() => null),
+    getCurrentTeam: vi.fn(() => null),
+}));
+
+vi.mock('./issue-list.js', () => ({
+    renderIssueRow: vi.fn((issue) => `<div class="issue-row">${issue.title}</div>`),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    formatActivityText: vi.fn((activity) => activity.activity_type),
+    formatActivityActor: vi.fn((activity) => activity.user_name || 'Unknown'),
+    getActivityIcon: vi.fn(() => '📝'),
+}));
+
+vi.mock('./router.js', () => ({
+    navigateToIssueByIdentifier: vi.fn(),
+}));
+
+vi.mock('./documents.js', () => ({
+    viewDocument: vi.fn(),
 }));
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
+import { getCurrentUser, getCurrentTeam } from './state.js';
+import { renderIssueRow } from './issue-list.js';
+import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import {
     getMyIssues,
     setMyIssues,
@@ -37,17 +67,9 @@ import {
     renderDashboardActivity,
     showMyIssuesLoadingSkeleton,
     filterMyIssues,
-    setDependencies,
 } from './dashboard.js';
 
 describe('dashboard module', () => {
-    let mockCurrentUser;
-    let mockCurrentTeam;
-    let mockRenderIssueRow;
-    let mockFormatActivityText;
-    let mockFormatActivityActor;
-    let mockGetActivityIcon;
-
     beforeEach(() => {
         // Set up DOM
         document.body.innerHTML = `
@@ -63,25 +85,9 @@ describe('dashboard module', () => {
             </select>
         `;
 
-        // Mock dependencies
-        mockCurrentUser = { id: 'user-1', name: 'Test User' };
-        mockCurrentTeam = { id: 'team-1', name: 'Test Team' };
-        mockRenderIssueRow = vi.fn((issue) => `<div class="issue-row">${issue.title}</div>`);
-        mockFormatActivityText = vi.fn((activity) => activity.activity_type);
-        mockFormatActivityActor = vi.fn((activity) => activity.user_name || 'Unknown');
-        mockGetActivityIcon = vi.fn(() => '📝');
-
-        // Set dependencies
-        setDependencies({
-            getCurrentUser: () => mockCurrentUser,
-            getCurrentTeam: () => mockCurrentTeam,
-            renderIssueRow: mockRenderIssueRow,
-            formatActivityText: mockFormatActivityText,
-            formatActivityActor: mockFormatActivityActor,
-            getActivityIcon: mockGetActivityIcon,
-            navigateToIssueByIdentifier: vi.fn(),
-            viewDocument: vi.fn(),
-        });
+        // Configure mocks
+        getCurrentUser.mockReturnValue({ id: 'user-1', name: 'Test User' });
+        getCurrentTeam.mockReturnValue({ id: 'team-1', name: 'Test Team' });
 
         // Reset state
         setMyIssues([]);
@@ -143,11 +149,7 @@ describe('dashboard module', () => {
         });
 
         it('does nothing if no current team', async () => {
-            setDependencies({
-                getCurrentUser: () => mockCurrentUser,
-                getCurrentTeam: () => null,
-                renderIssueRow: mockRenderIssueRow,
-            });
+            getCurrentTeam.mockReturnValue(null);
 
             await loadMyIssues();
 
@@ -155,11 +157,7 @@ describe('dashboard module', () => {
         });
 
         it('does nothing if no current user', async () => {
-            setDependencies({
-                getCurrentUser: () => null,
-                getCurrentTeam: () => mockCurrentTeam,
-                renderIssueRow: mockRenderIssueRow,
-            });
+            getCurrentUser.mockReturnValue(null);
 
             await loadMyIssues();
 
@@ -237,10 +235,7 @@ describe('dashboard module', () => {
         });
 
         it('does nothing if no current team', async () => {
-            setDependencies({
-                getCurrentUser: () => mockCurrentUser,
-                getCurrentTeam: () => null,
-            });
+            getCurrentTeam.mockReturnValue(null);
 
             await loadDashboardActivity();
 
@@ -260,7 +255,7 @@ describe('dashboard module', () => {
             const list = document.getElementById('my-issues-list');
             expect(list.innerHTML).toContain('Issue 1');
             expect(list.innerHTML).toContain('Issue 2');
-            expect(mockRenderIssueRow).toHaveBeenCalledTimes(2);
+            expect(renderIssueRow).toHaveBeenCalledTimes(2);
         });
 
         it('renders empty state when no issues', () => {
@@ -299,9 +294,9 @@ describe('dashboard module', () => {
 
             const container = document.getElementById('dashboard-activity-list');
             expect(container.innerHTML).toContain('activity-item');
-            expect(mockGetActivityIcon).toHaveBeenCalled();
-            expect(mockFormatActivityText).toHaveBeenCalled();
-            expect(mockFormatActivityActor).toHaveBeenCalled();
+            expect(getActivityIcon).toHaveBeenCalled();
+            expect(formatActivityText).toHaveBeenCalled();
+            expect(formatActivityActor).toHaveBeenCalled();
         });
 
         it('renders empty state when no activities', () => {

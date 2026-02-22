@@ -9,7 +9,9 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getProjects, getEstimateScaleHint, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
-import { formatTimeAgo, escapeJsString, escapeHtml, escapeAttr } from './utils.js';
+import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
+import { getCurrentTeam } from './state.js';
+import { registerActions } from './event-delegation.js';
 
 // State
 let sprints = [];
@@ -108,7 +110,7 @@ export function renderSprints() {
 
         html += `
             <div class="sprint-card sprint-now ${now.limbo ? 'sprint-limbo' : ''} ${arrears ? 'sprint-arrears' : ''}"
-                 onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(now.id)}'); } else { window.open('/sprint/${now.id}', '_blank'); }" style="cursor: pointer;">
+                 data-action="view-sprint" data-sprint-id="${escapeAttr(now.id)}" data-sprint-url="/sprint/${escapeAttr(now.id)}" style="cursor: pointer;">
                 <div class="sprint-card-header">
                     <div class="sprint-card-label">NOW</div>
                     ${now.limbo ? '<span class="badge badge-limbo">IN LIMBO</span>' : ''}
@@ -118,12 +120,12 @@ export function renderSprints() {
                 <div class="sprint-card-budget ${arrears ? 'budget-arrears' : ''}">
                     ${budgetDisplay}
                 </div>
-                <div class="sprint-card-actions" onclick="event.stopPropagation();">
-                    <button class="btn btn-secondary btn-small" onclick="showEditBudgetModal('${escapeJsString(now.id)}', '${escapeJsString(now.name)}', ${now.budget || 'null'}, '${escapeJsString(now.project_id)}')">Edit Budget</button>
+                <div class="sprint-card-actions" data-action="stop-propagation">
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(now.id)}" data-sprint-name="${escapeAttr(now.name)}" data-budget="${now.budget || ''}" data-project-id="${escapeAttr(now.project_id)}">Edit Budget</button>
                     ${now.limbo ? `
-                        <button class="btn btn-primary btn-small" onclick="showLimboDetailsModal()">View Rituals</button>
+                        <button class="btn btn-primary btn-small" data-action="show-limbo-details-modal">View Rituals</button>
                     ` : `
-                        <button class="btn btn-primary btn-small" onclick="showCloseSprintConfirmation('${escapeJsString(now.id)}')">Close Sprint</button>
+                        <button class="btn btn-primary btn-small" data-action="show-close-sprint-confirmation" data-sprint-id="${escapeAttr(now.id)}">Close Sprint</button>
                     `}
                 </div>
             </div>
@@ -139,14 +141,14 @@ export function renderSprints() {
             : 'No budget set';
 
         html += `
-            <div class="sprint-card sprint-next" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(next.id)}'); } else { window.open('/sprint/${next.id}', '_blank'); }" style="cursor: pointer;">
+            <div class="sprint-card sprint-next" data-action="view-sprint" data-sprint-id="${escapeAttr(next.id)}" data-sprint-url="/sprint/${escapeAttr(next.id)}" style="cursor: pointer;">
                 <div class="sprint-card-header">
                     <div class="sprint-card-label">NEXT</div>
                 </div>
                 <div class="sprint-card-title">${escapeHtml(next.name)}</div>
                 <div class="sprint-card-budget">${budgetDisplay}</div>
-                <div class="sprint-card-actions" onclick="event.stopPropagation();">
-                    <button class="btn btn-secondary btn-small" onclick="showEditBudgetModal('${escapeJsString(next.id)}', '${escapeJsString(next.name)}', ${next.budget || 'null'}, '${escapeJsString(next.project_id)}')">Edit Budget</button>
+                <div class="sprint-card-actions" data-action="stop-propagation">
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(next.id)}" data-sprint-name="${escapeAttr(next.name)}" data-budget="${next.budget || ''}" data-project-id="${escapeAttr(next.project_id)}">Edit Budget</button>
                 </div>
             </div>
         `;
@@ -159,7 +161,7 @@ export function renderSprints() {
                 <summary>Completed Sprints (${completed.length})</summary>
                 <div class="sprint-history-list">
                     ${completed.map(s => `
-                        <div class="sprint-history-item" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewSprint('${escapeJsString(s.id)}'); } else { window.open('/sprint/${s.id}', '_blank'); }" style="cursor: pointer;">
+                        <div class="sprint-history-item" data-action="view-sprint" data-sprint-id="${escapeAttr(s.id)}" data-sprint-url="/sprint/${escapeAttr(s.id)}" style="cursor: pointer;">
                             <span class="sprint-history-name">${escapeHtml(s.name)}</span>
                             <span class="sprint-history-budget">${s.points_spent || 0}${s.budget ? ` / ${s.budget}` : ''} pts</span>
                         </div>
@@ -223,7 +225,7 @@ function renderSprintBurndown(sprint) {
             <div class="sprint-burndown-header">
                 <h4>Burndown</h4>
                 <div class="sprint-burndown-meta">
-                    <span>${formatDate(sprint.start_date)} → ${formatDate(sprint.end_date)}</span>
+                    <span>${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}</span>
                     <span>${remaining} of ${total} pts remaining</span>
                 </div>
             </div>
@@ -253,7 +255,7 @@ export async function viewSprint(sprintId, pushHistory = true) {
         currentSprintDetail = sprint;
 
         // Fetch issues, transactions, and documents for this sprint in parallel
-        const teamId = window.currentTeam?.id;
+        const teamId = getCurrentTeam()?.id;
         const [issues, transactions, documents] = await Promise.all([
             api.getIssues({ sprint_id: sprintId, limit: 500 }),
             api.getSprintTransactions(sprintId).catch(() => []),
@@ -337,8 +339,8 @@ function renderSprintDetail() {
     view.innerHTML = `
         <div class="sprint-detail-header">
             <div class="sprint-detail-nav">
-                <button class="btn btn-secondary btn-small" onclick="navigateTo('sprints')">
-                    ← Back to Sprints
+                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="sprints">
+                    \u2190 Back to Sprints
                 </button>
             </div>
             <div class="sprint-detail-title-row">
@@ -348,7 +350,7 @@ function renderSprintDetail() {
             </div>
             ${sprint.start_date && sprint.end_date ? `
                 <div class="sprint-detail-dates">
-                    ${formatDate(sprint.start_date)} → ${formatDate(sprint.end_date)}
+                    ${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}
                 </div>
             ` : ''}
         </div>
@@ -423,7 +425,7 @@ function renderSprintIssueRow(issue) {
     const statusClass = `status-dot-${safeStatus}`;
 
     return `
-        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${escapeJsString(issue.id)}'); } else { window.open('/issue/${encodeURIComponent(issue.identifier)}', '_blank'); }">
+        <div class="sprint-issue-row" data-action="navigate-sprint-issue" data-issue-id="${escapeAttr(issue.id)}" data-issue-url="/issue/${encodeURIComponent(issue.identifier)}">
             <span class="status-dot ${statusClass}"></span>
             <span class="sprint-issue-identifier">${escapeHtml(issue.identifier)}</span>
             <span class="sprint-issue-title">${escapeHtml(issue.title)}</span>
@@ -436,9 +438,9 @@ function renderSprintIssueRow(issue) {
 }
 
 function renderSprintDocumentRow(doc) {
-    const icon = escapeHtml(doc.icon) || '📄';
+    const icon = escapeHtml(doc.icon) || '\u{1F4C4}';
     return `
-        <div class="sprint-issue-row" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewDocument('${escapeJsString(doc.id)}'); } else { window.open('/document/${escapeJsString(encodeURIComponent(doc.id))}', '_blank'); }">
+        <div class="sprint-issue-row" data-action="navigate-sprint-document" data-document-id="${escapeAttr(doc.id)}" data-document-url="/document/${escapeAttr(encodeURIComponent(doc.id))}">
             <span class="sprint-issue-identifier">${icon}</span>
             <span class="sprint-issue-title">${escapeHtml(doc.title || 'Untitled')}</span>
             <span class="sprint-issue-meta">
@@ -500,7 +502,7 @@ export function showEditBudgetModal(sprintId, sprintName, currentBudget, project
     const scaleHint = projectId ? getEstimateScaleHint(projectId) : '';
     document.getElementById('modal-title').textContent = `Edit Sprint: ${sprintName}`;
     document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleUpdateBudget(event, '${escapeJsString(sprintId)}', '${escapeJsString(projectId)}')">
+        <form data-action="handle-update-budget" data-sprint-id="${escapeAttr(sprintId)}" data-project-id="${escapeAttr(projectId)}">
             <div class="form-group">
                 <label for="sprint-budget">Point Budget</label>
                 <input type="number" id="sprint-budget" min="1" value="${currentBudget || ''}" placeholder="Leave empty for unlimited">
@@ -617,8 +619,8 @@ export async function showCloseSprintConfirmation(sprintId) {
                 }
             </div>
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="this.disabled = true; closeModal(); completeSprint('${escapeJsString(sprintId)}')">Close Sprint</button>
+                <button class="btn btn-secondary" data-action="close-modal">Cancel</button>
+                <button class="btn btn-primary" data-action="confirm-close-sprint" data-sprint-id="${escapeAttr(sprintId)}">Close Sprint</button>
             </div>
         </div>
     `;
@@ -672,7 +674,7 @@ function renderLimboBanner() {
                 <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
             <span><strong>Sprint in Limbo</strong> - ${limboStatus.pending_rituals.length} ritual(s) pending</span>
-            <button class="btn btn-small" onclick="showLimboDetailsModal()">View Details</button>
+            <button class="btn btn-small" data-action="show-limbo-details-modal">View Details</button>
         </div>
     `;
 
@@ -701,7 +703,7 @@ function showLimboModal(sprint) {
             <div id="limbo-rituals-list" class="limbo-rituals">
                 <p class="loading">Loading rituals...</p>
             </div>
-            <button type="button" class="btn btn-primary" onclick="closeModal(); loadLimboStatus();">Got it</button>
+            <button type="button" class="btn btn-primary" data-action="dismiss-limbo-modal">Got it</button>
         </div>
     `;
     showModal();
@@ -724,9 +726,9 @@ async function loadLimboRituals(projectId) {
                 <div class="ritual-status">
                     ${r.attestation ?
                         (r.attestation.approved_at ?
-                            '<span class="ritual-done">✓</span>' :
-                            '<span class="ritual-pending">⏳</span>') :
-                        '<span class="ritual-todo">○</span>'}
+                            '<span class="ritual-done">\u2713</span>' :
+                            '<span class="ritual-pending">\u23F3</span>') :
+                        '<span class="ritual-todo">\u25CB</span>'}
                 </div>
                 <div class="ritual-info">
                     <div class="ritual-name">${escapeHtml(r.name)} <span class="ritual-mode">(${escapeHtml(r.approval_mode)})</span></div>
@@ -757,8 +759,8 @@ export function showLimboDetailsModal() {
                         <div class="ritual-header">
                             <span class="ritual-status-icon">
                                 ${r.attestation ?
-                                    (r.attestation.approved_at ? '✓' : '⏳') :
-                                    '○'}
+                                    (r.attestation.approved_at ? '\u2713' : '\u23F3') :
+                                    '\u25CB'}
                             </span>
                             <strong>${escapeHtml(r.name)}</strong>
                             <span class="badge badge-ritual-${escapeAttr(r.approval_mode)}">${escapeHtml(r.approval_mode)}</span>
@@ -774,7 +776,7 @@ export function showLimboDetailsModal() {
                 <div class="completed-rituals">
                     ${limboStatus.completed_rituals.map(r => `
                         <div class="completed-ritual">
-                            <div class="completed-ritual-header">✓ ${escapeHtml(r.name)}</div>
+                            <div class="completed-ritual-header">\u2713 ${escapeHtml(r.name)}</div>
                             ${renderAttestationNote(r.attestation)}
                         </div>
                     `).join('')}
@@ -810,7 +812,7 @@ function renderRitualActions(ritual, projectId) {
         return `
             <div class="ritual-actions">
                 <span class="text-warning">Pending approval</span>
-                <button class="btn btn-small btn-primary" onclick="approveRitual('${escapeJsString(ritual.id)}', '${escapeJsString(projectId)}')">Approve</button>
+                <button class="btn btn-small btn-primary" data-action="approve-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-project-id="${escapeAttr(projectId)}">Approve</button>
             </div>
         `;
     }
@@ -818,7 +820,7 @@ function renderRitualActions(ritual, projectId) {
     if (ritual.approval_mode === 'gate') {
         return `
             <div class="ritual-actions">
-                <button class="btn btn-small btn-primary" onclick="completeGateRitual('${escapeJsString(ritual.id)}', '${escapeJsString(projectId)}', '${escapeJsString(ritual.name)}')">Complete</button>
+                <button class="btn btn-small btn-primary" data-action="complete-gate-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-project-id="${escapeAttr(projectId)}" data-ritual-name="${escapeAttr(ritual.name)}">Complete</button>
             </div>
         `;
     }
@@ -856,6 +858,71 @@ export function updateSprintCacheForProject(projectId, sprintList) {
     sprintList.forEach(s => { sprintCache[s.id] = s; });
     sprintCacheLoadedProjects.add(projectId);
 }
+
+// ============================================================================
+// Event delegation actions
+// ============================================================================
+
+registerActions({
+    'view-sprint': (event, data) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
+            window.open(data.sprintUrl, '_blank');
+            return;
+        }
+        viewSprint(data.sprintId);
+    },
+    'stop-propagation': (event) => {
+        event.stopPropagation();
+    },
+    'show-edit-budget-modal': (event, data) => {
+        event.stopPropagation();
+        const budget = data.budget ? parseFloat(data.budget) : null;
+        showEditBudgetModal(data.sprintId, data.sprintName, budget, data.projectId);
+    },
+    'show-limbo-details-modal': (event) => {
+        event.stopPropagation();
+        showLimboDetailsModal();
+    },
+    'show-close-sprint-confirmation': (event, data) => {
+        event.stopPropagation();
+        showCloseSprintConfirmation(data.sprintId);
+    },
+    'handle-update-budget': (event, data) => {
+        handleUpdateBudget(event, data.sprintId, data.projectId);
+    },
+    'close-modal': () => {
+        closeModal();
+    },
+    'confirm-close-sprint': (_event, data, target) => {
+        target.disabled = true;
+        closeModal();
+        completeSprint(data.sprintId);
+    },
+    'dismiss-limbo-modal': () => {
+        closeModal();
+        loadLimboStatus();
+    },
+    'approve-ritual': (_event, data) => {
+        window.approveRitual(data.ritualId, data.projectId);
+    },
+    'complete-gate-ritual': (_event, data) => {
+        window.completeGateRitual(data.ritualId, data.projectId, data.ritualName);
+    },
+    'navigate-sprint-issue': (event, data) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
+            window.open(data.issueUrl, '_blank');
+            return;
+        }
+        window.viewIssue(data.issueId);
+    },
+    'navigate-sprint-document': (event, data) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
+            window.open(data.documentUrl, '_blank');
+            return;
+        }
+        window.viewDocument(data.documentId);
+    },
+});
 
 // ============================================================================
 // Utility functions

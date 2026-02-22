@@ -4,9 +4,11 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor } from './utils.js';
+import { escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
+import { getCurrentTeam } from './state.js';
+import { registerActions } from './event-delegation.js';
 
 // Module state
 let projects = [];
@@ -124,9 +126,9 @@ export function getEstimateScaleHint(projectId) {
  * Load projects for the current team
  */
 export async function loadProjects() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
   try {
-    projects = await api.getProjects(window.currentTeam.id);
+    projects = await api.getProjects(getCurrentTeam().id);
     updateProjectFilters();
   } catch (e) {
     showToast(e.message, 'error');
@@ -269,13 +271,13 @@ export function renderProjects() {
   list.innerHTML = projects
     .map(
       (project) => `
-        <div class="grid-item" onclick="viewProject('${escapeJsString(project.id)}')">
+        <div class="grid-item" data-action="view-project" data-project-id="${escapeAttr(project.id)}">
             <div class="grid-item-header">
                 <div class="grid-item-icon" style="background: ${sanitizeColor(project.color)}20; color: ${sanitizeColor(project.color)}">
                     ${escapeHtml(project.icon || project.key.charAt(0))}
                 </div>
                 <div class="grid-item-title">${escapeHtml(project.name)}</div>
-                <button class="grid-item-edit" onclick="event.stopPropagation(); viewProjectSettings('${escapeJsString(project.id)}')" title="Project settings">
+                <button class="grid-item-edit" data-action="view-project-settings" data-project-id="${escapeAttr(project.id)}" title="Project settings">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 </button>
             </div>
@@ -308,7 +310,7 @@ export function viewProject(projectId) {
 export function showCreateProjectModal() {
   document.getElementById('modal-title').textContent = 'Create Project';
   document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleCreateProject(event)">
+        <form data-action="create-project">
             <div class="form-group">
                 <label for="project-name">Name</label>
                 <input type="text" id="project-name" required>
@@ -366,7 +368,7 @@ export async function handleCreateProject(event) {
   };
 
   try {
-    await api.createProject(window.currentTeam.id, data);
+    await api.createProject(getCurrentTeam().id, data);
     await loadProjects();
     renderProjects();
     closeModal();
@@ -394,7 +396,7 @@ export function showEditProjectModal(projectId) {
 
   document.getElementById('modal-title').textContent = 'Edit Project';
   document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleUpdateProject(event, '${escapeJsString(project.id)}')">
+        <form data-action="update-project" data-project-id="${escapeAttr(project.id)}">
             <div class="form-group">
                 <label for="project-name">Name</label>
                 <input type="text" id="project-name" value="${escapeAttr(project.name)}" required>
@@ -433,7 +435,7 @@ export function showEditProjectModal(projectId) {
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Save Changes</button>
-                <button type="button" class="btn btn-danger-outline" onclick="confirmDeleteProject('${escapeJsString(project.id)}')">Delete Project</button>
+                <button type="button" class="btn btn-danger-outline" data-action="confirm-delete-project" data-project-id="${escapeAttr(project.id)}">Delete Project</button>
             </div>
         </form>
     `;
@@ -745,8 +747,8 @@ export function renderRitualList(containerId, rituals, type) {
         </div>
       </div>
       <div class="ritual-item-actions">
-        <button class="btn btn-secondary btn-small" onclick="showEditProjectRitualModal('${escapeJsString(ritual.id)}')">Edit</button>
-        <button class="btn btn-danger btn-small" data-ritual-id="${escapeAttr(ritual.id)}" data-ritual-name="${escapeAttr(ritual.name)}" onclick="deleteProjectRitual(this.dataset.ritualId, this.dataset.ritualName)">Delete</button>
+        <button class="btn btn-secondary btn-small" data-action="edit-project-ritual" data-ritual-id="${escapeAttr(ritual.id)}">Edit</button>
+        <button class="btn btn-danger btn-small" data-action="delete-project-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-ritual-name="${escapeAttr(ritual.name)}">Delete</button>
       </div>
     </div>
   `;
@@ -768,7 +770,7 @@ export async function showCreateProjectRitualModal(triggerType) {
 
   document.getElementById('modal-title').textContent = 'Create Ritual';
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleCreateProjectRitual(event)">
+    <form data-action="create-project-ritual">
       <div class="form-group">
         <label for="ritual-name">Name</label>
         <input type="text" id="ritual-name" placeholder="e.g., run-tests, update-docs" required>
@@ -781,7 +783,7 @@ export async function showCreateProjectRitualModal(triggerType) {
       </div>
       <div class="form-group">
         <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger" onchange="toggleRitualConditions()">
+        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
           <option value="every_sprint" ${triggerType === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${triggerType === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
           <option value="ticket_claim" ${triggerType === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
@@ -806,7 +808,7 @@ export async function showCreateProjectRitualModal(triggerType) {
       </div>
       <div class="form-group">
         <label for="ritual-group">Group</label>
-        <select id="ritual-group" onchange="onRitualGroupChange()">
+        <select id="ritual-group" data-action="ritual-group-change">
           <option value="">None (always required)</option>
           ${groups.map(g => `<option value="${escapeAttr(g.id)}" data-mode="${escapeAttr(g.selection_mode)}">${escapeHtml(g.name)} (${escapeHtml(g.selection_mode)})</option>`).join('')}
           <option value="__create__">+ Create Group...</option>
@@ -980,7 +982,7 @@ export async function showEditProjectRitualModal(ritualId) {
 
   document.getElementById('modal-title').textContent = 'Edit Ritual';
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleUpdateProjectRitual(event, '${escapeJsString(ritualId)}')">
+    <form data-action="update-project-ritual" data-ritual-id="${escapeAttr(ritualId)}">
       <div class="form-group">
         <label for="ritual-name">Name</label>
         <input type="text" id="ritual-name" value="${escapeAttr(ritual.name)}" required>
@@ -991,7 +993,7 @@ export async function showEditProjectRitualModal(ritualId) {
       </div>
       <div class="form-group">
         <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger" onchange="toggleRitualConditions()">
+        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
           <option value="every_sprint" ${!ritual.trigger || ritual.trigger === 'every_sprint' ? 'selected' : ''}>Every Sprint - Required when sprint closes</option>
           <option value="ticket_close" ${ritual.trigger === 'ticket_close' ? 'selected' : ''}>Ticket Close - Required when closing a ticket</option>
           <option value="ticket_claim" ${ritual.trigger === 'ticket_claim' ? 'selected' : ''}>Ticket Claim - Required when claiming a ticket</option>
@@ -1014,7 +1016,7 @@ export async function showEditProjectRitualModal(ritualId) {
       </div>
       <div class="form-group">
         <label for="ritual-group">Group</label>
-        <select id="ritual-group" onchange="onRitualGroupChange()">
+        <select id="ritual-group" data-action="ritual-group-change">
           <option value="">None (always required)</option>
           ${groups.map(g => `<option value="${escapeAttr(g.id)}" data-mode="${escapeAttr(g.selection_mode)}" ${ritual.group_id === g.id ? 'selected' : ''}>${escapeHtml(g.name)} (${escapeHtml(g.selection_mode)})</option>`).join('')}
           <option value="__create__">+ Create Group...</option>
@@ -1125,6 +1127,47 @@ export async function deleteProjectRitual(ritualId, ritualName) {
     showToast(`Failed to delete ritual: ${e.message}`, 'error');
   }
 }
+
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+  'view-project': (event, dataset) => {
+    viewProject(dataset.projectId);
+  },
+  'view-project-settings': (event, dataset) => {
+    event.stopPropagation();
+    viewProjectSettings(dataset.projectId);
+  },
+  'create-project': (event) => {
+    handleCreateProject(event);
+  },
+  'update-project': (event, dataset) => {
+    handleUpdateProject(event, dataset.projectId);
+  },
+  'confirm-delete-project': (event, dataset) => {
+    confirmDeleteProject(dataset.projectId);
+  },
+  'edit-project-ritual': (event, dataset) => {
+    showEditProjectRitualModal(dataset.ritualId);
+  },
+  'delete-project-ritual': (event, dataset) => {
+    deleteProjectRitual(dataset.ritualId, dataset.ritualName);
+  },
+  'create-project-ritual': (event) => {
+    handleCreateProjectRitual(event);
+  },
+  'update-project-ritual': (event, dataset) => {
+    handleUpdateProjectRitual(event, dataset.ritualId);
+  },
+  'toggle-ritual-conditions': () => {
+    toggleRitualConditions();
+  },
+  'ritual-group-change': () => {
+    onRitualGroupChange();
+  },
+});
 
 // Attach to window for backward compatibility with HTML handlers
 Object.assign(window, {

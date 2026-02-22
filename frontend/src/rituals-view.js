@@ -8,6 +8,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { registerActions } from './event-delegation.js';
 import {
     getProjects,
     loadProjects,
@@ -107,21 +108,21 @@ export function renderRitualsView() {
         <div id="rituals-tab-sprint" class="settings-tab-content">
             <div class="settings-section-header">
                 <p class="settings-description">Required when closing a sprint</p>
-                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('every_sprint')">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="every_sprint">+ Create Ritual</button>
             </div>
             <div id="rv-sprint-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-close" class="settings-tab-content hidden">
             <div class="settings-section-header">
                 <p class="settings-description">Required when closing a ticket</p>
-                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_close')">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_close">+ Create Ritual</button>
             </div>
             <div id="rv-close-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-claim" class="settings-tab-content hidden">
             <div class="settings-section-header">
                 <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
-                <button class="btn btn-primary" onclick="showCreateProjectRitualModal('ticket_claim')">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
             </div>
             <div id="rv-claim-rituals-list" class="rituals-list"></div>
         </div>
@@ -217,20 +218,20 @@ export function renderTicketRitualActions(ritual, issueId) {
     if (ritual.attestation && !ritual.attestation.approved_at) {
         return `
             <span class="text-warning">Awaiting approval</span>
-            <button class="btn btn-small btn-primary" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" onclick="approveTicketRitual(this.dataset.ritualId, this.dataset.issueId)">Approve</button>
+            <button class="btn btn-small btn-primary" data-action="approve-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}">Approve</button>
         `;
     }
 
     // Not attested - GATE mode requires human completion
     if (ritual.approval_mode === 'gate') {
-        return `<button class="btn btn-small btn-primary" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" onclick="showCompleteTicketRitualModal(this.dataset.ritualId, this.dataset.issueId, this.dataset.ritualName)">Complete</button>`;
+        return `<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}">Complete</button>`;
     }
 
     // AUTO or REVIEW mode - agent can attest
     if (ritual.note_required) {
-        return `<button class="btn btn-small btn-secondary" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-prompt="${escapeAttr(ritual.prompt || '')}" onclick="showAttestTicketRitualModal(this.dataset.ritualId, this.dataset.issueId, this.dataset.ritualName, this.dataset.ritualPrompt)">Attest</button>`;
+        return `<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual-modal" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-prompt="${escapeAttr(ritual.prompt || '')}">Attest</button>`;
     }
-    return `<button class="btn btn-small btn-secondary" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}" onclick="attestTicketRitual(this.dataset.ritualId, this.dataset.issueId)">Attest</button>`;
+    return `<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-issue-id="${escapeAttr(issueId)}">Attest</button>`;
 }
 
 export function showAttestTicketRitualModal(ritualId, issueId, ritualName, ritualPrompt) {
@@ -321,3 +322,24 @@ async function handleCompleteTicketRitual(event, ritualId, issueId) {
     }
     return false;
 }
+
+// Register delegated event handlers
+registerActions({
+    'show-create-ritual-modal': (_event, data) => {
+        if (window.showCreateProjectRitualModal) {
+            window.showCreateProjectRitualModal(data.trigger);
+        }
+    },
+    'approve-ticket-ritual': (_event, data) => {
+        approveTicketRitual(data.ritualId, data.issueId);
+    },
+    'complete-ticket-ritual': (_event, data) => {
+        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName);
+    },
+    'attest-ticket-ritual-modal': (_event, data) => {
+        showAttestTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualPrompt);
+    },
+    'attest-ticket-ritual': (_event, data) => {
+        attestTicketRitual(data.ritualId, data.issueId);
+    },
+});

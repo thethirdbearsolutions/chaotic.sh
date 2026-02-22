@@ -22,6 +22,7 @@ vi.mock('./utils.js', () => ({
     escapeAttr: (s) => s != null ? String(s) : '',
 }));
 
+import { setCurrentTeam } from './state.js';
 import { loadEpics, renderEpics } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
@@ -34,7 +35,7 @@ describe('loadEpics', () => {
     beforeEach(() => {
         setupDom();
         vi.clearAllMocks();
-        window.currentTeam = { id: 'team-1' };
+        setCurrentTeam({ id: 'team-1' });
     });
 
     it('shows empty state when no epics exist', async () => {

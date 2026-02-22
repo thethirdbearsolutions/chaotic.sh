@@ -3,6 +3,7 @@
  */
 
 import { escapeAttr } from './utils.js';
+import { registerActions } from './event-delegation.js';
 
 // Supported fields and their valid operators
 const FIELD_OPERATORS = {
@@ -44,7 +45,7 @@ function renderConditionBuilder(conditions) {
             <div id="condition-rows">
                 ${rowsHtml}
             </div>
-            <button type="button" class="btn btn-secondary btn-small" onclick="addConditionRow()">+ Add Condition</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="add-condition-row">+ Add Condition</button>
             <p class="form-help">Filter which tickets this ritual applies to.</p>
             <p id="condition-error" class="form-error" style="display: none; color: #e53e3e;"></p>
         </div>
@@ -71,15 +72,15 @@ function renderConditionRow(field = '', operator = '', value = '') {
 
     return `
         <div class="condition-row" id="condition-row-${rowId}">
-            <select class="condition-field" onchange="updateOperatorOptions(${rowId})">
+            <select class="condition-field" data-action="update-operator-options" data-row-id="${rowId}">
                 <option value="">Select field...</option>
                 ${fieldOptions}
             </select>
-            <select class="condition-operator" id="condition-operator-${rowId}" onchange="toggleValueInput(${rowId})">
+            <select class="condition-operator" id="condition-operator-${rowId}" data-action="toggle-value-input" data-row-id="${rowId}">
                 ${operatorOptions}
             </select>
             <input type="text" class="condition-value" id="condition-value-${rowId}" value="${escapeAttr(String(displayValue))}" placeholder="Value"${hideValue ? ' style="display: none;"' : ''}>
-            <button type="button" class="btn btn-secondary btn-small" onclick="removeConditionRow(${rowId})">&times;</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="remove-condition-row" data-row-id="${rowId}">&times;</button>
         </div>
     `;
 }
@@ -224,7 +225,23 @@ function collectConditions() {
     return Object.keys(conditions).length > 0 ? conditions : null;
 }
 
-// Export to window for onclick handlers and app.js usage
+// Register delegated event handlers
+registerActions({
+    'add-condition-row': () => {
+        addConditionRow();
+    },
+    'remove-condition-row': (_event, data) => {
+        removeConditionRow(Number(data.rowId));
+    },
+    'update-operator-options': (_event, data) => {
+        updateOperatorOptions(Number(data.rowId));
+    },
+    'toggle-value-input': (_event, data) => {
+        toggleValueInput(Number(data.rowId));
+    },
+});
+
+// Export to window for app.js usage
 Object.assign(window, {
     renderConditionBuilder,
     addConditionRow,

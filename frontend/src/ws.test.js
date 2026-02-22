@@ -11,6 +11,8 @@ vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(() => 'my-issues'),
     getWebsocket: vi.fn(() => null),
     setWebsocket: vi.fn(),
+    getCurrentTeam: vi.fn(() => null),
+    setCurrentTeam: vi.fn(),
 }));
 
 // Mock ui.js
@@ -18,7 +20,15 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getWebsocket, setWebsocket } from './state.js';
+// Mock api.js
+vi.mock('./api.js', () => ({
+    api: {
+        getToken: vi.fn(() => 'test-token'),
+    },
+}));
+
+import { api } from './api.js';
+import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
 import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState } from './ws.js';
 
@@ -27,16 +37,13 @@ describe('ws.js', () => {
         vi.clearAllMocks();
         resetWsState();
 
-        // Mock window.api
-        window.api = {
-            getToken: vi.fn(() => 'test-token'),
-        };
-        window.currentTeam = { id: 'team-1' };
+        // Reset api mock after clearAllMocks
+        api.getToken.mockReturnValue('test-token');
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
     });
 
     afterEach(() => {
-        delete window.api;
-        delete window.currentTeam;
+        getCurrentTeam.mockReturnValue(null);
     });
 
     describe('connectWebSocket', () => {
@@ -83,7 +90,7 @@ describe('ws.js', () => {
         });
 
         it('does nothing if no token', () => {
-            window.api.getToken.mockReturnValue(null);
+            api.getToken.mockReturnValue(null);
             connectWebSocket('team-1');
             expect(MockWebSocket).not.toHaveBeenCalled();
         });

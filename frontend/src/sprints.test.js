@@ -36,13 +36,17 @@ vi.mock('./url-helpers.js', () => ({
     updateUrlWithProject: vi.fn(),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 vi.mock('./utils.js', () => ({
     formatTimeAgo: vi.fn(s => s || ''),
-    escapeJsString: vi.fn(s => s || ''),
     escapeHtml: vi.fn(s => s || ''),
     escapeAttr: vi.fn(s => s || ''),
 }));
 
+import { setCurrentTeam } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { setGlobalProjectSelection } from './projects.js';
@@ -83,7 +87,7 @@ beforeEach(() => {
     window.viewIssue = vi.fn();
     window.viewDocument = vi.fn();
     window.renderMarkdown = vi.fn(s => s);
-    window.currentTeam = { id: 'team-1', name: 'Test Team' };
+    setCurrentTeam({ id: 'team-1', name: 'Test Team' });
     // Reset module state
     setSprints([]);
     invalidateSprintCache();
@@ -392,7 +396,7 @@ describe('viewSprint', () => {
     });
 
     it('skips document fetch when currentTeam is null', async () => {
-        window.currentTeam = null;
+        setCurrentTeam(null);
         api.getSprint.mockResolvedValue({
             id: 's1', name: 'Sprint 1', status: 'active',
             budget: 20, points_spent: 5, project_id: 'p1',

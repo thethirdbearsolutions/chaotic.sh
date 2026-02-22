@@ -5,7 +5,7 @@
  * Extracted from app.js.
  */
 
-/* global api */
+import { api } from './api.js';
 import { showToast } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
 import { getIssues, setIssues } from './state.js';

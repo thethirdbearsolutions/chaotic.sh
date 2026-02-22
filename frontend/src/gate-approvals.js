@@ -11,9 +11,10 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
+import { escapeHtml, escapeAttr } from './utils.js';
+import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
-import { getPendingGates, setPendingGates } from './state.js';
+import { getPendingGates, setPendingGates, getCurrentTeam } from './state.js';
 import { completeGateRitual } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 
@@ -79,7 +80,7 @@ function showGateApprovalModal(ritualId, issueId, ritualName, ritualPrompt, issu
                     <span class="gate-approval-issue-id">${escapeHtml(issueIdentifier)}</span>
                     <span class="gate-approval-issue-title">${escapeHtml(issueTitle)}</span>
                 </div>
-                <a href="/issue/${encodeURIComponent(issueIdentifier)}" class="gate-approval-view-link" onclick="event.preventDefault(); closeModal(); viewIssue('${escapeJsString(issueId)}')">View full ticket details &rarr;</a>
+                <a href="/issue/${encodeURIComponent(issueIdentifier)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${escapeAttr(issueId)}">View full ticket details &rarr;</a>
             </div>
             <div class="gate-approval-ritual">
                 <div class="gate-approval-prompt">${escapeHtml(ritualPrompt)}</div>
@@ -137,7 +138,7 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
                     <span class="gate-approval-issue-id">${escapeHtml(issueIdentifier)}</span>
                     <span class="gate-approval-issue-title">${escapeHtml(issueTitle)}</span>
                 </div>
-                <a href="/issue/${encodeURIComponent(issueIdentifier)}" class="gate-approval-view-link" onclick="event.preventDefault(); closeModal(); viewIssue('${escapeJsString(issueId)}')">View full ticket details &rarr;</a>
+                <a href="/issue/${encodeURIComponent(issueIdentifier)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${escapeAttr(issueId)}">View full ticket details &rarr;</a>
             </div>
             <div class="gate-approval-ritual">
                 <div class="gate-approval-prompt">${escapeHtml(ritualPrompt)}</div>
@@ -191,7 +192,7 @@ let sprintLimboApprovals = [];
  * Load all pending gate approvals across projects.
  */
 export async function loadGateApprovals() {
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
 
     const container = document.getElementById('gate-approvals-list');
     if (!container) return;
@@ -258,7 +259,7 @@ function renderGateApprovals() {
                         </ul>
                         <p>To set up rituals, go to a project's settings and configure them under the ritual tabs.</p>
                     </div>
-                    <button class="btn btn-secondary" onclick="dismissApprovalsExplainer()">Got it!</button>
+                    <button class="btn btn-secondary" data-action="dismiss-approvals-explainer">Got it!</button>
                 </div>
             `;
         } else {
@@ -487,7 +488,7 @@ function renderApprovalIssue(approvalIssue) {
     return `
         <div class="gate-issue-card">
             <div class="gate-issue-header">
-                <a href="/issue/${encodeURIComponent(approvalIssue.identifier)}" onclick="event.preventDefault(); viewIssue('${escapeJsString(approvalIssue.issue_id)}')" class="gate-issue-link">
+                <a href="/issue/${encodeURIComponent(approvalIssue.identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(approvalIssue.issue_id)}" class="gate-issue-link">
                     <span class="gate-issue-id">${escapeHtml(approvalIssue.identifier)}</span>
                     <span class="gate-issue-title">${escapeHtml(approvalIssue.title)}</span>
                 </a>
@@ -502,9 +503,17 @@ function renderApprovalIssue(approvalIssue) {
 }
 
 
-// Export to window for onclick handlers
-window.completeGateFromList = completeGateFromList;
-window.approveReviewFromList = approveReviewFromList;
+// Register delegated event handlers
+registerActions({
+    'view-issue-from-modal': (event, data) => {
+        event.preventDefault();
+        closeModal();
+        if (window.viewIssue) window.viewIssue(data.issueId);
+    },
+    'dismiss-approvals-explainer': () => {
+        dismissApprovalsExplainer();
+    },
+});
 
 export {
     showGateApprovalModal,

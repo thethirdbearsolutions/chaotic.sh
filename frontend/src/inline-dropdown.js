@@ -3,6 +3,18 @@
  * Extracted from app.js for testability
  */
 
+import { api } from './api.js';
+import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
+import { getMyIssues, setMyIssues } from './dashboard.js';
+import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast } from './ui.js';
+import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeJsString, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { registerActions } from './event-delegation.js';
+import { formatEstimate, getEstimateOptions } from './projects.js';
+import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, getAssigneeById } from './assignees.js';
+import { updateSprintCacheForProject } from './sprints.js';
+import { updateSprintBudgetBar } from './issues-view.js';
+
 // Dropdown options
 export const STATUS_OPTIONS = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
 export const PRIORITY_OPTIONS = ['no_priority', 'urgent', 'high', 'medium', 'low'];
@@ -11,52 +23,6 @@ export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 't
 // Module state
 let createIssueLabelIds = [];
 let _labelToggleQueue = Promise.resolve();
-
-// Dependencies injected from app.js
-let deps = {
-    api: null,
-    getIssues: () => [],
-    setIssues: () => {},
-    getMyIssues: () => [],
-    setMyIssues: () => {},
-    getCurrentDetailIssue: () => null,
-    setCurrentDetailIssue: () => {},
-    getLabels: () => [],
-    setLabels: () => {},
-    getCurrentTeam: () => null,
-    getCurrentDetailSprints: () => [],
-    closeAllDropdowns: () => {},
-    registerDropdownClickOutside: () => {},
-    setDropdownKeyHandler: () => {},
-    showToast: () => {},
-    getStatusIcon: () => '',
-    getPriorityIcon: () => '',
-    formatStatus: (s) => s,
-    formatPriority: (p) => p,
-    formatIssueType: (t) => t || 'task',
-    formatEstimate: (e) => e || 'None',
-    formatAssigneeName: (a) => a?.name || '',
-    formatAssigneeOptionLabel: (a) => a?.name || '',
-    getAssigneeOptionList: () => [],
-    getAssigneeById: () => null,
-    getEstimateOptions: () => [],
-    renderAvatar: () => '',
-    renderIssueRow: () => '',
-    escapeHtml: (text) => text,
-    escapeAttr: (text) => text,
-    escapeJsString: (text) => text,
-    sanitizeColor: (c) => c || '#888',
-    updateSprintCacheForProject: () => {},
-    updateSprintBudgetBar: () => {},
-};
-
-/**
- * Set dependencies for this module
- * @param {Object} dependencies - Object containing required dependencies
- */
-export function setDependencies(dependencies) {
-    deps = { ...deps, ...dependencies };
-}
 
 /**
  * Get create issue label IDs
@@ -79,12 +45,13 @@ export function setCreateIssueLabelIds(ids) {
  * @param {Event} event - Click event
  * @param {string} type - Dropdown type (status, priority, type, assignee, estimate, labels, sprint)
  * @param {string} issueId - Issue ID being edited
+ * @param {Element} [anchorEl] - Element to anchor dropdown to (defaults to event.currentTarget)
  */
-export async function showInlineDropdown(event, type, issueId) {
+export async function showInlineDropdown(event, type, issueId, anchorEl) {
     event.preventDefault();
-    deps.closeAllDropdowns();
+    closeAllDropdowns();
 
-    const btn = event.currentTarget;
+    const btn = anchorEl || event.currentTarget;
     const rect = btn.getBoundingClientRect();
 
     const dropdown = document.createElement('div');
@@ -94,9 +61,9 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change status...</div>
             ${STATUS_OPTIONS.map((status, i) => `
-                <button class="dropdown-option" data-value="${status}" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'status', '${status}')">
-                    ${deps.getStatusIcon(status)}
-                    <span>${deps.formatStatus(status)}</span>
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="status" data-value="${status}">
+                    ${getStatusIcon(status)}
+                    <span>${formatStatus(status)}</span>
                     <span class="dropdown-shortcut">${i + 1}</span>
                 </button>
             `).join('')}
@@ -105,9 +72,9 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change priority...</div>
             ${PRIORITY_OPTIONS.map((priority, i) => `
-                <button class="dropdown-option" data-value="${priority}" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'priority', '${priority}')">
-                    ${deps.getPriorityIcon(priority)}
-                    <span>${deps.formatPriority(priority)}</span>
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="priority" data-value="${priority}">
+                    ${getPriorityIcon(priority)}
+                    <span>${formatPriority(priority)}</span>
                     <span class="dropdown-shortcut">${i}</span>
                 </button>
             `).join('')}
@@ -116,16 +83,16 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change type...</div>
             ${ISSUE_TYPE_OPTIONS.map(issueType => `
-                <button class="dropdown-option" data-value="${issueType}" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'issue_type', '${issueType}')">
-                    <span class="issue-type-badge type-${issueType}">${deps.formatIssueType(issueType)}</span>
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="issue_type" data-value="${issueType}">
+                    <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
                 </button>
             `).join('')}
         `;
     } else if (type === 'assignee') {
-        const assigneeOptions = deps.getAssigneeOptionList();
+        const assigneeOptions = getAssigneeOptionList();
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to...</div>
-            <button class="dropdown-option" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'assignee_id', null)">
+            <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="assignee_id" data-value="__null__">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
                 <span>Unassigned</span>
                 <span class="dropdown-shortcut">0</span>
@@ -134,9 +101,9 @@ export async function showInlineDropdown(event, type, issueId) {
                 <div class="dropdown-empty">No team members or agents found</div>
             ` : assigneeOptions.map(({ assignee, indent }, i) => {
                 return `
-                <button class="dropdown-option" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'assignee_id', '${deps.escapeJsString(assignee.id)}')">
-                    ${deps.renderAvatar(assignee, 'avatar-small')}
-                    <span>${deps.formatAssigneeOptionLabel(assignee, indent)}</span>
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="assignee_id" data-value="${escapeAttr(assignee.id)}">
+                    ${renderAvatar(assignee, 'avatar-small')}
+                    <span>${formatAssigneeOptionLabel(assignee, indent)}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i + 1}</span>` : ''}
                 </button>
             `}).join('')}
@@ -144,12 +111,12 @@ export async function showInlineDropdown(event, type, issueId) {
     } else if (type === 'estimate') {
         // Get project_id from issue row or detail view
         const issueRow = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
-        const projectId = issueRow?.dataset.projectId || deps.getCurrentDetailIssue()?.project_id;
-        const estimateOptions = deps.getEstimateOptions(projectId);
+        const projectId = issueRow?.dataset.projectId || getCurrentDetailIssue()?.project_id;
+        const estimateOptions = getEstimateOptions(projectId);
         dropdown.innerHTML = `
             <div class="dropdown-header">Set estimate...</div>
             ${estimateOptions.map((est, i) => `
-                <button class="dropdown-option" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'estimate', ${est.value})">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="estimate" data-value="${est.value}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                     <span>${est.label}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i}</span>` : ''}
@@ -157,9 +124,9 @@ export async function showInlineDropdown(event, type, issueId) {
             `).join('')}
         `;
     } else if (type === 'labels') {
-        const issues = deps.getIssues();
-        const myIssues = deps.getMyIssues();
-        const currentDetailIssue = deps.getCurrentDetailIssue();
+        const issues = getIssues();
+        const myIssues = getMyIssues();
+        const currentDetailIssue = getCurrentDetailIssue();
         const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
         const currentLabelIds = new Set((issue?.labels || []).map(l => l.id));
 
@@ -176,13 +143,13 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.style.left = `${Math.max(8, left)}px`;
 
         // Multi-select: only close when clicking outside the dropdown
-        deps.registerDropdownClickOutside(dropdown, { multiSelect: true });
+        registerDropdownClickOutside(dropdown, { multiSelect: true });
 
         let teamLabels = [];
-        const currentTeam = deps.getCurrentTeam();
+        const currentTeam = getCurrentTeam();
         if (currentTeam) {
             try {
-                teamLabels = await deps.api.getLabels(currentTeam.id);
+                teamLabels = await api.getLabels(currentTeam.id);
             } catch (e) {
                 console.error('Failed to load labels:', e);
             }
@@ -205,9 +172,9 @@ export async function showInlineDropdown(event, type, issueId) {
         return; // already appended and positioned
     } else if (type === 'sprint') {
         // Find the issue's project and current sprint
-        const issues = deps.getIssues();
-        const myIssues = deps.getMyIssues();
-        const currentDetailIssue = deps.getCurrentDetailIssue();
+        const issues = getIssues();
+        const myIssues = getMyIssues();
+        const currentDetailIssue = getCurrentDetailIssue();
         const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
         const projectId = issue?.project_id || document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.dataset.projectId;
 
@@ -224,14 +191,14 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.style.top = `${top}px`;
         dropdown.style.left = `${Math.max(8, left)}px`;
 
-        deps.registerDropdownClickOutside(dropdown);
+        registerDropdownClickOutside(dropdown);
 
         let sprintList = [];
         if (projectId) {
             try {
-                sprintList = await deps.api.getSprints(projectId);
+                sprintList = await api.getSprints(projectId);
                 // Populate sprint cache so row re-renders show sprint names
-                deps.updateSprintCacheForProject(projectId, sprintList);
+                updateSprintCacheForProject(projectId, sprintList);
             } catch (e) {
                 console.error('Failed to load sprints:', e);
             }
@@ -242,15 +209,15 @@ export async function showInlineDropdown(event, type, issueId) {
         const available = sprintList.filter(s => s.status !== 'completed' || s.id === issue?.sprint_id);
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to sprint...</div>
-            <button class="dropdown-option" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'sprint_id', null)">
+            <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="sprint_id" data-value="__null__">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                 <span>No Sprint</span>
                 <span class="dropdown-shortcut">0</span>
             </button>
             ${available.map((sprint, i) => `
-                <button class="dropdown-option" onclick="updateIssueField('${deps.escapeJsString(issueId)}', 'sprint_id', '${deps.escapeJsString(sprint.id)}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="sprint_id" data-value="${escapeAttr(sprint.id)}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                    <span>${deps.escapeHtml(sprint.name)}${sprint.status === 'active' ? ' (Active)' : ''}</span>
+                    <span>${escapeHtml(sprint.name)}${sprint.status === 'active' ? ' (Active)' : ''}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i + 1}</span>` : ''}
                 </button>
             `).join('')}
@@ -270,9 +237,9 @@ export async function showInlineDropdown(event, type, issueId) {
         const sprintKeyHandler = (e) => {
             const key = e.key;
             if (key === 'Escape') {
-                deps.closeAllDropdowns();
+                closeAllDropdowns();
                 document.removeEventListener('keydown', sprintKeyHandler);
-                deps.setDropdownKeyHandler(null);
+                setDropdownKeyHandler(null);
                 return;
             }
             const num = parseInt(key);
@@ -288,10 +255,10 @@ export async function showInlineDropdown(event, type, issueId) {
             }
             if (shouldClose) {
                 document.removeEventListener('keydown', sprintKeyHandler);
-                deps.setDropdownKeyHandler(null);
+                setDropdownKeyHandler(null);
             }
         };
-        deps.setDropdownKeyHandler(sprintKeyHandler);
+        setDropdownKeyHandler(sprintKeyHandler);
         document.addEventListener('keydown', sprintKeyHandler);
 
         return; // already appended and positioned
@@ -326,7 +293,7 @@ export async function showInlineDropdown(event, type, issueId) {
     const keyHandler = (e) => {
         const key = e.key;
         if (key === 'Escape') {
-            deps.closeAllDropdowns();
+            closeAllDropdowns();
             document.removeEventListener('keydown', keyHandler);
             return;
         }
@@ -342,8 +309,8 @@ export async function showInlineDropdown(event, type, issueId) {
             updateIssueField(issueId, 'priority', PRIORITY_OPTIONS[num]);
             shouldClose = true;
         } else if (type === 'estimate') {
-            const issue = deps.getCurrentDetailIssue();
-            const estimateOptions = deps.getEstimateOptions(issue?.project_id);
+            const issue = getCurrentDetailIssue();
+            const estimateOptions = getEstimateOptions(issue?.project_id);
             if (num >= 0 && num < estimateOptions.length) {
                 updateIssueField(issueId, 'estimate', estimateOptions[num].value);
                 shouldClose = true;
@@ -352,15 +319,15 @@ export async function showInlineDropdown(event, type, issueId) {
 
         if (shouldClose) {
             document.removeEventListener('keydown', keyHandler);
-            deps.setDropdownKeyHandler(null);
+            setDropdownKeyHandler(null);
         }
     };
 
-    deps.setDropdownKeyHandler(keyHandler);
+    setDropdownKeyHandler(keyHandler);
     document.addEventListener('keydown', keyHandler);
 
     // Close on click outside
-    deps.registerDropdownClickOutside(dropdown);
+    registerDropdownClickOutside(dropdown);
 }
 
 /**
@@ -368,10 +335,11 @@ export async function showInlineDropdown(event, type, issueId) {
  * @param {Event} event - Click event
  * @param {string} type - Dropdown type
  * @param {string} issueId - Issue ID
+ * @param {Element} [anchorEl] - Element to anchor dropdown to (defaults to event.currentTarget)
  */
-export function showDetailDropdown(event, type, issueId) {
+export function showDetailDropdown(event, type, issueId, anchorEl) {
     event.stopPropagation();
-    showInlineDropdown(event, type, issueId);
+    showInlineDropdown(event, type, issueId, anchorEl);
 }
 
 /**
@@ -385,9 +353,9 @@ export function toggleIssueLabel(issueId, labelId, buttonEl) {
 }
 
 async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
-    const issues = deps.getIssues();
-    const myIssues = deps.getMyIssues();
-    const currentDetailIssue = deps.getCurrentDetailIssue();
+    const issues = getIssues();
+    const myIssues = getMyIssues();
+    const currentDetailIssue = getCurrentDetailIssue();
     const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
     if (!issue) return;
 
@@ -408,29 +376,29 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
     }
 
     try {
-        const updated = await deps.api.updateIssue(issueId, { label_ids: newLabelIds });
+        const updated = await api.updateIssue(issueId, { label_ids: newLabelIds });
 
         // Update local state
         const updatedLabels = updated.labels || [];
         const issueIndex = issues.findIndex(i => i.id === issueId);
         if (issueIndex !== -1) {
             issues[issueIndex].labels = updatedLabels;
-            deps.setIssues([...issues]);
+            setIssues([...issues]);
         }
         const myIssueIndex = myIssues.findIndex(i => i.id === issueId);
         if (myIssueIndex !== -1) {
             myIssues[myIssueIndex].labels = updatedLabels;
-            deps.setMyIssues([...myIssues]);
+            setMyIssues([...myIssues]);
         }
         if (currentDetailIssue?.id === issueId) {
-            deps.setCurrentDetailIssue({ ...currentDetailIssue, labels: updatedLabels });
+            setCurrentDetailIssue({ ...currentDetailIssue, labels: updatedLabels });
         }
 
         // Re-render the row if visible
         const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
         if (row && row.parentNode) {
             const issueData = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId);
-            if (issueData) row.outerHTML = deps.renderIssueRow(issueData);
+            if (issueData) row.outerHTML = renderIssueRow(issueData);
         }
 
         // Update detail view labels display inline (don't re-render whole detail view to preserve dropdown)
@@ -438,12 +406,12 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
         if (detailLabelsBtn) {
             detailLabelsBtn.innerHTML = updatedLabels.length > 0
                 ? updatedLabels.map(label => `
-                    <span class="issue-label" style="background: ${deps.sanitizeColor(label.color)}20; color: ${deps.sanitizeColor(label.color)}">${deps.escapeHtml(label.name)}</span>
+                    <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>
                 `).join('')
                 : '<span class="text-muted">No Labels</span>';
         }
     } catch {
-        deps.showToast('Failed to update labels', 'error');
+        showToast('Failed to update labels', 'error');
         // Revert UI
         if (buttonEl) {
             const wasSelected = idx >= 0;
@@ -466,16 +434,16 @@ export function renderLabelDropdownContent(dropdown, issueId, teamLabels, curren
     dropdown.innerHTML = `
         <div class="dropdown-header">Toggle labels...</div>
         <div class="label-create-row">
-            <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleLabelCreateKey(event, '${deps.escapeJsString(issueId)}')">
-            <button class="btn btn-small" onclick="createLabelFromDropdown('${deps.escapeJsString(issueId)}')">Add</button>
+            <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleLabelCreateKey(event, '${escapeJsString(issueId)}')">
+            <button class="btn btn-small" data-action="create-label-from-dropdown" data-issue-id="${escapeAttr(issueId)}">Add</button>
         </div>
         ${teamLabels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
         ${teamLabels.map(label => {
             const checked = currentLabelIds.has(label.id);
             return `
-                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-label-id="${label.id}" onclick="event.stopPropagation(); toggleIssueLabel('${deps.escapeJsString(issueId)}', '${deps.escapeJsString(label.id)}', this)">
+                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-action="toggle-issue-label" data-issue-id="${escapeAttr(issueId)}" data-label-id="${escapeAttr(label.id)}">
                     <span class="label-check">${checked ? '✓' : ''}</span>
-                    <span class="issue-label" style="background: ${deps.sanitizeColor(label.color)}20; color: ${deps.sanitizeColor(label.color)}">${deps.escapeHtml(label.name)}</span>
+                    <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>
                 </button>
             `;
         }).join('')}
@@ -501,22 +469,22 @@ export function handleLabelCreateKey(event, issueId) {
 export async function createLabelFromDropdown(issueId) {
     const dropdown = document.querySelector(`.inline-dropdown[data-dropdown-type="labels"][data-issue-id="${issueId}"]`);
     const input = dropdown?.querySelector('.label-create-input');
-    const currentTeam = deps.getCurrentTeam();
+    const currentTeam = getCurrentTeam();
     if (!input || !currentTeam) return;
     const name = input.value.trim();
     if (!name) return;
 
     input.disabled = true;
     try {
-        const created = await deps.api.createLabel(currentTeam.id, { name });
-        const labels = await deps.api.getLabels(currentTeam.id);
-        deps.setLabels(labels);
+        const created = await api.createLabel(currentTeam.id, { name });
+        const labels = await api.getLabels(currentTeam.id);
+        setLabels(labels);
         if (created?.id) {
             await _doToggleIssueLabel(issueId, created.id, null);
         }
-        const issues = deps.getIssues();
-        const myIssues = deps.getMyIssues();
-        const currentDetailIssue = deps.getCurrentDetailIssue();
+        const issues = getIssues();
+        const myIssues = getMyIssues();
+        const currentDetailIssue = getCurrentDetailIssue();
         const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
         const currentLabelIds = new Set((issue?.labels || []).map(l => l.id));
         if (dropdown) {
@@ -524,7 +492,7 @@ export async function createLabelFromDropdown(issueId) {
         }
         input.value = '';
     } catch (e) {
-        deps.showToast(e.message || 'Failed to create label', 'error');
+        showToast(e.message || 'Failed to create label', 'error');
     } finally {
         input.disabled = false;
         input.focus();
@@ -549,21 +517,21 @@ export function updateCreateIssueLabelsLabel() {
  * @param {Element} dropdown - Dropdown element
  */
 export function renderCreateIssueLabelDropdown(dropdown) {
-    const labels = deps.getLabels();
+    const labels = getLabels();
     dropdown.dataset.dropdownType = 'create-labels';
     dropdown.innerHTML = `
         <div class="dropdown-header">Labels</div>
         <div class="label-create-row">
             <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleCreateIssueLabelKey(event)">
-            <button class="btn btn-small" onclick="createLabelForCreateIssue()">Add</button>
+            <button class="btn btn-small" data-action="create-label-for-create-issue">Add</button>
         </div>
         ${labels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
         ${labels.map(label => {
             const checked = createIssueLabelIds.includes(label.id);
             return `
-                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" onclick="event.stopPropagation(); toggleCreateIssueLabelSelection('${deps.escapeJsString(label.id)}')">
+                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-action="toggle-create-issue-label" data-label-id="${escapeAttr(label.id)}">
                     <span class="label-check">${checked ? '✓' : ''}</span>
-                    <span class="issue-label" style="background: ${deps.sanitizeColor(label.color)}20; color: ${deps.sanitizeColor(label.color)}">${deps.escapeHtml(label.name)}</span>
+                    <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>
                 </button>
             `;
         }).join('')}
@@ -603,7 +571,7 @@ export function handleCreateIssueLabelKey(event) {
  * Create a new label from create issue modal
  */
 export async function createLabelForCreateIssue() {
-    const currentTeam = deps.getCurrentTeam();
+    const currentTeam = getCurrentTeam();
     if (!currentTeam) return;
     const dropdown = document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]');
     const input = dropdown?.querySelector('.label-create-input');
@@ -613,9 +581,9 @@ export async function createLabelForCreateIssue() {
 
     input.disabled = true;
     try {
-        const created = await deps.api.createLabel(currentTeam.id, { name });
-        const labels = await deps.api.getLabels(currentTeam.id);
-        deps.setLabels(labels);
+        const created = await api.createLabel(currentTeam.id, { name });
+        const labels = await api.getLabels(currentTeam.id);
+        setLabels(labels);
         if (created?.id && !createIssueLabelIds.includes(created.id)) {
             createIssueLabelIds.push(created.id);
         }
@@ -625,7 +593,7 @@ export async function createLabelForCreateIssue() {
         }
         input.value = '';
     } catch (e) {
-        deps.showToast(e.message || 'Failed to create label', 'error');
+        showToast(e.message || 'Failed to create label', 'error');
     } finally {
         input.disabled = false;
         input.focus();
@@ -639,7 +607,7 @@ export async function createLabelForCreateIssue() {
  * @param {*} value - New value
  */
 export async function updateIssueField(issueId, field, value) {
-    deps.closeAllDropdowns();
+    closeAllDropdowns();
 
     const row = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
     if (row) row.classList.add('updating');
@@ -648,7 +616,7 @@ export async function updateIssueField(issueId, field, value) {
         const updateData = {};
         updateData[field] = value;
         // API returns the full updated issue - use it to update local state completely
-        const updatedIssue = await deps.api.updateIssue(issueId, updateData);
+        const updatedIssue = await api.updateIssue(issueId, updateData);
 
         // Defensive check - ensure we got a valid response
         if (!updatedIssue || !updatedIssue.id) {
@@ -657,29 +625,29 @@ export async function updateIssueField(issueId, field, value) {
 
         // Update local state with full issue object (not just the changed field)
         // This ensures related fields like completed_at are also updated
-        const issues = deps.getIssues();
+        const issues = getIssues();
         const issueIndex = issues.findIndex(i => i.id === issueId);
         if (issueIndex !== -1) {
             issues[issueIndex] = updatedIssue;
-            deps.setIssues([...issues]);
+            setIssues([...issues]);
         }
-        const myIssues = deps.getMyIssues();
+        const myIssues = getMyIssues();
         const myIssueIndex = myIssues.findIndex(i => i.id === issueId);
         if (myIssueIndex !== -1) {
             myIssues[myIssueIndex] = updatedIssue;
-            deps.setMyIssues([...myIssues]);
+            setMyIssues([...myIssues]);
         }
         // Update detail view state if this issue is currently being viewed
-        const currentDetailIssue = deps.getCurrentDetailIssue();
+        const currentDetailIssue = getCurrentDetailIssue();
         if (currentDetailIssue?.id === issueId) {
-            deps.setCurrentDetailIssue(updatedIssue);
+            setCurrentDetailIssue(updatedIssue);
         }
 
         // Re-render the specific row
         if (row && row.parentNode) {
             const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || updatedIssue;
             if (issue) {
-                row.outerHTML = deps.renderIssueRow(issue);
+                row.outerHTML = renderIssueRow(issue);
                 const newRow = document.querySelector(`.issue-row[data-issue-id="${issueId}"]`);
                 if (newRow) {
                     newRow.classList.add('updated');
@@ -688,16 +656,16 @@ export async function updateIssueField(issueId, field, value) {
             }
         }
 
-        deps.showToast('Issue updated', 'success');
+        showToast('Issue updated', 'success');
 
         // Refresh sprint budget bar if status changed (may affect points_spent)
         if (field === 'status') {
             const projectId = document.getElementById('project-filter')?.value;
             if (projectId) {
                 try {
-                    const sprints = await deps.api.getSprints(projectId);
+                    const sprints = await api.getSprints(projectId);
                     const activeSprint = sprints.find(s => s.status === 'active');
-                    deps.updateSprintBudgetBar(activeSprint || null);
+                    updateSprintBudgetBar(activeSprint || null);
                 } catch { /* non-critical */ }
             }
         }
@@ -711,7 +679,7 @@ export async function updateIssueField(issueId, field, value) {
             }
         }
     } catch (error) {
-        deps.showToast(error.message || 'Failed to update issue', 'error');
+        showToast(error.message || 'Failed to update issue', 'error');
         if (row) row.classList.remove('updating');
     }
 }
@@ -754,37 +722,37 @@ export function updateDetailViewField(field, updatedIssue) {
     // Update the button content based on the field type
     if (field === 'status') {
         valueButton.innerHTML = `
-            ${deps.getStatusIcon(updatedIssue.status)}
-            <span>${deps.formatStatus(updatedIssue.status)}</span>
+            ${getStatusIcon(updatedIssue.status)}
+            <span>${formatStatus(updatedIssue.status)}</span>
         `;
     } else if (field === 'priority') {
         valueButton.innerHTML = `
-            ${deps.getPriorityIcon(updatedIssue.priority)}
-            <span>${deps.formatPriority(updatedIssue.priority)}</span>
+            ${getPriorityIcon(updatedIssue.priority)}
+            <span>${formatPriority(updatedIssue.priority)}</span>
         `;
     } else if (field === 'issue_type') {
         valueButton.innerHTML = `
-            <span class="issue-type-badge type-${updatedIssue.issue_type || 'task'}">${deps.formatIssueType(updatedIssue.issue_type)}</span>
+            <span class="issue-type-badge type-${updatedIssue.issue_type || 'task'}">${formatIssueType(updatedIssue.issue_type)}</span>
         `;
     } else if (field === 'assignee_id') {
-        const assignee = updatedIssue.assignee_id ? deps.getAssigneeById(updatedIssue.assignee_id) : null;
-        const assigneeName = assignee ? deps.formatAssigneeName(assignee) : null;
+        const assignee = updatedIssue.assignee_id ? getAssigneeById(updatedIssue.assignee_id) : null;
+        const assigneeName = assignee ? formatAssigneeName(assignee) : null;
         valueButton.innerHTML = assigneeName
-            ? `${deps.renderAvatar(assignee, 'avatar-small')}<span>${deps.escapeHtml(assigneeName)}</span>`
+            ? `${renderAvatar(assignee, 'avatar-small')}<span>${escapeHtml(assigneeName)}</span>`
             : `<span class="text-muted">Unassigned</span>`;
     } else if (field === 'sprint_id') {
-        const currentDetailSprints = deps.getCurrentDetailSprints();
+        const currentDetailSprints = getCurrentDetailSprints();
         const currentSprint = updatedIssue.sprint_id && currentDetailSprints
             ? currentDetailSprints.find(s => s.id === updatedIssue.sprint_id)
             : null;
         valueButton.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            <span>${currentSprint ? deps.escapeHtml(currentSprint.name) : '<span class="text-muted">No Sprint</span>'}</span>
+            <span>${currentSprint ? escapeHtml(currentSprint.name) : '<span class="text-muted">No Sprint</span>'}</span>
         `;
     } else if (field === 'estimate') {
         valueButton.innerHTML = `
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            <span>${deps.formatEstimate(updatedIssue.estimate, updatedIssue.project_id)}</span>
+            <span>${formatEstimate(updatedIssue.estimate, updatedIssue.project_id)}</span>
         `;
     }
 
@@ -792,3 +760,29 @@ export function updateDetailViewField(field, updatedIssue) {
     valueButton.classList.add('updated');
     setTimeout(() => valueButton.classList.remove('updated'), 500);
 }
+
+// Register delegated event handlers (CHT-1062)
+registerActions({
+    'update-issue-field': (event, data) => {
+        const value = data.value === '__null__' ? null : data.value;
+        const field = data.field;
+        // estimate field needs numeric conversion
+        if (field === 'estimate') {
+            updateIssueField(data.issueId, field, value === 'null' ? null : Number(value));
+        } else {
+            updateIssueField(data.issueId, field, value);
+        }
+    },
+    'toggle-issue-label': (event, data, target) => {
+        toggleIssueLabel(data.issueId, data.labelId, target);
+    },
+    'create-label-from-dropdown': (event, data) => {
+        createLabelFromDropdown(data.issueId);
+    },
+    'toggle-create-issue-label': (event, data) => {
+        toggleCreateIssueLabelSelection(data.labelId);
+    },
+    'create-label-for-create-issue': () => {
+        createLabelForCreateIssue();
+    },
+});

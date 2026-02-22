@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { getCurrentTeam, setCurrentTeam } from './state.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -409,7 +410,7 @@ describe('logout', () => {
     document.getElementById('main-screen').classList.remove('hidden');
     vi.clearAllMocks();
     window.currentUser = { id: 1, name: 'Test User' };
-    window.currentTeam = { id: 1, name: 'Test Team' };
+    setCurrentTeam({ id: 1, name: 'Test Team' });
     localStorage.setItem('chaotic_token', 'token123');
   });
 
@@ -425,7 +426,7 @@ describe('logout', () => {
 
   it('clears currentTeam', () => {
     logout();
-    expect(window.currentTeam).toBeNull();
+    expect(getCurrentTeam()).toBeNull();
   });
 
   it('shows auth screen', () => {

@@ -2,11 +2,48 @@
  * Tests for board.js module (CHT-665)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('./api.js', () => ({
+    api: {
+        getIssues: vi.fn(),
+        updateIssue: vi.fn(),
+    },
+}));
+
+vi.mock('./ui.js', () => ({
+    showToast: vi.fn(),
+}));
+
+vi.mock('./projects.js', () => ({
+    getProjects: vi.fn(() => []),
+    setGlobalProjectSelection: vi.fn(),
+}));
+
+vi.mock('./url-helpers.js', () => ({
+    getProjectFromUrl: vi.fn(() => null),
+    updateUrlWithProject: vi.fn(),
+}));
+
+vi.mock('./utils.js', () => ({
+    escapeHtml: vi.fn((text) => text),
+    escapeAttr: vi.fn((text) => text),
+    formatPriority: vi.fn((p) => p),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    viewIssue: vi.fn(),
+}));
+
+import { api } from './api.js';
+import { showToast } from './ui.js';
 import {
     BOARD_STATUSES,
     getBoardIssues,
     setBoardIssues,
-    setDependencies,
     loadBoard,
     renderBoard,
     handleDragStart,
@@ -16,32 +53,10 @@ import {
 } from './board.js';
 
 describe('board', () => {
-    let mockApi;
-    let mockDeps;
-
     beforeEach(() => {
         // Reset board state
         setBoardIssues([]);
-
-        // Mock API
-        mockApi = {
-            getIssues: vi.fn(),
-            updateIssue: vi.fn(),
-        };
-
-        // Mock dependencies
-        mockDeps = {
-            api: mockApi,
-            showToast: vi.fn(),
-            getProjects: vi.fn(() => []),
-            getProjectFromUrl: vi.fn(() => null),
-            setGlobalProjectSelection: vi.fn(),
-            updateUrlWithProject: vi.fn(),
-            escapeHtml: vi.fn((text) => text),
-            formatPriority: vi.fn((p) => p),
-        };
-
-        setDependencies(mockDeps);
+        vi.clearAllMocks();
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -83,20 +98,20 @@ describe('board', () => {
                 { id: '1', title: 'Issue 1', status: 'todo' },
                 { id: '2', title: 'Issue 2', status: 'done' },
             ];
-            mockApi.getIssues.mockResolvedValue(mockIssues);
+            api.getIssues.mockResolvedValue(mockIssues);
 
             await loadBoard('project-123');
 
-            expect(mockApi.getIssues).toHaveBeenCalledWith({ project_id: 'project-123' });
+            expect(api.getIssues).toHaveBeenCalledWith({ project_id: 'project-123' });
             expect(getBoardIssues()).toEqual(mockIssues);
         });
 
         it('shows error toast on API failure', async () => {
-            mockApi.getIssues.mockRejectedValue(new Error('API Error'));
+            api.getIssues.mockRejectedValue(new Error('API Error'));
 
             await loadBoard('project-123');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load board: API Error', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to load board: API Error', 'error');
         });
     });
 
@@ -164,30 +179,29 @@ describe('board', () => {
 
     describe('drag and drop', () => {
         it('handleDragStart sets dragging state', () => {
+            const mockTarget = {
+                dataset: { id: 'issue-1' },
+                classList: { add: vi.fn() },
+            };
             const mockEvent = {
                 dataTransfer: { setData: vi.fn() },
-                target: {
-                    dataset: { id: 'issue-1' },
-                    classList: { add: vi.fn() },
-                },
             };
 
-            handleDragStart(mockEvent);
+            handleDragStart(mockEvent, mockTarget);
 
             expect(mockEvent.dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'issue-1');
-            expect(mockEvent.target.classList.add).toHaveBeenCalledWith('dragging');
+            expect(mockTarget.classList.add).toHaveBeenCalledWith('dragging');
         });
 
         it('handleDragEnd clears dragging state', () => {
-            const mockEvent = {
-                target: {
-                    classList: { remove: vi.fn() },
-                },
+            const mockTarget = {
+                classList: { remove: vi.fn() },
             };
+            const mockEvent = {};
 
-            handleDragEnd(mockEvent);
+            handleDragEnd(mockEvent, mockTarget);
 
-            expect(mockEvent.target.classList.remove).toHaveBeenCalledWith('dragging');
+            expect(mockTarget.classList.remove).toHaveBeenCalledWith('dragging');
         });
     });
 
@@ -237,55 +251,55 @@ describe('board', () => {
         });
 
         it('updates issue status on drop', async () => {
-            mockApi.updateIssue.mockResolvedValue({ id: '1', status: 'done' });
+            api.updateIssue.mockResolvedValue({ id: '1', status: 'done' });
 
+            const mockTarget = {
+                dataset: { status: 'done' },
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'done' },
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('1', { status: 'done' });
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Status updated', 'success');
+            expect(api.updateIssue).toHaveBeenCalledWith('1', { status: 'done' });
+            expect(showToast).toHaveBeenCalledWith('Status updated', 'success');
         });
 
         it('reverts status on API error', async () => {
-            mockApi.updateIssue.mockRejectedValue(new Error('Update failed'));
+            api.updateIssue.mockRejectedValue(new Error('Update failed'));
 
+            const mockTarget = {
+                dataset: { status: 'done' },
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'done' },
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to update status: Update failed', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to update status: Update failed', 'error');
             // Issue should be reverted to original status
             expect(getBoardIssues().find(i => i.id === '1').status).toBe('todo');
         });
 
         it('does nothing when status unchanged', async () => {
+            const mockTarget = {
+                dataset: { status: 'todo' }, // Same as current
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'todo' }, // Same as current
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
-            expect(mockApi.updateIssue).not.toHaveBeenCalled();
+            expect(api.updateIssue).not.toHaveBeenCalled();
         });
     });
 });

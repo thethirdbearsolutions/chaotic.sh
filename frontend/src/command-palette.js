@@ -5,6 +5,8 @@
  * Provides a Cmd+K style command palette for quick navigation and actions.
  */
 
+import { registerActions } from './event-delegation.js';
+
 // State
 let commandPaletteOpen = false;
 let selectedCommandIndex = 0;
@@ -144,7 +146,7 @@ function render() {
             html += `
                 <div class="command-item ${isSelected ? 'selected' : ''}"
                      data-index="${globalIndex}"
-                     onclick="executeCommand(${globalIndex})"
+                     data-action="execute-command" data-command-index="${globalIndex}"
                      onmouseenter="selectCommand(${globalIndex})">
                     <div class="command-item-icon">${cmd.icon}</div>
                     <div class="command-item-content">
@@ -217,6 +219,12 @@ export function handleKeydown(e) {
     }
 }
 
-// Window exports for onclick handlers
+// Window export for onmouseenter (not delegated)
 window.selectCommand = selectCommand;
-window.executeCommand = executeCommand;
+
+// Register delegated event handlers
+registerActions({
+    'execute-command': (_event, data) => {
+        executeCommand(Number(data.commandIndex));
+    },
+});

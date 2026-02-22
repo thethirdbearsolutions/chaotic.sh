@@ -5,12 +5,13 @@
  * from the main application module.
  */
 
-/* global api */
-import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, escapeJsString } from './utils.js';
+import { api } from './api.js';
+import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import {
     getActiveFilterCategory,
     setActiveFilterCategory,
     getCurrentUser,
+    getCurrentTeam,
     getIssues,
     setIssues,
     getSearchDebounceTimer,
@@ -24,6 +25,7 @@ import { updateBoardProjectFilter } from './board.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
+import { registerActions } from './event-delegation.js';
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -183,11 +185,11 @@ export function updateLabelFilterLabel() {
 
 export async function populateLabelFilter() {
     const dropdown = document.getElementById('label-filter-dropdown');
-    if (!dropdown || !window.currentTeam) return;
+    if (!dropdown || !getCurrentTeam()) return;
 
     const optionsContainer = dropdown.querySelector('.multi-select-options');
     try {
-        const labels = await api.getLabels(window.currentTeam.id);
+        const labels = await api.getLabels(getCurrentTeam().id);
 
         // Clear existing options except the clear button
         optionsContainer.innerHTML = '';
@@ -199,7 +201,7 @@ export async function populateLabelFilter() {
                 const option = document.createElement('label');
                 option.className = 'multi-select-option';
                 option.innerHTML = `
-                    <input type="checkbox" value="${lbl.id}" onchange="updateLabelFilter()">
+                    <input type="checkbox" value="${lbl.id}" data-action="update-label-filter">
                     <span class="label-badge" style="background: ${sanitizeColor(lbl.color)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
                         <span class="label-name">${escapeHtml(lbl.name)}</span>
                     </span>
@@ -211,7 +213,7 @@ export async function populateLabelFilter() {
         // Add clear button back
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'multi-select-actions';
-        actionsDiv.innerHTML = '<button type="button" class="btn btn-small" onclick="clearLabelFilter()">Clear</button>';
+        actionsDiv.innerHTML = '<button type="button" class="btn btn-small" data-action="clear-label-filter">Clear</button>';
         optionsContainer.appendChild(actionsDiv);
     } catch (e) {
         console.error('Failed to load labels for filter:', e);
@@ -251,7 +253,7 @@ export function syncFiltersToUrl() {
     history.replaceState({ view: 'issues' }, '', newUrl);
 
     // Also persist for cross-session recall (CHT-1042)
-    setIssueFilters(window.currentTeam?.id, queryString);
+    setIssueFilters(getCurrentTeam()?.id, queryString);
 }
 
 export function loadFiltersFromUrl() {
@@ -259,7 +261,7 @@ export function loadFiltersFromUrl() {
 
     // Fall back to saved filters if URL has no filter params (CHT-1042)
     if (params.toString() === '') {
-        const saved = getIssueFilters(window.currentTeam?.id);
+        const saved = getIssueFilters(getCurrentTeam()?.id);
         if (saved) {
             params = new URLSearchParams(saved);
             // Update URL to reflect restored filters
@@ -497,7 +499,7 @@ export function renderFilterMenuCategories() {
         const isActive = getActiveFilterCategory() === cat.key;
         return `
             <div class="filter-menu-category ${isActive ? 'active' : ''}"
-                 onclick="showFilterCategoryOptions('${cat.key}')">
+                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
                 <span>${cat.label}</span>
                 ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : '<span class="filter-menu-category-arrow">→</span>'}
             </div>
@@ -549,9 +551,9 @@ function renderProjectOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Project</span>
-            ${currentValue ? '<button class="filter-options-clear" onclick="clearProjectFilter()">Clear</button>' : ''}
+            ${currentValue ? '<button class="filter-options-clear" data-action="set-project-filter" data-value="">Clear</button>' : ''}
         </div>
-        <label class="filter-option" onclick="setProjectFilter('')">
+        <label class="filter-option" data-action="set-project-filter" data-value="">
             <input type="radio" name="project-filter-radio" value="" ${!currentValue ? 'checked' : ''}>
             <span class="filter-option-label">All Projects</span>
         </label>
@@ -559,7 +561,7 @@ function renderProjectOptions(container) {
 
     projects.forEach(p => {
         html += `
-            <label class="filter-option" onclick="setProjectFilter('${escapeJsString(p.id)}')">
+            <label class="filter-option" data-action="set-project-filter" data-value="${escapeAttr(p.id)}">
                 <input type="radio" name="project-filter-radio" value="${escapeAttr(p.id)}" ${currentValue === p.id ? 'checked' : ''}>
                 <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(p.color)};"></span>
                 <span class="filter-option-label">${escapeHtml(p.name)}</span>
@@ -591,18 +593,18 @@ function renderStatusOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Status</span>
-            ${selected.length > 0 ? '<button class="filter-options-clear" onclick="clearStatusFilterNew()">Clear</button>' : ''}
+            ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-status-filter-new">Clear</button>' : ''}
         </div>
         <div class="filter-presets">
-            <button class="filter-preset-btn ${isOpenPreset ? 'active' : ''}" onclick="setStatusPreset('open')">Open</button>
-            <button class="filter-preset-btn ${isClosedPreset ? 'active' : ''}" onclick="setStatusPreset('closed')">Closed</button>
+            <button class="filter-preset-btn ${isOpenPreset ? 'active' : ''}" data-action="set-status-preset" data-value="open">Open</button>
+            <button class="filter-preset-btn ${isClosedPreset ? 'active' : ''}" data-action="set-status-preset" data-value="closed">Closed</button>
         </div>
     `;
 
     statuses.forEach(s => {
         html += `
             <label class="filter-option">
-                <input type="checkbox" value="${s.value}" ${selected.includes(s.value) ? 'checked' : ''} onchange="toggleStatusOption('${s.value}', event)">
+                <input type="checkbox" value="${s.value}" ${selected.includes(s.value) ? 'checked' : ''} data-action="toggle-status-option" data-filter-value="${escapeAttr(s.value)}">
                 <span class="filter-option-icon">${s.icon}</span>
                 <span class="filter-option-label">${s.label}</span>
             </label>
@@ -625,14 +627,14 @@ function renderPriorityOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Priority</span>
-            ${selected.length > 0 ? '<button class="filter-options-clear" onclick="clearPriorityFilterNew()">Clear</button>' : ''}
+            ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-priority-filter-new">Clear</button>' : ''}
         </div>
     `;
 
     priorities.forEach(p => {
         html += `
             <label class="filter-option">
-                <input type="checkbox" value="${p.value}" ${selected.includes(p.value) ? 'checked' : ''} onchange="togglePriorityOption('${p.value}', event)">
+                <input type="checkbox" value="${p.value}" ${selected.includes(p.value) ? 'checked' : ''} data-action="toggle-priority-option" data-filter-value="${escapeAttr(p.value)}">
                 <span class="filter-option-icon">${p.icon}</span>
                 <span class="filter-option-label">${p.label}</span>
             </label>
@@ -659,13 +661,13 @@ function renderTypeOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Type</span>
-            ${currentValue ? '<button class="filter-options-clear" onclick="clearTypeFilter()">Clear</button>' : ''}
+            ${currentValue ? '<button class="filter-options-clear" data-action="set-type-filter" data-value="">Clear</button>' : ''}
         </div>
     `;
 
     types.forEach(t => {
         html += `
-            <label class="filter-option" onclick="setTypeFilter('${t.value}')">
+            <label class="filter-option" data-action="set-type-filter" data-value="${escapeAttr(t.value)}">
                 <input type="radio" name="type-filter-radio" value="${t.value}" ${currentValue === t.value ? 'checked' : ''}>
                 <span class="filter-option-label">${t.label}</span>
             </label>
@@ -683,17 +685,17 @@ function renderAssigneeOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Assignee</span>
-            ${currentValue ? '<button class="filter-options-clear" onclick="clearAssigneeFilter()">Clear</button>' : ''}
+            ${currentValue ? '<button class="filter-options-clear" data-action="set-assignee-filter" data-value="">Clear</button>' : ''}
         </div>
-        <label class="filter-option" onclick="setAssigneeFilter('')">
+        <label class="filter-option" data-action="set-assignee-filter" data-value="">
             <input type="radio" name="assignee-filter-radio" value="" ${!currentValue ? 'checked' : ''}>
             <span class="filter-option-label">All Assignees</span>
         </label>
-        <label class="filter-option" onclick="setAssigneeFilter('me')">
+        <label class="filter-option" data-action="set-assignee-filter" data-value="me">
             <input type="radio" name="assignee-filter-radio" value="me" ${currentValue === 'me' ? 'checked' : ''}>
             <span class="filter-option-label">Assigned to me</span>
         </label>
-        <label class="filter-option" onclick="setAssigneeFilter('unassigned')">
+        <label class="filter-option" data-action="set-assignee-filter" data-value="unassigned">
             <input type="radio" name="assignee-filter-radio" value="unassigned" ${currentValue === 'unassigned' ? 'checked' : ''}>
             <span class="filter-option-label">Unassigned</span>
         </label>
@@ -701,7 +703,7 @@ function renderAssigneeOptions(container) {
 
     members.forEach(m => {
         html += `
-            <label class="filter-option" onclick="setAssigneeFilter('${escapeJsString(m.user_id)}')">
+            <label class="filter-option" data-action="set-assignee-filter" data-value="${escapeAttr(m.user_id)}">
                 <input type="radio" name="assignee-filter-radio" value="${escapeAttr(m.user_id)}" ${currentValue === m.user_id ? 'checked' : ''}>
                 <span class="filter-option-label">${escapeHtml(m.name || m.email)}</span>
             </label>
@@ -719,13 +721,13 @@ function renderSprintOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Sprint</span>
-            ${currentValue ? '<button class="filter-options-clear" onclick="clearSprintFilter()">Clear</button>' : ''}
+            ${currentValue ? '<button class="filter-options-clear" data-action="set-sprint-filter" data-value="">Clear</button>' : ''}
         </div>
     `;
 
     options.forEach(opt => {
         html += `
-            <label class="filter-option" onclick="setSprintFilter('${escapeJsString(opt.value)}')">
+            <label class="filter-option" data-action="set-sprint-filter" data-value="${escapeAttr(opt.value)}">
                 <input type="radio" name="sprint-filter-radio" value="${escapeAttr(opt.value)}" ${currentValue === opt.value ? 'checked' : ''}>
                 <span class="filter-option-label">${escapeHtml(opt.text)}</span>
             </label>
@@ -743,7 +745,7 @@ function renderLabelOptions(container) {
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Labels</span>
-            ${selected.length > 0 ? '<button class="filter-options-clear" onclick="clearLabelFilterNew()">Clear</button>' : ''}
+            ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-label-filter-new">Clear</button>' : ''}
         </div>
     `;
 
@@ -759,7 +761,7 @@ function renderLabelOptions(container) {
 
             html += `
                 <label class="filter-option">
-                    <input type="checkbox" value="${escapeAttr(cb.value)}" ${selected.includes(cb.value) ? 'checked' : ''} onchange="toggleLabelOption('${escapeJsString(cb.value)}', event)">
+                    <input type="checkbox" value="${escapeAttr(cb.value)}" ${selected.includes(cb.value) ? 'checked' : ''} data-action="toggle-label-option" data-filter-value="${escapeAttr(cb.value)}">
                     <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(color)};"></span>
                     <span class="filter-option-label">${escapeHtml(name)}</span>
                 </label>
@@ -955,7 +957,7 @@ export function renderDisplayMenuOptions() {
         <div class="display-section">
             <div class="display-section-title">Sort by</div>
             ${sortOptions.map(opt => `
-                <div class="display-option ${currentSort === opt.value ? 'active' : ''}" onclick="setSort('${opt.value}')">
+                <div class="display-option ${currentSort === opt.value ? 'active' : ''}" data-action="set-sort" data-value="${escapeAttr(opt.value)}">
                     <span>${opt.label}</span>
                     ${currentSort === opt.value ? '<span class="display-option-check">✓</span>' : ''}
                 </div>
@@ -964,7 +966,7 @@ export function renderDisplayMenuOptions() {
         <div class="display-section">
             <div class="display-section-title">Group by</div>
             ${groupOptions.map(opt => `
-                <div class="display-option ${currentGroup === opt.value ? 'active' : ''}" onclick="setGroupBy('${opt.value}')">
+                <div class="display-option ${currentGroup === opt.value ? 'active' : ''}" data-action="set-group-by" data-value="${escapeAttr(opt.value)}">
                     <span>${opt.label}</span>
                     ${currentGroup === opt.value ? '<span class="display-option-check">✓</span>' : ''}
                 </div>
@@ -1012,7 +1014,7 @@ export function updateFilterChips() {
             category: 'project',
             label: 'Project',
             value: project?.name || 'Unknown',
-            clearFn: 'clearProjectFilter()'
+            clearAction: 'clear-project-filter'
         });
     }
 
@@ -1024,7 +1026,7 @@ export function updateFilterChips() {
             category: 'status',
             label: 'Status',
             value: statusLabels,
-            clearFn: 'clearStatusFilterNew()'
+            clearAction: 'clear-status-filter-new'
         });
     }
 
@@ -1036,7 +1038,7 @@ export function updateFilterChips() {
             category: 'priority',
             label: 'Priority',
             value: priorityLabels,
-            clearFn: 'clearPriorityFilterNew()'
+            clearAction: 'clear-priority-filter-new'
         });
     }
 
@@ -1048,7 +1050,7 @@ export function updateFilterChips() {
             category: 'type',
             label: 'Type',
             value: selectedOption ? selectedOption.text : typeFilter.value,
-            clearFn: 'clearTypeFilter()'
+            clearAction: 'clear-type-filter'
         });
     }
 
@@ -1069,7 +1071,7 @@ export function updateFilterChips() {
             category: 'assignee',
             label: 'Assignee',
             value: assigneeLabel,
-            clearFn: 'clearAssigneeFilter()'
+            clearAction: 'clear-assignee-filter'
         });
     }
 
@@ -1081,7 +1083,7 @@ export function updateFilterChips() {
             category: 'sprint',
             label: 'Sprint',
             value: selectedOption?.text || sprintFilter.value,
-            clearFn: 'clearSprintFilter()'
+            clearAction: 'clear-sprint-filter'
         });
     }
 
@@ -1098,7 +1100,7 @@ export function updateFilterChips() {
             category: 'labels',
             label: 'Labels',
             value: labelNames,
-            clearFn: 'clearLabelFilterNew()'
+            clearAction: 'clear-label-filter-new'
         });
     }
 
@@ -1113,12 +1115,12 @@ export function updateFilterChips() {
         <span class="filter-chip">
             <span class="filter-chip-label">${chip.label}:</span>
             <span class="filter-chip-value">${escapeHtml(chip.value)}</span>
-            <button class="filter-chip-remove" onclick="${chip.clearFn}" title="Remove filter">×</button>
+            <button class="filter-chip-remove" data-action="${chip.clearAction}" title="Remove filter">×</button>
         </span>
     `).join('');
 
     if (chips.length > 1) {
-        html += '<button class="filter-chips-clear-all" onclick="clearAllFilters()">Clear all</button>';
+        html += '<button class="filter-chips-clear-all" data-action="clear-all-filters">Clear all</button>';
     }
 
     container.innerHTML = html;
@@ -1289,7 +1291,7 @@ export function updateSprintBudgetBar(activeSprint) {
 export async function loadIssues() {
     // Reset keyboard selection when issues are reloaded
     setSelectedIssueIndex(-1);
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
 
     const projectId = document.getElementById('project-filter').value;
     const statuses = getSelectedStatuses();
@@ -1375,7 +1377,7 @@ export async function loadIssues() {
             issues = await api.getIssues(params);
         } else if (getProjects().length > 0) {
             // Load all issues from the team (across all projects)
-            issues = await api.getTeamIssues(window.currentTeam.id, params);
+            issues = await api.getTeamIssues(getCurrentTeam().id, params);
         }
 
         // Client-side label filtering (backend doesn't support label filter params)
@@ -1456,3 +1458,31 @@ export function getGroupByValue() {
     const select = document.getElementById('group-by-select');
     return select ? select.value : '';
 }
+
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+    'update-label-filter': () => updateLabelFilter(),
+    'clear-label-filter': () => clearLabelFilter(),
+    'show-filter-category': (_event, dataset) => showFilterCategoryOptions(dataset.category),
+    'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
+    'clear-project-filter': () => clearProjectFilter(),
+    'clear-status-filter-new': () => clearStatusFilterNew(),
+    'set-status-preset': (_event, dataset) => setStatusPreset(dataset.value),
+    'toggle-status-option': (event, dataset) => toggleStatusOption(dataset.filterValue, event),
+    'clear-priority-filter-new': () => clearPriorityFilterNew(),
+    'toggle-priority-option': (event, dataset) => togglePriorityOption(dataset.filterValue, event),
+    'set-type-filter': (_event, dataset) => setTypeFilter(dataset.value),
+    'clear-type-filter': () => clearTypeFilter(),
+    'set-assignee-filter': (_event, dataset) => setAssigneeFilter(dataset.value),
+    'clear-assignee-filter': () => clearAssigneeFilter(),
+    'set-sprint-filter': (_event, dataset) => setSprintFilter(dataset.value),
+    'clear-sprint-filter': () => clearSprintFilter(),
+    'clear-label-filter-new': () => clearLabelFilterNew(),
+    'toggle-label-option': (event, dataset) => toggleLabelOption(dataset.filterValue, event),
+    'set-sort': (_event, dataset) => setSort(dataset.value),
+    'set-group-by': (_event, dataset) => setGroupBy(dataset.value),
+    'clear-all-filters': () => clearAllFilters(),
+});

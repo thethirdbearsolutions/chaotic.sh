@@ -2,16 +2,78 @@
  * Tests for epic-detail-view.js module (CHT-855)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Mock dependencies
+vi.mock('./api.js', () => ({
+    api: {
+        getIssue: vi.fn(),
+        getIssueByIdentifier: vi.fn(),
+        getSubIssues: vi.fn(),
+        getActivities: vi.fn(),
+        getComments: vi.fn(),
+    },
+}));
+
+vi.mock('./state.js', () => ({
+    getCurrentView: vi.fn(() => 'epics'),
+}));
+
+vi.mock('./ui.js', () => ({
+    showToast: vi.fn(),
+}));
+
+vi.mock('./router.js', () => ({
+    navigateTo: vi.fn(),
+}));
+
+vi.mock('./projects.js', () => ({
+    getProjects: vi.fn(() => []),
+    formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
+}));
+
+vi.mock('./assignees.js', () => ({
+    getAssigneeById: vi.fn(() => null),
+    formatAssigneeName: vi.fn((a) => a?.name || ''),
+}));
+
+vi.mock('./utils.js', () => ({
+    formatStatus: vi.fn((s) => s || 'backlog'),
+    formatPriority: vi.fn((p) => p || 'no_priority'),
+    formatTimeAgo: vi.fn(() => '1h ago'),
+    escapeHtml: vi.fn((text) => text || ''),
+    escapeAttr: vi.fn((text) => text || ''),
+    escapeJsString: vi.fn((text) => text || ''),
+    sanitizeColor: vi.fn((c) => c || '#888'),
+}));
+
+vi.mock('./issue-list.js', () => ({
+    getStatusIcon: vi.fn(() => '<svg></svg>'),
+    getPriorityIcon: vi.fn(() => '<svg></svg>'),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    getActivityIcon: vi.fn(() => '📝'),
+    formatActivityActor: vi.fn((a) => a.user_name || 'Unknown'),
+    formatActivityText: vi.fn((a) => a.activity_type),
+    renderDescriptionContent: vi.fn((text) => text),
+}));
+
+import { api } from './api.js';
+import { getCurrentView } from './state.js';
+import { showToast } from './ui.js';
+import { navigateTo } from './router.js';
+import { getProjects } from './projects.js';
+import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import {
-    setDependencies,
     viewEpic,
     viewEpicByPath,
 } from './epic-detail-view.js';
 
 describe('epic-detail-view', () => {
-    let mockApi;
-    let mockDeps;
-
     const makeEpic = (overrides = {}) => ({
         id: 'epic-1',
         identifier: 'CHT-100',
@@ -38,35 +100,16 @@ describe('epic-detail-view', () => {
     });
 
     beforeEach(() => {
-        mockApi = {
-            getIssue: vi.fn().mockResolvedValue(makeEpic()),
-            getIssueByIdentifier: vi.fn().mockResolvedValue(makeEpic()),
-            getSubIssues: vi.fn().mockResolvedValue([]),
-            getActivities: vi.fn().mockResolvedValue([]),
-            getComments: vi.fn().mockResolvedValue([]),
-        };
+        vi.clearAllMocks();
 
-        mockDeps = {
-            api: mockApi,
-            getCurrentView: vi.fn(() => 'epics'),
-            showToast: vi.fn(),
-            navigateTo: vi.fn(),
-            getProjects: vi.fn(() => [{ id: 'proj-1', name: 'Test Project' }]),
-            getAssigneeById: vi.fn(() => null),
-            formatAssigneeName: vi.fn((a) => a?.name || ''),
-            formatStatus: vi.fn((s) => s || 'backlog'),
-            formatPriority: vi.fn((p) => p || 'no_priority'),
-            formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
-            formatTimeAgo: vi.fn(() => '1h ago'),
-            getStatusIcon: vi.fn(() => '<svg></svg>'),
-            getPriorityIcon: vi.fn(() => '<svg></svg>'),
-            escapeHtml: vi.fn((text) => text || ''),
-            escapeAttr: vi.fn((text) => text || ''),
-            escapeJsString: vi.fn((text) => text || ''),
-            sanitizeColor: vi.fn((c) => c || '#888'),
-        };
+        api.getIssue.mockResolvedValue(makeEpic());
+        api.getIssueByIdentifier.mockResolvedValue(makeEpic());
+        api.getSubIssues.mockResolvedValue([]);
+        api.getActivities.mockResolvedValue([]);
+        api.getComments.mockResolvedValue([]);
 
-        setDependencies(mockDeps);
+        getCurrentView.mockReturnValue('epics');
+        getProjects.mockReturnValue([{ id: 'proj-1', name: 'Test Project' }]);
 
         document.body.innerHTML = `
             <div class="view" id="epics-view"></div>
@@ -93,7 +136,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders progress bar with 0 sub-issues', async () => {
-            mockApi.getSubIssues.mockResolvedValue([]);
+            api.getSubIssues.mockResolvedValue([]);
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
@@ -102,7 +145,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders progress bar with partial completion', async () => {
-            mockApi.getSubIssues.mockResolvedValue([
+            api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', status: 'done' }),
                 makeSubIssue({ id: 's2', status: 'in_progress' }),
                 makeSubIssue({ id: 's3', status: 'todo' }),
@@ -116,7 +159,7 @@ describe('epic-detail-view', () => {
         });
 
         it('counts canceled as done for progress', async () => {
-            mockApi.getSubIssues.mockResolvedValue([
+            api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', status: 'done' }),
                 makeSubIssue({ id: 's2', status: 'canceled' }),
                 makeSubIssue({ id: 's3', status: 'todo' }),
@@ -129,7 +172,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders 100% progress with complete class', async () => {
-            mockApi.getSubIssues.mockResolvedValue([
+            api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', status: 'done' }),
                 makeSubIssue({ id: 's2', status: 'done' }),
             ]);
@@ -146,7 +189,7 @@ describe('epic-detail-view', () => {
                 makeSubIssue({ id: 's1', identifier: 'CHT-101', title: 'First task', status: 'done' }),
                 makeSubIssue({ id: 's2', identifier: 'CHT-102', title: 'Second task', status: 'in_progress' }),
             ];
-            mockApi.getSubIssues.mockResolvedValue(subIssues);
+            api.getSubIssues.mockResolvedValue(subIssues);
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
@@ -157,9 +200,9 @@ describe('epic-detail-view', () => {
         });
 
         it('renders sub-issue assignee when present', async () => {
-            mockDeps.getAssigneeById.mockReturnValue({ id: 'user-1', name: 'Alice' });
-            mockDeps.formatAssigneeName.mockReturnValue('Alice');
-            mockApi.getSubIssues.mockResolvedValue([
+            getAssigneeById.mockReturnValue({ id: 'user-1', name: 'Alice' });
+            formatAssigneeName.mockReturnValue('Alice');
+            api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 's1', assignee_id: 'user-1' }),
             ]);
             await viewEpic('epic-1');
@@ -169,7 +212,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders activity timeline', async () => {
-            mockApi.getActivities.mockResolvedValue([
+            api.getActivities.mockResolvedValue([
                 { activity_type: 'created', user_name: 'Bob', created_at: '2025-01-01T00:00:00Z' },
                 { activity_type: 'status_changed', user_name: 'Alice', old_value: 'backlog', new_value: 'in_progress', created_at: '2025-01-02T00:00:00Z' },
             ]);
@@ -181,7 +224,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders empty activity state', async () => {
-            mockApi.getActivities.mockResolvedValue([]);
+            api.getActivities.mockResolvedValue([]);
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
@@ -200,7 +243,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders labels when present', async () => {
-            mockApi.getIssue.mockResolvedValue(makeEpic({
+            api.getIssue.mockResolvedValue(makeEpic({
                 labels: [{ name: 'frontend', color: '#ff0000' }],
             }));
             await viewEpic('epic-1');
@@ -231,7 +274,7 @@ describe('epic-detail-view', () => {
 
         it('redirects to issue detail view if not an epic', async () => {
             window.viewIssue = vi.fn();
-            mockApi.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
+            api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
             await viewEpic('issue-1');
 
             expect(window.viewIssue).toHaveBeenCalledWith('issue-1', true);
@@ -243,22 +286,22 @@ describe('epic-detail-view', () => {
 
         it('falls back to epics navigation if not epic and no viewIssue', async () => {
             delete window.viewIssue;
-            mockApi.getIssue.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
+            api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
             await viewEpic('issue-1');
 
-            expect(mockDeps.navigateTo).toHaveBeenCalledWith('epics', false);
+            expect(navigateTo).toHaveBeenCalledWith('epics', false);
         });
 
         it('shows toast on error', async () => {
-            mockApi.getIssue.mockRejectedValue(new Error('Not found'));
+            api.getIssue.mockRejectedValue(new Error('Not found'));
             await viewEpic('epic-1');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to load epic: Not found', 'error');
+            expect(showToast).toHaveBeenCalledWith('Failed to load epic: Not found', 'error');
         });
 
         it('sub-issue row click navigates to issue detail', async () => {
             window.viewIssue = vi.fn();
-            mockApi.getSubIssues.mockResolvedValue([
+            api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 'sub-1', identifier: 'CHT-101' }),
             ]);
             await viewEpic('epic-1');
@@ -272,7 +315,7 @@ describe('epic-detail-view', () => {
         });
 
         it('renders comments section when comments exist', async () => {
-            mockApi.getComments.mockResolvedValue([
+            api.getComments.mockResolvedValue([
                 { id: 'c1', author_name: 'Alice', content: 'Looks good', created_at: '2025-01-01T00:00:00Z' },
             ]);
             await viewEpic('epic-1');
@@ -284,7 +327,7 @@ describe('epic-detail-view', () => {
         });
 
         it('does not render comments section when no comments', async () => {
-            mockApi.getComments.mockResolvedValue([]);
+            api.getComments.mockResolvedValue([]);
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
@@ -300,7 +343,7 @@ describe('epic-detail-view', () => {
         });
 
         it('omits description section when no description', async () => {
-            mockApi.getIssue.mockResolvedValue(makeEpic({ description: null }));
+            api.getIssue.mockResolvedValue(makeEpic({ description: null }));
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
@@ -310,24 +353,24 @@ describe('epic-detail-view', () => {
 
     describe('viewEpicByPath', () => {
         it('resolves identifier and calls viewEpic', async () => {
-            mockApi.getIssueByIdentifier.mockResolvedValue(makeEpic());
+            api.getIssueByIdentifier.mockResolvedValue(makeEpic());
             await viewEpicByPath('CHT-100');
 
-            expect(mockApi.getIssueByIdentifier).toHaveBeenCalledWith('CHT-100');
-            expect(mockApi.getIssue).toHaveBeenCalledWith('epic-1');
+            expect(api.getIssueByIdentifier).toHaveBeenCalledWith('CHT-100');
+            expect(api.getIssue).toHaveBeenCalledWith('epic-1');
         });
 
         it('resolves by ID when no dash in identifier', async () => {
-            mockApi.getIssue.mockResolvedValue(makeEpic());
+            api.getIssue.mockResolvedValue(makeEpic());
             await viewEpicByPath('epic-uuid-123');
 
             // Has a dash, so treated as identifier
-            expect(mockApi.getIssueByIdentifier).toHaveBeenCalledWith('epic-uuid-123');
+            expect(api.getIssueByIdentifier).toHaveBeenCalledWith('epic-uuid-123');
         });
 
         it('redirects to issue detail if not an epic', async () => {
             window.viewIssue = vi.fn();
-            mockApi.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'task' }));
+            api.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'task' }));
             await viewEpicByPath('CHT-101');
 
             expect(window.viewIssue).toHaveBeenCalledWith('epic-1', false);
@@ -335,17 +378,17 @@ describe('epic-detail-view', () => {
         });
 
         it('navigates to epics on not found', async () => {
-            mockApi.getIssueByIdentifier.mockResolvedValue(null);
+            api.getIssueByIdentifier.mockResolvedValue(null);
             await viewEpicByPath('CHT-999');
 
-            expect(mockDeps.navigateTo).toHaveBeenCalledWith('epics', false);
+            expect(navigateTo).toHaveBeenCalledWith('epics', false);
         });
 
         it('navigates to epics on error', async () => {
-            mockApi.getIssueByIdentifier.mockRejectedValue(new Error('fail'));
+            api.getIssueByIdentifier.mockRejectedValue(new Error('fail'));
             await viewEpicByPath('CHT-999');
 
-            expect(mockDeps.navigateTo).toHaveBeenCalledWith('epics', false);
+            expect(navigateTo).toHaveBeenCalledWith('epics', false);
         });
     });
 });

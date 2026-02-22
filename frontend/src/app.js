@@ -2,7 +2,8 @@
  * Chaotic - Main Application
  */
 
-/* global api -- provided via window by main.js entry point */
+import { api } from './api.js';
+import { initEventDelegation, registerActions } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout, initAuth } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
@@ -10,15 +11,7 @@ import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import {
     showCreateIssueModal,
-    toggleCreateIssueOptions,
-    applyIssueTemplate,
     showCreateSubIssueModal,
-    handleCreateSubIssue,
-    toggleCreateIssueDropdown,
-    updateCreateIssueProject,
-    setCreateIssueField,
-    handleCreateIssueNew,
-    handleCreateIssueAndNew,
 } from './issue-creation.js';
 import {
     showEditIssueModal,
@@ -32,33 +25,13 @@ import {
     clearStatusFilter,
     updatePriorityFilter,
     clearPriorityFilter,
-    updateLabelFilter,
     clearLabelFilter,
     updateLabelFilterLabel,
     populateLabelFilter,
     loadFiltersFromUrl,
     toggleFilterMenu,
     toggleDisplayMenu,
-    showFilterCategoryOptions,
-    setProjectFilter,
-    clearProjectFilter,
-    toggleStatusOption,
-    clearStatusFilterNew,
-    setStatusPreset,
-    togglePriorityOption,
-    clearPriorityFilterNew,
-    setTypeFilter,
-    clearTypeFilter,
-    setAssigneeFilter,
-    clearAssigneeFilter,
-    setSprintFilter,
-    clearSprintFilter,
-    toggleLabelOption,
-    clearLabelFilterNew,
-    setSort,
-    setGroupBy,
     updateFilterChips,
-    clearAllFilters,
     updateFilterCountBadge,
     initFilterBar,
     updateSprintFilter,
@@ -191,9 +164,13 @@ import {
 } from './issue-detail-view.js';
 import {
     getCurrentView,
+    getCurrentTeam,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
     setCurrentUser,
+    setLabels,
+    setCurrentDetailIssue,
+    setCurrentDetailSprints,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
 import {
@@ -206,13 +183,9 @@ import {
 } from './router.js';
 import { connectWebSocket } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
-import { initAllDependencies } from './dependencies.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
 import { getTheme, setTheme } from './storage.js';
-
-window.currentTeam = null;
-let labels = [];
 
 // Mobile sidebar toggle, closeSidebar, focus trap moved to sidebar.js (CHT-1046)
 
@@ -223,8 +196,8 @@ configureRouter({
     beforeNavigate: () => {
         clearProjectSettingsState();
         window._onRitualsChanged = null;
-        window.currentDetailIssue = null;
-        window.currentDetailSprints = null;
+        setCurrentDetailIssue(null);
+        setCurrentDetailSprints(null);
         closeSidebar();
         hideTooltip();
     },
@@ -595,8 +568,16 @@ function initSidebarNav() {
     if (fab) fab.addEventListener('click', () => showCreateIssueModal());
 }
 
+// Register shared delegated actions
+registerActions({
+    'navigate-to': (_event, data) => {
+        navigateTo(data.view);
+    },
+});
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+    initEventDelegation();
     initAuth();
     initSidebarNav();
     initModal();
@@ -709,9 +690,10 @@ async function viewDocumentByPath(docId) {
 
 // Labels
 async function loadLabels() {
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
     try {
-        labels = await api.getLabels(window.currentTeam.id);
+        const labels = await api.getLabels(getCurrentTeam().id);
+        setLabels(labels);
     } catch (e) {
         console.error('Failed to load labels:', e);
     }
@@ -833,19 +815,6 @@ setCommandPaletteCommands([
 ]);
 
 // ============================================
-// MODULE DEPENDENCY INITIALIZATION (CHT-1043)
-// ============================================
-
-initAllDependencies({
-    getLabels: () => labels,
-    setLabels: (newLabels) => { labels = newLabels; },
-    getCurrentTeam: () => window.currentTeam,
-    getCurrentDetailIssue: () => window.currentDetailIssue,
-    setCurrentDetailIssue: (issue) => { window.currentDetailIssue = issue; },
-    getCurrentDetailSprints: () => window.currentDetailSprints,
-});
-
-// ============================================
 // IMPROVED MODAL UX
 // ============================================
 
@@ -924,7 +893,6 @@ Object.assign(window, {
     showCreateIssueModal,
     loadIssues,
     filterIssues,
-    filterMyIssues,
     debounceSearch,
     handleQuickCreate,
     onProjectFilterChange,
@@ -942,10 +910,6 @@ Object.assign(window, {
     navigateToIssueByIdentifier,
 
     // Issue creation
-    handleCreateIssueNew,
-    handleCreateIssueAndNew,
-    setCreateIssueField,
-    toggleCreateIssueDropdown,
     toggleCreateIssueLabelSelection,
     createLabelForCreateIssue,
     createLabelFromDropdown,
@@ -955,7 +919,6 @@ Object.assign(window, {
 
     // Sub-issues and relations
     showCreateSubIssueModal,
-    handleCreateSubIssue,
     showAddRelationModal,
     handleAddRelation,
     deleteRelation,
@@ -968,37 +931,16 @@ Object.assign(window, {
     showInlineDropdown,
     toggleIssueLabel,
 
-    // Issue filters
+    // Issue filters (non-delegated)
     toggleMultiSelect,
     updateStatusFilter,
     updatePriorityFilter,
-    updateLabelFilter,
     clearStatusFilter,
     clearPriorityFilter,
-    clearLabelFilter,
 
-    // Linear-style filter bar
+    // Linear-style filter bar (non-delegated)
     toggleFilterMenu,
     toggleDisplayMenu,
-    showFilterCategoryOptions,
-    setProjectFilter,
-    clearProjectFilter,
-    toggleStatusOption,
-    clearStatusFilterNew,
-    setStatusPreset,
-    togglePriorityOption,
-    clearPriorityFilterNew,
-    setTypeFilter,
-    clearTypeFilter,
-    setAssigneeFilter,
-    clearAssigneeFilter,
-    setSprintFilter,
-    clearSprintFilter,
-    toggleLabelOption,
-    clearLabelFilterNew,
-    setSort,
-    setGroupBy,
-    clearAllFilters,
     updateFilterChips,
     updateFilterCountBadge,
 
@@ -1064,11 +1006,6 @@ Object.assign(window, {
 
     // Settings - Agents
     showCreateAgentModal,
-
-    // Issue creation helpers (called from HTML onchange handlers)
-    toggleCreateIssueOptions,
-    applyIssueTemplate,
-    updateCreateIssueProject,
 
     // Inline dropdown key handlers (CHT-717)
     handleLabelCreateKey,

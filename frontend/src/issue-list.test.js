@@ -2,11 +2,56 @@
  * Tests for issue-list.js module (CHT-664)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Mock all dependency modules before importing issue-list
+vi.mock('./state.js', () => ({
+    getIssues: vi.fn(() => []),
+}));
+
+vi.mock('./assignees.js', () => ({
+    getAssigneeById: vi.fn(() => null),
+    formatAssigneeName: vi.fn((a) => a?.name || ''),
+    getAssigneeOptionList: vi.fn(() => []),
+}));
+
+vi.mock('./projects.js', () => ({
+    formatEstimate: vi.fn((e) => e ? `${e}pt` : ''),
+}));
+
+vi.mock('./sprints.js', () => ({
+    getSprintCache: vi.fn(() => ({})),
+}));
+
+vi.mock('./utils.js', () => ({
+    formatStatus: vi.fn((s) => s),
+    formatPriority: vi.fn((p) => p),
+    formatIssueType: vi.fn((t) => t || 'task'),
+    escapeHtml: vi.fn((text) => text || ''),
+    escapeAttr: vi.fn((text) => text || ''),
+    sanitizeColor: vi.fn((c) => c || '#888'),
+    renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
+}));
+
+vi.mock('./issues-view.js', () => ({
+    getGroupByValue: vi.fn(() => ''),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./inline-dropdown.js', () => ({
+    showInlineDropdown: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    viewIssue: vi.fn(),
+}));
+
 import {
     STATUS_ORDER,
     PRIORITY_ORDER,
     ISSUE_TYPE_ORDER,
-    setDependencies,
     renderIssues,
     renderIssueRow,
     toggleGroup,
@@ -15,38 +60,41 @@ import {
     sumEstimates,
 } from './issue-list.js';
 
+import { getIssues } from './state.js';
+import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
+import { formatEstimate } from './projects.js';
+import { getSprintCache } from './sprints.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { getGroupByValue } from './issues-view.js';
+
 describe('issue-list', () => {
-    let mockDeps;
     let testIssues;
 
     // Helper to set test issues
     const setTestIssues = (issues) => {
         testIssues = issues;
+        getIssues.mockReturnValue(testIssues);
     };
 
     beforeEach(() => {
         // Reset test issues
         testIssues = [];
 
-        // Mock dependencies
-        mockDeps = {
-            getIssues: vi.fn(() => testIssues),
-            getAssigneeById: vi.fn(() => null),
-            formatAssigneeName: vi.fn((a) => a?.name || ''),
-            formatEstimate: vi.fn((e) => e ? `${e}pt` : ''),
-            getSprintCache: vi.fn(() => ({})),
-            formatStatus: vi.fn((s) => s),
-            formatPriority: vi.fn((p) => p),
-            formatIssueType: vi.fn((t) => t || 'task'),
-            escapeHtml: vi.fn((text) => text || ''),
-            escapeAttr: vi.fn((text) => text || ''),
-            sanitizeColor: vi.fn((c) => c || '#888'),
-            renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
-            getAssigneeOptionList: vi.fn(() => []),
-            getGroupByValue: vi.fn(() => ''),
-        };
-
-        setDependencies(mockDeps);
+        // Reset all mocks to defaults
+        getIssues.mockReturnValue([]);
+        getAssigneeById.mockReturnValue(null);
+        formatAssigneeName.mockImplementation((a) => a?.name || '');
+        formatEstimate.mockImplementation((e) => e ? `${e}pt` : '');
+        getSprintCache.mockReturnValue({});
+        formatStatus.mockImplementation((s) => s);
+        formatPriority.mockImplementation((p) => p);
+        formatIssueType.mockImplementation((t) => t || 'task');
+        escapeHtml.mockImplementation((text) => text || '');
+        escapeAttr.mockImplementation((text) => text || '');
+        sanitizeColor.mockImplementation((c) => c || '#888');
+        renderAvatar.mockReturnValue('<span class="avatar"></span>');
+        getAssigneeOptionList.mockReturnValue([]);
+        getGroupByValue.mockReturnValue('');
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -88,7 +136,7 @@ describe('issue-list', () => {
                 { id: '1', title: 'Issue 1', status: 'todo', priority: 'medium', identifier: 'TEST-1', project_id: 'p1' },
                 { id: '2', title: 'Issue 2', status: 'done', priority: 'low', identifier: 'TEST-2', project_id: 'p1' },
             ]);
-            mockDeps.getGroupByValue.mockReturnValue('');
+            getGroupByValue.mockReturnValue('');
 
             renderIssues();
 
@@ -102,7 +150,7 @@ describe('issue-list', () => {
                 { id: '2', title: 'Issue 2', status: 'todo', priority: 'low', identifier: 'TEST-2', project_id: 'p1' },
                 { id: '3', title: 'Issue 3', status: 'done', priority: 'high', identifier: 'TEST-3', project_id: 'p1' },
             ]);
-            mockDeps.getGroupByValue.mockReturnValue('status');
+            getGroupByValue.mockReturnValue('status');
 
             renderIssues();
 
@@ -127,7 +175,7 @@ describe('issue-list', () => {
                 { id: '2', title: 'Issue 2', status: 'todo', priority: 'low', identifier: 'TEST-2', project_id: 'p1' },
                 { id: '3', title: 'Issue 3', status: 'todo', priority: 'high', identifier: 'TEST-3', project_id: 'p1' },
             ]);
-            mockDeps.getGroupByValue.mockReturnValue('priority');
+            getGroupByValue.mockReturnValue('priority');
 
             renderIssues();
 
@@ -167,8 +215,8 @@ describe('issue-list', () => {
 
         it('renders assignee avatar when assigned', () => {
             const assignee = { id: 'user-1', name: 'John Doe' };
-            mockDeps.getAssigneeById.mockReturnValue(assignee);
-            mockDeps.formatAssigneeName.mockReturnValue('John Doe');
+            getAssigneeById.mockReturnValue(assignee);
+            formatAssigneeName.mockReturnValue('John Doe');
 
             const issue = {
                 id: 'issue-1',
@@ -183,13 +231,13 @@ describe('issue-list', () => {
 
             const _html = renderIssueRow(issue);
 
-            expect(mockDeps.getAssigneeById).toHaveBeenCalledWith('user-1');
-            expect(mockDeps.renderAvatar).toHaveBeenCalled();
+            expect(getAssigneeById).toHaveBeenCalledWith('user-1');
+            expect(renderAvatar).toHaveBeenCalled();
         });
 
         it('renders labels when present', () => {
-            mockDeps.sanitizeColor.mockReturnValue('#ff0000');
-            mockDeps.escapeHtml.mockImplementation((t) => t);
+            sanitizeColor.mockReturnValue('#ff0000');
+            escapeHtml.mockImplementation((t) => t);
 
             const issue = {
                 id: 'issue-1',
@@ -211,7 +259,7 @@ describe('issue-list', () => {
         });
 
         it('renders sprint badge when assigned to sprint', () => {
-            mockDeps.getSprintCache.mockReturnValue({
+            getSprintCache.mockReturnValue({
                 'sprint-1': { id: 'sprint-1', name: 'Sprint 1', status: 'active' }
             });
 
@@ -233,7 +281,7 @@ describe('issue-list', () => {
         });
 
         it('renders estimate when present', () => {
-            mockDeps.formatEstimate.mockReturnValue('3pt');
+            formatEstimate.mockReturnValue('3pt');
 
             const issue = {
                 id: 'issue-1',
@@ -361,8 +409,7 @@ describe('issue-list', () => {
 
         it('shows summary bar when grouped by status', () => {
             setTestIssues(issuesWithEstimates);
-            mockDeps.getGroupByValue.mockReturnValue('status');
-            setDependencies(mockDeps);
+            getGroupByValue.mockReturnValue('status');
             renderIssues();
 
             const html = document.getElementById('issues-list').innerHTML;
@@ -373,8 +420,7 @@ describe('issue-list', () => {
 
         it('shows points per group in group headers', () => {
             setTestIssues(issuesWithEstimates);
-            mockDeps.getGroupByValue.mockReturnValue('status');
-            setDependencies(mockDeps);
+            getGroupByValue.mockReturnValue('status');
             renderIssues();
 
             const html = document.getElementById('issues-list').innerHTML;
@@ -386,8 +432,7 @@ describe('issue-list', () => {
 
         it('shows points per group when grouped by priority', () => {
             setTestIssues(issuesWithEstimates);
-            mockDeps.getGroupByValue.mockReturnValue('priority');
-            setDependencies(mockDeps);
+            getGroupByValue.mockReturnValue('priority');
             renderIssues();
 
             const html = document.getElementById('issues-list').innerHTML;

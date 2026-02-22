@@ -39,6 +39,10 @@ vi.mock('./issue-detail-view.js', () => ({
     loadTicketRituals: vi.fn(),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 vi.mock('./api.js', () => ({
     api: {
         approveAttestation: vi.fn(),
@@ -372,16 +376,16 @@ describe('rituals-view', () => {
         it('shows Attest button with modal for note_required', () => {
             const ritual = { id: 'r1', approval_mode: 'review', note_required: true, name: 'QA', prompt: 'Check it' };
             const html = renderTicketRitualActions(ritual, 'issue-1');
-            expect(html).toContain('showAttestTicketRitualModal');
+            expect(html).toContain('data-action="attest-ticket-ritual-modal"');
             expect(html).toContain('Attest');
         });
 
         it('shows simple Attest button for auto mode without note_required', () => {
             const ritual = { id: 'r1', approval_mode: 'auto' };
             const html = renderTicketRitualActions(ritual, 'issue-1');
-            expect(html).toContain('attestTicketRitual');
+            expect(html).toContain('data-action="attest-ticket-ritual"');
             expect(html).toContain('Attest');
-            expect(html).not.toContain('showAttestTicketRitualModal');
+            expect(html).not.toContain('attest-ticket-ritual-modal');
         });
     });
 

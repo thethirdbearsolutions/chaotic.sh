@@ -8,6 +8,7 @@ import { navigateToEpicByIdentifier } from './router.js';
 import { getProjects, loadProjects, getSavedProjectId, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getCurrentTeam } from './state.js';
 
 /**
  * Populate the epics project filter dropdown and auto-select saved project.
@@ -61,7 +62,7 @@ export async function loadEpics() {
     `).join('');
 
     try {
-        if (!window.currentTeam?.id) {
+        if (!getCurrentTeam()?.id) {
             listEl.innerHTML = '<div class="empty-state">Select a team to view epics.</div>';
             return;
         }
@@ -71,7 +72,7 @@ export async function loadEpics() {
         if (projectId) {
             epics = await api.getIssues({ project_id: projectId, issue_type: 'epic' });
         } else {
-            epics = await api.getTeamIssues(window.currentTeam.id, { issue_type: 'epic' });
+            epics = await api.getTeamIssues(getCurrentTeam().id, { issue_type: 'epic' });
         }
 
         if (!epics || epics.length === 0) {

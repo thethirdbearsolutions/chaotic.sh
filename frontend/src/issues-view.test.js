@@ -13,6 +13,8 @@ vi.mock('./state.js', () => ({
     getSearchDebounceTimer: vi.fn(() => null),
     setSearchDebounceTimer: vi.fn(),
     setSelectedIssueIndex: vi.fn(),
+    getCurrentTeam: vi.fn(() => null),
+    setCurrentTeam: vi.fn(),
 }));
 
 // Mock projects.js
@@ -47,7 +49,23 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer } from './state.js';
+// Mock event-delegation.js
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+// Mock api.js
+vi.mock('./api.js', () => ({
+    api: {
+        getIssues: vi.fn().mockResolvedValue([]),
+        getTeamIssues: vi.fn().mockResolvedValue([]),
+        getLabels: vi.fn().mockResolvedValue([]),
+        getSprints: vi.fn().mockResolvedValue([]),
+    },
+}));
+
+import { api } from './api.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam } from './state.js';
 import { getProjects, setGlobalProjectSelection } from './projects.js';
 import { getMembers } from './teams.js';
 import { updateSprintProjectFilter } from './sprints.js';
@@ -93,14 +111,7 @@ describe('issues-view', () => {
         vi.clearAllMocks();
         replaceStateSpy = vi.spyOn(history, 'replaceState').mockImplementation(() => {});
 
-        // Mock api global
-        window.api = {
-            getIssues: vi.fn().mockResolvedValue([]),
-            getTeamIssues: vi.fn().mockResolvedValue([]),
-            getLabels: vi.fn().mockResolvedValue([]),
-            getSprints: vi.fn().mockResolvedValue([]),
-        };
-        window.currentTeam = { id: 'team-1' };
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
 
         // Set up minimal DOM for filter elements
         document.body.innerHTML = `
@@ -172,8 +183,7 @@ describe('issues-view', () => {
     afterEach(() => {
         replaceStateSpy.mockRestore();
         document.body.innerHTML = '';
-        delete window.api;
-        delete window.currentTeam;
+        getCurrentTeam.mockReturnValue(null);
     });
 
     // ========================================
@@ -419,12 +429,11 @@ describe('issues-view', () => {
         });
 
         it('does not save to localStorage when no team (CHT-1042)', () => {
-            const savedTeam = window.currentTeam;
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             document.getElementById('project-filter').value = 'proj-1';
             syncFiltersToUrl();
             expect(localStorage.getItem('chaotic_issues_filters_null')).toBeNull();
-            window.currentTeam = savedTeam;
+            getCurrentTeam.mockReturnValue({ id: 'team-1' });
         });
     });
 
@@ -486,15 +495,14 @@ describe('issues-view', () => {
                 writable: true,
                 configurable: true,
             });
-            const savedTeam = window.currentTeam;
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
 
             loadFiltersFromUrl();
 
             // Should not apply the saved filter
             expect(document.getElementById('project-filter').value).toBe('');
-            window.currentTeam = savedTeam;
+            getCurrentTeam.mockReturnValue({ id: 'team-1' });
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
     });
@@ -641,46 +649,46 @@ describe('issues-view', () => {
         });
 
         it('resets selected issue index', async () => {
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
             expect(setSelectedIssueIndex).toHaveBeenCalledWith(-1);
         });
 
         it('calls api.getIssues with project ID', async () => {
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
-            expect(window.api.getIssues).toHaveBeenCalledWith(
+            expect(api.getIssues).toHaveBeenCalledWith(
                 expect.objectContaining({ project_id: 'p-1' })
             );
         });
 
         it('stores issues in centralized state', async () => {
             const mockIssues = [{ id: 'i-1', project_id: 'p-1' }];
-            window.api.getIssues.mockResolvedValue(mockIssues);
+            api.getIssues.mockResolvedValue(mockIssues);
             await loadIssues();
             expect(setIssues).toHaveBeenCalledWith(mockIssues);
         });
 
         it('calls renderIssues after loading', async () => {
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
             expect(renderIssues).toHaveBeenCalled();
         });
 
         it('includes status filters in params', async () => {
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
-            expect(window.api.getIssues).toHaveBeenCalledWith(
+            expect(api.getIssues).toHaveBeenCalledWith(
                 expect.objectContaining({ status: ['todo'] })
             );
         });
 
         it('includes priority filters in params', async () => {
             document.querySelector('#priority-filter-dropdown input[value="urgent"]').checked = true;
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
-            expect(window.api.getIssues).toHaveBeenCalledWith(
+            expect(api.getIssues).toHaveBeenCalledWith(
                 expect.objectContaining({ priority: ['urgent'] })
             );
         });
@@ -689,9 +697,9 @@ describe('issues-view', () => {
             getCurrentUser.mockReturnValue({ id: 'user-1' });
             document.getElementById('assignee-filter').innerHTML = '<option value="me">Me</option>';
             document.getElementById('assignee-filter').value = 'me';
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await loadIssues();
-            expect(window.api.getIssues).toHaveBeenCalledWith(
+            expect(api.getIssues).toHaveBeenCalledWith(
                 expect.objectContaining({ assignee_id: 'user-1' })
             );
         });
@@ -705,9 +713,9 @@ describe('issues-view', () => {
         });
 
         it('returns early when no currentTeam', async () => {
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             await loadIssues();
-            expect(window.api.getIssues).not.toHaveBeenCalled();
+            expect(api.getIssues).not.toHaveBeenCalled();
         });
 
         it('filters issues by labels client-side', async () => {
@@ -722,7 +730,7 @@ describe('issues-view', () => {
                 { id: 'i-2', project_id: 'p-1', labels: [{ id: 'label-2' }] },
                 { id: 'i-3', project_id: 'p-1', labels: [] },
             ];
-            window.api.getIssues.mockResolvedValue(mockIssues);
+            api.getIssues.mockResolvedValue(mockIssues);
             await loadIssues();
 
             // Only issue with label-1 should be stored
@@ -730,7 +738,7 @@ describe('issues-view', () => {
         });
 
         it('shows error toast on API failure', async () => {
-            window.api.getIssues.mockRejectedValue(new Error('Network error'));
+            api.getIssues.mockRejectedValue(new Error('Network error'));
             await loadIssues();
             expect(showToast).toHaveBeenCalledWith('Network error', 'error');
         });
@@ -738,9 +746,9 @@ describe('issues-view', () => {
         it('loads team issues when no project selected', async () => {
             document.getElementById('project-filter').value = '';
             getProjects.mockReturnValue([{ id: 'p-1' }]);
-            window.api.getTeamIssues.mockResolvedValue([]);
+            api.getTeamIssues.mockResolvedValue([]);
             await loadIssues();
-            expect(window.api.getTeamIssues).toHaveBeenCalledWith('team-1', expect.any(Object));
+            expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', expect.any(Object));
         });
     });
 
@@ -790,7 +798,7 @@ describe('issues-view', () => {
         it('saves project selection when project selected', async () => {
             document.getElementById('project-filter').value = 'proj-1';
             getProjects.mockReturnValue([{ id: 'proj-1' }]);
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await onProjectFilterChange();
             expect(setGlobalProjectSelection).toHaveBeenCalledWith('proj-1');
         });
@@ -798,7 +806,7 @@ describe('issues-view', () => {
         it('updates board and sprint project filters', async () => {
             document.getElementById('project-filter').value = 'proj-1';
             getProjects.mockReturnValue([{ id: 'proj-1' }]);
-            window.api.getIssues.mockResolvedValue([]);
+            api.getIssues.mockResolvedValue([]);
             await onProjectFilterChange();
             expect(updateBoardProjectFilter).toHaveBeenCalled();
             expect(updateSprintProjectFilter).toHaveBeenCalled();
@@ -813,7 +821,7 @@ describe('issues-view', () => {
         it('clears project filter', () => {
             document.getElementById('project-filter').value = 'proj-1';
             getProjects.mockReturnValue([{ id: 'proj-1' }]);
-            window.api.getTeamIssues.mockResolvedValue([]);
+            api.getTeamIssues.mockResolvedValue([]);
             clearAllFilters();
             expect(document.getElementById('project-filter').value).toBe('');
         });
@@ -879,7 +887,7 @@ describe('issues-view', () => {
 
     describe('populateLabelFilter', () => {
         it('populates label options from API', async () => {
-            window.api.getLabels.mockResolvedValue([
+            api.getLabels.mockResolvedValue([
                 { id: 'lbl-1', name: 'Bug', color: '#ff0000' },
                 { id: 'lbl-2', name: 'Feature', color: '#00ff00' },
             ]);
@@ -889,7 +897,7 @@ describe('issues-view', () => {
         });
 
         it('shows empty message when no labels', async () => {
-            window.api.getLabels.mockResolvedValue([]);
+            api.getLabels.mockResolvedValue([]);
             await populateLabelFilter();
             const empty = document.querySelector('#label-filter-dropdown .multi-select-empty');
             expect(empty).not.toBeNull();
@@ -897,9 +905,9 @@ describe('issues-view', () => {
         });
 
         it('does nothing when no team', async () => {
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             await populateLabelFilter();
-            expect(window.api.getLabels).not.toHaveBeenCalled();
+            expect(api.getLabels).not.toHaveBeenCalled();
         });
     });
 
@@ -943,7 +951,7 @@ describe('issues-view', () => {
 
         it('loads sprints for selected project', async () => {
             document.getElementById('project-filter').value = 'proj-1';
-            window.api.getSprints.mockResolvedValue([
+            api.getSprints.mockResolvedValue([
                 { id: 's-1', name: 'Sprint 1', status: 'active' },
                 { id: 's-2', name: 'Sprint 2', status: 'completed' },
             ]);

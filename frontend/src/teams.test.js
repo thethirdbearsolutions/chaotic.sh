@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { getCurrentTeam, setCurrentTeam } from './state.js';
 import {
   getTeams,
   getMembers,
@@ -41,6 +42,10 @@ vi.mock('./ui.js', () => ({
   showModal: vi.fn(),
   closeModal: vi.fn(),
   showToast: vi.fn(),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+  registerActions: vi.fn(),
 }));
 
 describe('getTeams', () => {
@@ -129,13 +134,13 @@ describe('selectTeam', () => {
     delete window.navigateTo;
     delete window.handleRoute;
     delete window.currentView;
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('sets currentTeam and updates UI', async () => {
     const team = { id: 'team-1', name: 'My Team', description: 'Test desc' };
     await selectTeam(team);
-    expect(window.currentTeam).toEqual(team);
+    expect(getCurrentTeam()).toEqual(team);
     expect(document.getElementById('current-team-name').textContent).toBe('My Team');
     expect(document.getElementById('team-description-text').textContent).toBe('Test desc');
   });
@@ -207,19 +212,19 @@ describe('toggleUserDropdown', () => {
 describe('loadTeamMembersQuiet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
   });
 
   it('returns early if no currentTeam', async () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     await loadTeamMembersQuiet();
     expect(api.getTeamMembers).not.toHaveBeenCalled();
   });
@@ -244,14 +249,14 @@ describe('loadTeamMembers', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-members-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.currentUser = { id: 'current-user' };
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.currentUser;
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
@@ -279,14 +284,14 @@ describe('renderTeamMembers', () => {
   it('escapes member names for XSS prevention', async () => {
     const members = [{ id: 'user-1', user_id: 'user-1', user_name: '<script>xss</script>', role: 'member' }];
     api.getTeamMembers.mockResolvedValue(members);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('<script>xss</script>');
     expect(list.innerHTML).toContain('&lt;script&gt;');
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
   });
@@ -296,13 +301,13 @@ describe('renderTeamMembers', () => {
       { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).toContain('Remove');
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
   });
@@ -312,13 +317,13 @@ describe('renderTeamMembers', () => {
       { id: 'user-1', user_id: 'other-user', user_name: 'Owner', role: 'owner' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('Remove');
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
   });
@@ -328,15 +333,15 @@ describe('loadTeamInvitations', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-invitations-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('returns early if no currentTeam', async () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     await loadTeamInvitations();
     expect(api.getTeamInvitations).not.toHaveBeenCalled();
   });
@@ -360,11 +365,11 @@ describe('loadTeamInvitations', () => {
 describe('renderTeamInvitations', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-invitations-list"></div>';
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('escapes email for XSS prevention', async () => {
@@ -406,11 +411,11 @@ describe('handleInvite', () => {
       <div id="team-invitations-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('prevents default form submission', async () => {
@@ -434,7 +439,7 @@ describe('removeMember', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-members-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.currentUser = { id: 'current-user' };
     window.buildAssignees = vi.fn();
     window.updateAssigneeFilter = vi.fn();
@@ -442,7 +447,7 @@ describe('removeMember', () => {
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.currentUser;
     delete window.buildAssignees;
     delete window.updateAssigneeFilter;
@@ -474,11 +479,11 @@ describe('deleteInvitation', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-invitations-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('deletes invitation and reloads list', async () => {
@@ -518,15 +523,15 @@ describe('showEditTeamModal', () => {
       <div id="modal-title"></div>
       <div id="modal-content"></div>
     `;
-    window.currentTeam = { id: 'team-1', name: 'Test Team', key: 'TT', description: 'Test desc' };
+    setCurrentTeam({ id: 'team-1', name: 'Test Team', key: 'TT', description: 'Test desc' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('returns early if no currentTeam', () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     showEditTeamModal();
     expect(document.getElementById('modal-title').textContent).toBe('');
   });
@@ -540,7 +545,7 @@ describe('showEditTeamModal', () => {
   });
 
   it('escapes team values in form', () => {
-    window.currentTeam = { id: 'team-1', name: '<script>xss</script>', key: 'TT', description: '<img onerror=alert(1)>' };
+    setCurrentTeam({ id: 'team-1', name: '<script>xss</script>', key: 'TT', description: '<img onerror=alert(1)>' });
     showEditTeamModal();
     const content = document.getElementById('modal-content');
     // Form values should be properly set as text
@@ -615,15 +620,15 @@ describe('handleUpdateTeam', () => {
       <div id="team-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1', name: 'Old Team' };
+    setCurrentTeam({ id: 'team-1', name: 'Old Team' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('returns false if no currentTeam', async () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     const event = { preventDefault: vi.fn() };
     const result = await handleUpdateTeam(event);
     expect(result).toBe(false);

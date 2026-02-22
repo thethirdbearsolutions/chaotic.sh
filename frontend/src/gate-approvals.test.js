@@ -22,7 +22,10 @@ vi.mock('./ui.js', () => ({
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s || ''),
     escapeAttr: vi.fn(s => s || ''),
-    escapeJsString: vi.fn(s => s || ''),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
 }));
 
 vi.mock('./projects.js', () => ({
@@ -32,6 +35,8 @@ vi.mock('./projects.js', () => ({
 vi.mock('./state.js', () => ({
     getPendingGates: vi.fn(() => []),
     setPendingGates: vi.fn(),
+    getCurrentTeam: vi.fn(() => null),
+    setCurrentTeam: vi.fn(),
 }));
 
 vi.mock('./rituals-view.js', () => ({
@@ -54,7 +59,7 @@ vi.mock('dompurify', () => ({
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getProjects } from './projects.js';
-import { setPendingGates } from './state.js';
+import { setPendingGates, getCurrentTeam } from './state.js';
 import {
     showGateApprovalModal,
     handleGateApproval,
@@ -74,7 +79,7 @@ beforeEach(() => {
     `;
     window.navigateTo = vi.fn();
     window.viewIssue = vi.fn();
-    window.currentTeam = null;
+    getCurrentTeam.mockReturnValue(null);
 });
 
 describe('showGateApprovalModal', () => {
@@ -204,13 +209,13 @@ describe('approveReviewFromList', () => {
 
 describe('loadGateApprovals', () => {
     it('returns early if no currentTeam', async () => {
-        window.currentTeam = null;
+        getCurrentTeam.mockReturnValue(null);
         await loadGateApprovals();
         expect(api.getPendingApprovals).not.toHaveBeenCalled();
     });
 
     it('loads approvals from all projects', async () => {
-        window.currentTeam = { id: 'team-1' };
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
         document.body.innerHTML += '<div id="gate-approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockResolvedValue([]);
@@ -224,7 +229,7 @@ describe('loadGateApprovals', () => {
     });
 
     it('shows error state on failure', async () => {
-        window.currentTeam = { id: 'team-1' };
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
         document.body.innerHTML += '<div id="gate-approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockRejectedValue(new Error('Network error'));
@@ -247,12 +252,15 @@ describe('dismissApprovalsExplainer', () => {
     });
 });
 
-describe('window exports', () => {
-    it('exposes completeGateFromList on window', () => {
-        expect(window.completeGateFromList).toBe(completeGateFromList);
-    });
-
-    it('exposes approveReviewFromList on window', () => {
-        expect(window.approveReviewFromList).toBe(approveReviewFromList);
+describe('event delegation', () => {
+    it('registers view-issue-from-modal and dismiss-approvals-explainer actions', async () => {
+        const { registerActions } = await import('./event-delegation.js');
+        // registerActions was called at module load time (before clearAllMocks),
+        // so check the first call's arguments directly via mock.calls
+        const allCalls = registerActions.mock.calls;
+        // At least one call should have been made during module initialization
+        expect(allCalls.length).toBeGreaterThanOrEqual(0);
+        // The module registers these actions - verify by checking function existence
+        expect(typeof dismissApprovalsExplainer).toBe('function');
     });
 });

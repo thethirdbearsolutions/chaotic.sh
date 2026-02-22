@@ -20,10 +20,17 @@ vi.mock('./issue-list.js', () => ({
     renderIssues: vi.fn(),
 }));
 
+vi.mock('./api.js', () => ({
+    api: {
+        createIssue: vi.fn(),
+    },
+}));
+
 import { showToast } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
 import { getIssues, setIssues } from './state.js';
 import { renderIssues } from './issue-list.js';
+import { api } from './api.js';
 
 describe('handleQuickCreate', () => {
     let input;
@@ -41,16 +48,14 @@ describe('handleQuickCreate', () => {
         projectFilter = document.getElementById('project-filter');
         projectFilter.value = 'proj-1';
 
-        // Mock global api
-        window.api = {
-            createIssue: vi.fn().mockResolvedValue({
-                id: 'real-1',
-                identifier: 'TST-1',
-                title: 'New issue',
-                status: 'backlog',
-                priority: 'no_priority',
-            }),
-        };
+        // Reset api mock
+        api.createIssue.mockResolvedValue({
+            id: 'real-1',
+            identifier: 'TST-1',
+            title: 'New issue',
+            status: 'backlog',
+            priority: 'no_priority',
+        });
     });
 
     it('ignores non-Enter keys', async () => {
@@ -103,7 +108,7 @@ describe('handleQuickCreate', () => {
         expect(secondCall[0].id).toBe('real-1');
 
         // API should have been called
-        expect(window.api.createIssue).toHaveBeenCalledWith('proj-1', {
+        expect(api.createIssue).toHaveBeenCalledWith('proj-1', {
             title: 'New issue',
             status: 'backlog',
             priority: 'no_priority',
@@ -130,7 +135,7 @@ describe('handleQuickCreate', () => {
     });
 
     it('removes optimistic issue on API error', async () => {
-        window.api.createIssue.mockRejectedValue(new Error('Server error'));
+        api.createIssue.mockRejectedValue(new Error('Server error'));
 
         // Set up getIssues to return the optimistic issue after first setIssues
         const optimisticIssues = [];
@@ -156,7 +161,7 @@ describe('handleQuickCreate', () => {
 
     it('disables input during creation', async () => {
         let inputDisabledDuringCreate = false;
-        window.api.createIssue.mockImplementation(() => {
+        api.createIssue.mockImplementation(() => {
             inputDisabledDuringCreate = input.disabled;
             return Promise.resolve({
                 id: 'real-1', identifier: 'TST-1', title: 'New issue',
@@ -184,7 +189,7 @@ describe('handleQuickCreate', () => {
         expect(input.placeholder).toBe('Quick create...');
 
         let placeholderDuringCreate;
-        window.api.createIssue.mockImplementation(() => {
+        api.createIssue.mockImplementation(() => {
             placeholderDuringCreate = input.placeholder;
             return Promise.resolve({
                 id: 'real-1', identifier: 'TST-1', title: 'New issue',
@@ -199,7 +204,7 @@ describe('handleQuickCreate', () => {
     });
 
     it('restores placeholder on error', async () => {
-        window.api.createIssue.mockRejectedValue(new Error('fail'));
+        api.createIssue.mockRejectedValue(new Error('fail'));
         const event = { key: 'Enter', target: input };
         await handleQuickCreate(event);
         expect(input.placeholder).toBe('Quick create...');
@@ -213,7 +218,7 @@ describe('handleQuickCreate', () => {
     });
 
     it('focuses input after error', async () => {
-        window.api.createIssue.mockRejectedValue(new Error('fail'));
+        api.createIssue.mockRejectedValue(new Error('fail'));
         const focusSpy = vi.spyOn(input, 'focus');
         const event = { key: 'Enter', target: input };
         await handleQuickCreate(event);
