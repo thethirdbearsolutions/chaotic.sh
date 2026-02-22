@@ -42,9 +42,22 @@ class SprintService:
         return sprint
 
     async def _get_next_sprint_number(self, project_id: str) -> int:
-        """Get the next sprint number for a project."""
-        count = await OxydeSprint.objects.filter(project_id=project_id).count()
-        return count + 1
+        """Get the next sprint number for a project.
+
+        Uses MAX of existing sprint numbers extracted from 'Sprint N' names,
+        rather than count, to avoid duplicate names after deletions or gaps.
+        """
+        sprints = await OxydeSprint.objects.filter(project_id=project_id).all()
+        max_num = 0
+        for s in sprints:
+            # Extract number from "Sprint N" pattern
+            if s.name and s.name.startswith("Sprint "):
+                try:
+                    num = int(s.name.split(" ", 1)[1])
+                    max_num = max(max_num, num)
+                except (ValueError, IndexError):
+                    pass
+        return max_num + 1
 
     async def _get_project_default_budget(self, project_id: str) -> int | None:
         """Get the project's default sprint budget."""
@@ -164,6 +177,14 @@ class SprintService:
         """Activate the next sprint and create a new next."""
         next_sprint.status = SprintStatus.ACTIVE
         await next_sprint.save(update_fields={"status"})
+
+        # Only create a new PLANNED sprint if one doesn't already exist
+        existing_planned = await OxydeSprint.objects.filter(
+            project_id=next_sprint.project_id,
+            status=SprintStatus.PLANNED.name,
+        ).first()
+        if existing_planned:
+            return
 
         # Determine budget for new sprint: inherit from previous Next, or fall back to project default
         new_budget = next_sprint.budget

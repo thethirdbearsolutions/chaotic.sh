@@ -22,37 +22,27 @@ def register(cli):
         pass
 
     @sprint.command("create")
-    @click.argument("name")
-    @click.option("--budget", type=int, help="Point budget for the sprint")
-    @click.option("--no-budget", is_flag=True, help="Explicitly unlimited budget (ignore project default)")
-    @click.option("--description", help="Sprint description")
+    @click.argument("name", required=False)
+    @click.option("--budget", type=int, help="Ignored (sprints are managed automatically)")
+    @click.option("--no-budget", is_flag=True, help="Ignored (sprints are managed automatically)")
+    @click.option("--description", help="Ignored (sprints are managed automatically)")
     @_main().json_option
     @_main().require_project
     @_main().handle_error
     def sprint_create(name, budget, no_budget, description):
-        """Create a new sprint.
+        """Show the current sprint.
 
-        NAME is the sprint name (e.g., "Sprint 61" or "Frontend Polish").
-        Budget defaults to the project's default budget if set.
+        Sprints are managed automatically. Use 'sprint close' to rotate.
+        This command returns the current active sprint.
         """
         m = _main()
         project_id = m.get_current_project()
-
-        kwargs = {}
-        if description:
-            kwargs["description"] = description
-        if no_budget:
-            kwargs["explicit_unlimited"] = True
-        elif budget is not None:
-            kwargs["budget"] = budget
-
-        result = _client().create_sprint(project_id, name, **kwargs)
+        result = _client().get_current_sprint(project_id)
         if m.is_json_output():
             m.output_json(result)
             return
-        budget = result.get("budget")
-        budget_info = f" (budget: {budget} pts)" if budget is not None else ""
-        console.print(f"[green]Sprint '{result['name']}' created{budget_info}.[/green]")
+        console.print(f"[yellow]Sprints are managed automatically. Current sprint:[/yellow]")
+        print_sprint_panel(result)
 
     @sprint.command("list")
     @click.option("--status", type=click.Choice(["planned", "active", "completed"]))
