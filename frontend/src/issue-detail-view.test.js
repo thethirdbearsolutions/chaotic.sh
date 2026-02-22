@@ -53,7 +53,6 @@ vi.mock('./utils.js', () => ({
     formatTimeAgo: vi.fn(() => '1h ago'),
     escapeHtml: vi.fn((text) => text || ''),
     escapeAttr: vi.fn((text) => text || ''),
-    escapeJsString: vi.fn((text) => text || ''),
     sanitizeColor: vi.fn((c) => c || '#888'),
     renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
 }));
@@ -69,6 +68,14 @@ vi.mock('./gate-approvals.js', () => ({
 
 vi.mock('./inline-dropdown.js', () => ({
     showDetailDropdown: vi.fn(),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./issue-creation.js', () => ({
+    showCreateSubIssueModal: vi.fn(),
 }));
 
 vi.mock('./mention-autocomplete.js', () => ({
@@ -94,7 +101,7 @@ import { showToast, showModal, closeModal } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
-import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, escapeJsString, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { showDetailDropdown } from './inline-dropdown.js';
@@ -157,7 +164,7 @@ describe('issue-detail-view', () => {
         formatTimeAgo.mockReset().mockReturnValue('1h ago');
         escapeHtml.mockReset().mockImplementation((text) => text || '');
         escapeAttr.mockReset().mockImplementation((text) => text || '');
-        escapeJsString.mockReset().mockImplementation((text) => text || '');
+
         sanitizeColor.mockReset().mockImplementation((c) => c || '#888');
         renderAvatar.mockReset().mockReturnValue('<span class="avatar"></span>');
         getStatusIcon.mockReset().mockReturnValue('<svg></svg>');

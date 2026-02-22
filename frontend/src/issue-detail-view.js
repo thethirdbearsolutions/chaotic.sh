@@ -10,11 +10,14 @@ import { showToast, showModal, closeModal } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
-import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, escapeJsString, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
+import { showDetailDropdown } from './inline-dropdown.js';
+import { registerActions } from './event-delegation.js';
+import { showCreateSubIssueModal } from './issue-creation.js';
 
 // Module state
 let ticketRitualsCollapsed = true;
@@ -126,7 +129,7 @@ export function formatActivityText(activity) {
                 ? escapeAttr(activity.new_value.substring(0, 200)) + (activity.new_value.length > 200 ? '...' : '')
                 : '';
             return preview
-                ? `<a href="#comments-section" class="activity-comment-link" title="${attrPreview}" onclick="event.preventDefault(); document.getElementById('comments-section')?.scrollIntoView({behavior: 'smooth'})">Added a comment</a>`
+                ? `<a href="#comments-section" class="activity-comment-link" title="${attrPreview}" data-action="scroll-to-comments">Added a comment</a>`
                 : 'Added a comment';
         }
         case 'status_changed':
@@ -633,17 +636,17 @@ export async function viewIssue(issueId, pushHistory = true) {
             <div class="issue-detail-layout">
                 <div class="issue-detail-main">
                     <div class="issue-detail-nav">
-                        <button class="back-link" onclick="navigateTo('${backView}')">
+                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Back
                         </button>
                         ${inList ? `
                         <div class="issue-nav-arrows">
-                            <button class="issue-nav-btn" ${prevIssue ? `onclick="viewIssue('${escapeJsString(prevIssue.id)}')"` : 'disabled'} title="Previous issue">
+                            <button class="issue-nav-btn" ${prevIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(prevIssue.id)}" data-identifier="${escapeAttr(prevIssue.identifier)}"` : 'disabled'} title="Previous issue">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
                             </button>
                             <span class="issue-nav-counter">${currentIndex + 1} / ${issueList.length}</span>
-                            <button class="issue-nav-btn" ${nextIssue ? `onclick="viewIssue('${escapeJsString(nextIssue.id)}')"` : 'disabled'} title="Next issue">
+                            <button class="issue-nav-btn" ${nextIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(nextIssue.id)}" data-identifier="${escapeAttr(nextIssue.identifier)}"` : 'disabled'} title="Next issue">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                             </button>
                         </div>
@@ -656,19 +659,19 @@ export async function viewIssue(issueId, pushHistory = true) {
                     ${parentIssue ? `
                     <div class="parent-issue-link">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                        Sub-issue of <a href="/issue/${encodeURIComponent(parentIssue.identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${escapeJsString(parentIssue.id)}'); }">${parentIssue.identifier}: ${escapeHtml(parentIssue.title)}</a>
+                        Sub-issue of <a href="/issue/${encodeURIComponent(parentIssue.identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(parentIssue.id)}" data-identifier="${escapeAttr(parentIssue.identifier)}">${parentIssue.identifier}: ${escapeHtml(parentIssue.title)}</a>
                     </div>
                     ` : ''}
 
                     <div class="issue-detail-description">
                         <div class="section-header">
                             <h3>Description</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="editDescription('${escapeJsString(issue.id)}')">
+                            <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                 Edit
                             </button>
                         </div>
-                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}"${!issue.description ? ` onclick="editDescription('${escapeJsString(issue.id)}')"` : ''}>
+                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}"${!issue.description ? ` data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}"` : ''}>
                             ${issue.description ? renderDescriptionContent(issue.description) : '<span class="add-description-link">Add description...</span>'}
                         </div>
                     </div>
@@ -676,7 +679,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     <div class="issue-detail-section sub-issues-section">
                         <div class="section-header">
                             <h3>Sub-issues</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="showCreateSubIssueModal('${escapeJsString(issue.id)}', '${escapeJsString(issue.project_id)}')">
+                            <button class="btn btn-secondary btn-sm" data-action="show-create-sub-issue-modal" data-issue-id="${escapeAttr(issue.id)}" data-project-id="${escapeAttr(issue.project_id)}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 Add
                             </button>
@@ -685,12 +688,12 @@ export async function viewIssue(issueId, pushHistory = true) {
                             ${subIssues.length === 0 ? `
                                 <div class="sub-issues-empty">No sub-issues</div>
                             ` : subIssues.map(subIssue => `
-                                <div class="sub-issue-item" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${escapeJsString(subIssue.id)}'); } else { window.open('/issue/${encodeURIComponent(subIssue.identifier)}', '_blank'); }">
+                                <a href="/issue/${encodeURIComponent(subIssue.identifier)}" class="sub-issue-item" data-action="navigate-issue" data-issue-id="${escapeAttr(subIssue.id)}" data-identifier="${escapeAttr(subIssue.identifier)}">
                                     <span class="sub-issue-status">${getStatusIcon(subIssue.status)}</span>
                                     <span class="sub-issue-id">${subIssue.identifier}</span>
                                     <span class="sub-issue-title">${escapeHtml(subIssue.title)}</span>
                                     ${subIssue.estimate ? `<span class="sub-issue-estimate">${subIssue.estimate}pts</span>` : ''}
-                                </div>
+                                </a>
                             `).join('')}
                         </div>
                     </div>
@@ -698,7 +701,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     <div class="issue-detail-section relations-section">
                         <div class="section-header">
                             <h3>Relations</h3>
-                            <button class="btn btn-secondary btn-sm" onclick="showAddRelationModal('${escapeJsString(issue.id)}')">
+                            <button class="btn btn-secondary btn-sm" data-action="show-add-relation-modal" data-issue-id="${escapeAttr(issue.id)}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 Add
                             </button>
@@ -714,9 +717,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item blocked-by">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                                             <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" onclick="deleteRelation('${escapeJsString(issue.id)}', '${escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
+                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                             </button>
                                         </div>
@@ -730,9 +733,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item blocks">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                                             <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" onclick="deleteRelation('${escapeJsString(issue.id)}', '${escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
+                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                             </button>
                                         </div>
@@ -746,9 +749,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                                         <div class="relation-item relates-to">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                                             <span class="relation-status">${getStatusIcon(rel.related_issue_status)}</span>
-                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { event.preventDefault(); viewIssue('${escapeJsString(rel.related_issue_id)}'); }" class="relation-link">${rel.related_issue_identifier}</a>
+                                            <a href="/issue/${encodeURIComponent(rel.related_issue_identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(rel.related_issue_id)}" data-identifier="${escapeAttr(rel.related_issue_identifier)}" class="relation-link">${rel.related_issue_identifier}</a>
                                             <span class="relation-title">${escapeHtml(rel.related_issue_title)}</span>
-                                            <button class="relation-delete" onclick="deleteRelation('${escapeJsString(issue.id)}', '${escapeJsString(rel.id)}'); event.stopPropagation();" title="Remove relation">
+                                            <button class="relation-delete" data-action="remove-relation" data-issue-id="${escapeAttr(issue.id)}" data-relation-id="${escapeAttr(rel.id)}" title="Remove relation">
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                             </button>
                                         </div>
@@ -759,7 +762,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     </div>
 
                     <div id="ticket-rituals-section" class="issue-detail-section hidden">
-                        <div class="section-header section-header-collapsible" onclick="toggleTicketRituals()">
+                        <div class="section-header section-header-collapsible" data-action="toggle-ticket-rituals">
                             <h3>Ticket Rituals</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle ticket rituals">
                                 <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -773,7 +776,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     </div>
 
                     <div class="issue-detail-section" id="activity-section">
-                        <div class="section-header section-header-collapsible" onclick="toggleSection('activity')">
+                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
                             <h3>Activity</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle activity">
                                 <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -798,7 +801,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     </div>
 
                     <div class="issue-detail-section" id="comments-section">
-                        <div class="section-header section-header-collapsible" onclick="toggleSection('comments')">
+                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="comments">
                             <h3>Comments</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle comments">
                                 <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -825,7 +828,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                     </div>
 
-                    <form class="comment-form comment-form-sticky" onsubmit="return handleAddComment(event, '${escapeJsString(issue.id)}')">
+                    <form class="comment-form comment-form-sticky" data-action="save-comment" data-issue-id="${escapeAttr(issue.id)}">
                         <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
                         <div id="mention-suggestions" class="mention-suggestions hidden"></div>
                         <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
@@ -836,7 +839,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
-                        <div class="property-row" data-field="status" onclick="showDetailDropdown(event, 'status', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="status" data-action="show-detail-dropdown" data-dropdown-type="status" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Status</span>
                             <button class="property-value">
                                 ${getStatusIcon(issue.status)}
@@ -844,7 +847,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="priority" onclick="showDetailDropdown(event, 'priority', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="priority" data-action="show-detail-dropdown" data-dropdown-type="priority" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Priority</span>
                             <button class="property-value">
                                 ${getPriorityIcon(issue.priority)}
@@ -852,21 +855,21 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="type" onclick="showDetailDropdown(event, 'type', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="type" data-action="show-detail-dropdown" data-dropdown-type="type" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Type</span>
                             <button class="property-value">
                                 <span class="issue-type-badge type-${issue.issue_type || 'task'}">${formatIssueType(issue.issue_type)}</span>
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="assignee" onclick="showDetailDropdown(event, 'assignee', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="assignee" data-action="show-detail-dropdown" data-dropdown-type="assignee" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Assignee</span>
                             <button class="property-value">
                                 ${assigneeName ? `${renderAvatar(assignee, 'avatar-small')}<span>${escapeHtml(assigneeName)}</span>` : `<span class="text-muted">Unassigned</span>`}
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="sprint" onclick="showDetailDropdown(event, 'sprint', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="sprint" data-action="show-detail-dropdown" data-dropdown-type="sprint" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Sprint</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -874,7 +877,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="labels" onclick="showDetailDropdown(event, 'labels', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="labels" data-action="show-detail-dropdown" data-dropdown-type="labels" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Labels</span>
                             <button class="property-value property-labels-btn">
                                 ${issue.labels && issue.labels.length > 0
@@ -893,7 +896,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                         ` : ''}
 
-                        <div class="property-row" data-field="estimate" onclick="showDetailDropdown(event, 'estimate', '${escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="estimate" data-action="show-detail-dropdown" data-dropdown-type="estimate" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Estimate</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -1089,8 +1092,8 @@ export async function editDescription(issueId) {
     contentDiv.innerHTML = `
         <div class="description-inline-editor">
             <div class="editor-tabs">
-                <button type="button" class="editor-tab active" id="edit-description-tab-write" onclick="setDescriptionEditorMode('write')">Write</button>
-                <button type="button" class="editor-tab" id="edit-description-tab-preview" onclick="setDescriptionEditorMode('preview')">Preview</button>
+                <button type="button" class="editor-tab active" id="edit-description-tab-write" data-action="set-description-editor-mode" data-mode="write">Write</button>
+                <button type="button" class="editor-tab" id="edit-description-tab-preview" data-action="set-description-editor-mode" data-mode="preview">Preview</button>
             </div>
             <textarea id="edit-description" rows="8" placeholder="Add a description...">${escapeHtml(issue.description || '')}</textarea>
             <div id="edit-description-preview" class="markdown-body editor-preview" style="display: none;"></div>
@@ -1141,7 +1144,8 @@ export async function editDescription(issueId) {
         if (header) header.style.display = '';
         contentDiv.className = `description-content markdown-body ${!issue.description ? 'empty' : ''}`;
         if (!issue.description) {
-            contentDiv.setAttribute('onclick', `editDescription('${escapeJsString(issue.id)}')`);
+            contentDiv.setAttribute('data-action', 'edit-description');
+            contentDiv.setAttribute('data-issue-id', issue.id);
         }
         contentDiv.innerHTML = issue.description
             ? renderDescriptionContent(issue.description)
@@ -1202,7 +1206,7 @@ export function setDescriptionEditorMode(mode) {
 export function showAddRelationModal(issueId) {
     document.getElementById('modal-title').textContent = 'Add Relation';
     document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleAddRelation(event, '${escapeJsString(issueId)}')">
+        <form data-action="handle-add-relation" data-issue-id="${escapeAttr(issueId)}">
             <div class="form-group">
                 <label for="relation-type">Relation Type</label>
                 <select id="relation-type" required>
@@ -1213,7 +1217,7 @@ export function showAddRelationModal(issueId) {
             </div>
             <div class="form-group">
                 <label for="relation-issue-search">Search Issues</label>
-                <input type="text" id="relation-issue-search" placeholder="Search by title or ID..." oninput="searchIssuesToRelate(this.value, '${escapeJsString(issueId)}')">
+                <input type="text" id="relation-issue-search" placeholder="Search by title or ID..." data-action="search-issues-to-relate" data-issue-id="${escapeAttr(issueId)}">
                 <input type="hidden" id="selected-related-issue-id">
             </div>
             <div id="relation-search-results" class="link-results">
@@ -1222,7 +1226,7 @@ export function showAddRelationModal(issueId) {
             <div id="selected-issue-display" class="selected-issue-display" style="display: none;">
                 <span class="selected-issue-label">Selected:</span>
                 <span id="selected-issue-info"></span>
-                <button type="button" class="btn btn-danger btn-tiny" onclick="clearSelectedRelation()">×</button>
+                <button type="button" class="btn btn-danger btn-tiny" data-action="clear-selected-relation">&#215;</button>
             </div>
             <button type="submit" class="btn btn-primary" id="add-relation-btn" disabled>Add Relation</button>
         </form>
@@ -1252,7 +1256,7 @@ export async function searchIssuesToRelate(query, currentIssueId) {
         }
 
         resultsDiv.innerHTML = filteredIssues.map(issue => `
-            <div class="link-result-item" onclick="selectIssueForRelation('${escapeJsString(issue.id)}', '${escapeJsString(issue.identifier)}', '${escapeJsString(issue.title)}')">
+            <div class="link-result-item" data-action="select-issue-for-relation" data-issue-id="${escapeAttr(issue.id)}" data-identifier="${escapeAttr(issue.identifier)}" data-title="${escapeAttr(issue.title)}">
                 <span class="link-result-id">${escapeHtml(issue.identifier)}</span>
                 <span class="link-result-title">${escapeHtml(issue.title)}</span>
             </div>
@@ -1327,3 +1331,57 @@ export async function deleteRelation(issueId, relationId) {
         showToast(`Failed to remove relation: ${e.message}`, 'error');
     }
 }
+
+// ============================================================================
+// Event delegation actions
+// ============================================================================
+
+registerActions({
+    'navigate-to': (_event, data) => {
+        navigateTo(data.view);
+    },
+    'show-detail-dropdown': (event, data, target) => {
+        showDetailDropdown(event, data.dropdownType, data.issueId, target);
+    },
+    'edit-description': (_event, data) => {
+        editDescription(data.issueId);
+    },
+    'toggle-section': (_event, data) => {
+        toggleSection(data.section);
+    },
+    'toggle-ticket-rituals': () => {
+        toggleTicketRituals();
+    },
+    'save-comment': (event, data) => {
+        handleAddComment(event, data.issueId);
+    },
+    'show-add-relation-modal': (_event, data) => {
+        showAddRelationModal(data.issueId);
+    },
+    'remove-relation': (event, data) => {
+        event.stopPropagation();
+        deleteRelation(data.issueId, data.relationId);
+    },
+    'show-create-sub-issue-modal': (_event, data) => {
+        showCreateSubIssueModal(data.issueId, data.projectId);
+    },
+    'handle-add-relation': (event, data) => {
+        handleAddRelation(event, data.issueId);
+    },
+    'search-issues-to-relate': (_event, data, target) => {
+        searchIssuesToRelate(target.value, data.issueId);
+    },
+    'select-issue-for-relation': (_event, data) => {
+        selectIssueForRelation(data.issueId, data.identifier, data.title);
+    },
+    'clear-selected-relation': () => {
+        clearSelectedRelation();
+    },
+    'set-description-editor-mode': (_event, data) => {
+        setDescriptionEditorMode(data.mode);
+    },
+    'scroll-to-comments': (event) => {
+        event.preventDefault();
+        document.getElementById('comments-section')?.scrollIntoView({ behavior: 'smooth' });
+    },
+});

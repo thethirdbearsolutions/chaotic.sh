@@ -335,10 +335,11 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
  * @param {Event} event - Click event
  * @param {string} type - Dropdown type
  * @param {string} issueId - Issue ID
+ * @param {Element} [anchorEl] - Element to anchor dropdown to (defaults to event.currentTarget)
  */
-export function showDetailDropdown(event, type, issueId) {
+export function showDetailDropdown(event, type, issueId, anchorEl) {
     event.stopPropagation();
-    showInlineDropdown(event, type, issueId);
+    showInlineDropdown(event, type, issueId, anchorEl);
 }
 
 /**
