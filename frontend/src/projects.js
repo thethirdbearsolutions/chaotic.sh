@@ -166,10 +166,10 @@ export function updateProjectFilters() {
 
   if (projectFilter) {
     projectFilter.innerHTML = options;
-    // Try to restore selection: current > localStorage > URL > first project
+    // Try to restore selection: current > saved > URL > first project
     let selectedProjectId = currentProjectSelection;
     if (!selectedProjectId || !projects.some((p) => p.id === selectedProjectId)) {
-      // Try localStorage
+      // Try saved project
       if (savedProjectId && projects.some((p) => p.id === savedProjectId)) {
         selectedProjectId = savedProjectId;
       } else {
@@ -226,7 +226,7 @@ export function updateProjectFilters() {
 }
 
 /**
- * Get the saved project ID from localStorage
+ * Get the saved project ID from storage
  * @returns {string|null} Saved project ID
  */
 export function getSavedProjectId() {

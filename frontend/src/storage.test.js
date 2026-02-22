@@ -163,5 +163,12 @@ describe('storage', () => {
             expect(() => setToken('abc')).not.toThrow();
             localStorage.setItem = original;
         });
+
+        it('does not throw when localStorage throws on remove', () => {
+            const original = localStorage.removeItem;
+            localStorage.removeItem = () => { throw new Error('fail'); };
+            expect(() => setToken(null)).not.toThrow();
+            localStorage.removeItem = original;
+        });
     });
 });
