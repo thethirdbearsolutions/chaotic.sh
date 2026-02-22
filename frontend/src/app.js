@@ -5,20 +5,11 @@
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
-import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout, initAuth } from './auth.js';
+import { updateUserInfo, showAuthScreen, showMainScreen, logout, initAuth } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
-import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
-import { buildAssignees, updateAssigneeFilter } from './assignees.js';
-import {
-    showCreateIssueModal,
-    showCreateSubIssueModal,
-} from './issue-creation.js';
-import {
-    showEditIssueModal,
-    handleUpdateIssue,
-    deleteIssue,
-} from './issue-edit.js';
-import { escapeHtml } from './utils.js';
+import { loadAgents, showCreateAgentModal } from './agents.js';
+import { showCreateIssueModal } from './issue-creation.js';
+import { showEditIssueModal } from './issue-edit.js';
 import {
     toggleMultiSelect,
     updateStatusFilter,
@@ -31,8 +22,6 @@ import {
     loadFiltersFromUrl,
     toggleFilterMenu,
     toggleDisplayMenu,
-    updateFilterChips,
-    updateFilterCountBadge,
     initFilterBar,
     updateSprintFilter,
     loadIssues,
@@ -41,16 +30,12 @@ import {
     onProjectFilterChange,
     updateGroupBy,
 } from './issues-view.js';
-import { loadGateApprovals, dismissApprovalsExplainer, renderMarkdown } from './gate-approvals.js';
+import { loadGateApprovals } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
-import {
-    viewEpicByPath,
-    viewEpic,
-} from './epic-detail-view.js';
+import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler } from './keyboard.js';
 import {
     getTeams,
-    getMembers,
     loadTeams,
     selectTeam,
     toggleTeamDropdown,
@@ -70,118 +55,52 @@ import {
     clearProjectSettingsState,
     showCreateProjectModal,
     setGlobalProjectSelection,
-    toggleRitualConditions,
     switchProjectSettingsTab,
     saveProjectSettingsGeneral,
     saveProjectSettingsRules,
     showCreateProjectRitualModal,
+    setOnRitualsChanged,
 } from './projects.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { getProjectFromUrl } from './url-helpers.js';
 import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
 import {
     updateSprintProjectFilter,
     onSprintProjectChange,
-    loadSprints,
     viewSprint,
     viewSprintByPath,
-    showEditBudgetModal,
-    handleUpdateBudget,
-    showCloseSprintConfirmation,
-    completeSprint,
-    loadLimboStatus,
-    showLimboDetailsModal,
 } from './sprints.js';
 import {
     updateRitualProjectFilter,
     loadRitualsView,
     onRitualsProjectChange,
     switchRitualsTab,
-    approveRitual,
-    completeGateRitual,
-    showAttestTicketRitualModal,
-    attestTicketRitual,
-    approveTicketRitual,
-    showCompleteTicketRitualModal,
 } from './rituals-view.js';
-import {
-    loadApiKeys,
-    showCreateApiKeyModal,
-    copyApiKey,
-    revokeApiKey,
-} from './api-keys.js';
+import { loadApiKeys, showCreateApiKeyModal } from './api-keys.js';
 import {
     setCommands as setCommandPaletteCommands,
     open as openCommandPalette,
     close as closeCommandPalette,
     isOpen as isCommandPaletteOpen,
 } from './command-palette.js';
-import {
-    loadMyIssues,
-    loadDashboardActivity,
-    filterMyIssues,
-} from './dashboard.js';
-import {
-    updateBoardProjectFilter,
-    onBoardProjectChange,
-    loadBoard,
-    handleDragStart,
-    handleDragEnd,
-    handleDragOver,
-    handleDragLeave,
-    handleCardDragOver,
-    handleCardDragLeave,
-    handleDrop,
-    handleCardDrop,
-} from './board.js';
-import {
-    toggleGroup,
-} from './issue-list.js';
-import {
-    showInlineDropdown,
-    showDetailDropdown,
-    updateIssueField,
-    toggleIssueLabel,
-    createLabelFromDropdown,
-    createLabelForCreateIssue,
-    toggleCreateIssueLabelSelection,
-    handleLabelCreateKey,
-    handleCreateIssueLabelKey,
-} from './inline-dropdown.js';
-import {
-    toggleSection,
-    toggleTicketRituals,
-    viewIssueByPath,
-    viewIssue,
-    handleAddComment,
-    editDescription,
-    setDescriptionEditorMode,
-    showAddRelationModal,
-    searchIssuesToRelate,
-    selectIssueForRelation,
-    clearSelectedRelation,
-    handleAddRelation,
-    deleteRelation,
-} from './issue-detail-view.js';
+import { loadMyIssues, loadDashboardActivity, filterMyIssues } from './dashboard.js';
+import { updateBoardProjectFilter, onBoardProjectChange } from './board.js';
+import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import {
     getCurrentView,
-    getCurrentTeam,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
     setCurrentUser,
-    setLabels,
     setCurrentDetailIssue,
     setCurrentDetailSprints,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
 import {
     navigateTo,
-    handleRoute,
     navigateToIssueByIdentifier,
     configureRouter,
     registerViews,
     initRouter,
 } from './router.js';
-import { connectWebSocket } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
@@ -189,13 +108,11 @@ import { getTheme, setTheme } from './storage.js';
 
 // Mobile sidebar toggle, closeSidebar, focus trap moved to sidebar.js (CHT-1046)
 
-// renderMarkdown imported from gate-approvals.js (CHT-1040)
-
 // Configure router (CHT-782)
 configureRouter({
     beforeNavigate: () => {
         clearProjectSettingsState();
-        window._onRitualsChanged = null;
+        setOnRitualsChanged(null);
         setCurrentDetailIssue(null);
         setCurrentDetailSprints(null);
         closeSidebar();
@@ -597,7 +514,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const user = await api.getMe();
             setCurrentUser(user);
-            window.currentUser = user;
             await initApp();
         } catch {
             api.logout();
@@ -638,7 +554,7 @@ function initIssueLinkHandler() {
 }
 
 // App initialization
-async function initApp() {
+export async function initApp() {
     showMainScreen();
     updateUserInfo();
     await loadTeams();
@@ -653,25 +569,6 @@ async function initApp() {
     }
 }
 
-// Expose initApp to window so auth.js can call it
-window.initApp = initApp;
-
-// Export issue-detail-view functions to window for inline onclick handlers
-window.viewIssue = viewIssue;
-window.viewIssueByPath = viewIssueByPath;
-window.viewEpic = viewEpic;
-window.viewEpicByPath = viewEpicByPath;
-window.toggleTicketRituals = toggleTicketRituals;
-window.toggleSection = toggleSection;
-
-// Export functions called via window from other modules (agents.js, teams.js)
-window.connectWebSocket = connectWebSocket;
-window.buildAssignees = () => buildAssignees(getMembers, getAgents);
-window.updateAssigneeFilter = updateAssigneeFilter;
-window.loadLabels = loadLabels;
-window.resetOnboarding = resetOnboarding;
-
-window.viewDocument = viewDocument;
 
 // viewDocumentByPath helper (used by router detail route config)
 async function viewDocumentByPath(docId) {
@@ -687,17 +584,6 @@ async function viewDocumentByPath(docId) {
 
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
-
-// Labels
-async function loadLabels() {
-    if (!getCurrentTeam()) return;
-    try {
-        const labels = await api.getLabels(getCurrentTeam().id);
-        setLabels(labels);
-    } catch (e) {
-        console.error('Failed to load labels:', e);
-    }
-}
 
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
@@ -818,19 +704,6 @@ setCommandPaletteCommands([
 // IMPROVED MODAL UX
 // ============================================
 
-// Auto-focus first input when modal opens
-// Note: We override the global window.showModal to add auto-focus
-// while keeping the imported showModal for the base functionality
-const baseShowModal = showModal;
-window.showModal = function() {
-    baseShowModal();
-    // Focus first input after animation
-    setTimeout(() => {
-        const firstInput = document.querySelector('#modal-content input, #modal-content textarea');
-        if (firstInput) firstInput.focus();
-    }, 50);
-};
-
 // Cmd+Enter (submit forms/modals) and Cmd+K (command palette) - logic in keyboard.js
 document.addEventListener('keydown', createModifierKeyHandler({
     isModalOpen,
@@ -855,159 +728,3 @@ document.addEventListener('keydown', createListNavigationHandler({
     isCommandPaletteOpen,
 }));
 
-// ============================================================================
-// Window attachments for HTML event handlers
-// These functions are called from onclick, onchange, onsubmit, etc. in HTML
-// ============================================================================
-Object.assign(window, {
-    // Utilities (used by other modules)
-    escapeHtml,
-    renderMarkdown,
-
-    // Auth
-    handleLogin,
-    handleSignup,
-    showLogin,
-    showSignup,
-    logout,
-
-    // Navigation
-    navigateTo,
-    handleRoute,
-    closeModal,
-    toggleSidebar,
-    closeSidebar,
-
-    // URL helpers (for testing)
-    getProjectFromUrl,
-    updateUrlWithProject,
-
-    // Team management
-    toggleTeamDropdown,
-    toggleUserDropdown,
-    showCreateTeamModal,
-    showEditTeamModal,
-    showInviteModal,
-    
-    // Issues - list and filtering
-    showCreateIssueModal,
-    loadIssues,
-    filterIssues,
-    debounceSearch,
-    handleQuickCreate,
-    onProjectFilterChange,
-    updateGroupBy,
-    toggleGroup,
-
-    // Issue viewing and editing
-    viewIssue,
-    showEditIssueModal,
-    editDescription,
-    setDescriptionEditorMode,
-    updateIssueField,
-    handleUpdateIssue,
-    deleteIssue,
-    navigateToIssueByIdentifier,
-
-    // Issue creation
-    toggleCreateIssueLabelSelection,
-    createLabelForCreateIssue,
-    createLabelFromDropdown,
-
-    // Comments
-    handleAddComment,
-
-    // Sub-issues and relations
-    showCreateSubIssueModal,
-    showAddRelationModal,
-    handleAddRelation,
-    deleteRelation,
-    searchIssuesToRelate,
-    selectIssueForRelation,
-    clearSelectedRelation,
-
-    // Issue detail dropdowns
-    showDetailDropdown,
-    showInlineDropdown,
-    toggleIssueLabel,
-
-    // Issue filters (non-delegated)
-    toggleMultiSelect,
-    updateStatusFilter,
-    updatePriorityFilter,
-    clearStatusFilter,
-    clearPriorityFilter,
-
-    // Linear-style filter bar (non-delegated)
-    toggleFilterMenu,
-    toggleDisplayMenu,
-    updateFilterChips,
-    updateFilterCountBadge,
-
-    // Board (functions in board.js)
-    loadBoard,
-    onBoardProjectChange,
-    handleDragStart,
-    handleDragEnd,
-    handleDragOver,
-    handleDragLeave,
-    handleCardDragOver,
-    handleCardDragLeave,
-    handleDrop,
-    handleCardDrop,
-
-    // Sprints
-    loadSprints,
-    onSprintProjectChange,
-    viewSprint,
-    showEditBudgetModal,
-    handleUpdateBudget,
-    showCloseSprintConfirmation,
-    completeSprint,
-    loadLimboStatus,
-    showLimboDetailsModal,
-
-    // Documents
-    showCreateDocumentModal,
-
-    // Projects
-    showCreateProjectModal,
-
-    // Epics
-    onEpicsProjectChange,
-    showCreateEpicModal,
-
-    // Approvals
-    dismissApprovalsExplainer,
-    loadGateApprovals,
-
-    // Rituals top-level view
-    loadRitualsView,
-    onRitualsProjectChange,
-    switchRitualsTab,
-    toggleRitualConditions,
-
-    // Rituals (pending rituals approval)
-    approveRitual,
-    completeGateRitual,
-
-    // Ticket rituals
-    toggleSection,
-    toggleTicketRituals,
-    attestTicketRitual,
-    approveTicketRitual,
-    showCompleteTicketRitualModal,
-    showAttestTicketRitualModal,
-
-    // Settings - API Keys
-    showCreateApiKeyModal,
-    copyApiKey,
-    revokeApiKey,
-
-    // Settings - Agents
-    showCreateAgentModal,
-
-    // Inline dropdown key handlers (CHT-717)
-    handleLabelCreateKey,
-    handleCreateIssueLabelKey,
-});

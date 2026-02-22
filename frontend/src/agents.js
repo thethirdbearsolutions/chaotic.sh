@@ -9,7 +9,8 @@ import { showModal, closeModal, showToast } from './ui.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
-import { updateAssigneeFilter } from './assignees.js';
+import { buildAssignees, updateAssigneeFilter } from './assignees.js';
+import { getMembers } from './teams.js';
 
 // Module state
 let agents = [];
@@ -74,8 +75,7 @@ export async function loadTeamAgentsQuiet(teamId) {
 
   try {
     agents = await api.getTeamAgents(teamId);
-    // Update assignees if functions exist
-    if (window.buildAssignees) window.buildAssignees();
+    buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {
     console.error('Failed to load team agents:', e);
@@ -94,7 +94,7 @@ export async function loadAgents(teamId) {
 
   try {
     agents = await api.getTeamAgents(teamId);
-    if (window.buildAssignees) window.buildAssignees();
+    buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
     renderAgents();
   } catch (e) {
@@ -274,14 +274,6 @@ export async function deleteAgent(agentId, agentName) {
   }
 }
 
-// Attach to window for remaining callers
-Object.assign(window, {
-  loadTeamAgentsQuiet,
-  loadAgents,
-  renderAgents,
-  showCreateAgentModal,
-  renderAgentAvatar,
-});
 
 // Register delegated event handlers
 registerActions({

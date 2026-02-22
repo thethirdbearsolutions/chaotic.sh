@@ -1182,38 +1182,3 @@ registerActions({
   },
 });
 
-// Attach to window for backward compatibility with HTML handlers
-Object.assign(window, {
-  loadProjects,
-  updateProjectFilters,
-  getSavedProjectId,
-  setGlobalProjectSelection,
-  renderProjects,
-  viewProject,
-  showCreateProjectModal,
-  handleCreateProject,
-  viewProjectSettings,
-  switchProjectSettingsTab,
-  saveProjectSettingsGeneral,
-  saveProjectSettingsRules,
-  clearProjectSettingsState,
-  showEditProjectModal,
-  handleUpdateProject,
-  confirmDeleteProject,
-  getEstimateOptions,
-  formatEstimate,
-  getEstimateScaleHint,
-  getProjects,
-  setProjects,
-  ESTIMATE_SCALES,
-  // Project settings rituals
-  showCreateProjectRitualModal,
-  handleCreateProjectRitual,
-  showEditProjectRitualModal,
-  handleUpdateProjectRitual,
-  deleteProjectRitual,
-  setCurrentSettingsProjectId,
-  getProjectRituals,
-  loadProjectSettingsRituals,
-  onRitualGroupChange,
-});

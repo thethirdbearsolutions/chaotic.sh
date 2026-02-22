@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getCurrentTeam, setCurrentTeam } from './state.js';
+import { getCurrentTeam, setCurrentTeam, setCurrentUser } from './state.js';
 import {
   getTeams,
   getMembers,
@@ -61,8 +61,10 @@ vi.mock('./projects.js', () => ({
 }));
 
 const mockLoadTeamAgentsQuiet = vi.fn().mockResolvedValue();
+const mockGetAgents = vi.fn(() => []);
 vi.mock('./agents.js', () => ({
   loadTeamAgentsQuiet: (...args) => mockLoadTeamAgentsQuiet(...args),
+  getAgents: (...args) => mockGetAgents(...args),
 }));
 
 const mockConnectWebSocket = vi.fn();
@@ -71,8 +73,10 @@ vi.mock('./ws.js', () => ({
 }));
 
 const mockUpdateAssigneeFilter = vi.fn();
+const mockBuildAssignees = vi.fn();
 vi.mock('./assignees.js', () => ({
   updateAssigneeFilter: (...args) => mockUpdateAssigneeFilter(...args),
+  buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
 
 describe('getTeams', () => {
@@ -144,7 +148,7 @@ describe('selectTeam', () => {
     `;
     vi.clearAllMocks();
     mockLoadProjects.mockResolvedValue();
-    window.loadLabels = vi.fn().mockResolvedValue();
+    api.getLabels = vi.fn().mockResolvedValue([]);
     mockLoadTeamAgentsQuiet.mockResolvedValue();
     mockConnectWebSocket.mockClear();
     mockNavigateTo.mockClear();
@@ -153,7 +157,6 @@ describe('selectTeam', () => {
   });
 
   afterEach(() => {
-    delete window.loadLabels;
     setCurrentTeam(null);
   });
 
@@ -233,13 +236,12 @@ describe('loadTeamMembersQuiet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
+    mockBuildAssignees.mockClear();
     mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.buildAssignees;
   });
 
   it('returns early if no currentTeam', async () => {
@@ -253,7 +255,7 @@ describe('loadTeamMembersQuiet', () => {
     api.getTeamMembers.mockResolvedValue(members);
     await loadTeamMembersQuiet();
     expect(api.getTeamMembers).toHaveBeenCalledWith('team-1');
-    expect(window.buildAssignees).toHaveBeenCalled();
+    expect(mockBuildAssignees).toHaveBeenCalled();
     expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
@@ -269,16 +271,14 @@ describe('loadTeamMembers', () => {
     document.body.innerHTML = '<div id="team-members-list"></div>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.currentUser = { id: 'current-user' };
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    setCurrentUser({ id: 'current-user' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.currentUser;
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
+    setCurrentUser(null);
   });
 
   it('fetches and renders members', async () => {
@@ -293,26 +293,24 @@ describe('loadTeamMembers', () => {
 describe('renderTeamMembers', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-members-list"></div>';
-    window.currentUser = { id: 'current-user' };
+    setCurrentUser({ id: 'current-user' });
   });
 
   afterEach(() => {
-    delete window.currentUser;
+    setCurrentUser(null);
   });
 
   it('escapes member names for XSS prevention', async () => {
     const members = [{ id: 'user-1', user_id: 'user-1', user_name: '<script>xss</script>', role: 'member' }];
     api.getTeamMembers.mockResolvedValue(members);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('<script>xss</script>');
     expect(list.innerHTML).toContain('&lt;script&gt;');
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('shows remove button for non-owner members who are not current user', async () => {
@@ -321,14 +319,12 @@ describe('renderTeamMembers', () => {
     ];
     api.getTeamMembers.mockResolvedValue(members);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).toContain('Remove');
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('does not show remove button for owner', async () => {
@@ -337,14 +333,12 @@ describe('renderTeamMembers', () => {
     ];
     api.getTeamMembers.mockResolvedValue(members);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('Remove');
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 });
 
@@ -459,17 +453,15 @@ describe('removeMember', () => {
     document.body.innerHTML = '<div id="team-members-list"></div>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.currentUser = { id: 'current-user' };
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    setCurrentUser({ id: 'current-user' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.currentUser;
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
+    setCurrentUser(null);
     vi.restoreAllMocks();
   });
 
@@ -591,7 +583,7 @@ describe('handleCreateTeam', () => {
     `;
     vi.clearAllMocks();
     mockLoadProjects.mockResolvedValue();
-    window.loadLabels = vi.fn().mockResolvedValue();
+    api.getLabels = vi.fn().mockResolvedValue([]);
     mockLoadTeamAgentsQuiet.mockResolvedValue();
     mockConnectWebSocket.mockClear();
     mockNavigateTo.mockClear();
@@ -599,7 +591,6 @@ describe('handleCreateTeam', () => {
   });
 
   afterEach(() => {
-    delete window.loadLabels;
   });
 
   it('prevents default form submission', async () => {

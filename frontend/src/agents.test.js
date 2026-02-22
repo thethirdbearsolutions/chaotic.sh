@@ -40,8 +40,14 @@ vi.mock('./projects.js', () => ({
 }));
 
 const mockUpdateAssigneeFilter = vi.fn();
+const mockBuildAssignees = vi.fn();
 vi.mock('./assignees.js', () => ({
   updateAssigneeFilter: (...args) => mockUpdateAssigneeFilter(...args),
+  buildAssignees: (...args) => mockBuildAssignees(...args),
+}));
+
+vi.mock('./teams.js', () => ({
+  getMembers: vi.fn(() => []),
 }));
 
 describe('getAgents', () => {
@@ -116,13 +122,12 @@ describe('loadTeamAgentsQuiet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
+    mockBuildAssignees.mockClear();
     mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.buildAssignees;
   });
 
   it('returns early if no teamId and no currentTeam', async () => {
@@ -146,7 +151,7 @@ describe('loadTeamAgentsQuiet', () => {
   it('calls buildAssignees and updateAssigneeFilter', async () => {
     api.getTeamAgents.mockResolvedValue([{ id: 'agent-1', name: 'Bot' }]);
     await loadTeamAgentsQuiet();
-    expect(window.buildAssignees).toHaveBeenCalled();
+    expect(mockBuildAssignees).toHaveBeenCalled();
     expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
@@ -162,14 +167,12 @@ describe('loadAgents', () => {
     document.body.innerHTML = '<div id="agents-list"></div>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('fetches and renders agents', async () => {
@@ -197,14 +200,12 @@ describe('renderAgents', () => {
   it('renders empty state when no agents', async () => {
     api.getTeamAgents.mockResolvedValue([]);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadAgents();
     const list = document.getElementById('agents-list');
     expect(list.innerHTML).toContain('No agents yet');
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('escapes agent name for XSS prevention', async () => {
@@ -213,8 +214,8 @@ describe('renderAgents', () => {
     ];
     api.getTeamAgents.mockResolvedValue(agents);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadAgents();
     const list = document.getElementById('agents-list');
     // Verify the escaped version is present
@@ -222,8 +223,6 @@ describe('renderAgents', () => {
     // Verify no script element was created
     expect(list.querySelector('script')).toBeNull();
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('shows project-scoped vs team-wide label', async () => {
@@ -233,15 +232,13 @@ describe('renderAgents', () => {
     ];
     api.getTeamAgents.mockResolvedValue(agents);
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     await loadAgents();
     const list = document.getElementById('agents-list');
     expect(list.innerHTML).toContain('Project-scoped');
     expect(list.innerHTML).toContain('Team-wide');
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 });
 
@@ -374,15 +371,13 @@ describe('deleteAgent', () => {
     document.body.innerHTML = '<div id="agents-list"></div>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
     vi.restoreAllMocks();
   });
 

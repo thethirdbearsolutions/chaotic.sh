@@ -6,13 +6,14 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { getCurrentTeam, setCurrentTeam, getCurrentView } from './state.js';
+import { getCurrentTeam, setCurrentTeam, getCurrentView, getCurrentUser, setLabels } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo, handleRoute } from './router.js';
 import { loadProjects } from './projects.js';
 import { loadTeamAgentsQuiet } from './agents.js';
 import { connectWebSocket } from './ws.js';
-import { updateAssigneeFilter } from './assignees.js';
+import { buildAssignees, updateAssigneeFilter } from './assignees.js';
+import { getAgents } from './agents.js';
 
 // Module state
 let teams = [];
@@ -98,7 +99,7 @@ export async function selectTeam(team, isInitialLoad = false) {
   // Load team data (including members for assignee dropdown)
   await Promise.all([
     loadProjects(),
-    window.loadLabels ? window.loadLabels() : Promise.resolve(),
+    loadLabels(),
     loadTeamMembersQuiet(),
     loadTeamAgentsQuiet(),
   ]);
@@ -132,9 +133,7 @@ export async function loadTeamMembersQuiet() {
   if (!getCurrentTeam()) return;
   try {
     members = await api.getTeamMembers(getCurrentTeam().id);
-    if (window.buildAssignees) {
-      window.buildAssignees();
-    }
+    buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {
     console.error('Failed to load team members:', e);
@@ -149,9 +148,7 @@ export async function loadTeamMembers() {
 
   try {
     members = await api.getTeamMembers(getCurrentTeam().id);
-    if (window.buildAssignees) {
-      window.buildAssignees();
-    }
+    buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
     renderTeamMembers();
   } catch (e) {
@@ -178,7 +175,7 @@ export function renderTeamMembers() {
             <div style="display: flex; align-items: center; gap: 0.5rem;">
                 <span class="member-role">${member.role}</span>
                 ${
-                  member.user_id !== window.currentUser.id &&
+                  member.user_id !== getCurrentUser().id &&
                   member.role !== 'owner'
                     ? `
                     <button class="btn btn-danger btn-small" data-action="remove-member" data-user-id="${escapeAttr(member.user_id)}">Remove</button>
@@ -467,6 +464,19 @@ export async function handleUpdateTeam(event) {
   return false;
 }
 
+/**
+ * Load labels for the current team
+ */
+export async function loadLabels() {
+    if (!getCurrentTeam()) return;
+    try {
+        const labels = await api.getLabels(getCurrentTeam().id);
+        setLabels(labels);
+    } catch (e) {
+        console.error('Failed to load labels:', e);
+    }
+}
+
 // Set up dropdown close handlers
 document.addEventListener('click', (e) => {
   if (
@@ -511,29 +521,3 @@ registerActions({
   },
 });
 
-// Attach to window for backward compatibility with HTML handlers
-Object.assign(window, {
-  loadTeams,
-  renderTeamList,
-  selectTeam,
-  toggleTeamDropdown,
-  toggleUserDropdown,
-  loadTeamMembersQuiet,
-  loadTeamMembers,
-  renderTeamMembers,
-  loadTeamInvitations,
-  renderTeamInvitations,
-  loadTeamAgents,
-  renderTeamAgents,
-  showInviteModal,
-  handleInvite,
-  removeMember,
-  deleteInvitation,
-  showCreateTeamModal,
-  showEditTeamModal,
-  handleCreateTeam,
-  handleUpdateTeam,
-  getTeams,
-  getMembers,
-  setMembers,
-});

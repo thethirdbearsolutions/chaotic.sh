@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getCurrentTeam, setCurrentTeam } from './state.js';
+import { getCurrentTeam, setCurrentTeam, getCurrentUser, setCurrentUser } from './state.js';
+
+const mockInitApp = vi.fn().mockResolvedValue(undefined);
+vi.mock('./app.js', () => ({
+  initApp: (...args) => mockInitApp(...args),
+}));
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -181,8 +186,8 @@ describe('handleLogin', () => {
     document.getElementById('login-email').value = 'test@example.com';
     document.getElementById('login-password').value = 'password123';
     vi.clearAllMocks();
-    window.currentUser = null;
-    window.initApp = null;
+    setCurrentUser(null);
+    mockInitApp.mockClear();
     localStorage.clear();
 
     // Mock login to call setToken like the real API does
@@ -219,17 +224,16 @@ describe('handleLogin', () => {
 
     await handleLogin(event);
     expect(api.getMe).toHaveBeenCalled();
-    expect(window.currentUser).toEqual(mockUser);
+    expect(getCurrentUser()).toEqual(mockUser);
   });
 
-  it('calls window.initApp if available', async () => {
+  it('calls initApp after login', async () => {
     const event = { preventDefault: vi.fn() };
-    window.initApp = vi.fn().mockResolvedValue(undefined);
     api.login.mockResolvedValue({ access_token: 'token123' });
     api.getMe.mockResolvedValue({ id: 1, name: 'Test User' });
 
     await handleLogin(event);
-    expect(window.initApp).toHaveBeenCalled();
+    expect(mockInitApp).toHaveBeenCalled();
   });
 
   it('shows success toast on successful login', async () => {
@@ -254,7 +258,7 @@ describe('handleLogin', () => {
     api.login.mockRejectedValue(new Error('Invalid credentials'));
 
     await handleLogin(event);
-    expect(window.currentUser).toBeNull();
+    expect(getCurrentUser()).toBeNull();
   });
 
   it('returns false', async () => {
@@ -295,8 +299,8 @@ describe('handleSignup', () => {
     document.getElementById('signup-email').value = 'test@example.com';
     document.getElementById('signup-password').value = 'password123';
     vi.clearAllMocks();
-    window.currentUser = null;
-    window.initApp = null;
+    setCurrentUser(null);
+    mockInitApp.mockClear();
     localStorage.clear();
 
     // Mock login to call setToken like the real API does
@@ -350,18 +354,17 @@ describe('handleSignup', () => {
 
     await handleSignup(event);
     expect(api.getMe).toHaveBeenCalled();
-    expect(window.currentUser).toEqual(mockUser);
+    expect(getCurrentUser()).toEqual(mockUser);
   });
 
-  it('calls window.initApp if available', async () => {
+  it('calls initApp after signup', async () => {
     const event = { preventDefault: vi.fn() };
-    window.initApp = vi.fn().mockResolvedValue(undefined);
     api.signup.mockResolvedValue({ id: 1 });
     api.login.mockResolvedValue({ access_token: 'token123' });
     api.getMe.mockResolvedValue({ id: 1, name: 'Test User' });
 
     await handleSignup(event);
-    expect(window.initApp).toHaveBeenCalled();
+    expect(mockInitApp).toHaveBeenCalled();
   });
 
   it('shows success toast on successful signup', async () => {
@@ -409,7 +412,7 @@ describe('logout', () => {
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('main-screen').classList.remove('hidden');
     vi.clearAllMocks();
-    window.currentUser = { id: 1, name: 'Test User' };
+    setCurrentUser({ id: 1, name: 'Test User' });
     setCurrentTeam({ id: 1, name: 'Test Team' });
     localStorage.setItem('chaotic_token', 'token123');
   });
@@ -421,7 +424,7 @@ describe('logout', () => {
 
   it('clears currentUser', () => {
     logout();
-    expect(window.currentUser).toBeNull();
+    expect(getCurrentUser()).toBeNull();
   });
 
   it('clears currentTeam', () => {
@@ -493,7 +496,7 @@ describe('updateUserInfo', () => {
     document.getElementById('user-avatar').textContent = '';
     document.getElementById('user-avatar').className = '';
     document.getElementById('user-avatar').innerHTML = '';
-    window.currentUser = null;
+    setCurrentUser(null);
   });
 
   it('does nothing if no current user', () => {
@@ -502,13 +505,13 @@ describe('updateUserInfo', () => {
   });
 
   it('updates user name', () => {
-    window.currentUser = { name: 'Test User', avatar_url: null };
+    setCurrentUser({ name: 'Test User', avatar_url: null });
     updateUserInfo();
     expect(document.getElementById('user-name').textContent).toBe('Test User');
   });
 
   it('shows first letter of name as default avatar', () => {
-    window.currentUser = { name: 'Test User', avatar_url: null };
+    setCurrentUser({ name: 'Test User', avatar_url: null });
     updateUserInfo();
     const avatarEl = document.getElementById('user-avatar');
     expect(avatarEl.textContent).toBe('T');
@@ -516,10 +519,10 @@ describe('updateUserInfo', () => {
   });
 
   it('shows image avatar when avatar_url is an image', () => {
-    window.currentUser = {
+    setCurrentUser({
       name: 'Test User',
       avatar_url: 'https://example.com/avatar.png',
-    };
+    });
     updateUserInfo();
     const avatarEl = document.getElementById('user-avatar');
     expect(avatarEl.className).toBe('avatar-small');
@@ -529,7 +532,7 @@ describe('updateUserInfo', () => {
   });
 
   it('shows emoji avatar when avatar_url is emoji', () => {
-    window.currentUser = { name: 'Test User', avatar_url: '😀' };
+    setCurrentUser({ name: 'Test User', avatar_url: '😀' });
     updateUserInfo();
     const avatarEl = document.getElementById('user-avatar');
     expect(avatarEl.className).toBe('avatar-small avatar-emoji');
@@ -542,7 +545,7 @@ describe('updateUserInfo', () => {
     const parent = nameEl.parentNode;
     parent.removeChild(nameEl);
 
-    window.currentUser = { name: 'Test User', avatar_url: null };
+    setCurrentUser({ name: 'Test User', avatar_url: null });
     expect(() => updateUserInfo()).not.toThrow();
 
     // Restore the element
@@ -555,7 +558,7 @@ describe('updateUserInfo', () => {
     const parent = avatarEl.parentNode;
     parent.removeChild(avatarEl);
 
-    window.currentUser = { name: 'Test User', avatar_url: null };
+    setCurrentUser({ name: 'Test User', avatar_url: null });
     expect(() => updateUserInfo()).not.toThrow();
 
     // Restore the element
@@ -563,7 +566,7 @@ describe('updateUserInfo', () => {
   });
 
   it('lowercases first letter when appropriate', () => {
-    window.currentUser = { name: 'test', avatar_url: null };
+    setCurrentUser({ name: 'test', avatar_url: null });
     updateUserInfo();
     const avatarEl = document.getElementById('user-avatar');
     expect(avatarEl.textContent).toBe('T');
