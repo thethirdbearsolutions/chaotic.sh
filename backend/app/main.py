@@ -41,8 +41,6 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
-    from oxyde.migrations.executor import apply_migrations
-    await apply_migrations(migrations_dir="migrations")
     yield
     # Shutdown
     await close_oxyde()
