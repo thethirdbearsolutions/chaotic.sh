@@ -11,6 +11,25 @@ import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSign
 import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
 import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
 import { buildAssignees, getAssigneeById, formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, updateAssigneeFilter } from './assignees.js';
+import {
+    setDependencies as setIssueCreationDependencies,
+    showCreateIssueModal,
+    toggleCreateIssueOptions,
+    applyIssueTemplate,
+    showCreateSubIssueModal,
+    handleCreateSubIssue,
+    toggleCreateIssueDropdown,
+    updateCreateIssueProject,
+    setCreateIssueField,
+    handleCreateIssueNew,
+    handleCreateIssueAndNew,
+} from './issue-creation.js';
+import {
+    setDependencies as setIssueEditDependencies,
+    showEditIssueModal,
+    handleUpdateIssue,
+    deleteIssue,
+} from './issue-edit.js';
 import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
 import {
     toggleMultiSelect,
@@ -170,8 +189,6 @@ import {
     createLabelFromDropdown,
     createLabelForCreateIssue,
     toggleCreateIssueLabelSelection,
-    updateCreateIssueLabelsLabel,
-    renderCreateIssueLabelDropdown,
     handleLabelCreateKey,
     handleCreateIssueLabelKey,
 } from './inline-dropdown.js';
@@ -218,7 +235,6 @@ import { connectWebSocket } from './ws.js';
 
 window.currentTeam = null;
 let labels = [];
-let createIssueLabelIds = [];
 
 // Mobile sidebar toggle (CHT-869)
 function updateSidebarAria() {
@@ -312,62 +328,6 @@ function renderMarkdown(content) {
         return content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     }
 }
-
-const ISSUE_TEMPLATES = [
-    {
-        id: 'none',
-        label: 'No template',
-        title: '',
-        description: '',
-    },
-    {
-        id: 'bug',
-        label: 'Bug report',
-        title: 'Bug: ',
-        description: `## Summary
-
-## Steps to Reproduce
-1.
-2.
-3.
-
-## Expected Behavior
-
-## Actual Behavior
-
-## Environment
-- 
-
-## Notes
-`,
-    },
-    {
-        id: 'feature',
-        label: 'Feature request',
-        title: 'Feature: ',
-        description: `## Problem
-
-## Proposed Solution
-
-## Alternatives Considered
-
-## Acceptance Criteria
-- 
-`,
-    },
-    {
-        id: 'task',
-        label: 'Task',
-        title: 'Task: ',
-        description: `## Goal
-
-## Plan
-- 
-
-## Notes
-`,
-    },
-];
 
 // Configure router (CHT-782)
 configureRouter({
@@ -568,9 +528,6 @@ window.viewEpic = viewEpic;
 window.viewEpicByPath = viewEpicByPath;
 window.toggleTicketRituals = toggleTicketRituals;
 window.toggleSection = toggleSection;
-
-// Export create issue modal functions to window for inline onclick handlers
-window.toggleCreateIssueOptions = toggleCreateIssueOptions;
 
 // Export functions called via window from other modules (agents.js, teams.js)
 window.connectWebSocket = connectWebSocket;
@@ -981,607 +938,6 @@ function setupMentionAutocomplete() {
 }
 
 
-// Linear-style create issue modal
-function showCreateIssueModal(preselectedProjectId = null) {
-    const projectId = preselectedProjectId || document.getElementById('project-filter')?.value;
-    createIssueLabelIds = [];
-
-    // Build project options
-    const projectOptions = getProjects().map(p => `
-        <option value="${p.id}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>
-    `).join('');
-
-    document.getElementById('modal-title').textContent = '';
-    document.getElementById('modal-content').innerHTML = `
-        <div class="create-issue-modal">
-            <div class="create-issue-header">
-                <select id="create-issue-project" class="project-select" onchange="updateCreateIssueProject()">
-                    <option value="">Select project</option>
-                    ${projectOptions}
-                </select>
-                <span class="create-issue-breadcrumb">› New issue</span>
-            </div>
-            <div class="create-issue-body">
-                <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Issue title" autofocus>
-                <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" onclick="toggleCreateIssueOptions()">
-                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    More options
-                </button>
-            </div>
-            <div class="create-issue-options collapsed" id="create-issue-options-panel">
-                <div class="create-issue-options-content">
-                    <div class="create-issue-template">
-                        <label for="create-issue-template">Template</label>
-                        <select id="create-issue-template" onchange="applyIssueTemplate(this.value)">
-                            ${ISSUE_TEMPLATES.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="create-issue-meta">
-                        <label for="create-issue-due-date">Due date</label>
-                        <input type="date" id="create-issue-due-date" class="create-issue-date-input">
-                    </div>
-                </div>
-                <div class="create-issue-toolbar">
-                    <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('status', event)">
-                            ${getStatusIcon('backlog')}
-                            <span id="create-issue-status-label">Backlog</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('priority', event)">
-                            ${getPriorityIcon('no_priority')}
-                            <span id="create-issue-priority-label">Priority</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" onclick="toggleCreateIssueDropdown('type', event)">
-                            <span class="issue-type-badge type-task">Task</span>
-                            <span id="create-issue-type-label">Task</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" onclick="toggleCreateIssueDropdown('labels', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                            <span id="create-issue-labels-label">Labels</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('assignee', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
-                            <span id="create-issue-assignee-label">Assignee</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('estimate', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                            <span id="create-issue-estimate-label">Estimate</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('sprint', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                            <span id="create-issue-sprint-label">Sprint</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="create-issue-footer">
-                <button type="button" id="btn-create-and-new" class="btn btn-secondary" onclick="handleCreateIssueAndNew()">Create & New</button>
-                <button type="button" id="btn-create-issue" class="btn btn-primary" onclick="handleCreateIssueNew()">Create issue</button>
-            </div>
-            <input type="hidden" id="create-issue-status" value="backlog">
-            <input type="hidden" id="create-issue-priority" value="no_priority">
-            <input type="hidden" id="create-issue-type" value="task">
-            <input type="hidden" id="create-issue-assignee" value="">
-            <input type="hidden" id="create-issue-estimate" value="">
-            <input type="hidden" id="create-issue-sprint" value="">
-        </div>
-    `;
-    showModal();
-    updateCreateIssueLabelsLabel();
-    document.getElementById('create-issue-title').focus();
-}
-
-// Toggle more options panel in create issue modal
-function toggleCreateIssueOptions() {
-    const panel = document.getElementById('create-issue-options-panel');
-    const toggle = document.getElementById('more-options-toggle');
-    if (panel && toggle) {
-        panel.classList.toggle('collapsed');
-        toggle.classList.toggle('expanded');
-    }
-}
-
-function applyIssueTemplate(templateId) {
-    const template = ISSUE_TEMPLATES.find(t => t.id === templateId);
-    if (!template) return;
-    const titleInput = document.getElementById('create-issue-title');
-    const descriptionInput = document.getElementById('create-issue-description');
-    if (titleInput && template.title !== undefined) {
-        titleInput.value = template.title;
-    }
-    if (descriptionInput && template.description !== undefined) {
-        descriptionInput.value = template.description;
-    }
-}
-
-function showCreateSubIssueModal(parentId, projectId) {
-    const project = getProjects().find(p => p.id === projectId);
-    createIssueLabelIds = [];
-
-    document.getElementById('modal-title').textContent = '';
-    document.getElementById('modal-content').innerHTML = `
-        <div class="create-issue-modal">
-            <div class="create-issue-header">
-                <span class="project-name">${project ? escapeHtml(project.name) : 'Project'}</span>
-                <span class="create-issue-breadcrumb">› New sub-issue</span>
-            </div>
-            <div class="create-issue-body">
-                <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Sub-issue title" autofocus>
-                <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" onclick="toggleCreateIssueOptions()">
-                    <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    More options
-                </button>
-            </div>
-            <div class="create-issue-options collapsed" id="create-issue-options-panel">
-                <div class="create-issue-toolbar">
-                    <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('status', event)">
-                            ${getStatusIcon('backlog')}
-                            <span id="create-issue-status-label">Backlog</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('priority', event)">
-                            ${getPriorityIcon('no_priority')}
-                            <span id="create-issue-priority-label">Priority</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" onclick="toggleCreateIssueDropdown('type', event)">
-                            <span class="issue-type-badge type-task">Task</span>
-                            <span id="create-issue-type-label">Task</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" onclick="toggleCreateIssueDropdown('labels', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                            <span id="create-issue-labels-label">Labels</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('assignee', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
-                            <span id="create-issue-assignee-label">Assignee</span>
-                        </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('estimate', event)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                            <span id="create-issue-estimate-label">Estimate</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="create-issue-footer">
-                <button type="button" class="btn btn-primary" onclick="handleCreateSubIssue('${escapeJsString(parentId)}', '${escapeJsString(projectId)}')">Create sub-issue</button>
-            </div>
-            <input type="hidden" id="create-issue-status" value="backlog">
-            <input type="hidden" id="create-issue-priority" value="no_priority">
-            <input type="hidden" id="create-issue-type" value="task">
-            <input type="hidden" id="create-issue-assignee" value="">
-            <input type="hidden" id="create-issue-estimate" value="">
-        </div>
-    `;
-    showModal();
-    updateCreateIssueLabelsLabel();
-    document.getElementById('create-issue-title').focus();
-}
-
-async function handleCreateSubIssue(parentId, projectId) {
-    const title = document.getElementById('create-issue-title').value.trim();
-    const description = document.getElementById('create-issue-description').value.trim();
-    const status = document.getElementById('create-issue-status').value;
-    const priority = document.getElementById('create-issue-priority').value;
-    const issueType = document.getElementById('create-issue-type').value || 'task';
-    const assigneeId = document.getElementById('create-issue-assignee').value || null;
-    const estimateValue = document.getElementById('create-issue-estimate').value;
-    const estimate = estimateValue ? parseInt(estimateValue) : null;
-
-    if (!title) {
-        showToast('Please enter a title', 'error');
-        return;
-    }
-
-    try {
-        const issue = await api.createIssue(projectId, {
-            title,
-            description: description || null,
-            status,
-            priority,
-            issue_type: issueType,
-            assignee_id: assigneeId,
-            estimate,
-            label_ids: createIssueLabelIds,
-            parent_id: parentId
-        });
-
-        closeModal();
-        showToast(`Created sub-issue ${issue.identifier}`, 'success');
-
-        // Refresh the parent issue detail view
-        viewIssue(parentId);
-    } catch (e) {
-        showToast(`Failed to create sub-issue: ${e.message}`, 'error');
-    }
-}
-
-async function toggleCreateIssueDropdown(type, event) {
-    closeAllDropdowns();
-
-    const btn = event.currentTarget;
-    const rect = btn.getBoundingClientRect();
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'inline-dropdown dropdown-positioning';
-    dropdown.style.top = `${rect.top - 8}px`;
-    dropdown.style.left = `${rect.left}px`;
-    dropdown.style.transform = 'translateY(-100%)';
-    dropdown.style.animation = 'none'; // Disable animation - it overrides the transform
-
-    if (type === 'status') {
-        const currentStatus = document.getElementById('create-issue-status').value;
-        dropdown.innerHTML = `
-            <div class="dropdown-header">Status</div>
-            ${['backlog', 'todo', 'in_progress', 'in_review', 'done'].map(status => `
-                <button class="dropdown-option ${status === currentStatus ? 'selected' : ''}" onclick="setCreateIssueField('status', '${status}', '${formatStatus(status)}')">
-                    ${getStatusIcon(status)}
-                    <span>${formatStatus(status)}</span>
-                </button>
-            `).join('')}
-        `;
-    } else if (type === 'priority') {
-        const currentPriority = document.getElementById('create-issue-priority').value;
-        dropdown.innerHTML = `
-            <div class="dropdown-header">Priority</div>
-            ${['no_priority', 'urgent', 'high', 'medium', 'low'].map(priority => `
-                <button class="dropdown-option ${priority === currentPriority ? 'selected' : ''}" onclick="setCreateIssueField('priority', '${priority}', '${formatPriority(priority)}')">
-                    ${getPriorityIcon(priority)}
-                    <span>${formatPriority(priority)}</span>
-                </button>
-            `).join('')}
-        `;
-    } else if (type === 'type') {
-        const currentType = document.getElementById('create-issue-type').value;
-        dropdown.innerHTML = `
-            <div class="dropdown-header">Type</div>
-            ${['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'].map(issueType => `
-                <button class="dropdown-option ${issueType === currentType ? 'selected' : ''}" onclick="setCreateIssueField('type', '${issueType}', '${formatIssueType(issueType)}')">
-                    <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
-                </button>
-            `).join('')}
-        `;
-    } else if (type === 'labels') {
-        if (!window.currentTeam) {
-            dropdown.innerHTML = `<div class="dropdown-header">Select a team first</div>`;
-        } else {
-            if (labels.length === 0) {
-                try {
-                    labels = await api.getLabels(window.currentTeam.id);
-                } catch (e) {
-                    console.error('Failed to load labels:', e);
-                }
-            }
-            renderCreateIssueLabelDropdown(dropdown);
-
-            // Multi-select labels need special handling: don't close when clicking inside
-            document.body.appendChild(dropdown);
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    dropdown.classList.remove('dropdown-positioning');
-                });
-            });
-            registerDropdownClickOutside(dropdown, { multiSelect: true });
-            return; // Skip the default handler registration below
-        }
-    } else if (type === 'assignee') {
-        const currentAssignee = document.getElementById('create-issue-assignee').value;
-        const assigneeOptions = getAssigneeOptionList();
-        dropdown.innerHTML = `
-            <div class="dropdown-header">Assignee</div>
-            <button class="dropdown-option ${!currentAssignee ? 'selected' : ''}" onclick="setCreateIssueField('assignee', '', 'Assignee')">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
-                <span>Unassigned</span>
-            </button>
-            ${assigneeOptions.length === 0 ? `
-                <div class="dropdown-empty">No team members or agents found</div>
-            ` : assigneeOptions.map(({ assignee, indent }) => {
-                const name = formatAssigneeName(assignee) || 'User';
-                return `
-                <button class="dropdown-option ${assignee.id === currentAssignee ? 'selected' : ''}" onclick="setCreateIssueField('assignee', '${escapeJsString(assignee.id)}', '${escapeJsString(name)}')">
-                    ${renderAvatar(assignee, 'avatar-small')}
-                    <span>${formatAssigneeOptionLabel(assignee, indent)}</span>
-                </button>
-            `}).join('')}
-        `;
-    } else if (type === 'estimate') {
-        const currentEstimate = document.getElementById('create-issue-estimate').value;
-        const projectId = document.getElementById('create-issue-project')?.value;
-        const estimateOptions = getEstimateOptions(projectId);
-        dropdown.innerHTML = `
-            <div class="dropdown-header">Estimate</div>
-            ${estimateOptions.map(est => {
-                const strValue = est.value === null ? '' : String(est.value);
-                return `
-                <button class="dropdown-option ${strValue === currentEstimate ? 'selected' : ''}" onclick="setCreateIssueField('estimate', '${strValue}', '${est.value ? est.label : 'Estimate'}')">
-                    <span>${est.label}</span>
-                </button>
-            `}).join('')}
-        `;
-    } else if (type === 'sprint') {
-        const currentSprintId = document.getElementById('create-issue-sprint').value;
-        const projectId = document.getElementById('create-issue-project')?.value;
-        if (!projectId) {
-            dropdown.innerHTML = `<div class="dropdown-header">Select a project first</div>`;
-        } else {
-            try {
-                const projectSprints = await api.getSprints(projectId);
-                const available = projectSprints.filter(s => s.status !== 'completed');
-                dropdown.innerHTML = `
-                    <div class="dropdown-header">Sprint</div>
-                    <button class="dropdown-option ${!currentSprintId ? 'selected' : ''}" onclick="setCreateIssueField('sprint', '', 'Sprint')">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                        <span>No Sprint</span>
-                    </button>
-                    ${available.map(sprint => `
-                        <button class="dropdown-option ${sprint.id === currentSprintId ? 'selected' : ''}" onclick="setCreateIssueField('sprint', '${escapeJsString(sprint.id)}', '${escapeJsString(sprint.name)}')">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                            <span>${escapeHtml(sprint.name)}${sprint.status === 'active' ? ' (Active)' : ''}</span>
-                        </button>
-                    `).join('')}
-                `;
-            } catch {
-                dropdown.innerHTML = `<div class="dropdown-header">Failed to load sprints</div>`;
-            }
-            // Falls through to default append logic below
-        }
-    }
-
-    document.body.appendChild(dropdown);
-    // Double rAF ensures browser has painted before revealing (prevents position jump)
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            dropdown.classList.remove('dropdown-positioning');
-        });
-    });
-    registerDropdownClickOutside(dropdown);
-}
-
-function updateCreateIssueProject() {
-    // Clear sprint selection when project changes (sprints are project-specific)
-    const sprintInput = document.getElementById('create-issue-sprint');
-    const sprintLabel = document.getElementById('create-issue-sprint-label');
-    if (sprintInput) sprintInput.value = '';
-    if (sprintLabel) sprintLabel.textContent = 'Sprint';
-}
-
-function setCreateIssueField(field, value, label) {
-    document.getElementById(`create-issue-${field}`).value = value;
-    document.getElementById(`create-issue-${field}-label`).textContent = label;
-
-    if (field === 'status') {
-        const btn = document.querySelector('.toolbar-btn:first-child');
-        btn.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${label}</span>`;
-    } else if (field === 'priority') {
-        const btn = document.querySelectorAll('.toolbar-btn')[1];
-        btn.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${label}</span>`;
-    } else if (field === 'type') {
-        const btn = document.getElementById('create-issue-type-btn');
-        if (btn) {
-            btn.innerHTML = `<span class="issue-type-badge type-${value}">${formatIssueType(value)}</span><span id="create-issue-type-label">${label}</span>`;
-        }
-    }
-
-    closeAllDropdowns();
-}
-
-async function submitCreateIssue({ keepOpen = false } = {}) {
-    const projectId = document.getElementById('create-issue-project').value;
-    const title = document.getElementById('create-issue-title').value.trim();
-    const description = document.getElementById('create-issue-description').value.trim();
-    const status = document.getElementById('create-issue-status').value;
-    const priority = document.getElementById('create-issue-priority').value;
-    const issueType = document.getElementById('create-issue-type').value || 'task';
-    const assigneeId = document.getElementById('create-issue-assignee').value || null;
-    const estimateValue = document.getElementById('create-issue-estimate').value;
-    const estimate = estimateValue ? parseInt(estimateValue) : null;
-    const sprintId = document.getElementById('create-issue-sprint')?.value || null;
-    const dueDateValue = document.getElementById('create-issue-due-date')?.value;
-    const dueDate = dueDateValue ? new Date(`${dueDateValue}T00:00:00Z`).toISOString() : null;
-
-    if (!projectId) {
-        showToast('Please select a project', 'error');
-        return;
-    }
-    if (!title) {
-        showToast('Please enter a title', 'error');
-        return;
-    }
-
-    // Disable buttons to prevent double-submit
-    const btnCreate = document.getElementById('btn-create-issue');
-    const btnCreateAndNew = document.getElementById('btn-create-and-new');
-    if (btnCreate) btnCreate.disabled = true;
-    if (btnCreateAndNew) btnCreateAndNew.disabled = true;
-
-    try {
-        const issue = await api.createIssue(projectId, {
-            title,
-            description: description || null,
-            status,
-            priority,
-            issue_type: issueType,
-            assignee_id: assigneeId,
-            estimate,
-            sprint_id: sprintId,
-            label_ids: createIssueLabelIds,
-            due_date: dueDate
-        });
-
-        showToast(`Created ${issue.identifier}`, 'success');
-
-        // Refresh issues list in the background
-        if (getCurrentView() === 'issues') {
-            loadIssues();
-        } else if (getCurrentView() === 'my-issues') {
-            loadMyIssues();
-        }
-
-        if (keepOpen) {
-            // Reset title and description for next issue; preserve all other settings
-            document.getElementById('create-issue-title').value = '';
-            document.getElementById('create-issue-description').value = '';
-            document.getElementById('create-issue-title').focus();
-        } else {
-            closeModal();
-            viewIssue(issue.id);
-        }
-    } catch (e) {
-        showToast(`Failed to create issue: ${e.message}`, 'error');
-    } finally {
-        if (btnCreate) btnCreate.disabled = false;
-        if (btnCreateAndNew) btnCreateAndNew.disabled = false;
-    }
-}
-
-async function handleCreateIssueNew() {
-    await submitCreateIssue({ keepOpen: false });
-}
-
-async function handleCreateIssueAndNew() {
-    await submitCreateIssue({ keepOpen: true });
-}
-
-async function showEditIssueModal(issueId) {
-    try {
-        const issue = await api.getIssue(issueId);
-        const projectSprints = await api.getSprints(issue.project_id);
-
-        // Get estimate options based on project's estimate scale
-        const estimateOptions = window.getEstimateOptions ? window.getEstimateOptions(issue.project_id) : [
-            { value: null, label: 'No estimate' },
-            { value: 1, label: '1 point' },
-            { value: 2, label: '2 points' },
-            { value: 3, label: '3 points' },
-            { value: 5, label: '5 points' },
-            { value: 8, label: '8 points' },
-            { value: 13, label: '13 points' },
-            { value: 21, label: '21 points' },
-        ];
-
-        const estimateSelectOptions = estimateOptions.map(opt => `
-            <option value="${opt.value === null ? '' : opt.value}" ${issue.estimate === opt.value ? 'selected' : ''}>${escapeHtml(opt.label)}</option>
-        `).join('');
-
-        document.getElementById('modal-title').textContent = 'Edit Issue';
-        document.getElementById('modal-content').innerHTML = `
-            <form onsubmit="return handleUpdateIssue(event, '${escapeJsString(issueId)}')">
-                <div class="form-group">
-                    <label for="edit-issue-title">Title</label>
-                    <input type="text" id="edit-issue-title" value="${escapeAttr(issue.title)}" required>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-description">Description</label>
-                    <textarea id="edit-issue-description">${escapeHtml(issue.description || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-status">Status</label>
-                    <select id="edit-issue-status">
-                        <option value="backlog" ${issue.status === 'backlog' ? 'selected' : ''}>Backlog</option>
-                        <option value="todo" ${issue.status === 'todo' ? 'selected' : ''}>Todo</option>
-                        <option value="in_progress" ${issue.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
-                        <option value="in_review" ${issue.status === 'in_review' ? 'selected' : ''}>In Review</option>
-                        <option value="done" ${issue.status === 'done' ? 'selected' : ''}>Done</option>
-                        <option value="canceled" ${issue.status === 'canceled' ? 'selected' : ''}>Canceled</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-priority">Priority</label>
-                    <select id="edit-issue-priority">
-                        <option value="no_priority" ${issue.priority === 'no_priority' ? 'selected' : ''}>No Priority</option>
-                        <option value="low" ${issue.priority === 'low' ? 'selected' : ''}>Low</option>
-                        <option value="medium" ${issue.priority === 'medium' ? 'selected' : ''}>Medium</option>
-                        <option value="high" ${issue.priority === 'high' ? 'selected' : ''}>High</option>
-                        <option value="urgent" ${issue.priority === 'urgent' ? 'selected' : ''}>Urgent</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-type">Type</label>
-                    <select id="edit-issue-type">
-                        <option value="task" ${issue.issue_type === 'task' ? 'selected' : ''}>Task</option>
-                        <option value="bug" ${issue.issue_type === 'bug' ? 'selected' : ''}>Bug</option>
-                        <option value="feature" ${issue.issue_type === 'feature' ? 'selected' : ''}>Feature</option>
-                        <option value="chore" ${issue.issue_type === 'chore' ? 'selected' : ''}>Chore</option>
-                        <option value="docs" ${issue.issue_type === 'docs' ? 'selected' : ''}>Docs</option>
-                        <option value="tech_debt" ${issue.issue_type === 'tech_debt' ? 'selected' : ''}>Tech Debt</option>
-                        <option value="epic" ${issue.issue_type === 'epic' ? 'selected' : ''}>Epic</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-estimate">Estimate</label>
-                    <select id="edit-issue-estimate">
-                        ${estimateSelectOptions}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="edit-issue-sprint">Sprint</label>
-                    <select id="edit-issue-sprint">
-                        <option value="">No Sprint</option>
-                        ${projectSprints.filter(s => s.status !== 'completed').map(s => `
-                            <option value="${s.id}" ${issue.sprint_id === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>
-                        `).join('')}
-                    </select>
-                </div>
-                <button type="submit" class="btn btn-primary">Update Issue</button>
-            </form>
-        `;
-        showModal();
-    } catch (e) {
-        showToast(`Failed to load issue: ${e.message}`, 'error');
-    }
-}
-
-async function handleUpdateIssue(event, issueId) {
-    event.preventDefault();
-
-    try {
-        const titleEl = document.getElementById('edit-issue-title');
-        const descEl = document.getElementById('edit-issue-description');
-        const statusEl = document.getElementById('edit-issue-status');
-        const priorityEl = document.getElementById('edit-issue-priority');
-        const typeEl = document.getElementById('edit-issue-type');
-        const estimateEl = document.getElementById('edit-issue-estimate');
-        const sprintEl = document.getElementById('edit-issue-sprint');
-
-        if (!titleEl || !statusEl || !priorityEl || !typeEl) {
-            throw new Error('Required form fields not found');
-        }
-
-        const data = {
-            title: titleEl.value,
-            description: descEl ? descEl.value : '',
-            status: statusEl.value,
-            priority: priorityEl.value,
-            issue_type: typeEl.value,
-            estimate: estimateEl && estimateEl.value ? parseInt(estimateEl.value) : null,
-            sprint_id: sprintEl && sprintEl.value ? sprintEl.value : null,
-        };
-
-        await api.updateIssue(issueId, data);
-        closeModal();
-        await viewIssue(issueId);
-        showToast('Issue updated!', 'success');
-    } catch (e) {
-        showToast(`Failed to update issue: ${e.message}`, 'error');
-    }
-    return false;
-}
-
-async function deleteIssue(issueId) {
-    if (!confirm('Are you sure you want to delete this issue?')) return;
-
-    try {
-        await api.deleteIssue(issueId);
-        await loadIssues();
-        await loadProjects();
-        navigateTo('issues');
-        showToast('Issue deleted!', 'success');
-    } catch (e) {
-        showToast(`Failed to delete issue: ${e.message}`, 'error');
-    }
-}
-
 // Labels
 async function loadLabels() {
     if (!window.currentTeam) return;
@@ -1804,6 +1160,59 @@ setInlineDropdownDependencies({
     sanitizeColor,
     updateSprintCacheForProject,
     updateSprintBudgetBar,
+});
+
+// ============================================
+// ISSUE CREATION (logic in issue-creation.js)
+// ============================================
+
+setIssueCreationDependencies({
+    api,
+    getProjects,
+    getEstimateOptions,
+    getCurrentView,
+    showModal,
+    closeModal,
+    showToast,
+    viewIssue,
+    loadIssues,
+    loadMyIssues,
+    closeAllDropdowns,
+    registerDropdownClickOutside,
+    getLabels: () => labels,
+    setLabels: (newLabels) => { labels = newLabels; },
+    getCurrentTeam: () => window.currentTeam,
+    getStatusIcon,
+    getPriorityIcon,
+    formatStatus,
+    formatPriority,
+    formatIssueType,
+    formatAssigneeName,
+    formatAssigneeOptionLabel,
+    getAssigneeOptionList,
+    renderAvatar,
+    escapeHtml,
+    escapeAttr,
+    escapeJsString,
+});
+
+// ============================================
+// ISSUE EDIT (logic in issue-edit.js)
+// ============================================
+
+setIssueEditDependencies({
+    api,
+    showModal,
+    closeModal,
+    showToast,
+    viewIssue,
+    navigateTo,
+    loadIssues,
+    loadProjects,
+    getEstimateOptions,
+    escapeHtml,
+    escapeAttr,
+    escapeJsString,
 });
 
 // ============================================
@@ -2176,6 +1585,7 @@ Object.assign(window, {
     showCreateAgentModal,
 
     // Issue creation helpers (called from HTML onchange handlers)
+    toggleCreateIssueOptions,
     applyIssueTemplate,
     updateCreateIssueProject,
 
