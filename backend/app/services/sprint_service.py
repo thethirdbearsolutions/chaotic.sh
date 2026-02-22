@@ -7,7 +7,7 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
 from app.enums import SprintStatus
 from app.enums import IssueStatus
-from app.schemas.sprint import SprintCreate, SprintUpdate
+from app.schemas.sprint import SprintUpdate
 
 # Type alias for API compatibility
 Sprint = OxydeSprint
@@ -19,27 +19,6 @@ class SprintService:
     def __init__(self, db=None):
         # db parameter kept for API compatibility during migration.
         pass
-
-    async def create(self, sprint_in: SprintCreate, project_id: str) -> OxydeSprint:
-        """Create a new sprint."""
-        # Determine budget: explicit value > explicit unlimited > project default
-        if sprint_in.budget is not None:
-            budget = sprint_in.budget
-        elif sprint_in.explicit_unlimited:
-            budget = None  # Explicitly unlimited, don't use project default
-        else:
-            budget = await self._get_project_default_budget(project_id)
-
-        sprint = await OxydeSprint.objects.create(
-            project_id=project_id,
-            name=sprint_in.name,
-            description=sprint_in.description,
-            start_date=sprint_in.start_date,
-            end_date=sprint_in.end_date,
-            budget=budget,
-        )
-        await sprint.refresh()
-        return sprint
 
     async def _get_next_sprint_number(self, project_id: str) -> int:
         """Get the next sprint number for a project.

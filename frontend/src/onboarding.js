@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { isOnboardingComplete, setOnboardingComplete, clearOnboarding } from './storage.js';
 import { registerActions } from './event-delegation.js';
-import { initApp } from './app.js';
+import { initApp } from './init.js';
 
 let onboardingOverlay = null;
 let currentStep = 0;

@@ -12,7 +12,7 @@ vi.mock('./api.js', () => ({
 }));
 
 const mockInitApp = vi.fn().mockResolvedValue(undefined);
-vi.mock('./app.js', () => ({
+vi.mock('./init.js', () => ({
     initApp: (...args) => mockInitApp(...args),
 }));
 

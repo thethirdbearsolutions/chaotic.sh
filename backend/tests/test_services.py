@@ -4,13 +4,11 @@ from app.services.user_service import UserService
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
 from app.services.issue_service import IssueService
-from app.services.sprint_service import SprintService
 from app.services.document_service import DocumentService
 from app.schemas.user import UserCreate, UserUpdate
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.schemas.issue import IssueCreate, IssueUpdate, IssueCommentCreate, LabelCreate
-from app.schemas.sprint import SprintCreate, SprintUpdate
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.enums import TeamRole, IssueStatus, IssuePriority
 
@@ -172,21 +170,8 @@ async def test_issue_service_create_label(db, test_team):
 
 
 # Sprint Service Tests
-@pytest.mark.asyncio
-async def test_sprint_service_create(db, test_project):
-    """Test sprint creation via service."""
-    service = SprintService()
-    sprint_in = SprintCreate(
-        name="Service Sprint",
-        description="Created by service",
-    )
-    sprint = await service.create(sprint_in, test_project.id)
-    assert sprint.name == "Service Sprint"
-    assert sprint.status.value == "planned"
-
-
-# Note: Sprint lifecycle tests are in test_sprints.py (close_sprint, ensure_sprints_exist, etc.)
-# Manual start_sprint/complete_sprint were removed in CHT-588 in favor of the cadence system.
+# Note: SprintService.create() was removed (CHT-1069) — sprints are auto-created via cadence.
+# Sprint lifecycle tests are in test_sprints.py (close_sprint, ensure_sprints_exist, etc.).
 
 
 # Document Service Tests

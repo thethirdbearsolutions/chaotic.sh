@@ -5,7 +5,8 @@
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
-import { updateUserInfo, showAuthScreen, showMainScreen, logout, initAuth } from './auth.js';
+import { showAuthScreen, logout, initAuth } from './auth.js';
+import { initApp } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
@@ -35,9 +36,6 @@ import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } f
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
 import {
-    getTeams,
-    loadTeams,
-    selectTeam,
     toggleTeamDropdown,
     toggleUserDropdown,
     loadTeamMembers,
@@ -62,7 +60,7 @@ import {
     setOnRitualsChanged,
 } from './projects.js';
 import { getProjectFromUrl } from './url-helpers.js';
-import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
+import { resetOnboarding } from './onboarding.js';
 import {
     updateSprintProjectFilter,
     onSprintProjectChange,
@@ -555,21 +553,7 @@ function initIssueLinkHandler() {
     });
 }
 
-// App initialization
-export async function initApp() {
-    showMainScreen();
-    updateUserInfo();
-    await loadTeams();
-
-    const teams = getTeams();
-    if (teams.length === 0 && !hasCompletedOnboarding()) {
-        showOnboarding();
-        return;
-    }
-    if (teams.length > 0) {
-        await selectTeam(teams[0], true);
-    }
-}
+// initApp extracted to init.js (CHT-1093) to break circular deps
 
 
 // viewDocumentByPath helper (used by router detail route config)
