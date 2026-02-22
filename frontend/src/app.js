@@ -2,7 +2,7 @@
  * Chaotic - Main Application
  */
 
-/* global api -- provided via window by main.js entry point */
+import { api } from './api.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout, initAuth } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';

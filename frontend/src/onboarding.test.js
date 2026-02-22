@@ -3,6 +3,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('./api.js', () => ({
+    api: {
+        createTeam: vi.fn(),
+        createProject: vi.fn(),
+        createIssue: vi.fn(),
+    },
+}));
+
+import { api } from './api.js';
 import {
     hasCompletedOnboarding,
     markOnboardingComplete,
@@ -16,12 +25,6 @@ beforeEach(() => {
     localStorage.clear();
     document.body.innerHTML = '<div id="app"></div>';
     window.initApp = vi.fn();
-    // Mock the global api object used by onboarding.js (it uses window.api, not an import)
-    window.api = {
-        createTeam: vi.fn(),
-        createProject: vi.fn(),
-        createIssue: vi.fn(),
-    };
     // Clean up any existing overlay
     hideOnboarding();
 });
@@ -118,7 +121,7 @@ describe('onboarding navigation', () => {
 
 describe('onboarding team creation', () => {
     it('creates team and advances to project step', async () => {
-        window.api.createTeam.mockResolvedValue({ id: 't1', name: 'Engineering', key: 'ENG' });
+        api.createTeam.mockResolvedValue({ id: 't1', name: 'Engineering', key: 'ENG' });
 
         showOnboarding();
         window._onboardingNext(); // Go to team step
@@ -128,13 +131,13 @@ describe('onboarding team creation', () => {
 
         await window._onboardingCreateTeam({ preventDefault: vi.fn() });
 
-        expect(window.api.createTeam).toHaveBeenCalledWith({ name: 'Engineering', key: 'ENG' });
+        expect(api.createTeam).toHaveBeenCalledWith({ name: 'Engineering', key: 'ENG' });
         const overlay = document.getElementById('onboarding-overlay');
         expect(overlay.innerHTML).toContain('Create Your First Project');
     });
 
     it('shows error on team creation failure', async () => {
-        window.api.createTeam.mockRejectedValue(new Error('Team key already taken'));
+        api.createTeam.mockRejectedValue(new Error('Team key already taken'));
 
         showOnboarding();
         window._onboardingNext();
@@ -152,8 +155,8 @@ describe('onboarding team creation', () => {
 
 describe('onboarding project creation', () => {
     it('creates project and advances to issue step', async () => {
-        window.api.createTeam.mockResolvedValue({ id: 't1', name: 'Eng', key: 'ENG' });
-        window.api.createProject.mockResolvedValue({ id: 'p1', name: 'Backend', key: 'BE' });
+        api.createTeam.mockResolvedValue({ id: 't1', name: 'Eng', key: 'ENG' });
+        api.createProject.mockResolvedValue({ id: 'p1', name: 'Backend', key: 'BE' });
 
         showOnboarding();
         window._onboardingNext(); // team step
@@ -166,16 +169,16 @@ describe('onboarding project creation', () => {
         document.getElementById('onboarding-project-key').value = 'BE';
         await window._onboardingCreateProject({ preventDefault: vi.fn() });
 
-        expect(window.api.createProject).toHaveBeenCalledWith('t1', { name: 'Backend', key: 'BE' });
+        expect(api.createProject).toHaveBeenCalledWith('t1', { name: 'Backend', key: 'BE' });
         expect(document.getElementById('onboarding-overlay').innerHTML).toContain('Create Your First Issue');
     });
 });
 
 describe('onboarding issue creation', () => {
     it('creates issue and shows completion step', async () => {
-        window.api.createTeam.mockResolvedValue({ id: 't1', name: 'Eng', key: 'ENG' });
-        window.api.createProject.mockResolvedValue({ id: 'p1', name: 'Backend', key: 'BE' });
-        window.api.createIssue.mockResolvedValue({ id: 'i1', identifier: 'ENG-1', title: 'Setup CI' });
+        api.createTeam.mockResolvedValue({ id: 't1', name: 'Eng', key: 'ENG' });
+        api.createProject.mockResolvedValue({ id: 'p1', name: 'Backend', key: 'BE' });
+        api.createIssue.mockResolvedValue({ id: 'i1', identifier: 'ENG-1', title: 'Setup CI' });
 
         showOnboarding();
         window._onboardingNext();
@@ -191,7 +194,7 @@ describe('onboarding issue creation', () => {
         document.getElementById('onboarding-issue-title').value = 'Setup CI';
         await window._onboardingCreateIssue({ preventDefault: vi.fn() });
 
-        expect(window.api.createIssue).toHaveBeenCalledWith('p1', { title: 'Setup CI' });
+        expect(api.createIssue).toHaveBeenCalledWith('p1', { title: 'Setup CI' });
         const overlay = document.getElementById('onboarding-overlay');
         expect(overlay.innerHTML).toContain("You're all set");
         expect(overlay.innerHTML).toContain('Eng (ENG)');

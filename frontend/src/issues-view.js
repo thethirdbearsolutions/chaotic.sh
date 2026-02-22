@@ -5,7 +5,7 @@
  * from the main application module.
  */
 
-/* global api */
+import { api } from './api.js';
 import { formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, escapeJsString } from './utils.js';
 import {
     getActiveFilterCategory,

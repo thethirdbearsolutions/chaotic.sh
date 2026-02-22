@@ -3,8 +3,7 @@
  * Shows a multi-step wizard when user has no teams after login.
  */
 
-/* global api */
-
+import { api } from './api.js';
 import { isOnboardingComplete, setOnboardingComplete, clearOnboarding } from './storage.js';
 
 let onboardingOverlay = null;

@@ -522,5 +522,3 @@ export class ApiClient {
 // Create and export the singleton instance
 export const api = new ApiClient();
 
-// Also attach to window for backward compatibility with inline event handlers
-window.api = api;

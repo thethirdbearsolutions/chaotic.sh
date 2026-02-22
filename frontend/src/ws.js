@@ -8,8 +8,7 @@
  * CHT-1039: Pub/sub event registry replacing monolithic handler
  */
 
-/* global api -- provided via window by main.js entry point */
-
+import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
 
