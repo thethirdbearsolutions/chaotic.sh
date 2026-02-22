@@ -17,6 +17,7 @@ vi.mock('./api.js', () => ({
   api: {
     getDocuments: vi.fn(),
     getDocument: vi.fn(),
+    getDocumentComments: vi.fn().mockResolvedValue([]),
     createDocument: vi.fn(),
     updateDocument: vi.fn(),
     deleteDocument: vi.fn(),
