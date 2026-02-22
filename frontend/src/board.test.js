@@ -27,8 +27,15 @@ vi.mock('./url-helpers.js', () => ({
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn((text) => text),
     escapeAttr: vi.fn((text) => text),
-    escapeJsString: vi.fn((text) => text),
     formatPriority: vi.fn((p) => p),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    viewIssue: vi.fn(),
 }));
 
 import { api } from './api.js';
@@ -172,30 +179,29 @@ describe('board', () => {
 
     describe('drag and drop', () => {
         it('handleDragStart sets dragging state', () => {
+            const mockTarget = {
+                dataset: { id: 'issue-1' },
+                classList: { add: vi.fn() },
+            };
             const mockEvent = {
                 dataTransfer: { setData: vi.fn() },
-                target: {
-                    dataset: { id: 'issue-1' },
-                    classList: { add: vi.fn() },
-                },
             };
 
-            handleDragStart(mockEvent);
+            handleDragStart(mockEvent, mockTarget);
 
             expect(mockEvent.dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'issue-1');
-            expect(mockEvent.target.classList.add).toHaveBeenCalledWith('dragging');
+            expect(mockTarget.classList.add).toHaveBeenCalledWith('dragging');
         });
 
         it('handleDragEnd clears dragging state', () => {
-            const mockEvent = {
-                target: {
-                    classList: { remove: vi.fn() },
-                },
+            const mockTarget = {
+                classList: { remove: vi.fn() },
             };
+            const mockEvent = {};
 
-            handleDragEnd(mockEvent);
+            handleDragEnd(mockEvent, mockTarget);
 
-            expect(mockEvent.target.classList.remove).toHaveBeenCalledWith('dragging');
+            expect(mockTarget.classList.remove).toHaveBeenCalledWith('dragging');
         });
     });
 
@@ -247,16 +253,16 @@ describe('board', () => {
         it('updates issue status on drop', async () => {
             api.updateIssue.mockResolvedValue({ id: '1', status: 'done' });
 
+            const mockTarget = {
+                dataset: { status: 'done' },
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'done' },
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
             expect(api.updateIssue).toHaveBeenCalledWith('1', { status: 'done' });
             expect(showToast).toHaveBeenCalledWith('Status updated', 'success');
@@ -265,16 +271,16 @@ describe('board', () => {
         it('reverts status on API error', async () => {
             api.updateIssue.mockRejectedValue(new Error('Update failed'));
 
+            const mockTarget = {
+                dataset: { status: 'done' },
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'done' },
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
             expect(showToast).toHaveBeenCalledWith('Failed to update status: Update failed', 'error');
             // Issue should be reverted to original status
@@ -282,16 +288,16 @@ describe('board', () => {
         });
 
         it('does nothing when status unchanged', async () => {
+            const mockTarget = {
+                dataset: { status: 'todo' }, // Same as current
+                classList: { remove: vi.fn() },
+            };
             const mockEvent = {
                 preventDefault: vi.fn(),
                 dataTransfer: { getData: vi.fn(() => '1') },
-                currentTarget: {
-                    dataset: { status: 'todo' }, // Same as current
-                    classList: { remove: vi.fn() },
-                },
             };
 
-            await handleDrop(mockEvent);
+            await handleDrop(mockEvent, mockTarget);
 
             expect(api.updateIssue).not.toHaveBeenCalled();
         });
