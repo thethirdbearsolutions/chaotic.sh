@@ -3,7 +3,7 @@
  */
 
 /* global api -- provided via window by main.js entry point */
-import { showModal, closeModal, isModalOpen, showToast } from './ui.js';
+import { showModal, closeModal, isModalOpen } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
 import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
@@ -156,7 +156,6 @@ import {
     handleCardDrop,
 } from './board.js';
 import {
-    renderIssues,
     toggleGroup,
 } from './issue-list.js';
 import {
@@ -189,8 +188,6 @@ import {
     getCurrentView,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
-    getIssues,
-    setIssues,
     setCurrentUser,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
@@ -205,84 +202,13 @@ import {
 import { connectWebSocket } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { initAllDependencies } from './dependencies.js';
+import { toggleSidebar, closeSidebar } from './sidebar.js';
+import { handleQuickCreate } from './quick-create.js';
 
 window.currentTeam = null;
 let labels = [];
 
-// Mobile sidebar toggle (CHT-869)
-function updateSidebarAria() {
-    const btn = document.getElementById('hamburger-btn');
-    if (btn) btn.setAttribute('aria-expanded', String(document.body.classList.contains('sidebar-open')));
-}
-
-function toggleSidebar() {
-    const wasOpen = document.body.classList.contains('sidebar-open');
-    document.body.classList.toggle('sidebar-open');
-    updateSidebarAria();
-    if (wasOpen) {
-        // Closing: return focus to hamburger button
-        const btn = document.getElementById('hamburger-btn');
-        if (btn) btn.focus();
-    } else {
-        // Opening: focus first focusable element in sidebar
-        const sidebar = document.querySelector('.sidebar');
-        if (sidebar) {
-            const firstFocusable = sidebar.querySelector(FOCUSABLE_SELECTOR);
-            if (firstFocusable) firstFocusable.focus();
-        }
-    }
-}
-
-function closeSidebar() {
-    const wasOpen = document.body.classList.contains('sidebar-open');
-    document.body.classList.remove('sidebar-open');
-    updateSidebarAria();
-    if (wasOpen) {
-        const btn = document.getElementById('hamburger-btn');
-        if (btn) btn.focus();
-    }
-}
-
-// Shared focusable-element selector for sidebar focus trap (CHT-883)
-const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-// Focus trap for mobile sidebar (CHT-883)
-// Escape is handled by keyboard.js which already calls closeSidebar()
-document.addEventListener('keydown', (e) => {
-    if (!document.body.classList.contains('sidebar-open')) return;
-    if (e.key !== 'Tab') return;
-
-    const sidebar = document.querySelector('.sidebar');
-    if (!sidebar) return;
-
-    const focusable = sidebar.querySelectorAll(FOCUSABLE_SELECTOR);
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-
-    // If focus is outside the sidebar, redirect into it
-    if (!sidebar.contains(document.activeElement)) {
-        e.preventDefault();
-        first.focus();
-        return;
-    }
-
-    if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-    }
-});
-
-// Clean up sidebar-open class when resizing past mobile breakpoint
-window.addEventListener('resize', () => {
-    if (window.innerWidth > 768 && document.body.classList.contains('sidebar-open')) {
-        closeSidebar();
-    }
-});
+// Mobile sidebar toggle, closeSidebar, focus trap moved to sidebar.js (CHT-1046)
 
 // renderMarkdown imported from gate-approvals.js (CHT-1040)
 
@@ -677,75 +603,7 @@ document.addEventListener('keydown', createModifierKeyHandler({
 }));
 
 
-// ============================================
-// QUICK CREATE (with optimistic UI)
-// ============================================
-
-async function handleQuickCreate(event) {
-    if (event.key !== 'Enter') return;
-
-    const input = event.target;
-    const title = input.value.trim();
-    if (!title) return;
-
-    const projectId = document.getElementById('project-filter').value;
-    if (!projectId) {
-        showToast('Please select a project first', 'error');
-        return;
-    }
-
-    input.disabled = true;
-    const originalPlaceholder = input.placeholder;
-    input.placeholder = 'Creating...';
-
-    // Optimistic: add to list immediately
-    const tempId = 'temp-' + Date.now();
-    const project = getProjects().find(p => p.id === projectId);
-    const optimisticIssue = {
-        id: tempId,
-        title,
-        identifier: `${project?.key || 'NEW'}-?`,
-        status: 'backlog',
-        priority: 'no_priority',
-        issue_type: 'task',
-        estimate: null,
-        _isOptimistic: true
-    };
-    setIssues([optimisticIssue, ...getIssues()]);
-    renderIssues();
-
-    // Mark new item
-    const newItem = document.querySelector(`[data-id="${tempId}"]`);
-    if (newItem) newItem.classList.add('new');
-
-    try {
-        const created = await api.createIssue(projectId, {
-            title,
-            status: 'backlog',
-            priority: 'no_priority'
-        });
-        input.value = '';
-        // Replace optimistic with real
-        const issuesAfterCreate = getIssues();
-        const idx = issuesAfterCreate.findIndex(i => i.id === tempId);
-        if (idx !== -1) {
-            issuesAfterCreate[idx] = created;
-            setIssues(issuesAfterCreate);
-        }
-        renderIssues();
-        loadProjects(); // Update issue count in background
-        showToast('Issue created!', 'success');
-    } catch (e) {
-        // Remove optimistic on error
-        setIssues(getIssues().filter(i => i.id !== tempId));
-        renderIssues();
-        showToast(`Failed to create issue: ${e.message}`, 'error');
-    } finally {
-        input.disabled = false;
-        input.placeholder = originalPlaceholder;
-        input.focus();
-    }
-}
+// handleQuickCreate moved to quick-create.js (CHT-1045)
 
 // j/k/Enter/e list navigation - logic in keyboard.js
 document.addEventListener('keydown', createListNavigationHandler({
