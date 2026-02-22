@@ -9,7 +9,7 @@
 import { showModal, closeModal, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { getAssigneeById, formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
 import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
-import { getProjects, loadProjects, setGlobalProjectSelection, getEstimateOptions, formatEstimate } from './projects.js';
+import { getProjects, setGlobalProjectSelection, getEstimateOptions, formatEstimate } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { getMembers } from './teams.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -48,18 +48,12 @@ import {
     setDependencies as setIssueCreationDependencies,
 } from './issue-creation.js';
 import {
-    setDependencies as setIssueEditDependencies,
-} from './issue-edit.js';
-import {
     setDependencies as setIssueDetailViewDependencies,
     viewIssue,
     getActivityIcon,
     formatActivityActor,
     formatActivityText,
 } from './issue-detail-view.js';
-import {
-    setDependencies as setEpicDetailViewDependencies,
-} from './epic-detail-view.js';
 import { navigateTo, navigateToIssueByIdentifier } from './router.js';
 import { getSprintCache, updateSprintCacheForProject } from './sprints.js';
 
@@ -201,22 +195,6 @@ export function initAllDependencies(localState) {
         escapeJsString,
     });
 
-    // Issue Edit
-    setIssueEditDependencies({
-        api,
-        showModal,
-        closeModal,
-        showToast,
-        viewIssue,
-        navigateTo,
-        loadIssues,
-        loadProjects,
-        getEstimateOptions,
-        escapeHtml,
-        escapeAttr,
-        escapeJsString,
-    });
-
     // Issue Detail View
     setIssueDetailViewDependencies({
         api,
@@ -248,24 +226,4 @@ export function initAllDependencies(localState) {
         getIssues,
     });
 
-    // Epic Detail View
-    setEpicDetailViewDependencies({
-        api,
-        getCurrentView,
-        showToast,
-        navigateTo,
-        getProjects,
-        getAssigneeById,
-        formatAssigneeName,
-        formatStatus,
-        formatPriority,
-        formatEstimate,
-        formatTimeAgo,
-        getStatusIcon,
-        getPriorityIcon,
-        escapeHtml,
-        escapeAttr,
-        escapeJsString,
-        sanitizeColor,
-    });
 }

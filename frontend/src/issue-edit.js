@@ -4,14 +4,15 @@
  * Extracted from app.js to decouple issue editing logic from the main application module.
  */
 
-let deps = {};
-
-export function setDependencies(d) {
-    deps = d;
-}
+import { api } from './api.js';
+import { showModal, closeModal, showToast } from './ui.js';
+import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
+import { getEstimateOptions, loadProjects } from './projects.js';
+import { viewIssue } from './issue-detail-view.js';
+import { navigateTo } from './router.js';
+import { loadIssues } from './issues-view.js';
 
 export async function showEditIssueModal(issueId) {
-    const { api, showModal, showToast, escapeHtml, escapeAttr, escapeJsString, getEstimateOptions } = deps;
     try {
         const issue = await api.getIssue(issueId);
         const projectSprints = await api.getSprints(issue.project_id);
@@ -91,7 +92,6 @@ export async function showEditIssueModal(issueId) {
 }
 
 export async function handleUpdateIssue(event, issueId) {
-    const { api, showToast, closeModal, viewIssue } = deps;
     event.preventDefault();
 
     try {
@@ -127,7 +127,6 @@ export async function handleUpdateIssue(event, issueId) {
 }
 
 export async function deleteIssue(issueId) {
-    const { api, showToast, loadIssues, loadProjects, navigateTo } = deps;
     if (!confirm('Are you sure you want to delete this issue?')) return;
 
     try {
