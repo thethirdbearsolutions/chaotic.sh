@@ -28,6 +28,16 @@ function handleEvent(event) {
     const target = event.target.closest('[data-action]');
     if (!target) return;
 
+    // For keydown/input events from form controls (INPUT, TEXTAREA, SELECT),
+    // only fire if the form control itself has data-action. Don't bubble keydown
+    // from a textarea up to a parent form's data-action — that's normal typing,
+    // not an action trigger. (CHT-1100)
+    const evtType = event.type;
+    if ((evtType === 'keydown' || evtType === 'input') && target !== event.target) {
+        const tag = event.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    }
+
     const actionName = target.dataset.action;
     const handler = actions[actionName];
     if (!handler) {
