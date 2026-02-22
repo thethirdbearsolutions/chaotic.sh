@@ -3416,7 +3416,7 @@ class TestLimboStatusAPI:
     async def test_get_limbo_status_project_not_found(self, client, auth_headers):
         """Test getting limbo status for non-existent project."""
         response = await client.get(
-            "/api/rituals/limbo?project_id=nonexistent",
+            "/api/rituals/limbo?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -3647,7 +3647,7 @@ class TestTicketRitualAPI:
     async def test_get_pending_ticket_rituals_api_issue_not_found(self, client, auth_headers, test_project):
         """Test getting pending rituals for non-existent issue."""
         response = await client.get(
-            "/api/rituals/issue/nonexistent/pending",
+            "/api/rituals/issue/00000000-0000-0000-0000-000000000003/pending",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -3937,7 +3937,7 @@ class TestRitualGroupsAPI:
     async def test_get_ritual_group_api_not_found(self, client, auth_headers):
         """Test getting a non-existent ritual group."""
         response = await client.get(
-            "/api/rituals/groups/nonexistent",
+            "/api/rituals/groups/00000000-0000-0000-0000-000000000002",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4033,7 +4033,7 @@ class TestRitualGroupsAPI:
     async def test_list_ritual_groups_api_project_not_found(self, client, auth_headers):
         """Test listing ritual groups for non-existent project."""
         response = await client.get(
-            "/api/rituals/groups?project_id=nonexistent",
+            "/api/rituals/groups?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4049,7 +4049,7 @@ class TestRitualGroupsAPI:
     async def test_create_ritual_group_api_project_not_found(self, client, auth_headers):
         """Test creating ritual group for non-existent project."""
         response = await client.post(
-            "/api/rituals/groups?project_id=nonexistent",
+            "/api/rituals/groups?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
             json={"name": "test-group", "selection_mode": "random_one"},
         )
@@ -4096,7 +4096,7 @@ class TestRitualAPIEdgeCases:
     async def test_update_ritual_api_not_found(self, client, auth_headers):
         """Test updating non-existent ritual."""
         response = await client.patch(
-            "/api/rituals/nonexistent",
+            "/api/rituals/00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
             json={"prompt": "Updated"},
         )
@@ -4105,7 +4105,7 @@ class TestRitualAPIEdgeCases:
     async def test_delete_ritual_api_not_found(self, client, auth_headers):
         """Test deleting non-existent ritual."""
         response = await client.delete(
-            "/api/rituals/nonexistent",
+            "/api/rituals/00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4113,7 +4113,7 @@ class TestRitualAPIEdgeCases:
     async def test_attest_ritual_api_ritual_not_found(self, client, auth_headers, test_project):
         """Test attesting to non-existent ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/attest?project_id={test_project.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/attest?project_id={test_project.id}",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4124,7 +4124,7 @@ class TestRitualAPIEdgeCases:
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="test", prompt="Test")
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/attest?project_id=nonexistent",
+            f"/api/rituals/{ritual.id}/attest?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4179,7 +4179,7 @@ class TestRitualAPIEdgeCases:
     async def test_approve_attestation_api_ritual_not_found(self, client, auth_headers, test_project):
         """Test approving attestation for non-existent ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/approve?project_id={test_project.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/approve?project_id={test_project.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4189,7 +4189,7 @@ class TestRitualAPIEdgeCases:
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="test", prompt="Test")
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/approve?project_id=nonexistent",
+            f"/api/rituals/{ritual.id}/approve?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4265,7 +4265,7 @@ class TestRitualAPIEdgeCases:
     async def test_complete_gate_ritual_api_ritual_not_found(self, client, auth_headers, test_project):
         """Test completing non-existent GATE ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/complete?project_id={test_project.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/complete?project_id={test_project.id}",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4276,7 +4276,7 @@ class TestRitualAPIEdgeCases:
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="test", prompt="Test", approval_mode=ApprovalMode.GATE)
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/complete?project_id=nonexistent",
+            f"/api/rituals/{ritual.id}/complete?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4379,7 +4379,7 @@ class TestTicketRitualAPIEdgeCases:
     async def test_attest_ritual_for_issue_api_ritual_not_found(self, client, auth_headers, test_issue):
         """Test attesting to non-existent ticket ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/attest-issue/{test_issue.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/attest-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4395,7 +4395,7 @@ class TestTicketRitualAPIEdgeCases:
         )
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/attest-issue/nonexistent",
+            f"/api/rituals/{ritual.id}/attest-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4459,7 +4459,7 @@ class TestTicketRitualAPIEdgeCases:
     async def test_complete_gate_ritual_for_issue_api_ritual_not_found(self, client, auth_headers, test_issue):
         """Test completing non-existent GATE ticket ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/complete-issue/{test_issue.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/complete-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4476,7 +4476,7 @@ class TestTicketRitualAPIEdgeCases:
         )
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/complete-issue/nonexistent",
+            f"/api/rituals/{ritual.id}/complete-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
             json={"note": "Test"},
         )
@@ -4585,7 +4585,7 @@ class TestTicketRitualAPIEdgeCases:
     async def test_approve_issue_attestation_api_ritual_not_found(self, client, auth_headers, test_issue):
         """Test approving attestation for non-existent ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/approve-issue/{test_issue.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/approve-issue/{test_issue.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4601,7 +4601,7 @@ class TestTicketRitualAPIEdgeCases:
         )
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/approve-issue/nonexistent",
+            f"/api/rituals/{ritual.id}/approve-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4736,7 +4736,7 @@ class TestPendingGatesAPIEdgeCases:
     async def test_get_issues_with_pending_gates_api_project_not_found(self, client, auth_headers):
         """Test getting pending gates for non-existent project."""
         response = await client.get(
-            "/api/rituals/pending-gates?project_id=nonexistent",
+            "/api/rituals/pending-gates?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4757,7 +4757,7 @@ class TestForceClearLimboAPIEdgeCases:
     async def test_force_clear_limbo_api_project_not_found(self, client, auth_headers):
         """Test force-clearing limbo for non-existent project."""
         response = await client.post(
-            "/api/rituals/force-clear-limbo?project_id=nonexistent",
+            "/api/rituals/force-clear-limbo?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -4899,7 +4899,7 @@ class TestPendingTicketRitualsAPISuccessPaths:
     ):
         """Test getting pending ticket rituals for non-existent issue."""
         response = await client.get(
-            "/api/rituals/issue/nonexistent/pending",
+            "/api/rituals/issue/00000000-0000-0000-0000-000000000003/pending",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -5873,7 +5873,7 @@ class TestAttestationHistoryAPI:
     async def test_history_project_not_found(self, client, auth_headers):
         """Test history endpoint returns 404 for non-existent project."""
         response = await client.get(
-            "/api/rituals/history?project_id=nonexistent",
+            "/api/rituals/history?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404

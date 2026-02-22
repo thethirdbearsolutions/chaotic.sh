@@ -188,7 +188,7 @@ class TestTicketRitualAttestation:
     ):
         """Complete gate ritual with nonexistent issue → 404 (line 570)."""
         response = await client.post(
-            f"/api/rituals/{gate_ritual.id}/complete-issue/nonexistent",
+            f"/api/rituals/{gate_ritual.id}/complete-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
             json={"note": "gate done"},
         )
@@ -199,7 +199,7 @@ class TestTicketRitualAttestation:
     ):
         """Approve issue attestation with nonexistent issue → 404 (line 664)."""
         response = await client.post(
-            f"/api/rituals/{review_ticket_ritual.id}/approve-issue/nonexistent",
+            f"/api/rituals/{review_ticket_ritual.id}/approve-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
         )
         assert response.status_code == 404

@@ -489,7 +489,7 @@ async def test_list_invitations_not_admin(client, auth_headers2, test_team, db, 
 async def test_accept_invitation_not_found(client, auth_headers):
     """Test accepting invitation that doesn't exist."""
     response = await client.post(
-        "/api/teams/invitations/00000000-0000-0000-0000-00000000000b/accept",
+        "/api/teams/invitations/aaaa_bbbb_cccc_dddd_eeee_ffff_0000/accept",
         headers=auth_headers,
     )
     assert response.status_code == 404

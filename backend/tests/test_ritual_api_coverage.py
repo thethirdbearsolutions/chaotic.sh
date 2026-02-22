@@ -123,7 +123,7 @@ class TestRitualGroupCRUD:
     ):
         """GET /rituals/groups/{id} returns 404 for nonexistent group."""
         response = await client.get(
-            "/api/rituals/groups/nonexistent",
+            "/api/rituals/groups/00000000-0000-0000-0000-000000000002",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -152,7 +152,7 @@ class TestRitualGroupCRUD:
     ):
         """PATCH /rituals/groups/{id} returns 404 for nonexistent group."""
         response = await client.patch(
-            "/api/rituals/groups/nonexistent",
+            "/api/rituals/groups/00000000-0000-0000-0000-000000000002",
             headers=auth_headers,
             json={"name": "Nope"},
         )
@@ -205,7 +205,7 @@ class TestRitualGroupCRUD:
     ):
         """DELETE /rituals/groups/{id} returns 404 for nonexistent group."""
         response = await client.delete(
-            "/api/rituals/groups/nonexistent",
+            "/api/rituals/groups/00000000-0000-0000-0000-000000000002",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -280,7 +280,7 @@ class TestRitualCRUD:
     ):
         """GET /rituals/{id} returns 404 for nonexistent ritual."""
         response = await client.get(
-            "/api/rituals/nonexistent",
+            "/api/rituals/00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -379,7 +379,7 @@ class TestRitualAttestationFlow:
     ):
         """POST /rituals/{id}/attest-issue/{id} returns 404 for nonexistent ritual."""
         response = await client.post(
-            f"/api/rituals/nonexistent/attest-issue/{test_issue.id}",
+            f"/api/rituals/00000000-0000-0000-0000-000000000000/attest-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Should fail"},
         )
@@ -495,7 +495,7 @@ class TestPendingApprovalsEdgeCases:
     ):
         """GET /rituals/pending-approvals returns 404 for nonexistent project."""
         response = await client.get(
-            "/api/rituals/pending-approvals?project_id=nonexistent",
+            "/api/rituals/pending-approvals?project_id=00000000-0000-0000-0000-000000000008",
             headers=auth_headers,
         )
         assert response.status_code == 404

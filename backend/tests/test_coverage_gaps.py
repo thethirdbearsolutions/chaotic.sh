@@ -127,7 +127,7 @@ class TestDocumentBranchCoverage:
     async def test_list_documents_sprint_not_found(self, client, auth_headers, test_team):
         """List documents with nonexistent sprint returns 404."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&sprint_id=nonexistent",
+            f"/api/documents?team_id={test_team.id}&sprint_id=00000000-0000-0000-0000-000000000009",
             headers=auth_headers,
         )
         assert response.status_code == 404

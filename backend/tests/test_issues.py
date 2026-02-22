@@ -2600,7 +2600,7 @@ async def test_list_issues_by_sprint_only(client, auth_headers, test_sprint, tes
 async def test_list_issues_by_sprint_not_found(client, auth_headers):
     """Test listing issues by non-existent sprint_id."""
     response = await client.get(
-        "/api/issues?sprint_id=nonexistent",
+        "/api/issues?sprint_id=00000000-0000-0000-0000-000000000009",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2639,7 +2639,7 @@ async def test_list_issues_no_scope_fails(client, auth_headers):
 async def test_create_issue_project_not_found(client, auth_headers):
     """Test creating issue with non-existent project."""
     response = await client.post(
-        "/api/issues?project_id=nonexistent",
+        "/api/issues?project_id=00000000-0000-0000-0000-000000000008",
         headers=auth_headers,
         json={"title": "Test Issue"},
     )
