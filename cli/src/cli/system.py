@@ -605,12 +605,33 @@ def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
         return False, (e.stderr or e.stdout or "Unknown error").strip()
 
 
+def reinstall_cli() -> tuple[bool, str]:
+    """Reinstall the CLI binary from the server repo so it picks up new code."""
+    cli_dir = PROJECT_DIR / "cli"
+    try:
+        run_command(
+            ["uv", "tool", "install", "--force", str(cli_dir)],
+            cwd=PROJECT_DIR,
+            timeout=120,
+        )
+        return True, "CLI reinstalled"
+    except subprocess.CalledProcessError as e:
+        return False, f"CLI reinstall failed: {e.stderr}"
+    except subprocess.TimeoutExpired:
+        return False, "CLI reinstall timed out"
+
+
 def run_migrations() -> tuple[bool, str]:
     """Run pending database migrations using Oxyde. Returns (success, message)."""
     backend_dir = PROJECT_DIR / "backend"
     try:
         # Sync dependencies first (may download packages)
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
+
+        # Reinstall CLI binary so it picks up code changes
+        ok, msg = reinstall_cli()
+        if not ok:
+            return ok, msg
 
         # Run Oxyde migrations
         try:
