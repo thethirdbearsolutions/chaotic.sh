@@ -769,6 +769,7 @@ textarea {
 .filter-select:focus {
     outline: none;
     border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
 }
 
 /* Badges */
@@ -3631,9 +3632,19 @@ input[type="checkbox"] {
 /* Compact comment form (above comments list) */
 .comment-form-compact {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
     margin-bottom: 16px;
+    position: relative;
+}
+
+.comment-form-compact .mention-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 10;
 }
 
 .comment-form-compact textarea {
@@ -3655,7 +3666,6 @@ input[type="checkbox"] {
     flex-shrink: 0;
     align-self: flex-start;
     margin-top: 0;
-}
 }
 
 /* Activity in detail view */

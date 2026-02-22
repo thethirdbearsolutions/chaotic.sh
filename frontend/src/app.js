@@ -179,7 +179,6 @@ import {
     getActivityIcon,
     formatActivityActor,
     formatActivityText,
-    handleDescriptionClick,
     toggleSection,
     toggleTicketRituals,
     viewIssueByPath,
@@ -568,7 +567,6 @@ window.viewIssue = viewIssue;
 window.viewIssueByPath = viewIssueByPath;
 window.viewEpic = viewEpic;
 window.viewEpicByPath = viewEpicByPath;
-window.handleDescriptionClick = handleDescriptionClick;
 window.toggleTicketRituals = toggleTicketRituals;
 window.toggleSection = toggleSection;
 
@@ -2183,7 +2181,6 @@ Object.assign(window, {
     viewIssue,
     showEditIssueModal,
     editDescription,
-    handleDescriptionClick,
     setDescriptionEditorMode,
     updateIssueField,
     handleUpdateDescription,

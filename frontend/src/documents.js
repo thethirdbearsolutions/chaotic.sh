@@ -816,9 +816,9 @@ export async function viewDocument(documentId, pushHistory = true) {
 
     // Strip leading H1 from markdown if it matches the document title (avoid duplicate)
     let contentToRender = doc.content || '';
-    const h1Match = contentToRender.match(/^#\s+(.+?)(\n|$)/);
+    const h1Match = contentToRender.match(/^\s*#\s+(.+?)(\n|$)/);
     if (h1Match && h1Match[1].trim() === doc.title.trim()) {
-      contentToRender = contentToRender.replace(/^#\s+.+?\n?/, '').trimStart();
+      contentToRender = contentToRender.replace(/^\s*#\s+.+?\n?/, '').trimStart();
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `

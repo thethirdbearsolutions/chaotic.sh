@@ -406,18 +406,6 @@ export function renderDescriptionContent(content) {
  * @param {Event} event - Click event
  * @param {string} issueId - Issue ID
  */
-export function handleDescriptionClick(event, issueId) {
-    // Don't open edit modal if clicking on a link
-    const target = event.target;
-    if (target.tagName === 'A' || target.closest('a')) {
-        return; // Let the link handle the click
-    }
-    // Call editDescription from app.js via window
-    if (window.editDescription) {
-        window.editDescription(issueId);
-    }
-}
-
 /**
  * Toggle a collapsible section (activity, comments)
  * @param {string} sectionName - 'activity' or 'comments'
@@ -845,7 +833,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <form class="comment-form comment-form-compact" onsubmit="return handleAddComment(event, '${deps.escapeJsString(issue.id)}')">
-                            <textarea id="new-comment" placeholder="Write a comment... (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
+                            <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
                             <div id="mention-suggestions" class="mention-suggestions hidden"></div>
                             <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
                         </form>
