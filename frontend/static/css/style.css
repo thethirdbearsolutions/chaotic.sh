@@ -2176,7 +2176,6 @@ select:focus-visible {
 .list-item.keyboard-selected {
     background: var(--bg-tertiary);
     border-color: var(--accent-color);
-    transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 /* Compact mode for lists */
@@ -4212,12 +4211,14 @@ input[type="checkbox"] {
         background: rgba(0, 0, 0, 0.5);
         z-index: 150;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
-        transition: opacity 0.25s ease;
+        transition: opacity 0.25s ease, visibility 0.25s ease;
     }
 
     body.sidebar-open .sidebar-backdrop {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
     }
 
