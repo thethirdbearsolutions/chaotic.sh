@@ -613,11 +613,23 @@ def run_migrations() -> tuple[bool, str]:
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
 
         # Run Oxyde migrations
-        run_command(
-            ["uv", "run", "oxyde", "migrate"],
-            cwd=backend_dir,
-            timeout=120,
-        )
+        try:
+            run_command(
+                ["uv", "run", "oxyde", "migrate"],
+                cwd=backend_dir,
+                timeout=120,
+            )
+        except subprocess.CalledProcessError as e:
+            output = (e.stderr or "") + (e.stdout or "")
+            if "already exists" in output:
+                # Existing DB from pre-Oxyde era — fake-apply to mark as done
+                run_command(
+                    ["uv", "run", "oxyde", "migrate", "--fake"],
+                    cwd=backend_dir,
+                    timeout=30,
+                )
+            else:
+                raise
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
