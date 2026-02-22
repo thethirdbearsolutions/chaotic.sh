@@ -162,6 +162,24 @@ describe('event-delegation', () => {
             expect(handler.mock.calls[0][0].type).toBe('submit');
         });
 
+        it('still fires click on child data-action inside a form', () => {
+            const formHandler = vi.fn();
+            const btnHandler = vi.fn();
+            registerActions({ 'save-comment': formHandler, 'delete-comment': btnHandler });
+
+            document.body.innerHTML = `
+                <form data-action="save-comment">
+                    <textarea>text</textarea>
+                    <button type="button" data-action="delete-comment" data-id="7">Delete</button>
+                </form>
+            `;
+            document.querySelector('[data-action="delete-comment"]').click();
+
+            expect(btnHandler).toHaveBeenCalledTimes(1);
+            expect(btnHandler.mock.calls[0][1].id).toBe('7');
+            expect(formHandler).not.toHaveBeenCalled();
+        });
+
         it('still fires submit events on forms with data-action', () => {
             const handler = vi.fn();
             registerActions({ 'save-comment': handler });
