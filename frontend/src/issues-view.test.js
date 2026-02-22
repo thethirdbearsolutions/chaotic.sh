@@ -498,6 +498,28 @@ describe('issues-view', () => {
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
+        it('restores filters from localStorage when URL has only project param (CHT-1085)', () => {
+            // Simulate navigating back to issues from board — URL has project but no filters
+            Object.defineProperty(window, 'location', {
+                value: { search: '?project=proj-1', pathname: '/issues', href: 'http://localhost/issues?project=proj-1' },
+                writable: true,
+                configurable: true,
+            });
+            // Saved filters include status and project
+            localStorage.setItem('chaotic_issues_filters_team-1', 'status=todo&status=in_progress&project=proj-1');
+
+            loadFiltersFromUrl();
+
+            // Should restore status filters from localStorage
+            const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
+            expect(todoCheckbox.checked).toBe(true);
+            const inProgressCheckbox = document.querySelector('#status-filter-dropdown input[value="in_progress"]');
+            expect(inProgressCheckbox.checked).toBe(true);
+            // Should preserve project from URL
+            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            localStorage.removeItem('chaotic_issues_filters_team-1');
+        });
+
         it('does not fall back to localStorage when no team (CHT-1042)', () => {
             Object.defineProperty(window, 'location', {
                 value: { search: '', pathname: '/issues', href: 'http://localhost/issues' },
