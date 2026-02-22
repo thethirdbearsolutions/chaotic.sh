@@ -3,6 +3,12 @@
  * Extracted from app.js for testability
  */
 
+import { api } from './api.js';
+import { showToast } from './ui.js';
+import { getProjects, setGlobalProjectSelection } from './projects.js';
+import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { escapeHtml, escapeAttr, escapeJsString, formatPriority } from './utils.js';
+
 // Board status configuration
 export const BOARD_STATUSES = [
     { key: 'backlog', label: 'Backlog' },
@@ -15,28 +21,6 @@ export const BOARD_STATUSES = [
 // Module state
 let boardIssues = [];
 let draggingIssueId = null;
-
-// Dependencies injected from app.js
-let deps = {
-    api: null,
-    showToast: () => {},
-    getProjects: () => [],
-    getProjectFromUrl: () => null,
-    setGlobalProjectSelection: () => {},
-    updateUrlWithProject: () => {},
-    escapeHtml: (text) => text,
-    escapeAttr: (text) => text,
-    escapeJsString: (text) => text,
-    formatPriority: (p) => p,
-};
-
-/**
- * Set dependencies for this module
- * @param {Object} dependencies - Object containing required dependencies
- */
-export function setDependencies(dependencies) {
-    deps = { ...deps, ...dependencies };
-}
 
 /**
  * Get current board issues
@@ -69,15 +53,15 @@ export function updateBoardProjectFilter() {
     const filter = document.getElementById('board-project-filter');
     if (!filter) return;
 
-    const projects = deps.getProjects();
+    const projects = getProjects();
 
     // Populate project filter
     filter.innerHTML = '<option value="">Select Project</option>' +
-        projects.map(p => `<option value="${p.id}">${deps.escapeHtml(p.name)}</option>`).join('');
+        projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 
     if (!filter.value) {
         // Read from URL first, then localStorage
-        const saved = deps.getProjectFromUrl();
+        const saved = getProjectFromUrl();
         if (saved && projects.some(p => p.id === saved)) {
             filter.value = saved;
         }
@@ -104,8 +88,8 @@ export function updateBoardProjectFilter() {
 export function onBoardProjectChange() {
     const projectId = document.getElementById('board-project-filter')?.value;
     if (projectId) {
-        deps.setGlobalProjectSelection(projectId);
-        deps.updateUrlWithProject(projectId);
+        setGlobalProjectSelection(projectId);
+        updateUrlWithProject(projectId);
     }
     loadBoard(projectId);
 }
@@ -128,10 +112,10 @@ export async function loadBoard(projectIdParam) {
     }
 
     try {
-        boardIssues = await deps.api.getIssues({ project_id: projectId });
+        boardIssues = await api.getIssues({ project_id: projectId });
         renderBoard();
     } catch (e) {
-        deps.showToast(`Failed to load board: ${e.message}`, 'error');
+        showToast(`Failed to load board: ${e.message}`, 'error');
     }
 }
 
@@ -158,14 +142,14 @@ export function renderBoard() {
                     ${columnIssues.length === 0 ? `
                         <div class="kanban-column-empty">No issues</div>
                     ` : columnIssues.map(issue => `
-                        <div class="kanban-card" draggable="true" data-id="${deps.escapeAttr(issue.id)}"
+                        <div class="kanban-card" draggable="true" data-id="${escapeAttr(issue.id)}"
                              ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)"
                              ondragover="handleCardDragOver(event)" ondragleave="handleCardDragLeave(event)" ondrop="handleCardDrop(event)"
-                             onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${deps.escapeJsString(issue.id)}'); } else { window.open('/issue/${encodeURIComponent(issue.identifier)}', '_blank'); }">
-                            <div class="kanban-card-title">${deps.escapeHtml(issue.title)}</div>
+                             onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && event.button !== 1) { viewIssue('${escapeJsString(issue.id)}'); } else { window.open('/issue/${encodeURIComponent(issue.identifier)}', '_blank'); }">
+                            <div class="kanban-card-title">${escapeHtml(issue.title)}</div>
                             <div class="kanban-card-meta">
                                 <span class="kanban-card-identifier">${issue.identifier}</span>
-                                <span class="badge badge-priority-${issue.priority}" style="font-size: 10px;">${deps.formatPriority(issue.priority)}</span>
+                                <span class="badge badge-priority-${issue.priority}" style="font-size: 10px;">${formatPriority(issue.priority)}</span>
                             </div>
                         </div>
                     `).join('')}
@@ -225,13 +209,13 @@ export async function handleDrop(e) {
 
     // Optimistic update
     try {
-        await deps.api.updateIssue(issueId, { status: newStatus });
-        deps.showToast('Status updated', 'success');
+        await api.updateIssue(issueId, { status: newStatus });
+        showToast('Status updated', 'success');
     } catch (e) {
         // Revert on error
         issue.status = oldStatus;
         renderBoard();
-        deps.showToast(`Failed to update status: ${e.message}`, 'error');
+        showToast(`Failed to update status: ${e.message}`, 'error');
     }
 }
 
@@ -258,12 +242,12 @@ export async function handleCardDrop(e) {
 
     if (oldStatus === newStatus) return;
     try {
-        await deps.api.updateIssue(issueId, { status: newStatus });
-        deps.showToast('Status updated', 'success');
+        await api.updateIssue(issueId, { status: newStatus });
+        showToast('Status updated', 'success');
     } catch (e) {
         issue.status = oldStatus;
         renderBoard();
-        deps.showToast(`Failed to update status: ${e.message}`, 'error');
+        showToast(`Failed to update status: ${e.message}`, 'error');
     }
 }
 

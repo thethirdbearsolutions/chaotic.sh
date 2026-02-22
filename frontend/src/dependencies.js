@@ -9,8 +9,7 @@
 import { showModal, closeModal, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { getAssigneeById, formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
 import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
-import { getProjects, setGlobalProjectSelection, getEstimateOptions, formatEstimate } from './projects.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { getProjects, getEstimateOptions, formatEstimate } from './projects.js';
 import { getMembers } from './teams.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { renderTicketRitualActions } from './rituals-view.js';
@@ -18,7 +17,6 @@ import {
     getCurrentView,
     getIssues,
     setIssues,
-    getCurrentUser,
 } from './state.js';
 import {
     loadIssues,
@@ -26,14 +24,10 @@ import {
     updateSprintBudgetBar,
 } from './issues-view.js';
 import {
-    setDependencies as setDashboardDependencies,
     getMyIssues,
     setMyIssues,
     loadMyIssues,
 } from './dashboard.js';
-import {
-    setDependencies as setBoardDependencies,
-} from './board.js';
 import {
     setDependencies as setIssueListDependencies,
     renderIssueRow,
@@ -50,14 +44,10 @@ import {
 import {
     setDependencies as setIssueDetailViewDependencies,
     viewIssue,
-    getActivityIcon,
-    formatActivityActor,
-    formatActivityText,
 } from './issue-detail-view.js';
-import { navigateTo, navigateToIssueByIdentifier } from './router.js';
+import { navigateTo } from './router.js';
 import { getSprintCache, updateSprintCacheForProject } from './sprints.js';
 
-import { viewDocument } from './documents.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 
 /**
@@ -80,32 +70,6 @@ export function initAllDependencies(localState) {
         setCurrentDetailIssue,
         getCurrentDetailSprints,
     } = localState;
-
-    // Dashboard
-    setDashboardDependencies({
-        getCurrentUser,
-        getCurrentTeam,
-        renderIssueRow,
-        formatActivityText,
-        formatActivityActor,
-        getActivityIcon,
-        navigateToIssueByIdentifier,
-        viewDocument,
-    });
-
-    // Board
-    setBoardDependencies({
-        api,
-        showToast,
-        getProjects,
-        getProjectFromUrl,
-        setGlobalProjectSelection,
-        updateUrlWithProject,
-        escapeHtml,
-        escapeAttr,
-        escapeJsString,
-        formatPriority,
-    });
 
     // Issue List
     setIssueListDependencies({

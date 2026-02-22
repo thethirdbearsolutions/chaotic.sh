@@ -6,30 +6,12 @@
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import { escapeHtml, escapeJsString, formatTimeAgo } from './utils.js';
-
+import { getCurrentUser, getCurrentTeam } from './state.js';
+import { renderIssueRow } from './issue-list.js';
+import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
-
-// Dependencies (injected for testability)
-let deps = {
-    getCurrentUser: () => null,
-    getCurrentTeam: () => null,
-    renderIssueRow: () => '',
-    formatActivityText: () => '',
-    formatActivityActor: () => '',
-    getActivityIcon: () => '📝',
-    navigateToIssueByIdentifier: () => {},
-    viewDocument: () => {},
-};
-
-/**
- * Set dependencies for the dashboard module.
- * @param {Object} dependencies - Dependency functions
- */
-export function setDependencies(dependencies) {
-    deps = { ...deps, ...dependencies };
-}
 
 /**
  * Get the current my-issues list.
@@ -67,8 +49,8 @@ export function setDashboardActivities(activities) {
  * Load issues assigned to the current user.
  */
 export async function loadMyIssues() {
-    const currentTeam = deps.getCurrentTeam();
-    const currentUser = deps.getCurrentUser();
+    const currentTeam = getCurrentTeam();
+    const currentUser = getCurrentUser();
 
     if (!currentTeam || !currentUser) return;
 
@@ -104,7 +86,7 @@ export async function loadMyIssues() {
  * @param {boolean} [options.showLoading=true] - Whether to show loading state (skip for WS updates to avoid FOUC)
  */
 export async function loadDashboardActivity({ showLoading = true } = {}) {
-    const currentTeam = deps.getCurrentTeam();
+    const currentTeam = getCurrentTeam();
 
     if (!currentTeam) return;
 
@@ -158,10 +140,10 @@ export function renderDashboardActivity() {
 
         return `
         <div class="activity-item">
-            <div class="activity-icon">${deps.getActivityIcon(activity.activity_type)}</div>
+            <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
             <div class="activity-content">
-                <span class="activity-text">${deps.formatActivityText(activity)}${targetLink}</span>
-                <span class="activity-actor">by ${escapeHtml(deps.formatActivityActor(activity))}</span>
+                <span class="activity-text">${formatActivityText(activity)}${targetLink}</span>
+                <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
                 <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
             </div>
         </div>
@@ -212,7 +194,7 @@ export function renderMyIssues() {
         return;
     }
 
-    list.innerHTML = myIssues.map(issue => deps.renderIssueRow(issue)).join('');
+    list.innerHTML = myIssues.map(issue => renderIssueRow(issue)).join('');
 }
 
 // Window exports for onclick handlers
