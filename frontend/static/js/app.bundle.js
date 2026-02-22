@@ -62,7 +62,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <div class="skeleton skeleton-meta" style="margin-top: 6px;"></div>
             </div>
         </div>
-    `).join("")),t===null){const i=document.getElementById("doc-project-filter");i!=null&&i.value&&(t=i.value)}try{ei=await $.getDocuments(e,t);const i=document.getElementById("doc-view-list"),a=document.getElementById("doc-view-grid");i&&a&&(i.classList.toggle("active",Lt==="list"),a.classList.toggle("active",Lt==="grid")),at()}catch(i){v(i.message,"error")}}function Fc(e){return!e||e.length===0?"":e.map(t=>`<span class="badge" style="background-color: ${ye(t.color)}; color: white;">${f(t.name)}</span>`).join(" ")}function Uc(e){const t=e.labels&&e.labels.length>0?`<div class="grid-item-labels">${Fc(e.labels)}</div>`:"";return`
+    `).join("")),t===null){const i=document.getElementById("doc-project-filter");i!=null&&i.value&&(t=i.value)}try{ei=await $.getDocuments(e,t);const i=document.getElementById("doc-view-list"),a=document.getElementById("doc-view-grid");i&&a&&(i.classList.toggle("active",Lt==="list"),a.classList.toggle("active",Lt==="grid")),at()}catch(i){const a=document.getElementById("documents-list");a&&(a.innerHTML=""),v(i.message,"error")}}function Fc(e){return!e||e.length===0?"":e.map(t=>`<span class="badge" style="background-color: ${ye(t.color)}; color: white;">${f(t.name)}</span>`).join(" ")}function Uc(e){const t=e.labels&&e.labels.length>0?`<div class="grid-item-labels">${Fc(e.labels)}</div>`:"";return`
     <div class="grid-item" data-doc-id="${_(e.id)}" onclick="viewDocument('${E(e.id)}')">
       <div class="grid-item-header">
         <div class="grid-item-icon" style="background: var(--bg-tertiary)">

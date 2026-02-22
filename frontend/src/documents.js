@@ -320,6 +320,9 @@ export async function loadDocuments(teamId, projectId = null) {
 
     filterDocuments();  // Apply search/sort and render
   } catch (e) {
+    // Clear skeleton on error (CHT-1047)
+    const errEl = document.getElementById('documents-list');
+    if (errEl) errEl.innerHTML = '';
     showToast(e.message, 'error');
   }
 }
