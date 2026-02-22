@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setCurrentTeam } from './state.js';
 import {
   getDocuments,
   loadDocuments,
@@ -41,15 +42,15 @@ describe('loadDocuments', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="documents-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('returns early if no teamId provided and no currentTeam', async () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     await loadDocuments();
     expect(api.getDocuments).not.toHaveBeenCalled();
   });
@@ -99,11 +100,11 @@ describe('renderDocuments', () => {
 
   it('renders empty state when no documents', async () => {
     api.getDocuments.mockResolvedValue([]);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     await loadDocuments();
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).toContain('No documents yet');
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('renders documents with escaped HTML', async () => {
@@ -111,33 +112,33 @@ describe('renderDocuments', () => {
       { id: 'doc-1', title: '<script>xss</script>', content: 'Test', updated_at: '2024-01-01' },
     ];
     api.getDocuments.mockResolvedValue(docs);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     await loadDocuments();
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).not.toContain('<script>');
     expect(list.innerHTML).toContain('&lt;script&gt;');
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('uses default icon when none provided', async () => {
     const docs = [{ id: 'doc-1', title: 'Test', content: null, updated_at: '2024-01-01' }];
     api.getDocuments.mockResolvedValue(docs);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     await loadDocuments();
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).toContain('📄');
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('truncates long content in preview', async () => {
     const longContent = 'A'.repeat(150);
     const docs = [{ id: 'doc-1', title: 'Test', content: longContent, updated_at: '2024-01-01' }];
     api.getDocuments.mockResolvedValue(docs);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     await loadDocuments();
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).toContain('...');
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 });
 
@@ -229,11 +230,11 @@ describe('handleCreateDocument', () => {
       <div id="documents-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
   });
 
   it('prevents default form submission', async () => {
@@ -356,14 +357,14 @@ describe('deleteDocument', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="documents-list"></div>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.navigateTo = vi.fn();
     // Mock confirm
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.navigateTo;
     vi.restoreAllMocks();
   });

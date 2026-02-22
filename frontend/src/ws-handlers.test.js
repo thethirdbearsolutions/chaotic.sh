@@ -1,7 +1,7 @@
 /**
  * Tests for ws-handlers.js module (CHT-1039)
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock state.js
 vi.mock('./state.js', () => ({
@@ -11,6 +11,8 @@ vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(() => 'my-issues'),
     getWebsocket: vi.fn(() => null),
     setWebsocket: vi.fn(),
+    getCurrentDetailIssue: vi.fn(() => null),
+    setCurrentDetailIssue: vi.fn(),
 }));
 
 // Mock dashboard.js
@@ -57,7 +59,7 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getIssues, setIssues, getCurrentUser, getCurrentView } from './state.js';
+import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
@@ -79,11 +81,7 @@ describe('ws-handlers.js', () => {
         getMyIssues.mockReturnValue([]);
         getCurrentView.mockReturnValue('my-issues');
         getCurrentUser.mockReturnValue({ id: 'user-1' });
-        window.currentDetailIssue = null;
-    });
-
-    afterEach(() => {
-        delete window.currentDetailIssue;
+        getCurrentDetailIssue.mockReturnValue(null);
     });
 
     describe('issue:created', () => {
@@ -137,7 +135,7 @@ describe('ws-handlers.js', () => {
 
         it('refreshes detail if child issue created', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'parent-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'parent-1' });
             const childIssue = { ...newIssue, parent_id: 'parent-1' };
 
             dispatch({ type: 'created', entity: 'issue', data: childIssue });
@@ -200,7 +198,7 @@ describe('ws-handlers.js', () => {
 
         it('navigates away from deleted issue detail', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'issue-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
             getMyIssues.mockReturnValue([]);
 
@@ -220,7 +218,7 @@ describe('ws-handlers.js', () => {
 
         it('refreshes issue detail if viewing the commented issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'issue-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
 
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
@@ -230,7 +228,7 @@ describe('ws-handlers.js', () => {
     describe('relation', () => {
         it('refreshes detail if viewing related issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'issue-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
 
             dispatch({
                 type: 'created',
@@ -275,7 +273,7 @@ describe('ws-handlers.js', () => {
     describe('attestation', () => {
         it('refreshes issue detail if viewing attested issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'issue-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
@@ -301,7 +299,7 @@ describe('ws-handlers.js', () => {
 
         it('refreshes issue detail if viewing the activity issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            window.currentDetailIssue = { id: 'issue-1' };
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
 
             dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);

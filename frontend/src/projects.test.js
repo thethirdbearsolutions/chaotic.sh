@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setCurrentTeam } from './state.js';
 import {
   getProjects,
   setProjects,
@@ -162,16 +163,16 @@ describe('loadProjects', () => {
   beforeEach(() => {
     document.body.innerHTML = '<select id="project-filter"></select>';
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
   it('returns early if no currentTeam', async () => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     await loadProjects();
     expect(api.getProjects).not.toHaveBeenCalled();
   });
@@ -369,11 +370,11 @@ describe('handleCreateProject', () => {
       <select id="project-filter"></select>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -455,12 +456,12 @@ describe('handleUpdateProject', () => {
       <select id="project-filter"></select>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     setProjects([{ id: 'proj-1', name: 'Old' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -495,12 +496,12 @@ describe('confirmDeleteProject', () => {
     `;
     vi.clearAllMocks();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     setProjects([{ id: 'proj-1', name: 'Test Project' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
     vi.restoreAllMocks();
   });
@@ -559,7 +560,7 @@ describe('viewProjectSettings', () => {
       </div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.navigateTo = vi.fn();
     window.history.pushState = vi.fn();
     setProjects([{
@@ -575,7 +576,7 @@ describe('viewProjectSettings', () => {
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.navigateTo;
     setProjects([]);
   });
@@ -682,13 +683,13 @@ describe('saveProjectSettingsGeneral', () => {
       <select id="project-filter"></select>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     setProjects([{ id: 'proj-1', name: 'Old', key: 'OLD' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -746,13 +747,13 @@ describe('showCreateProjectRitualModal', () => {
       <div id="modal-content"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     setProjects([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -813,13 +814,13 @@ describe('handleCreateProjectRitual', () => {
       <div id="ps-claim-rituals-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     setProjects([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -878,13 +879,13 @@ describe('showEditProjectRitualModal', () => {
       <div id="ps-claim-rituals-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     setProjects([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
   });
 
@@ -943,14 +944,14 @@ describe('deleteProjectRitual', () => {
       <div id="ps-claim-rituals-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     window.confirm = vi.fn(() => true);
     setProjects([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     delete window.confirm;
     setProjects([]);
   });
@@ -999,14 +1000,14 @@ describe('ritual XSS prevention', () => {
       <div id="ps-claim-rituals-list"></div>
     `;
     vi.clearAllMocks();
-    window.currentTeam = { id: 'team-1' };
+    setCurrentTeam({ id: 'team-1' });
     window.history.pushState = vi.fn();
     setProjects([{ id: 'proj-1', name: 'Test', key: 'TEST' }]);
     clearProjectSettingsState(); // Reset module state
   });
 
   afterEach(() => {
-    delete window.currentTeam;
+    setCurrentTeam(null);
     setProjects([]);
     clearProjectSettingsState();
   });

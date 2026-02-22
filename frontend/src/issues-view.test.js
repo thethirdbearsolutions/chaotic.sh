@@ -13,6 +13,8 @@ vi.mock('./state.js', () => ({
     getSearchDebounceTimer: vi.fn(() => null),
     setSearchDebounceTimer: vi.fn(),
     setSelectedIssueIndex: vi.fn(),
+    getCurrentTeam: vi.fn(() => null),
+    setCurrentTeam: vi.fn(),
 }));
 
 // Mock projects.js
@@ -47,7 +49,7 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer } from './state.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam } from './state.js';
 import { getProjects, setGlobalProjectSelection } from './projects.js';
 import { getMembers } from './teams.js';
 import { updateSprintProjectFilter } from './sprints.js';
@@ -100,7 +102,7 @@ describe('issues-view', () => {
             getLabels: vi.fn().mockResolvedValue([]),
             getSprints: vi.fn().mockResolvedValue([]),
         };
-        window.currentTeam = { id: 'team-1' };
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
 
         // Set up minimal DOM for filter elements
         document.body.innerHTML = `
@@ -173,7 +175,7 @@ describe('issues-view', () => {
         replaceStateSpy.mockRestore();
         document.body.innerHTML = '';
         delete window.api;
-        delete window.currentTeam;
+        getCurrentTeam.mockReturnValue(null);
     });
 
     // ========================================
@@ -419,12 +421,11 @@ describe('issues-view', () => {
         });
 
         it('does not save to localStorage when no team (CHT-1042)', () => {
-            const savedTeam = window.currentTeam;
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             document.getElementById('project-filter').value = 'proj-1';
             syncFiltersToUrl();
             expect(localStorage.getItem('chaotic_issues_filters_null')).toBeNull();
-            window.currentTeam = savedTeam;
+            getCurrentTeam.mockReturnValue({ id: 'team-1' });
         });
     });
 
@@ -486,15 +487,14 @@ describe('issues-view', () => {
                 writable: true,
                 configurable: true,
             });
-            const savedTeam = window.currentTeam;
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
 
             loadFiltersFromUrl();
 
             // Should not apply the saved filter
             expect(document.getElementById('project-filter').value).toBe('');
-            window.currentTeam = savedTeam;
+            getCurrentTeam.mockReturnValue({ id: 'team-1' });
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
     });
@@ -705,7 +705,7 @@ describe('issues-view', () => {
         });
 
         it('returns early when no currentTeam', async () => {
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             await loadIssues();
             expect(window.api.getIssues).not.toHaveBeenCalled();
         });
@@ -897,7 +897,7 @@ describe('issues-view', () => {
         });
 
         it('does nothing when no team', async () => {
-            window.currentTeam = null;
+            getCurrentTeam.mockReturnValue(null);
             await populateLabelFilter();
             expect(window.api.getLabels).not.toHaveBeenCalled();
         });

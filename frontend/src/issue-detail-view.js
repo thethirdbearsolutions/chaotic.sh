@@ -4,6 +4,7 @@
  */
 
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft } from './storage.js';
+import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints } from './state.js';
 
 // Module state
 let ticketRitualsCollapsed = true;
@@ -637,8 +638,8 @@ export async function viewIssue(issueId, pushHistory = true) {
         }
 
         // Store current issue for inline editing
-        window.currentDetailIssue = issue;
-        window.currentDetailSprints = projectSprints;
+        setCurrentDetailIssue(issue);
+        setCurrentDetailSprints(projectSprints);
 
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         const detailView = document.getElementById('issue-detail-view');
@@ -1100,7 +1101,7 @@ export async function handleAddComment(event, issueId) {
  * Inline description editing — replaces description content in-place.
  */
 export async function editDescription(issueId) {
-    const issue = window.currentDetailIssue || await deps.api.getIssue(issueId);
+    const issue = getCurrentDetailIssue() || await deps.api.getIssue(issueId);
     const section = document.querySelector('.issue-detail-description');
     if (!section) return;
     // Prevent double-click from creating duplicate editors
@@ -1270,7 +1271,7 @@ export async function searchIssuesToRelate(query, currentIssueId) {
     }
 
     try {
-        const teamId = window.currentTeam?.id;
+        const teamId = getCurrentTeam()?.id;
         const issues = await deps.api.searchIssues(teamId, query);
         const filteredIssues = issues.filter(issue => issue.id !== currentIssueId);
 

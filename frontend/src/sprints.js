@@ -10,6 +10,7 @@ import { showModal, closeModal, showToast } from './ui.js';
 import { getProjects, getEstimateScaleHint, setGlobalProjectSelection } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { formatTimeAgo, escapeJsString, escapeHtml, escapeAttr } from './utils.js';
+import { getCurrentTeam } from './state.js';
 
 // State
 let sprints = [];
@@ -253,7 +254,7 @@ export async function viewSprint(sprintId, pushHistory = true) {
         currentSprintDetail = sprint;
 
         // Fetch issues, transactions, and documents for this sprint in parallel
-        const teamId = window.currentTeam?.id;
+        const teamId = getCurrentTeam()?.id;
         const [issues, transactions, documents] = await Promise.all([
             api.getIssues({ sprint_id: sprintId, limit: 500 }),
             api.getSprintTransactions(sprintId).catch(() => []),

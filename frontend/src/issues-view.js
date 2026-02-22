@@ -11,6 +11,7 @@ import {
     getActiveFilterCategory,
     setActiveFilterCategory,
     getCurrentUser,
+    getCurrentTeam,
     getIssues,
     setIssues,
     getSearchDebounceTimer,
@@ -183,11 +184,11 @@ export function updateLabelFilterLabel() {
 
 export async function populateLabelFilter() {
     const dropdown = document.getElementById('label-filter-dropdown');
-    if (!dropdown || !window.currentTeam) return;
+    if (!dropdown || !getCurrentTeam()) return;
 
     const optionsContainer = dropdown.querySelector('.multi-select-options');
     try {
-        const labels = await api.getLabels(window.currentTeam.id);
+        const labels = await api.getLabels(getCurrentTeam().id);
 
         // Clear existing options except the clear button
         optionsContainer.innerHTML = '';
@@ -251,7 +252,7 @@ export function syncFiltersToUrl() {
     history.replaceState({ view: 'issues' }, '', newUrl);
 
     // Also persist for cross-session recall (CHT-1042)
-    setIssueFilters(window.currentTeam?.id, queryString);
+    setIssueFilters(getCurrentTeam()?.id, queryString);
 }
 
 export function loadFiltersFromUrl() {
@@ -259,7 +260,7 @@ export function loadFiltersFromUrl() {
 
     // Fall back to saved filters if URL has no filter params (CHT-1042)
     if (params.toString() === '') {
-        const saved = getIssueFilters(window.currentTeam?.id);
+        const saved = getIssueFilters(getCurrentTeam()?.id);
         if (saved) {
             params = new URLSearchParams(saved);
             // Update URL to reflect restored filters
@@ -1289,7 +1290,7 @@ export function updateSprintBudgetBar(activeSprint) {
 export async function loadIssues() {
     // Reset keyboard selection when issues are reloaded
     setSelectedIssueIndex(-1);
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
 
     const projectId = document.getElementById('project-filter').value;
     const statuses = getSelectedStatuses();
@@ -1375,7 +1376,7 @@ export async function loadIssues() {
             issues = await api.getIssues(params);
         } else if (getProjects().length > 0) {
             // Load all issues from the team (across all projects)
-            issues = await api.getTeamIssues(window.currentTeam.id, params);
+            issues = await api.getTeamIssues(getCurrentTeam().id, params);
         }
 
         // Client-side label filtering (backend doesn't support label filter params)

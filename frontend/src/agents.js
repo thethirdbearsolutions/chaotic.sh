@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString, formatDate } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getCurrentTeam } from './state.js';
 
 // Module state
 let agents = [];
@@ -64,7 +65,7 @@ export function renderAgentAvatar(agent) {
  */
 export async function loadTeamAgentsQuiet(teamId) {
   if (!teamId) {
-    teamId = window.currentTeam?.id;
+    teamId = getCurrentTeam()?.id;
   }
   if (!teamId) return;
 
@@ -84,7 +85,7 @@ export async function loadTeamAgentsQuiet(teamId) {
  */
 export async function loadAgents(teamId) {
   if (!teamId) {
-    teamId = window.currentTeam?.id;
+    teamId = getCurrentTeam()?.id;
   }
   if (!teamId) return;
 
@@ -188,7 +189,7 @@ export function showCreateAgentModal() {
 export async function handleCreateAgent(event) {
   event.preventDefault();
 
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   if (!teamId) {
     showToast('No team selected', 'error');
     return false;

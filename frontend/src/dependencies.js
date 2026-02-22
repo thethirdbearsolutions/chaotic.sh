@@ -72,10 +72,10 @@ import { setupMentionAutocomplete } from './mention-autocomplete.js';
  * @param {Object} localState - Closures over app.js local state
  * @param {Function} localState.getLabels - () => labels
  * @param {Function} localState.setLabels - (newLabels) => void
- * @param {Function} localState.getCurrentTeam - () => window.currentTeam
- * @param {Function} localState.getCurrentDetailIssue - () => window.currentDetailIssue
- * @param {Function} localState.setCurrentDetailIssue - (issue) => void
- * @param {Function} localState.getCurrentDetailSprints - () => window.currentDetailSprints
+ * @param {Function} localState.getCurrentTeam - () => currentTeam (from state.js)
+ * @param {Function} localState.getCurrentDetailIssue - () => currentDetailIssue (from state.js)
+ * @param {Function} localState.setCurrentDetailIssue - (issue) => void (from state.js)
+ * @param {Function} localState.getCurrentDetailSprints - () => currentDetailSprints (from state.js)
  */
 export function initAllDependencies(localState) {
     const {

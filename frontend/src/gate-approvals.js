@@ -13,7 +13,7 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
 import { getProjects } from './projects.js';
-import { getPendingGates, setPendingGates } from './state.js';
+import { getPendingGates, setPendingGates, getCurrentTeam } from './state.js';
 import { completeGateRitual } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 
@@ -191,7 +191,7 @@ let sprintLimboApprovals = [];
  * Load all pending gate approvals across projects.
  */
 export async function loadGateApprovals() {
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
 
     const container = document.getElementById('gate-approvals-list');
     if (!container) return;

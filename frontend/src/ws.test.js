@@ -11,6 +11,8 @@ vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(() => 'my-issues'),
     getWebsocket: vi.fn(() => null),
     setWebsocket: vi.fn(),
+    getCurrentTeam: vi.fn(() => null),
+    setCurrentTeam: vi.fn(),
 }));
 
 // Mock ui.js
@@ -18,7 +20,7 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-import { getWebsocket, setWebsocket } from './state.js';
+import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
 import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState } from './ws.js';
 
@@ -31,12 +33,12 @@ describe('ws.js', () => {
         window.api = {
             getToken: vi.fn(() => 'test-token'),
         };
-        window.currentTeam = { id: 'team-1' };
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
     });
 
     afterEach(() => {
         delete window.api;
-        delete window.currentTeam;
+        getCurrentTeam.mockReturnValue(null);
     });
 
     describe('connectWebSocket', () => {

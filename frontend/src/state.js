@@ -32,6 +32,13 @@ const initialState = {
 
     // WebSocket connection (not reactive)
     websocket: null,
+
+    // Team
+    currentTeam: null,
+
+    // Issue detail view
+    currentDetailIssue: null,
+    currentDetailSprints: null,
 };
 
 // Current state (mutable)
@@ -140,3 +147,12 @@ export const setSearchDebounceTimer = (timer) => setState('searchDebounceTimer',
 
 export const getWebsocket = () => state.websocket;
 export const setWebsocket = (ws) => setState('websocket', ws);
+
+export const getCurrentTeam = () => state.currentTeam;
+export const setCurrentTeam = (team) => setState('currentTeam', team);
+
+export const getCurrentDetailIssue = () => state.currentDetailIssue;
+export const setCurrentDetailIssue = (issue) => setState('currentDetailIssue', issue);
+
+export const getCurrentDetailSprints = () => state.currentDetailSprints;
+export const setCurrentDetailSprints = (sprints) => setState('currentDetailSprints', sprints);

@@ -6,7 +6,7 @@
  */
 
 import { subscribe } from './ws.js';
-import { getIssues, setIssues, getCurrentUser, getCurrentView } from './state.js';
+import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
@@ -102,8 +102,8 @@ function handleIssueCreated(data) {
     }
 
     // Refresh issue detail if a child issue was created
-    if (getCurrentView() === 'issue-detail' && data.parent_id === window.currentDetailIssue?.id) {
-        viewIssue(window.currentDetailIssue.id, false);
+    if (getCurrentView() === 'issue-detail' && data.parent_id === getCurrentDetailIssue()?.id) {
+        viewIssue(getCurrentDetailIssue()?.id, false);
     }
 }
 
@@ -153,7 +153,7 @@ function handleIssueDeleted(data) {
     showToast(`Issue ${data.identifier} deleted`, 'info');
 
     // Navigate away if viewing the deleted issue
-    if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.id) {
         showToast(`Issue ${data.identifier} was deleted`, 'warning');
         navigateTo('my-issues');
     }
@@ -163,14 +163,14 @@ function handleComment(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
         viewIssue(data.issue_id, false);
     }
 }
 
 function handleRelation(data) {
     if (getCurrentView() === 'issue-detail') {
-        const currentIssueId = window.currentDetailIssue?.id;
+        const currentIssueId = getCurrentDetailIssue()?.id;
         if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
             viewIssue(currentIssueId, false);
         }
@@ -181,7 +181,7 @@ function handleAttestation(data) {
     if (getCurrentView() === 'gate-approvals' && typeof window.loadGateApprovals === 'function') {
         window.loadGateApprovals();
     }
-    if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
         viewIssue(data.issue_id, false);
     }
 }
@@ -190,7 +190,7 @@ function handleActivity(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
         viewIssue(data.issue_id, false);
     }
 }

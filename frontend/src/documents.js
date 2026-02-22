@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
+import { getCurrentTeam } from './state.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -252,7 +253,7 @@ export function filterDocuments() {
  * Re-fetches documents from server with new project filter, then re-renders.
  */
 export async function onDocProjectFilterChange() {
-  const teamId = currentTeamId || window.currentTeam?.id;
+  const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
 
   const projectFilter = document.getElementById('doc-project-filter')?.value || null;
@@ -271,8 +272,8 @@ export async function onDocProjectFilterChange() {
  */
 export async function loadDocuments(teamId, projectId = null) {
   if (!teamId) {
-    // Fall back to window.currentTeam for backward compat
-    teamId = window.currentTeam?.id;
+    // Fall back to getCurrentTeam() for backward compat
+    teamId = getCurrentTeam()?.id;
   }
   if (!teamId) return;
 
@@ -636,7 +637,7 @@ export async function handleBulkMove(event) {
   }
 
   // Reload documents
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   await loadDocuments(teamId);
 
   return false;
@@ -679,7 +680,7 @@ export async function bulkDeleteDocuments() {
   }
 
   // Reload documents
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   await loadDocuments(teamId);
 }
 
@@ -953,7 +954,7 @@ export async function showCreateDocumentModal() {
 export async function handleCreateDocument(event) {
   event.preventDefault();
 
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   if (!teamId) {
     showToast('No team selected', 'error');
     return false;
@@ -1074,7 +1075,7 @@ export async function deleteDocument(documentId) {
 
   try {
     await api.deleteDocument(documentId);
-    const teamId = window.currentTeam?.id;
+    const teamId = getCurrentTeam()?.id;
     await loadDocuments(teamId);
     // Use window.navigateTo for backward compat
     if (window.navigateTo) {
@@ -1124,7 +1125,7 @@ async function searchIssuesToLink(query, documentId) {
   }
 
   try {
-    const teamId = window.currentTeam?.id;
+    const teamId = getCurrentTeam()?.id;
     const issues = await api.searchIssues(teamId, query);
     if (issues.length === 0) {
       resultsDiv.innerHTML = '<p class="empty-state-small">No issues found</p>';
@@ -1208,7 +1209,7 @@ export async function handleAddDocumentComment(event, documentId) {
  * @param {string} documentId - Document ID
  */
 export async function showAddLabelToDocModal(documentId) {
-  const teamId = window.currentTeam?.id;
+  const teamId = getCurrentTeam()?.id;
   if (!teamId) {
     showToast('No team selected', 'error');
     return;

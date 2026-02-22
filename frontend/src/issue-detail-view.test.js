@@ -1,7 +1,8 @@
 /**
  * Tests for issue-detail-view.js module (CHT-668)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue } from './state.js';
 import {
     setDependencies,
     getActivityIcon,
@@ -94,7 +95,12 @@ describe('issue-detail-view', () => {
             <div id="modal-content"></div>
             <textarea id="new-comment"></textarea>
         `;
-        window.currentTeam = { id: 'team-1' };
+        setCurrentTeam({ id: 'team-1' });
+    });
+
+    afterEach(() => {
+        setCurrentTeam(null);
+        setCurrentDetailIssue(null);
     });
 
     describe('getActivityIcon', () => {
@@ -333,10 +339,10 @@ describe('issue-detail-view', () => {
             expect(pushStateSpy).not.toHaveBeenCalled();
         });
 
-        it('sets window.currentDetailIssue', async () => {
+        it('sets currentDetailIssue in state', async () => {
             await viewIssue('issue-1');
 
-            expect(window.currentDetailIssue).toEqual(mockIssue);
+            expect(getCurrentDetailIssue()).toEqual(mockIssue);
         });
 
         it('shows error toast on API failure', async () => {
@@ -644,7 +650,7 @@ describe('issue-detail-view', () => {
         });
 
         it('opens inline description editor', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Current desc' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
 
             await editDescription('i1');
 
@@ -654,7 +660,7 @@ describe('issue-detail-view', () => {
         });
 
         it('falls back to API when no cached issue', async () => {
-            window.currentDetailIssue = null;
+            setCurrentDetailIssue(null);
             mockApi.getIssue.mockResolvedValue({ id: 'i1', description: 'API desc' });
 
             await editDescription('i1');
@@ -664,7 +670,7 @@ describe('issue-detail-view', () => {
         });
 
         it('restores description draft from localStorage (CHT-1041)', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             localStorage.setItem('chaotic_description_draft_i1', 'Draft content');
 
             await editDescription('i1');
@@ -674,7 +680,7 @@ describe('issue-detail-view', () => {
         });
 
         it('clears description draft on cancel (CHT-1041)', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             localStorage.setItem('chaotic_description_draft_i1', 'Draft');
 
             await editDescription('i1');
@@ -692,7 +698,7 @@ describe('issue-detail-view', () => {
                     <div class="description-content markdown-body">Test</div>
                 </div>
             `;
-            window.currentDetailIssue = { id: 'i1', description: 'Test' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Test' });
             await editDescription('i1');
         });
 
@@ -718,7 +724,7 @@ describe('issue-detail-view', () => {
 
     describe('editDescription inline', () => {
         it('replaces description content with inline editor', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Old desc' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Old desc' });
             // Set up the description section in DOM
             document.body.innerHTML += `
                 <div class="issue-detail-description">
@@ -738,7 +744,7 @@ describe('issue-detail-view', () => {
         });
 
         it('cancel restores original content', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Original' });
             document.body.innerHTML += `
                 <div class="issue-detail-description">
                     <div class="section-header"><h3>Description</h3></div>
@@ -754,7 +760,7 @@ describe('issue-detail-view', () => {
         });
 
         it('save calls updateIssue and shows toast', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+            setCurrentDetailIssue({ id: 'i1', description: 'Old' });
             document.body.innerHTML += `
                 <div class="issue-detail-description">
                     <div class="section-header"><h3>Description</h3></div>

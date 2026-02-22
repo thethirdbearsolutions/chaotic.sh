@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getCurrentTeam, setCurrentTeam } from './state.js';
 
 // Module state
 let teams = [];
@@ -74,7 +75,7 @@ export function renderTeamList() {
  * @param {boolean} isInitialLoad - Whether this is the initial page load
  */
 export async function selectTeam(team, isInitialLoad = false) {
-  window.currentTeam = team;
+  setCurrentTeam(team);
   document.getElementById('current-team-name').textContent = team.name;
   const mobileTeamName = document.getElementById('mobile-team-name');
   if (mobileTeamName) mobileTeamName.textContent = team.name;
@@ -130,9 +131,9 @@ export function toggleUserDropdown() {
  * Load team members quietly (no UI feedback)
  */
 export async function loadTeamMembersQuiet() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
   try {
-    members = await api.getTeamMembers(window.currentTeam.id);
+    members = await api.getTeamMembers(getCurrentTeam().id);
     if (window.buildAssignees) {
       window.buildAssignees();
     }
@@ -148,10 +149,10 @@ export async function loadTeamMembersQuiet() {
  * Load team members with UI feedback
  */
 export async function loadTeamMembers() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
 
   try {
-    members = await api.getTeamMembers(window.currentTeam.id);
+    members = await api.getTeamMembers(getCurrentTeam().id);
     if (window.buildAssignees) {
       window.buildAssignees();
     }
@@ -201,10 +202,10 @@ export function renderTeamMembers() {
  * Load team invitations
  */
 export async function loadTeamInvitations() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
 
   try {
-    invitations = await api.getTeamInvitations(window.currentTeam.id);
+    invitations = await api.getTeamInvitations(getCurrentTeam().id);
     renderTeamInvitations();
   } catch {
     // User might not be admin
@@ -244,10 +245,10 @@ export function renderTeamInvitations() {
  * Load team agents with UI feedback
  */
 export async function loadTeamAgents() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
 
   try {
-    teamAgents = await api.getTeamAgents(window.currentTeam.id);
+    teamAgents = await api.getTeamAgents(getCurrentTeam().id);
     renderTeamAgents();
   } catch (e) {
     showToast(e.message, 'error');
@@ -323,7 +324,7 @@ export async function handleInvite(event) {
   const role = document.getElementById('invite-role').value;
 
   try {
-    await api.createInvitation(window.currentTeam.id, email, role);
+    await api.createInvitation(getCurrentTeam().id, email, role);
     await loadTeamInvitations();
     closeModal();
     showToast('Invitation sent!', 'success');
@@ -341,7 +342,7 @@ export async function removeMember(userId) {
   if (!confirm('Are you sure you want to remove this member?')) return;
 
   try {
-    await api.removeMember(window.currentTeam.id, userId);
+    await api.removeMember(getCurrentTeam().id, userId);
     await loadTeamMembers();
     showToast('Member removed!', 'success');
   } catch (e) {
@@ -355,7 +356,7 @@ export async function removeMember(userId) {
  */
 export async function deleteInvitation(invitationId) {
   try {
-    await api.deleteInvitation(window.currentTeam.id, invitationId);
+    await api.deleteInvitation(getCurrentTeam().id, invitationId);
     await loadTeamInvitations();
     showToast('Invitation canceled!', 'success');
   } catch (e) {
@@ -394,22 +395,22 @@ export function showCreateTeamModal() {
  * Show the edit team modal
  */
 export function showEditTeamModal() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
   document.getElementById('modal-title').textContent = 'Edit Team';
   document.getElementById('modal-content').innerHTML = `
         <form onsubmit="return handleUpdateTeam(event)">
             <div class="form-group">
                 <label for="team-name">Team Name</label>
-                <input type="text" id="team-name" value="${escapeAttr(window.currentTeam.name)}" required>
+                <input type="text" id="team-name" value="${escapeAttr(getCurrentTeam().name)}" required>
             </div>
             <div class="form-group">
                 <label for="team-key">Team Key</label>
-                <input type="text" id="team-key" value="${escapeAttr(window.currentTeam.key)}" disabled class="input-disabled">
+                <input type="text" id="team-key" value="${escapeAttr(getCurrentTeam().key)}" disabled class="input-disabled">
                 <small class="form-hint">Team key cannot be changed</small>
             </div>
             <div class="form-group">
                 <label for="team-description">Description</label>
-                <textarea id="team-description">${escapeHtml(window.currentTeam.description || '')}</textarea>
+                <textarea id="team-description">${escapeHtml(getCurrentTeam().description || '')}</textarea>
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Save Changes</button>
@@ -449,15 +450,15 @@ export async function handleCreateTeam(event) {
  */
 export async function handleUpdateTeam(event) {
   event.preventDefault();
-  if (!window.currentTeam) return false;
+  if (!getCurrentTeam()) return false;
   const data = {
     name: document.getElementById('team-name').value,
     description: document.getElementById('team-description').value,
   };
 
   try {
-    const updated = await api.updateTeam(window.currentTeam.id, data);
-    window.currentTeam = updated;
+    const updated = await api.updateTeam(getCurrentTeam().id, data);
+    setCurrentTeam(updated);
     document.getElementById('current-team-name').textContent = updated.name;
     const teamDescription = document.getElementById('team-description-text');
     if (teamDescription) {

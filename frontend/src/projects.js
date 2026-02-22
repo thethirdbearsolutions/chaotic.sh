@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
+import { getCurrentTeam } from './state.js';
 
 // Module state
 let projects = [];
@@ -124,9 +125,9 @@ export function getEstimateScaleHint(projectId) {
  * Load projects for the current team
  */
 export async function loadProjects() {
-  if (!window.currentTeam) return;
+  if (!getCurrentTeam()) return;
   try {
-    projects = await api.getProjects(window.currentTeam.id);
+    projects = await api.getProjects(getCurrentTeam().id);
     updateProjectFilters();
   } catch (e) {
     showToast(e.message, 'error');
@@ -366,7 +367,7 @@ export async function handleCreateProject(event) {
   };
 
   try {
-    await api.createProject(window.currentTeam.id, data);
+    await api.createProject(getCurrentTeam().id, data);
     await loadProjects();
     renderProjects();
     closeModal();

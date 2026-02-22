@@ -191,9 +191,16 @@ import {
 } from './issue-detail-view.js';
 import {
     getCurrentView,
+    getCurrentTeam,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
     setCurrentUser,
+    getLabels,
+    setLabels,
+    getCurrentDetailIssue,
+    setCurrentDetailIssue,
+    getCurrentDetailSprints,
+    setCurrentDetailSprints,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
 import {
@@ -211,9 +218,6 @@ import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
 import { getTheme, setTheme } from './storage.js';
 
-window.currentTeam = null;
-let labels = [];
-
 // Mobile sidebar toggle, closeSidebar, focus trap moved to sidebar.js (CHT-1046)
 
 // renderMarkdown imported from gate-approvals.js (CHT-1040)
@@ -223,8 +227,8 @@ configureRouter({
     beforeNavigate: () => {
         clearProjectSettingsState();
         window._onRitualsChanged = null;
-        window.currentDetailIssue = null;
-        window.currentDetailSprints = null;
+        setCurrentDetailIssue(null);
+        setCurrentDetailSprints(null);
         closeSidebar();
         hideTooltip();
     },
@@ -709,9 +713,10 @@ async function viewDocumentByPath(docId) {
 
 // Labels
 async function loadLabels() {
-    if (!window.currentTeam) return;
+    if (!getCurrentTeam()) return;
     try {
-        labels = await api.getLabels(window.currentTeam.id);
+        const labels = await api.getLabels(getCurrentTeam().id);
+        setLabels(labels);
     } catch (e) {
         console.error('Failed to load labels:', e);
     }
@@ -837,12 +842,12 @@ setCommandPaletteCommands([
 // ============================================
 
 initAllDependencies({
-    getLabels: () => labels,
-    setLabels: (newLabels) => { labels = newLabels; },
-    getCurrentTeam: () => window.currentTeam,
-    getCurrentDetailIssue: () => window.currentDetailIssue,
-    setCurrentDetailIssue: (issue) => { window.currentDetailIssue = issue; },
-    getCurrentDetailSprints: () => window.currentDetailSprints,
+    getLabels,
+    setLabels,
+    getCurrentTeam,
+    getCurrentDetailIssue,
+    setCurrentDetailIssue,
+    getCurrentDetailSprints,
 });
 
 // ============================================
