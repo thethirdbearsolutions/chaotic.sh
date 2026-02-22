@@ -3735,25 +3735,34 @@ input[type="checkbox"] {
     align-self: flex-start;
 }
 
-/* Compact comment form (above comments list) */
-.comment-form-compact {
+/* Sticky comment form (bottom of issue detail viewport) */
+.comment-form-sticky {
+    position: sticky;
+    position: -webkit-sticky;
+    bottom: 0;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
-    margin-bottom: 16px;
-    position: relative;
+    /* Extend background edge-to-edge, keep content aligned */
+    margin: 0 -40px;
+    padding: 12px 40px;
+    background: var(--bg-color);
+    border-top: 1px solid var(--border-color);
+    z-index: 5;
 }
 
-.comment-form-compact .mention-suggestions {
+.comment-form-sticky .mention-suggestions {
     position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
+    bottom: calc(100% + 4px);
+    left: 40px;
+    right: 40px;
     z-index: 10;
 }
 
-.comment-form-compact textarea {
+.comment-form-sticky textarea {
+    flex: 1;
+    min-width: 0;
     min-height: 36px;
     max-height: 36px;
     padding: 8px 12px;
@@ -3762,13 +3771,13 @@ input[type="checkbox"] {
     overflow: hidden;
 }
 
-.comment-form-compact textarea:focus {
+.comment-form-sticky textarea:focus {
     min-height: 80px;
     max-height: 200px;
     overflow: auto;
 }
 
-.comment-form-compact .comment-submit-btn {
+.comment-form-sticky .comment-submit-btn {
     flex-shrink: 0;
     align-self: flex-start;
     margin-top: 0;
@@ -4303,12 +4312,12 @@ input[type="checkbox"] {
         padding: 10px 8px;
     }
 
-    /* Compact comment form: stack vertically on mobile */
-    .comment-form-compact {
+    /* Sticky comment form: stack vertically on mobile */
+    .comment-form-sticky {
         flex-direction: column;
     }
 
-    .comment-form-compact .comment-submit-btn {
+    .comment-form-sticky .comment-submit-btn {
         align-self: flex-end;
     }
 }

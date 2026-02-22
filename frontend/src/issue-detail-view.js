@@ -832,11 +832,6 @@ export async function viewIssue(issueId, pushHistory = true) {
                                 </svg>
                             </button>
                         </div>
-                        <form class="comment-form comment-form-compact" onsubmit="return handleAddComment(event, '${deps.escapeJsString(issue.id)}')">
-                            <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
-                            <div id="mention-suggestions" class="mention-suggestions hidden"></div>
-                            <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
-                        </form>
                         <div class="comments-list section-collapsible-content">
                             ${allComments.length === 0 ? `
                                 <div class="comments-empty">No comments yet</div>
@@ -855,6 +850,12 @@ export async function viewIssue(issueId, pushHistory = true) {
                             `).join('')}
                         </div>
                     </div>
+
+                    <form class="comment-form comment-form-sticky" onsubmit="return handleAddComment(event, '${deps.escapeJsString(issue.id)}')">
+                        <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
+                        <div id="mention-suggestions" class="mention-suggestions hidden"></div>
+                        <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
+                    </form>
                 </div>
 
                 <aside class="issue-detail-sidebar">
