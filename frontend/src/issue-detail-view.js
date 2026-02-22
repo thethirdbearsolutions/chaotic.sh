@@ -21,6 +21,7 @@ import { showCreateSubIssueModal } from './issue-creation.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 
 // Module state
+let commentSubmitting = false;
 let ticketRitualsCollapsed = true;
 let currentTicketRituals = null;
 let detailNavPrevId = null;
@@ -1056,10 +1057,13 @@ export async function viewIssue(issueId, pushHistory = true) {
  */
 export async function handleAddComment(event, issueId) {
     event.preventDefault();
+    if (commentSubmitting) return false;
+
     const content = document.getElementById('new-comment').value;
 
     // Clear draft early to avoid stale restore on re-render (CHT-1041)
     setCommentDraft(issueId, null);
+    commentSubmitting = true;
     try {
         await api.createComment(issueId, content);
         await viewIssue(issueId);
@@ -1068,6 +1072,8 @@ export async function handleAddComment(event, issueId) {
         // Restore draft on failure so user doesn't lose their comment
         setCommentDraft(issueId, content);
         showToast(`Failed to add comment: ${e.message}`, 'error');
+    } finally {
+        commentSubmitting = false;
     }
     return false;
 }
