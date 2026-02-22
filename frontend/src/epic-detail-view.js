@@ -17,7 +17,6 @@ import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
-import { registerActions } from './event-delegation.js';
 
 /**
  * View epic by path (identifier or ID)
@@ -265,9 +264,4 @@ export async function viewEpic(epicId, pushHistory = true) {
     }
 }
 
-// Register delegated event handlers
-registerActions({
-    'navigate-to': (_event, data) => {
-        navigateTo(data.view);
-    },
-});
+// navigate-to action is registered centrally in app.js

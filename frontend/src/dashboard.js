@@ -10,7 +10,6 @@ import { getCurrentUser, getCurrentTeam } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import { navigateToIssueByIdentifier } from './router.js';
-import { viewDocument } from './documents.js';
 import { registerActions } from './event-delegation.js';
 // State
 let myIssues = [];
@@ -210,8 +209,5 @@ registerActions({
         event.preventDefault();
         navigateToIssueByIdentifier(dataset.identifier);
     },
-    'view-document': (event, dataset) => {
-        event.preventDefault();
-        viewDocument(dataset.documentId);
-    },
+    // view-document action is registered in documents.js
 });

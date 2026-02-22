@@ -1278,7 +1278,8 @@ async function removeLabelFromDoc(documentId, labelId) {
 // ============================================================================
 
 registerActions({
-    'view-document': (_event, data) => {
+    'view-document': (event, data) => {
+        event.preventDefault();
         viewDocument(data.documentId);
     },
     'toggle-doc-selection': (event, data) => {

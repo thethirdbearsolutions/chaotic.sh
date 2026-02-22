@@ -300,10 +300,10 @@ export async function handleCreateSubIssue(parentId, projectId) {
     }
 }
 
-export async function toggleCreateIssueDropdown(type, event) {
+export async function toggleCreateIssueDropdown(type, event, anchorEl) {
     closeAllDropdowns();
 
-    const btn = event.currentTarget || event.target.closest('[data-action]');
+    const btn = anchorEl || event.currentTarget;
     const rect = btn.getBoundingClientRect();
 
     const dropdown = document.createElement('div');
@@ -545,8 +545,8 @@ export async function handleCreateIssueAndNew() {
 
 // Register delegated event handlers
 registerActions({
-    'toggle-create-dropdown': (event, data) => {
-        toggleCreateIssueDropdown(data.dropdownType, event);
+    'toggle-create-dropdown': (event, data, target) => {
+        toggleCreateIssueDropdown(data.dropdownType, event, target);
     },
     'set-create-field': (event, data) => {
         setCreateIssueField(data.field, data.value, data.label);

@@ -1337,9 +1337,6 @@ export async function deleteRelation(issueId, relationId) {
 // ============================================================================
 
 registerActions({
-    'navigate-to': (_event, data) => {
-        navigateTo(data.view);
-    },
     'show-detail-dropdown': (event, data, target) => {
         showDetailDropdown(event, data.dropdownType, data.issueId, target);
     },

@@ -108,21 +108,21 @@ export function renderRitualsView() {
         <div id="rituals-tab-sprint" class="settings-tab-content">
             <div class="settings-section-header">
                 <p class="settings-description">Required when closing a sprint</p>
-                <button class="btn btn-primary" data-action="create-project-ritual" data-trigger="every_sprint">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="every_sprint">+ Create Ritual</button>
             </div>
             <div id="rv-sprint-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-close" class="settings-tab-content hidden">
             <div class="settings-section-header">
                 <p class="settings-description">Required when closing a ticket</p>
-                <button class="btn btn-primary" data-action="create-project-ritual" data-trigger="ticket_close">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_close">+ Create Ritual</button>
             </div>
             <div id="rv-close-rituals-list" class="rituals-list"></div>
         </div>
         <div id="rituals-tab-claim" class="settings-tab-content hidden">
             <div class="settings-section-header">
                 <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
-                <button class="btn btn-primary" data-action="create-project-ritual" data-trigger="ticket_claim">+ Create Ritual</button>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
             </div>
             <div id="rv-claim-rituals-list" class="rituals-list"></div>
         </div>
@@ -325,7 +325,7 @@ async function handleCompleteTicketRitual(event, ritualId, issueId) {
 
 // Register delegated event handlers
 registerActions({
-    'create-project-ritual': (_event, data) => {
+    'show-create-ritual-modal': (_event, data) => {
         if (window.showCreateProjectRitualModal) {
             window.showCreateProjectRitualModal(data.trigger);
         }
