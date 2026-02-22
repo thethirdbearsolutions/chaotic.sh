@@ -369,11 +369,29 @@ describe('formatTimeAgo', () => {
 });
 
 describe('sanitizeColor', () => {
-  it('accepts valid hex colors', () => {
-    expect(sanitizeColor('#fff')).toBe('#fff');
+  it('accepts valid 6-digit hex colors', () => {
     expect(sanitizeColor('#ffffff')).toBe('#ffffff');
     expect(sanitizeColor('#FF0000')).toBe('#FF0000');
-    expect(sanitizeColor('#12345678')).toBe('#12345678');
+  });
+
+  it('rejects 4/5/7/8-digit hex (not compatible with opacity suffix pattern)', () => {
+    expect(sanitizeColor('#f00a')).toBe('#888888');
+    expect(sanitizeColor('#12345')).toBe('#888888');
+    expect(sanitizeColor('#1234567')).toBe('#888888');
+    expect(sanitizeColor('#12345678')).toBe('#888888');
+  });
+
+  it('normalizes 3-digit hex to 6-digit', () => {
+    expect(sanitizeColor('#fff')).toBe('#ffffff');
+    expect(sanitizeColor('#abc')).toBe('#aabbcc');
+    expect(sanitizeColor('#F00')).toBe('#FF0000');
+  });
+
+  it('produces valid CSS when opacity suffix is appended', () => {
+    // The ${sanitizeColor(color)}20 pattern must produce valid 8-digit hex
+    const result = sanitizeColor('#abc') + '20';
+    expect(result).toBe('#aabbcc20');
+    expect(result).toMatch(/^#[0-9a-fA-F]{8}$/);
   });
 
   it('returns default for invalid colors', () => {
