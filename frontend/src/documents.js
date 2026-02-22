@@ -331,9 +331,9 @@ export async function loadDocuments(teamId, projectId = null) {
  */
 function renderLabelBadges(labels) {
   if (!labels || labels.length === 0) return '';
-  return labels.map(label =>
-    `<span class="badge" style="background-color: ${sanitizeColor(label.color)}; color: white;">${escapeHtml(label.name)}</span>`
-  ).join(' ');
+  return labels.slice(0, 2).map(label =>
+    `<span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`
+  ).join(' ') + (labels.length > 2 ? ` <span class="text-muted">+${labels.length - 2}</span>` : '');
 }
 
 /**
@@ -365,9 +365,9 @@ function renderDocumentCard(doc) {
  */
 function renderDocumentListItem(doc) {
   const labelsHtml = doc.labels && doc.labels.length > 0
-    ? doc.labels.slice(0, 3).map(label =>
-        `<span class="badge badge-small" style="background-color: ${sanitizeColor(label.color)}; color: white;">${escapeHtml(label.name)}</span>`
-      ).join(' ') + (doc.labels.length > 3 ? ` <span class="text-muted">+${doc.labels.length - 3}</span>` : '')
+    ? doc.labels.slice(0, 2).map(label =>
+        `<span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`
+      ).join(' ') + (doc.labels.length > 2 ? ` <span class="text-muted">+${doc.labels.length - 2}</span>` : '')
     : '';
 
   const scopeBadges = [];
@@ -761,8 +761,8 @@ export async function viewDocument(documentId, pushHistory = true) {
         <div class="comments-section">
           <h3>Comments</h3>
           <div class="comments-list">${commentsListHtml}</div>
-          <form class="comment-form" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
-            <textarea id="new-doc-comment" placeholder="Write a comment..." rows="3"></textarea>
+          <form class="comment-form comment-form-sticky" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
+            <textarea id="new-doc-comment" placeholder="Write a comment..." rows="1"></textarea>
             <button type="submit" class="btn btn-primary">Comment</button>
           </form>
         </div>

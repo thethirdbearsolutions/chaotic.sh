@@ -245,3 +245,62 @@ export function createListNavigationHandler(actions) {
         }
     };
 }
+
+/**
+ * Creates a handler for j/k/Enter/Escape list navigation in the documents view.
+ *
+ * @param {Object} actions
+ * @param {Function} actions.getCurrentView - Returns the current view name
+ * @param {Function} actions.getSelectedIndex - Returns the currently selected index
+ * @param {Function} actions.setSelectedIndex - Sets the selected index
+ * @param {Function} actions.viewDocument - Opens a document by ID
+ * @param {Function} actions.showEditDocumentModal - Opens edit modal for a document
+ * @param {Function} actions.isModalOpen - Returns true if a modal is open
+ * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @returns {Function} The keydown event handler
+ */
+export function createDocListNavigationHandler(actions) {
+    const selector = '#documents-list .list-item, #documents-list .grid-item';
+    return function handleDocListNavigation(e) {
+        if (actions.getCurrentView() !== 'documents') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (actions.isModalOpen()) return;
+        if (actions.isCommandPaletteOpen()) return;
+
+        const items = document.querySelectorAll(selector);
+        if (items.length === 0) return;
+
+        const selectedIndex = actions.getSelectedIndex();
+        switch (e.key) {
+            case 'j':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
+                break;
+            case 'k':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
+                break;
+            case 'Enter':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    const docId = items[selectedIndex].dataset.documentId;
+                    if (docId) actions.viewDocument(docId);
+                }
+                break;
+            case 'e':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    const docId = items[selectedIndex].dataset.documentId;
+                    if (docId && actions.showEditDocumentModal) actions.showEditDocumentModal(docId);
+                }
+                break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    actions.setSelectedIndex(-1);
+                }
+                break;
+        }
+    };
+}
