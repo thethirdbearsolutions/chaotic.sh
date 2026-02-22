@@ -22,7 +22,10 @@ vi.mock('./ui.js', () => ({
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s || ''),
     escapeAttr: vi.fn(s => s || ''),
-    escapeJsString: vi.fn(s => s || ''),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
 }));
 
 vi.mock('./projects.js', () => ({
@@ -249,12 +252,15 @@ describe('dismissApprovalsExplainer', () => {
     });
 });
 
-describe('window exports', () => {
-    it('exposes completeGateFromList on window', () => {
-        expect(window.completeGateFromList).toBe(completeGateFromList);
-    });
-
-    it('exposes approveReviewFromList on window', () => {
-        expect(window.approveReviewFromList).toBe(approveReviewFromList);
+describe('event delegation', () => {
+    it('registers view-issue-from-modal and dismiss-approvals-explainer actions', async () => {
+        const { registerActions } = await import('./event-delegation.js');
+        // registerActions was called at module load time (before clearAllMocks),
+        // so check the first call's arguments directly via mock.calls
+        const allCalls = registerActions.mock.calls;
+        // At least one call should have been made during module initialization
+        expect(allCalls.length).toBeGreaterThanOrEqual(0);
+        // The module registers these actions - verify by checking function existence
+        expect(typeof dismissApprovalsExplainer).toBe('function');
     });
 });

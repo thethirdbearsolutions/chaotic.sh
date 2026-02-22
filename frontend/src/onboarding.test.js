@@ -11,6 +11,10 @@ vi.mock('./api.js', () => ({
     },
 }));
 
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 import { api } from './api.js';
 import {
     hasCompletedOnboarding,

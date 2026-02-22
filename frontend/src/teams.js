@@ -4,9 +4,10 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getCurrentTeam, setCurrentTeam } from './state.js';
+import { registerActions } from './event-delegation.js';
 
 // Module state
 let teams = [];
@@ -62,7 +63,7 @@ export function renderTeamList() {
     teamList.innerHTML = teams
       .map(
         (team) => `
-            <button class="dropdown-item" data-team-json="${escapeAttr(JSON.stringify(team))}" onclick="selectTeam(JSON.parse(this.dataset.teamJson))">${escapeHtml(team.name)}</button>
+            <button class="dropdown-item" data-action="select-team" data-team-json="${escapeAttr(JSON.stringify(team))}">${escapeHtml(team.name)}</button>
         `
       )
       .join('');
@@ -187,7 +188,7 @@ export function renderTeamMembers() {
                   member.user_id !== window.currentUser.id &&
                   member.role !== 'owner'
                     ? `
-                    <button class="btn btn-danger btn-small" onclick="removeMember('${escapeJsString(member.user_id)}')">Remove</button>
+                    <button class="btn btn-danger btn-small" data-action="remove-member" data-user-id="${escapeAttr(member.user_id)}">Remove</button>
                 `
                     : ''
                 }
@@ -234,7 +235,7 @@ export function renderTeamInvitations() {
                     <span>Expires: ${new Date(inv.expires_at).toLocaleDateString()}</span>
                 </div>
             </div>
-            <button class="btn btn-danger btn-small" onclick="deleteInvitation('${escapeJsString(inv.id)}')">Cancel</button>
+            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>
         </div>
     `
     )
@@ -263,7 +264,7 @@ export function renderTeamAgents() {
   if (!list) return;
 
   if (teamAgents.length === 0) {
-    list.innerHTML = `<div class="empty-state" style="padding: 1rem"><p>No agents yet. <a href="#" onclick="navigateTo('settings'); return false;">Create an agent</a> to enable CLI automation with its own identity.</p></div>`;
+    list.innerHTML = `<div class="empty-state" style="padding: 1rem"><p>No agents yet. <a href="#" data-action="navigate-to" data-view="settings">Create an agent</a> to enable CLI automation with its own identity.</p></div>`;
     return;
   }
 
@@ -296,7 +297,7 @@ export function renderTeamAgents() {
 export function showInviteModal() {
   document.getElementById('modal-title').textContent = 'Invite Team Member';
   document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleInvite(event)">
+        <form data-action="invite-member">
             <div class="form-group">
                 <label for="invite-email">Email</label>
                 <input type="email" id="invite-email" required>
@@ -371,7 +372,7 @@ export function showCreateTeamModal() {
   toggleTeamDropdown();
   document.getElementById('modal-title').textContent = 'Create Team';
   document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleCreateTeam(event)">
+        <form data-action="create-team">
             <div class="form-group">
                 <label for="team-name">Team Name</label>
                 <input type="text" id="team-name" required>
@@ -398,7 +399,7 @@ export function showEditTeamModal() {
   if (!getCurrentTeam()) return;
   document.getElementById('modal-title').textContent = 'Edit Team';
   document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleUpdateTeam(event)">
+        <form data-action="update-team">
             <div class="form-group">
                 <label for="team-name">Team Name</label>
                 <input type="text" id="team-name" value="${escapeAttr(getCurrentTeam().name)}" required>
@@ -490,6 +491,31 @@ document.addEventListener('click', (e) => {
       dropdown.classList.add('hidden');
     }
   }
+});
+
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+  'select-team': (event, dataset) => {
+    selectTeam(JSON.parse(dataset.teamJson));
+  },
+  'remove-member': (event, dataset) => {
+    removeMember(dataset.userId);
+  },
+  'delete-invitation': (event, dataset) => {
+    deleteInvitation(dataset.invitationId);
+  },
+  'invite-member': (event) => {
+    handleInvite(event);
+  },
+  'create-team': (event) => {
+    handleCreateTeam(event);
+  },
+  'update-team': (event) => {
+    handleUpdateTeam(event);
+  },
 });
 
 // Attach to window for backward compatibility with HTML handlers

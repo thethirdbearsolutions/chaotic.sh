@@ -4,9 +4,10 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, escapeJsString, formatDate } from './utils.js';
+import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getCurrentTeam } from './state.js';
+import { registerActions } from './event-delegation.js';
 
 // Module state
 let agents = [];
@@ -126,7 +127,7 @@ export function renderAgents() {
             <span class="agent-date">Created by ${safeParentName} ${formatDate(agent.created_at)}</span>
           </div>
         </div>
-        <button class="btn btn-danger-outline" onclick="deleteAgent('${escapeJsString(agent.id)}', '${escapeJsString(agent.name || 'Agent')}')">Delete</button>
+        <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Delete</button>
       </div>
     `;
     })
@@ -141,7 +142,7 @@ export function showCreateAgentModal() {
 
   document.getElementById('modal-title').textContent = 'Create Agent';
   document.getElementById('modal-content').innerHTML = `
-    <form onsubmit="return handleCreateAgent(event)">
+    <form data-action="create-agent">
       <div class="form-group">
         <label for="agent-name">Agent Name</label>
         <input type="text" id="agent-name" placeholder="e.g., claude-bot, ci-agent" required>
@@ -217,13 +218,13 @@ export async function handleCreateAgent(event) {
         <p class="warning-text">Copy the agent's API key now. You won't be able to see it again!</p>
         <div class="api-key-display">
           <code id="new-agent-key">${safeApiKey}</code>
-          <button type="button" class="btn btn-secondary" onclick="copyAgentKey()">Copy</button>
+          <button type="button" class="btn btn-secondary" data-action="copy-agent-key">Copy</button>
         </div>
         <div class="api-key-instructions">
           <p>Configure the CLI to use this agent:</p>
           <code>chaotic auth set-key ${safeApiKey}</code>
         </div>
-        <button type="button" class="btn btn-primary" onclick="closeModal(); loadAgents();">Done</button>
+        <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
       </div>
     `;
     showModal();
@@ -271,14 +272,28 @@ export async function deleteAgent(agentId, agentName) {
   }
 }
 
-// Attach to window for backward compatibility with HTML handlers
+// Attach to window for remaining callers
 Object.assign(window, {
   loadTeamAgentsQuiet,
   loadAgents,
   renderAgents,
   showCreateAgentModal,
-  handleCreateAgent,
-  copyAgentKey,
-  deleteAgent,
   renderAgentAvatar,
+});
+
+// Register delegated event handlers
+registerActions({
+    'create-agent': (event) => {
+        handleCreateAgent(event);
+    },
+    'copy-agent-key': () => {
+        copyAgentKey();
+    },
+    'dismiss-agent-modal': () => {
+        closeModal();
+        loadAgents();
+    },
+    'delete-agent': (_event, data) => {
+        deleteAgent(data.agentId, data.agentName);
+    },
 });

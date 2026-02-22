@@ -5,7 +5,8 @@
 
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { escapeHtml, escapeJsString, formatDate } from './utils.js';
+import { escapeHtml, escapeAttr, formatDate } from './utils.js';
+import { registerActions } from './event-delegation.js';
 
 // State
 let apiKeys = [];
@@ -62,7 +63,7 @@ export function renderApiKeys() {
                 </div>
             </div>
             ${key.is_active ? `
-                <button class="btn btn-danger-outline" onclick="revokeApiKey('${escapeJsString(key.id)}', '${escapeJsString(key.name)}')">Revoke</button>
+                <button class="btn btn-danger-outline" data-action="revoke-api-key" data-key-id="${escapeAttr(key.id)}" data-key-name="${escapeAttr(key.name)}">Revoke</button>
             ` : ''}
         </div>
     `).join('');
@@ -74,7 +75,7 @@ export function renderApiKeys() {
 export function showCreateApiKeyModal() {
     document.getElementById('modal-title').textContent = 'Create API Key';
     document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleCreateApiKey(event)">
+        <form data-action="create-api-key">
             <div class="form-group">
                 <label for="api-key-name">Key Name</label>
                 <input type="text" id="api-key-name" placeholder="e.g., CLI, CI/CD, Personal" required>
@@ -106,13 +107,13 @@ export async function handleCreateApiKey(event) {
                 <p class="warning-text">Copy your API key now. You won't be able to see it again!</p>
                 <div class="api-key-display">
                     <code id="new-api-key">${result.key}</code>
-                    <button type="button" class="btn btn-secondary" onclick="copyApiKey()">Copy</button>
+                    <button type="button" class="btn btn-secondary" data-action="copy-api-key">Copy</button>
                 </div>
                 <div class="api-key-instructions">
                     <p>Use this key in the CLI:</p>
                     <code>chaotic auth set-key ${result.key}</code>
                 </div>
-                <button type="button" class="btn btn-secondary" onclick="closeModal(); loadApiKeys();">Done</button>
+                <button type="button" class="btn btn-secondary" data-action="dismiss-api-key-modal">Done</button>
             </div>
         `;
         showModal();
@@ -154,9 +155,23 @@ export async function revokeApiKey(keyId, keyName) {
     }
 }
 
-// Window exports for onclick handlers
+// Window exports for remaining callers
 window.loadApiKeys = loadApiKeys;
 window.showCreateApiKeyModal = showCreateApiKeyModal;
-window.handleCreateApiKey = handleCreateApiKey;
-window.copyApiKey = copyApiKey;
-window.revokeApiKey = revokeApiKey;
+
+// Register delegated event handlers
+registerActions({
+    'create-api-key': (event) => {
+        handleCreateApiKey(event);
+    },
+    'copy-api-key': () => {
+        copyApiKey();
+    },
+    'dismiss-api-key-modal': () => {
+        closeModal();
+        loadApiKeys();
+    },
+    'revoke-api-key': (_event, data) => {
+        revokeApiKey(data.keyId, data.keyName);
+    },
+});

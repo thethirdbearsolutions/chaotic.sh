@@ -49,6 +49,10 @@ vi.mock('./ui.js', () => ({
   showToast: vi.fn(),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+  registerActions: vi.fn(),
+}));
+
 describe('getProjects / setProjects', () => {
   afterEach(() => {
     setProjects([]);
@@ -1073,7 +1077,7 @@ describe('ritual XSS prevention', () => {
 
     const editBtn = document.querySelector('.ritual-item-actions button');
     expect(editBtn).not.toBeNull();
-    expect(editBtn.getAttribute('onclick')).toContain('showEditProjectRitualModal');
+    expect(editBtn.dataset.action).toBe('edit-project-ritual');
 
     const deleteBtn = document.querySelector('.ritual-item-actions button.btn-danger');
     expect(deleteBtn).not.toBeNull();

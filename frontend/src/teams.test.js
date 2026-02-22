@@ -44,6 +44,10 @@ vi.mock('./ui.js', () => ({
   showToast: vi.fn(),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+  registerActions: vi.fn(),
+}));
+
 describe('getTeams', () => {
   it('returns empty array initially', () => {
     expect(getTeams()).toEqual([]);

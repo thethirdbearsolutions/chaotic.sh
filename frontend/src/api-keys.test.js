@@ -22,8 +22,12 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
-    escapeJsString: vi.fn((text) => text ? String(text).replace(/[\\'"<>]/g, '') : ''),
+    escapeAttr: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
     formatDate: vi.fn((_date) => 'Jan 1, 2026'),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
 }));
 
 // Import after mocks are set up
@@ -130,10 +134,11 @@ describe('api-keys module', () => {
             renderApiKeys();
 
             const html = container.innerHTML;
-            // Active key should have revoke button
-            expect(html).toContain("revokeApiKey('1'");
+            // Active key should have revoke button with data-action
+            expect(html).toContain('data-action="revoke-api-key"');
+            expect(html).toContain('data-key-id="1"');
             // Inactive key should not have revoke button
-            expect(html).not.toContain("revokeApiKey('2'");
+            expect(html).not.toContain('data-key-id="2"');
         });
 
         it('does nothing if container not found', () => {
@@ -160,7 +165,7 @@ describe('api-keys module', () => {
 
             expect(document.getElementById('modal-title').textContent).toBe('Create API Key');
             expect(document.getElementById('modal-content').innerHTML).toContain('api-key-name');
-            expect(document.getElementById('modal-content').innerHTML).toContain('handleCreateApiKey');
+            expect(document.getElementById('modal-content').innerHTML).toContain('data-action="create-api-key"');
             expect(showModal).toHaveBeenCalled();
         });
     });
