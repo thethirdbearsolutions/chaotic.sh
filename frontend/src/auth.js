@@ -165,6 +165,41 @@ export function updateUserInfo() {
   }
 }
 
+/**
+ * Initialize auth event listeners (CHT-1057)
+ * Replaces inline onclick/onsubmit handlers in the HTML template.
+ */
+export function initAuth() {
+  initElements();
+
+  const loginFormEl = loginForm?.querySelector('form');
+  if (loginFormEl) {
+    loginFormEl.addEventListener('submit', (e) => handleLogin(e));
+  }
+
+  const signupFormEl = signupForm?.querySelector('form');
+  if (signupFormEl) {
+    signupFormEl.addEventListener('submit', (e) => handleSignup(e));
+  }
+
+  // "Sign up" / "Sign in" toggle links
+  const signupLink = loginForm?.querySelector('.auth-switch a');
+  if (signupLink) {
+    signupLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      showSignup();
+    });
+  }
+
+  const loginLink = signupForm?.querySelector('.auth-switch a');
+  if (loginLink) {
+    loginLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      showLogin();
+    });
+  }
+}
+
 // Attach to window for backward compatibility with HTML handlers
 Object.assign(window, {
   showAuthScreen,
