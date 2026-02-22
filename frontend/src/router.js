@@ -214,8 +214,6 @@ export function initRouter() {
     if (initialized) return;
     initialized = true;
     window.addEventListener('popstate', (e) => {
-        // Save scroll position of the page we're leaving
-        scrollPositions.set(window.location.href, window.scrollY);
 
         // Try detail popstate handler first (issues, documents, sprints)
         if (e.state && onDetailPopstate && onDetailPopstate(e.state)) {
