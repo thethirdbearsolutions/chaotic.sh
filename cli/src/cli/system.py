@@ -606,30 +606,18 @@ def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
 
 
 def run_migrations() -> tuple[bool, str]:
-    """Run pending database migrations using Alembic. Returns (success, message)."""
+    """Run pending database migrations using Oxyde. Returns (success, message)."""
     backend_dir = PROJECT_DIR / "backend"
     try:
         # Sync dependencies first (may download packages)
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
 
-        # Run Alembic migrations
-        try:
-            run_command(
-                ["uv", "run", "alembic", "upgrade", "head"],
-                cwd=backend_dir,
-                timeout=120,
-            )
-        except subprocess.CalledProcessError as e:
-            output = (e.stderr or "") + (e.stdout or "")
-            if "Can't locate revision" in output:
-                # Old migration history from before squash — re-stamp with current head
-                run_command(
-                    ["uv", "run", "alembic", "stamp", "head"],
-                    cwd=backend_dir,
-                    timeout=30,
-                )
-            else:
-                raise
+        # Run Oxyde migrations
+        run_command(
+            ["uv", "run", "oxyde", "migrate"],
+            cwd=backend_dir,
+            timeout=120,
+        )
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
