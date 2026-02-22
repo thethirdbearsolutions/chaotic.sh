@@ -717,7 +717,6 @@ export async function viewDocument(documentId, pushHistory = true) {
         linkedIssuesHtml = `
           <div class="linked-issues-section">
             <h3>Linked Issues</h3>
-            <p class="empty-state-small">No linked issues</p>
             <button class="btn btn-secondary btn-small" onclick="showLinkIssueModal('${escapeJsString(doc.id)}')">+ Link Issue</button>
           </div>
         `;
@@ -808,7 +807,6 @@ export async function viewDocument(documentId, pushHistory = true) {
       labelsHtml = `
         <div class="document-labels-section">
           <h3>Labels</h3>
-          <p class="empty-state-small">No labels</p>
           <button class="btn btn-secondary btn-small" onclick="showAddLabelToDocModal('${escapeJsString(doc.id)}')">+ Add Label</button>
         </div>
       `;

@@ -861,7 +861,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'status', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="status" onclick="showDetailDropdown(event, 'status', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Status</span>
                             <button class="property-value">
                                 ${deps.getStatusIcon(issue.status)}
@@ -869,7 +869,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'priority', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="priority" onclick="showDetailDropdown(event, 'priority', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Priority</span>
                             <button class="property-value">
                                 ${deps.getPriorityIcon(issue.priority)}
@@ -877,21 +877,21 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'type', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="type" onclick="showDetailDropdown(event, 'type', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Type</span>
                             <button class="property-value">
                                 <span class="issue-type-badge type-${issue.issue_type || 'task'}">${deps.formatIssueType(issue.issue_type)}</span>
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'assignee', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="assignee" onclick="showDetailDropdown(event, 'assignee', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Assignee</span>
                             <button class="property-value">
                                 ${assigneeName ? `${deps.renderAvatar(assignee, 'avatar-small')}<span>${deps.escapeHtml(assigneeName)}</span>` : `<span class="text-muted">Unassigned</span>`}
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'sprint', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="sprint" onclick="showDetailDropdown(event, 'sprint', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Sprint</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -899,7 +899,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'labels', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="labels" onclick="showDetailDropdown(event, 'labels', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Labels</span>
                             <button class="property-value property-labels-btn">
                                 ${issue.labels && issue.labels.length > 0
@@ -918,7 +918,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                         ` : ''}
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'estimate', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="estimate" onclick="showDetailDropdown(event, 'estimate', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Estimate</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -983,12 +983,24 @@ export async function viewIssue(issueId, pushHistory = true) {
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
             if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+            if (document.querySelector('.description-inline-editor')) return;
             if (e.key === 'ArrowLeft' && detailNavPrevId) {
                 e.preventDefault();
                 viewIssue(detailNavPrevId);
             } else if (e.key === 'ArrowRight' && detailNavNextId) {
                 e.preventDefault();
                 viewIssue(detailNavNextId);
+            }
+
+            // Metadata keyboard shortcuts — click the property row to open its dropdown
+            const shortcuts = { s: 'status', p: 'priority', a: 'assignee', l: 'labels', e: 'estimate', t: 'type' };
+            const field = shortcuts[e.key];
+            if (field) {
+                const row = document.querySelector(`.property-row[data-field="${field}"]`);
+                if (row) {
+                    e.preventDefault();
+                    row.click();
+                }
             }
         };
         document.addEventListener('keydown', detailKeyHandler);
@@ -1021,29 +1033,40 @@ export async function handleAddComment(event, issueId) {
 }
 
 /**
- * Open description edit modal.
+ * Inline description editing — replaces description content in-place.
  */
 export async function editDescription(issueId) {
     const issue = window.currentDetailIssue || await deps.api.getIssue(issueId);
+    const section = document.querySelector('.issue-detail-description');
+    if (!section) return;
+    // Prevent double-click from creating duplicate editors
+    if (section.querySelector('.description-inline-editor')) return;
 
-    document.getElementById('modal-title').textContent = 'Edit Description';
-    document.getElementById('modal-content').innerHTML = `
-        <form onsubmit="return handleUpdateDescription(event, '${deps.escapeJsString(issueId)}')">
-            <div class="form-group description-editor">
-                <div class="editor-tabs">
-                    <button type="button" class="editor-tab active" id="edit-description-tab-write" onclick="setDescriptionEditorMode('write')">Write</button>
-                    <button type="button" class="editor-tab" id="edit-description-tab-preview" onclick="setDescriptionEditorMode('preview')">Preview</button>
-                </div>
-                <textarea id="edit-description" rows="10" placeholder="Add a description...">${deps.escapeHtml(issue.description || '')}</textarea>
-                <div id="edit-description-preview" class="markdown-body editor-preview" style="display: none;"></div>
+    // Hide the section header (Edit button) while editing
+    const header = section.querySelector('.section-header');
+    if (header) header.style.display = 'none';
+
+    const contentDiv = section.querySelector('.description-content');
+    if (!contentDiv) return;
+
+    // Replace content with inline editor
+    contentDiv.innerHTML = `
+        <div class="description-inline-editor">
+            <div class="editor-tabs">
+                <button type="button" class="editor-tab active" id="edit-description-tab-write" onclick="setDescriptionEditorMode('write')">Write</button>
+                <button type="button" class="editor-tab" id="edit-description-tab-preview" onclick="setDescriptionEditorMode('preview')">Preview</button>
             </div>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save</button>
+            <textarea id="edit-description" rows="8" placeholder="Add a description...">${deps.escapeHtml(issue.description || '')}</textarea>
+            <div id="edit-description-preview" class="markdown-body editor-preview" style="display: none;"></div>
+            <div class="description-inline-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="cancel-description-edit">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" id="save-description-edit">Save</button>
             </div>
-        </form>
+        </div>
     `;
-    deps.showModal();
+    contentDiv.classList.remove('empty');
+    contentDiv.removeAttribute('onclick');
+
     const textarea = document.getElementById('edit-description');
     textarea.addEventListener('input', () => {
         const preview = document.getElementById('edit-description-preview');
@@ -1051,7 +1074,43 @@ export async function editDescription(issueId) {
             updateDescriptionPreview();
         }
     });
+    // Cmd/Ctrl+Enter to save
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            document.getElementById('save-description-edit')?.click();
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            document.getElementById('cancel-description-edit')?.click();
+        }
+    });
     textarea.focus();
+
+    // Cancel — restore original content
+    document.getElementById('cancel-description-edit').addEventListener('click', () => {
+        if (header) header.style.display = '';
+        contentDiv.className = `description-content markdown-body ${!issue.description ? 'empty' : ''}`;
+        if (!issue.description) {
+            contentDiv.setAttribute('onclick', `editDescription('${deps.escapeJsString(issue.id)}')`);
+        }
+        contentDiv.innerHTML = issue.description
+            ? renderDescriptionContent(issue.description)
+            : '<span class="add-description-link">Add description...</span>';
+    });
+
+    // Save
+    document.getElementById('save-description-edit').addEventListener('click', async () => {
+        const description = document.getElementById('edit-description')?.value;
+        if (description === undefined) return;
+        try {
+            await deps.api.updateIssue(issueId, { description });
+            deps.showToast('Description updated', 'success');
+            viewIssue(issueId, false);
+        } catch (e) {
+            deps.showToast(`Failed to update description: ${e.message}`, 'error');
+        }
+    });
 }
 
 function updateDescriptionPreview() {
@@ -1085,28 +1144,6 @@ export function setDescriptionEditorMode(mode) {
     } else {
         textarea.focus();
     }
-}
-
-/**
- * Save updated description.
- */
-export async function handleUpdateDescription(event, issueId) {
-    event.preventDefault();
-
-    try {
-        const descEl = document.getElementById('edit-description');
-        if (!descEl) {
-            throw new Error('Description field not found');
-        }
-        const description = descEl.value;
-        await deps.api.updateIssue(issueId, { description });
-        deps.closeModal();
-        deps.showToast('Description updated', 'success');
-        viewIssue(issueId, false);
-    } catch (e) {
-        deps.showToast(`Failed to update description: ${e.message}`, 'error');
-    }
-    return false;
 }
 
 /**
