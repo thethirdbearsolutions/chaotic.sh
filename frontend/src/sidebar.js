@@ -13,7 +13,18 @@ function updateSidebarAria() {
     const btn = document.getElementById('hamburger-btn');
     if (btn) btn.setAttribute('aria-expanded', String(isOpen));
 
-    // Prevent screen readers from accessing background content when sidebar is open (CHT-899)
+    // On mobile, sidebar acts as a modal dialog — apply ARIA + inert dynamically (CHT-899)
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+        if (isOpen) {
+            sidebar.setAttribute('role', 'dialog');
+            sidebar.setAttribute('aria-modal', 'true');
+        } else {
+            sidebar.removeAttribute('role');
+            sidebar.removeAttribute('aria-modal');
+        }
+    }
+
     const mainContent = document.querySelector('.main-content');
     if (mainContent) {
         if (isOpen) {
