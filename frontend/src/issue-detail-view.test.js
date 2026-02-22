@@ -17,7 +17,6 @@ import {
     handleAddComment,
     editDescription,
     setDescriptionEditorMode,
-    handleUpdateDescription,
     showAddRelationModal,
     searchIssuesToRelate,
     selectIssueForRelation,
@@ -614,13 +613,20 @@ describe('issue-detail-view', () => {
     });
 
     describe('editDescription', () => {
-        it('opens description edit modal', async () => {
+        beforeEach(() => {
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="description-content markdown-body">Current desc</div>
+                </div>
+            `;
+        });
+
+        it('opens inline description editor', async () => {
             window.currentDetailIssue = { id: 'i1', description: 'Current desc' };
 
             await editDescription('i1');
 
-            expect(mockDeps.showModal).toHaveBeenCalled();
-            expect(document.getElementById('modal-title').textContent).toBe('Edit Description');
             const textarea = document.getElementById('edit-description');
             expect(textarea).toBeTruthy();
             expect(textarea.value).toBe('Current desc');
@@ -639,6 +645,12 @@ describe('issue-detail-view', () => {
 
     describe('setDescriptionEditorMode', () => {
         beforeEach(async () => {
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="description-content markdown-body">Test</div>
+                </div>
+            `;
             window.currentDetailIssue = { id: 'i1', description: 'Test' };
             await editDescription('i1');
         });
@@ -663,31 +675,62 @@ describe('issue-detail-view', () => {
         });
     });
 
-    describe('handleUpdateDescription', () => {
-        it('updates description and closes modal', async () => {
-            // Set up the description edit modal
-            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+    describe('editDescription inline', () => {
+        it('replaces description content with inline editor', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Old desc' };
+            // Set up the description section in DOM
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="description-content markdown-body">Old desc</div>
+                </div>
+            `;
+
             await editDescription('i1');
-            document.getElementById('edit-description').value = 'New description';
 
-            // Mock viewIssue to prevent full render
-            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium', description: 'New description' });
-
-            await handleUpdateDescription({ preventDefault: vi.fn() }, 'i1');
-
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('i1', { description: 'New description' });
-            expect(mockDeps.closeModal).toHaveBeenCalled();
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Description updated', 'success');
+            expect(document.getElementById('edit-description')).toBeTruthy();
+            expect(document.getElementById('edit-description').value).toBe('Old desc');
+            expect(document.getElementById('save-description-edit')).toBeTruthy();
+            expect(document.getElementById('cancel-description-edit')).toBeTruthy();
+            // Section header should be hidden
+            expect(document.querySelector('.issue-detail-description .section-header').style.display).toBe('none');
         });
 
-        it('shows error on failure', async () => {
-            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+        it('cancel restores original content', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="description-content markdown-body">Original</div>
+                </div>
+            `;
+
             await editDescription('i1');
-            mockApi.updateIssue.mockRejectedValue(new Error('failed'));
+            document.getElementById('cancel-description-edit').click();
 
-            await handleUpdateDescription({ preventDefault: vi.fn() }, 'i1');
+            expect(document.getElementById('edit-description')).toBeFalsy();
+            expect(document.querySelector('.issue-detail-description .section-header').style.display).toBe('');
+        });
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to update description: failed', 'error');
+        it('save calls updateIssue and shows toast', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Old' };
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="description-content markdown-body">Old</div>
+                </div>
+            `;
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium', description: 'New' });
+
+            await editDescription('i1');
+            document.getElementById('edit-description').value = 'New';
+            document.getElementById('save-description-edit').click();
+
+            // Wait for async save
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(mockApi.updateIssue).toHaveBeenCalledWith('i1', { description: 'New' });
+            expect(mockDeps.showToast).toHaveBeenCalledWith('Description updated', 'success');
         });
     });
 
