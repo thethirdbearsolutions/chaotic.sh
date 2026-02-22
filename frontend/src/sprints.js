@@ -12,6 +12,11 @@ import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { navigateTo } from './router.js';
+import { renderMarkdown } from './gate-approvals.js';
+import { approveRitual, completeGateRitual } from './rituals-view.js';
+import { viewIssue } from './issue-detail-view.js';
+import { viewDocument } from './documents.js';
 
 // State
 let sprints = [];
@@ -248,7 +253,7 @@ export async function viewSprint(sprintId, pushHistory = true) {
         const sprint = await api.getSprint(sprintId);
         if (!sprint) {
             showToast('Sprint not found', 'error');
-            window.navigateTo('sprints');
+            navigateTo('sprints');
             return;
         }
 
@@ -275,7 +280,7 @@ export async function viewSprint(sprintId, pushHistory = true) {
     } catch (e) {
         console.error('Failed to load sprint:', e);
         showToast('Failed to load sprint', 'error');
-        window.navigateTo('sprints');
+        navigateTo('sprints');
     }
 }
 
@@ -284,14 +289,14 @@ export async function viewSprintByPath(sprintId) {
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!sprintId || !uuidPattern.test(sprintId)) {
         showToast('Invalid sprint ID', 'error');
-        window.navigateTo('sprints', false);
+        navigateTo('sprints', false);
         return;
     }
 
     try {
         await viewSprint(sprintId, false);
     } catch {
-        window.navigateTo('sprints', false);
+        navigateTo('sprints', false);
     }
 }
 
@@ -732,7 +737,7 @@ async function loadLimboRituals(projectId) {
                 </div>
                 <div class="ritual-info">
                     <div class="ritual-name">${escapeHtml(r.name)} <span class="ritual-mode">(${escapeHtml(r.approval_mode)})</span></div>
-                    <div class="ritual-prompt markdown-body">${window.renderMarkdown ? window.renderMarkdown(r.prompt) : escapeHtml(r.prompt)}</div>
+                    <div class="ritual-prompt markdown-body">${renderMarkdown(r.prompt)}</div>
                     ${renderAttestationNote(r.attestation)}
                 </div>
             </div>
@@ -765,7 +770,7 @@ export function showLimboDetailsModal() {
                             <strong>${escapeHtml(r.name)}</strong>
                             <span class="badge badge-ritual-${escapeAttr(r.approval_mode)}">${escapeHtml(r.approval_mode)}</span>
                         </div>
-                        <div class="ritual-prompt markdown-body">${window.renderMarkdown ? window.renderMarkdown(r.prompt) : escapeHtml(r.prompt)}</div>
+                        <div class="ritual-prompt markdown-body">${renderMarkdown(r.prompt)}</div>
                         ${renderAttestationNote(r.attestation)}
                         ${renderRitualActions(r, projectId)}
                     </div>
@@ -798,7 +803,7 @@ function renderAttestationNote(attestation) {
                 <span class="attestation-by">${escapeHtml(attestation.attested_by_name || 'Unknown')}</span>
                 ${attestation.attested_at ? `<span class="attestation-time">${escapeHtml(formatTimeAgo(attestation.attested_at))}</span>` : ''}
             </div>
-            <div class="attestation-note-content markdown-body">${window.renderMarkdown ? window.renderMarkdown(attestation.note) : escapeHtml(attestation.note)}</div>
+            <div class="attestation-note-content markdown-body">${renderMarkdown(attestation.note)}</div>
         </div>
     `;
 }
@@ -903,24 +908,24 @@ registerActions({
         loadLimboStatus();
     },
     'approve-ritual': (_event, data) => {
-        window.approveRitual(data.ritualId, data.projectId);
+        approveRitual(data.ritualId, data.projectId);
     },
     'complete-gate-ritual': (_event, data) => {
-        window.completeGateRitual(data.ritualId, data.projectId, data.ritualName);
+        completeGateRitual(data.ritualId, data.projectId, data.ritualName);
     },
     'navigate-sprint-issue': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
             window.open(data.issueUrl, '_blank');
             return;
         }
-        window.viewIssue(data.issueId);
+        viewIssue(data.issueId);
     },
     'navigate-sprint-document': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
             window.open(data.documentUrl, '_blank');
             return;
         }
-        window.viewDocument(data.documentId);
+        viewDocument(data.documentId);
     },
 });
 

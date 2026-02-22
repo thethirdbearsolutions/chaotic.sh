@@ -147,7 +147,7 @@ function render() {
                 <div class="command-item ${isSelected ? 'selected' : ''}"
                      data-index="${globalIndex}"
                      data-action="execute-command" data-command-index="${globalIndex}"
-                     onmouseenter="selectCommand(${globalIndex})">
+>
                     <div class="command-item-icon">${cmd.icon}</div>
                     <div class="command-item-content">
                         <div class="command-item-title">${cmd.title}</div>
@@ -219,12 +219,13 @@ export function handleKeydown(e) {
     }
 }
 
-// Window export for onmouseenter (not delegated)
-window.selectCommand = selectCommand;
-
 // Register delegated event handlers
 registerActions({
-    'execute-command': (_event, data) => {
+    'execute-command': (event, data) => {
+        if (event.type === 'mouseover') {
+            selectCommand(Number(data.commandIndex));
+            return;
+        }
         executeCommand(Number(data.commandIndex));
     },
 });

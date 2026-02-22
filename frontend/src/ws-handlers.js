@@ -15,6 +15,7 @@ import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
+import { loadGateApprovals } from './gate-approvals.js';
 
 /**
  * Register all WebSocket event handlers.
@@ -178,8 +179,8 @@ function handleRelation(data) {
 }
 
 function handleAttestation(data) {
-    if (getCurrentView() === 'gate-approvals' && typeof window.loadGateApprovals === 'function') {
-        window.loadGateApprovals();
+    if (getCurrentView() === 'gate-approvals') {
+        loadGateApprovals();
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
         viewIssue(data.issue_id, false);

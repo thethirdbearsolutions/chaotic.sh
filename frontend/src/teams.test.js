@@ -48,6 +48,33 @@ vi.mock('./event-delegation.js', () => ({
   registerActions: vi.fn(),
 }));
 
+const mockNavigateTo = vi.fn();
+const mockHandleRoute = vi.fn();
+vi.mock('./router.js', () => ({
+  navigateTo: (...args) => mockNavigateTo(...args),
+  handleRoute: (...args) => mockHandleRoute(...args),
+}));
+
+const mockLoadProjects = vi.fn().mockResolvedValue();
+vi.mock('./projects.js', () => ({
+  loadProjects: (...args) => mockLoadProjects(...args),
+}));
+
+const mockLoadTeamAgentsQuiet = vi.fn().mockResolvedValue();
+vi.mock('./agents.js', () => ({
+  loadTeamAgentsQuiet: (...args) => mockLoadTeamAgentsQuiet(...args),
+}));
+
+const mockConnectWebSocket = vi.fn();
+vi.mock('./ws.js', () => ({
+  connectWebSocket: (...args) => mockConnectWebSocket(...args),
+}));
+
+const mockUpdateAssigneeFilter = vi.fn();
+vi.mock('./assignees.js', () => ({
+  updateAssigneeFilter: (...args) => mockUpdateAssigneeFilter(...args),
+}));
+
 describe('getTeams', () => {
   it('returns empty array initially', () => {
     expect(getTeams()).toEqual([]);
@@ -116,24 +143,17 @@ describe('selectTeam', () => {
       <div id="team-dropdown"></div>
     `;
     vi.clearAllMocks();
-    window.loadProjects = vi.fn().mockResolvedValue();
+    mockLoadProjects.mockResolvedValue();
     window.loadLabels = vi.fn().mockResolvedValue();
-    window.loadTeamAgentsQuiet = vi.fn().mockResolvedValue();
-    window.connectWebSocket = vi.fn();
-    window.navigateTo = vi.fn();
-    window.handleRoute = vi.fn();
-    window.currentView = 'issues';
+    mockLoadTeamAgentsQuiet.mockResolvedValue();
+    mockConnectWebSocket.mockClear();
+    mockNavigateTo.mockClear();
+    mockHandleRoute.mockClear();
     api.getTeamMembers.mockResolvedValue([]);
   });
 
   afterEach(() => {
-    delete window.loadProjects;
     delete window.loadLabels;
-    delete window.loadTeamAgentsQuiet;
-    delete window.connectWebSocket;
-    delete window.navigateTo;
-    delete window.handleRoute;
-    delete window.currentView;
     setCurrentTeam(null);
   });
 
@@ -167,19 +187,19 @@ describe('selectTeam', () => {
 
   it('connects to WebSocket', async () => {
     await selectTeam({ id: 'team-1', name: 'Test' });
-    expect(window.connectWebSocket).toHaveBeenCalledWith('team-1');
+    expect(mockConnectWebSocket).toHaveBeenCalledWith('team-1');
   });
 
   it('calls handleRoute on initial load', async () => {
     await selectTeam({ id: 'team-1', name: 'Test' }, true);
-    expect(window.handleRoute).toHaveBeenCalled();
-    expect(window.navigateTo).not.toHaveBeenCalled();
+    expect(mockHandleRoute).toHaveBeenCalled();
+    expect(mockNavigateTo).not.toHaveBeenCalled();
   });
 
   it('calls navigateTo on subsequent selections', async () => {
     await selectTeam({ id: 'team-1', name: 'Test' }, false);
-    expect(window.navigateTo).toHaveBeenCalledWith('issues');
-    expect(window.handleRoute).not.toHaveBeenCalled();
+    expect(mockNavigateTo).toHaveBeenCalledWith('my-issues');
+    expect(mockHandleRoute).not.toHaveBeenCalled();
   });
 });
 
@@ -214,13 +234,12 @@ describe('loadTeamMembersQuiet', () => {
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
     delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('returns early if no currentTeam', async () => {
@@ -235,7 +254,7 @@ describe('loadTeamMembersQuiet', () => {
     await loadTeamMembersQuiet();
     expect(api.getTeamMembers).toHaveBeenCalledWith('team-1');
     expect(window.buildAssignees).toHaveBeenCalled();
-    expect(window.updateAssigneeFilter).toHaveBeenCalled();
+    expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
   it('handles errors silently', async () => {
@@ -571,22 +590,16 @@ describe('handleCreateTeam', () => {
       <div id="team-dropdown"></div>
     `;
     vi.clearAllMocks();
-    window.loadProjects = vi.fn().mockResolvedValue();
+    mockLoadProjects.mockResolvedValue();
     window.loadLabels = vi.fn().mockResolvedValue();
-    window.loadTeamAgentsQuiet = vi.fn().mockResolvedValue();
-    window.connectWebSocket = vi.fn();
-    window.navigateTo = vi.fn();
-    window.currentView = 'issues';
+    mockLoadTeamAgentsQuiet.mockResolvedValue();
+    mockConnectWebSocket.mockClear();
+    mockNavigateTo.mockClear();
     api.getTeamMembers.mockResolvedValue([]);
   });
 
   afterEach(() => {
-    delete window.loadProjects;
     delete window.loadLabels;
-    delete window.loadTeamAgentsQuiet;
-    delete window.connectWebSocket;
-    delete window.navigateTo;
-    delete window.currentView;
   });
 
   it('prevents default form submission', async () => {

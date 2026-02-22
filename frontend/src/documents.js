@@ -9,6 +9,9 @@ import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects, getSavedProjectId } from './projects.js';
+import { renderMarkdown } from './gate-approvals.js';
+import { navigateTo } from './router.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -447,7 +450,7 @@ export function renderDocuments(groupBy = '', viewMode = 'list') {
 
   // Group documents
   const groups = {};
-  const projects = window.getProjects ? window.getProjects() : [];
+  const projects = getProjects();
 
   docsToRender.forEach(doc => {
     let groupKey, groupLabel;
@@ -581,7 +584,7 @@ export async function showBulkMoveModal() {
     return;
   }
 
-  const projects = window.getProjects ? window.getProjects() : [];
+  const projects = getProjects();
   const projectOptions = projects.map(p =>
     `<option value="${p.id}">${escapeHtml(p.name)}</option>`
   ).join('');
@@ -701,8 +704,7 @@ export async function viewDocument(documentId, pushHistory = true) {
     const detailView = document.getElementById('document-detail-view');
     detailView.classList.remove('hidden');
 
-    // Use window.renderMarkdown for now (will be extracted later)
-    const renderMarkdown = window.renderMarkdown || ((c) => escapeHtml(c));
+    // renderMarkdown imported from gate-approvals module
 
     // Fetch linked issues
     let linkedIssuesHtml = '';
@@ -772,7 +774,7 @@ export async function viewDocument(documentId, pushHistory = true) {
     let projectName = null;
     let sprintName = null;
     if (doc.project_id) {
-      const projects = window.getProjects ? window.getProjects() : [];
+      const projects = getProjects();
       const project = projects.find(p => p.id === doc.project_id);
       projectName = project ? project.name : null;
 
@@ -899,9 +901,9 @@ async function updateSprintDropdown(selectId, projectId, selectedSprintId = null
  */
 export async function showCreateDocumentModal() {
   // Get projects for dropdown
-  const projects = window.getProjects ? window.getProjects() : [];
+  const projects = getProjects();
   // Get current project from localStorage if available
-  const currentProjectId = window.getSavedProjectId ? window.getSavedProjectId() : '';
+  const currentProjectId = getSavedProjectId() || '';
 
   const projectOptions = projects.map(p =>
     `<option value="${p.id}" ${p.id === currentProjectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
@@ -989,7 +991,7 @@ export async function showEditDocumentModal(documentId) {
     const doc = await api.getDocument(documentId);
 
     // Get projects for dropdown
-    const projects = window.getProjects ? window.getProjects() : [];
+    const projects = getProjects();
     const projectOptions = projects.map(p =>
       `<option value="${p.id}" ${p.id === doc.project_id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
     ).join('');
@@ -1076,10 +1078,7 @@ export async function deleteDocument(documentId) {
     await api.deleteDocument(documentId);
     const teamId = getCurrentTeam()?.id;
     await loadDocuments(teamId);
-    // Use window.navigateTo for backward compat
-    if (window.navigateTo) {
-      window.navigateTo('documents');
-    }
+    navigateTo('documents');
     showToast('Document deleted!', 'success');
   } catch (e) {
     showToast(e.message, 'error');

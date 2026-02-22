@@ -17,6 +17,8 @@ import {
     loadProjectSettingsRituals,
     renderRitualList,
     setCurrentSettingsProjectId,
+    showCreateProjectRitualModal,
+    setOnRitualsChanged,
 } from './projects.js';
 import { getProjectFromUrl } from './url-helpers.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
@@ -47,7 +49,7 @@ export async function loadRitualsView() {
     if (!filter) return;
 
     // Set callback so CRUD operations refresh the rituals view
-    window._onRitualsChanged = renderRitualsView;
+    setOnRitualsChanged(renderRitualsView);
 
     await loadProjects();
     filter.innerHTML = '<option value="">Select a project</option>' +
@@ -326,9 +328,7 @@ async function handleCompleteTicketRitual(event, ritualId, issueId) {
 // Register delegated event handlers
 registerActions({
     'show-create-ritual-modal': (_event, data) => {
-        if (window.showCreateProjectRitualModal) {
-            window.showCreateProjectRitualModal(data.trigger);
-        }
+        showCreateProjectRitualModal(data.trigger);
     },
     'approve-ticket-ritual': (_event, data) => {
         approveTicketRitual(data.ritualId, data.issueId);

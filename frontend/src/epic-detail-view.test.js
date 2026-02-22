@@ -55,11 +55,13 @@ vi.mock('./event-delegation.js', () => ({
     registerActions: vi.fn(),
 }));
 
+const mockViewIssue = vi.fn();
 vi.mock('./issue-detail-view.js', () => ({
     getActivityIcon: vi.fn(() => '📝'),
     formatActivityActor: vi.fn((a) => a.user_name || 'Unknown'),
     formatActivityText: vi.fn((a) => a.activity_type),
     renderDescriptionContent: vi.fn((text) => text),
+    viewIssue: (...args) => mockViewIssue(...args),
 }));
 
 import { api } from './api.js';
@@ -273,23 +275,22 @@ describe('epic-detail-view', () => {
         });
 
         it('redirects to issue detail view if not an epic', async () => {
-            window.viewIssue = vi.fn();
             api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
             await viewEpic('issue-1');
 
-            expect(window.viewIssue).toHaveBeenCalledWith('issue-1', true);
+            expect(mockViewIssue).toHaveBeenCalledWith('issue-1', true);
             // Should not render epic content
             const content = document.getElementById('epic-detail-content').innerHTML;
             expect(content).not.toContain('Progress');
-            delete window.viewIssue;
         });
 
         it('falls back to epics navigation if not epic and no viewIssue', async () => {
-            delete window.viewIssue;
+            // viewIssue is always available as an import now, so this test
+            // verifies the redirect path still works
             api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
             await viewEpic('issue-1');
 
-            expect(navigateTo).toHaveBeenCalledWith('epics', false);
+            expect(mockViewIssue).toHaveBeenCalledWith('issue-1', true);
         });
 
         it('shows toast on error', async () => {
@@ -300,7 +301,6 @@ describe('epic-detail-view', () => {
         });
 
         it('sub-issue row click navigates to issue detail', async () => {
-            window.viewIssue = vi.fn();
             api.getSubIssues.mockResolvedValue([
                 makeSubIssue({ id: 'sub-1', identifier: 'CHT-101' }),
             ]);
@@ -310,8 +310,7 @@ describe('epic-detail-view', () => {
             expect(row).not.toBeNull();
             row.click();
 
-            expect(window.viewIssue).toHaveBeenCalledWith('sub-1');
-            delete window.viewIssue;
+            expect(mockViewIssue).toHaveBeenCalledWith('sub-1');
         });
 
         it('renders comments section when comments exist', async () => {
@@ -369,12 +368,10 @@ describe('epic-detail-view', () => {
         });
 
         it('redirects to issue detail if not an epic', async () => {
-            window.viewIssue = vi.fn();
             api.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'task' }));
             await viewEpicByPath('CHT-101');
 
-            expect(window.viewIssue).toHaveBeenCalledWith('epic-1', false);
-            delete window.viewIssue;
+            expect(mockViewIssue).toHaveBeenCalledWith('epic-1', false);
         });
 
         it('navigates to epics on not found', async () => {

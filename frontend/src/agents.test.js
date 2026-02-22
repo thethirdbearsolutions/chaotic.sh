@@ -12,6 +12,7 @@ import {
   deleteAgent,
 } from './agents.js';
 import { api } from './api.js';
+import { getProjects } from './projects.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -32,6 +33,15 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./event-delegation.js', () => ({
   registerActions: vi.fn(),
+}));
+
+vi.mock('./projects.js', () => ({
+  getProjects: vi.fn(() => []),
+}));
+
+const mockUpdateAssigneeFilter = vi.fn();
+vi.mock('./assignees.js', () => ({
+  updateAssigneeFilter: (...args) => mockUpdateAssigneeFilter(...args),
 }));
 
 describe('getAgents', () => {
@@ -107,13 +117,12 @@ describe('loadTeamAgentsQuiet', () => {
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
     window.buildAssignees = vi.fn();
-    window.updateAssigneeFilter = vi.fn();
+    mockUpdateAssigneeFilter.mockClear();
   });
 
   afterEach(() => {
     setCurrentTeam(null);
     delete window.buildAssignees;
-    delete window.updateAssigneeFilter;
   });
 
   it('returns early if no teamId and no currentTeam', async () => {
@@ -138,7 +147,7 @@ describe('loadTeamAgentsQuiet', () => {
     api.getTeamAgents.mockResolvedValue([{ id: 'agent-1', name: 'Bot' }]);
     await loadTeamAgentsQuiet();
     expect(window.buildAssignees).toHaveBeenCalled();
-    expect(window.updateAssigneeFilter).toHaveBeenCalled();
+    expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
   it('handles errors silently', async () => {
@@ -242,11 +251,7 @@ describe('showCreateAgentModal', () => {
       <div id="modal-title"></div>
       <div id="modal-content"></div>
     `;
-    window.projects = [{ id: 'proj-1', name: 'Test Project' }];
-  });
-
-  afterEach(() => {
-    delete window.projects;
+    getProjects.mockReturnValue([{ id: 'proj-1', name: 'Test Project' }]);
   });
 
   it('sets modal title', () => {
@@ -270,7 +275,7 @@ describe('showCreateAgentModal', () => {
   });
 
   it('escapes project names', () => {
-    window.projects = [{ id: 'proj-1', name: '<script>xss</script>' }];
+    getProjects.mockReturnValue([{ id: 'proj-1', name: '<script>xss</script>' }]);
     showCreateAgentModal();
     const content = document.getElementById('modal-content');
     expect(content.innerHTML).not.toContain('<script>xss</script>');

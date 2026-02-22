@@ -8,7 +8,7 @@ import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentD
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast } from './ui.js';
 import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
-import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeJsString, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { formatEstimate, getEstimateOptions } from './projects.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, getAssigneeById } from './assignees.js';
@@ -434,7 +434,7 @@ export function renderLabelDropdownContent(dropdown, issueId, teamLabels, curren
     dropdown.innerHTML = `
         <div class="dropdown-header">Toggle labels...</div>
         <div class="label-create-row">
-            <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleLabelCreateKey(event, '${escapeJsString(issueId)}')">
+            <input type="text" class="label-create-input" placeholder="New label..." data-action="label-create-key" data-issue-id="${escapeAttr(issueId)}">
             <button class="btn btn-small" data-action="create-label-from-dropdown" data-issue-id="${escapeAttr(issueId)}">Add</button>
         </div>
         ${teamLabels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
@@ -522,7 +522,7 @@ export function renderCreateIssueLabelDropdown(dropdown) {
     dropdown.innerHTML = `
         <div class="dropdown-header">Labels</div>
         <div class="label-create-row">
-            <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleCreateIssueLabelKey(event)">
+            <input type="text" class="label-create-input" placeholder="New label..." data-action="create-issue-label-key">
             <button class="btn btn-small" data-action="create-label-for-create-issue">Add</button>
         </div>
         ${labels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
@@ -784,5 +784,17 @@ registerActions({
     },
     'create-label-for-create-issue': () => {
         createLabelForCreateIssue();
+    },
+    'label-create-key': (event, data) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            createLabelFromDropdown(data.issueId);
+        }
+    },
+    'create-issue-label-key': (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            createLabelForCreateIssue();
+        }
     },
 });

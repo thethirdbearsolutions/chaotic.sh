@@ -8,6 +8,8 @@ import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
+import { updateAssigneeFilter } from './assignees.js';
 
 // Module state
 let agents = [];
@@ -74,7 +76,7 @@ export async function loadTeamAgentsQuiet(teamId) {
     agents = await api.getTeamAgents(teamId);
     // Update assignees if functions exist
     if (window.buildAssignees) window.buildAssignees();
-    if (window.updateAssigneeFilter) window.updateAssigneeFilter();
+    updateAssigneeFilter();
   } catch (e) {
     console.error('Failed to load team agents:', e);
   }
@@ -93,7 +95,7 @@ export async function loadAgents(teamId) {
   try {
     agents = await api.getTeamAgents(teamId);
     if (window.buildAssignees) window.buildAssignees();
-    if (window.updateAssigneeFilter) window.updateAssigneeFilter();
+    updateAssigneeFilter();
     renderAgents();
   } catch (e) {
     showToast(e.message, 'error');
@@ -138,7 +140,7 @@ export function renderAgents() {
  * Show the create agent modal
  */
 export function showCreateAgentModal() {
-  const projects = window.projects || [];
+  const projects = getProjects();
 
   document.getElementById('modal-title').textContent = 'Create Agent';
   document.getElementById('modal-content').innerHTML = `

@@ -6,8 +6,13 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { getCurrentTeam, setCurrentTeam } from './state.js';
+import { getCurrentTeam, setCurrentTeam, getCurrentView } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { navigateTo, handleRoute } from './router.js';
+import { loadProjects } from './projects.js';
+import { loadTeamAgentsQuiet } from './agents.js';
+import { connectWebSocket } from './ws.js';
+import { updateAssigneeFilter } from './assignees.js';
 
 // Module state
 let teams = [];
@@ -88,29 +93,21 @@ export async function selectTeam(team, isInitialLoad = false) {
   document.getElementById('team-dropdown').classList.add('hidden');
 
   // Connect to WebSocket for real-time updates
-  if (window.connectWebSocket) {
-    window.connectWebSocket(team.id);
-  }
+  connectWebSocket(team.id);
 
   // Load team data (including members for assignee dropdown)
   await Promise.all([
-    window.loadProjects ? window.loadProjects() : Promise.resolve(),
+    loadProjects(),
     window.loadLabels ? window.loadLabels() : Promise.resolve(),
     loadTeamMembersQuiet(),
-    window.loadTeamAgentsQuiet
-      ? window.loadTeamAgentsQuiet()
-      : Promise.resolve(),
+    loadTeamAgentsQuiet(),
   ]);
 
   // On initial load, handle the URL route; otherwise navigate to current view
   if (isInitialLoad) {
-    if (window.handleRoute) {
-      window.handleRoute();
-    }
+    handleRoute();
   } else {
-    if (window.navigateTo) {
-      window.navigateTo(window.currentView);
-    }
+    navigateTo(getCurrentView());
   }
 }
 
@@ -138,9 +135,7 @@ export async function loadTeamMembersQuiet() {
     if (window.buildAssignees) {
       window.buildAssignees();
     }
-    if (window.updateAssigneeFilter) {
-      window.updateAssigneeFilter();
-    }
+    updateAssigneeFilter();
   } catch (e) {
     console.error('Failed to load team members:', e);
   }
@@ -157,9 +152,7 @@ export async function loadTeamMembers() {
     if (window.buildAssignees) {
       window.buildAssignees();
     }
-    if (window.updateAssigneeFilter) {
-      window.updateAssigneeFilter();
-    }
+    updateAssigneeFilter();
     renderTeamMembers();
   } catch (e) {
     showToast(e.message, 'error');

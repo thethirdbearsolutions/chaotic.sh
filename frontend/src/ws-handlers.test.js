@@ -59,6 +59,12 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
+// Mock gate-approvals.js
+const mockLoadGateApprovals = vi.fn();
+vi.mock('./gate-approvals.js', () => ({
+    loadGateApprovals: (...args) => mockLoadGateApprovals(...args),
+}));
+
 import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
@@ -281,12 +287,9 @@ describe('ws-handlers.js', () => {
 
         it('calls loadGateApprovals on gate-approvals view', () => {
             getCurrentView.mockReturnValue('gate-approvals');
-            window.loadGateApprovals = vi.fn();
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
-            expect(window.loadGateApprovals).toHaveBeenCalled();
-
-            delete window.loadGateApprovals;
+            expect(mockLoadGateApprovals).toHaveBeenCalled();
         });
     });
 

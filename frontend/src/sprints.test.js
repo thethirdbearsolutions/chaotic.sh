@@ -40,6 +40,28 @@ vi.mock('./event-delegation.js', () => ({
     registerActions: vi.fn(),
 }));
 
+const mockNavigateTo = vi.fn();
+vi.mock('./router.js', () => ({
+    navigateTo: (...args) => mockNavigateTo(...args),
+}));
+
+vi.mock('./gate-approvals.js', () => ({
+    renderMarkdown: vi.fn(s => s || ''),
+}));
+
+vi.mock('./rituals-view.js', () => ({
+    approveRitual: vi.fn(),
+    completeGateRitual: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    viewIssue: vi.fn(),
+}));
+
+vi.mock('./documents.js', () => ({
+    viewDocument: vi.fn(),
+}));
+
 vi.mock('./utils.js', () => ({
     formatTimeAgo: vi.fn(s => s || ''),
     escapeHtml: vi.fn(s => s || ''),
@@ -283,7 +305,7 @@ describe('viewSprint', () => {
         await viewSprint('bad-id');
 
         expect(showToast).toHaveBeenCalledWith('Sprint not found', 'error');
-        expect(window.navigateTo).toHaveBeenCalledWith('sprints');
+        expect(mockNavigateTo).toHaveBeenCalledWith('sprints');
     });
 
     it('handles API error gracefully', async () => {
@@ -417,7 +439,7 @@ describe('viewSprintByPath', () => {
         await viewSprintByPath('not-a-uuid');
 
         expect(showToast).toHaveBeenCalledWith('Invalid sprint ID', 'error');
-        expect(window.navigateTo).toHaveBeenCalledWith('sprints', false);
+        expect(mockNavigateTo).toHaveBeenCalledWith('sprints', false);
     });
 
     it('accepts valid UUID', async () => {
