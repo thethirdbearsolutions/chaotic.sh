@@ -17,6 +17,7 @@ import { getProjects } from './projects.js';
 import { getPendingGates, setPendingGates, getCurrentTeam } from './state.js';
 import { completeGateRitual } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
+import { viewIssue } from './issue-detail-view.js';
 
 
 /**
@@ -508,7 +509,7 @@ registerActions({
     'view-issue-from-modal': (event, data) => {
         event.preventDefault();
         closeModal();
-        if (window.viewIssue) window.viewIssue(data.issueId);
+        viewIssue(data.issueId);
     },
     'dismiss-approvals-explainer': () => {
         dismissApprovalsExplainer();

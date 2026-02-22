@@ -241,15 +241,6 @@ registerActions({
     },
 });
 
-// Export to window for app.js usage
-Object.assign(window, {
-    renderConditionBuilder,
-    addConditionRow,
-    removeConditionRow,
-    updateOperatorOptions,
-    toggleValueInput,
-    collectConditions
-});
 
 export {
     renderConditionBuilder,

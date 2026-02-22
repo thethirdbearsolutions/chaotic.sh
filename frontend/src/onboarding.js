@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { isOnboardingComplete, setOnboardingComplete, clearOnboarding } from './storage.js';
 import { registerActions } from './event-delegation.js';
+import { initApp } from './app.js';
 
 let onboardingOverlay = null;
 let currentStep = 0;
@@ -294,30 +295,27 @@ function setButtonLoading(buttonId, loading) {
     }
 }
 
-// Handlers exposed on window for inline onclick
-window._onboardingNext = function() {
+function onboardingNext() {
     const steps = tourMode ? getTourSteps() : getSetupSteps();
     if (currentStep < steps.length - 1) {
         currentStep++;
         renderStep();
     }
-};
+}
 
-window._onboardingSkip = function() {
+function onboardingSkip() {
     markOnboardingComplete();
     hideOnboarding();
-    // Reload the app
-    if (window.initApp) window.initApp();
-};
+    initApp();
+}
 
-window._onboardingFinish = function() {
+function onboardingFinish() {
     markOnboardingComplete();
     hideOnboarding();
-    // Reload the app to pick up created team/project
-    if (window.initApp) window.initApp();
-};
+    initApp();
+}
 
-window._onboardingCreateTeam = async function(event) {
+async function onboardingCreateTeam(event) {
     event.preventDefault();
     clearError('onboarding-team-error');
     setButtonLoading('onboarding-team-submit', true);
@@ -333,9 +331,9 @@ window._onboardingCreateTeam = async function(event) {
         showError('onboarding-team-error', e.message || 'Failed to create team');
         setButtonLoading('onboarding-team-submit', false);
     }
-};
+}
 
-window._onboardingCreateProject = async function(event) {
+async function onboardingCreateProject(event) {
     event.preventDefault();
     clearError('onboarding-project-error');
     setButtonLoading('onboarding-project-submit', true);
@@ -351,9 +349,9 @@ window._onboardingCreateProject = async function(event) {
         showError('onboarding-project-error', e.message || 'Failed to create project');
         setButtonLoading('onboarding-project-submit', false);
     }
-};
+}
 
-window._onboardingCreateIssue = async function(event) {
+async function onboardingCreateIssue(event) {
     event.preventDefault();
     clearError('onboarding-issue-error');
     setButtonLoading('onboarding-issue-submit', true);
@@ -368,7 +366,7 @@ window._onboardingCreateIssue = async function(event) {
         showError('onboarding-issue-error', e.message || 'Failed to create issue');
         setButtonLoading('onboarding-issue-submit', false);
     }
-};
+}
 
 export function showOnboarding(isTourMode = false) {
     tourMode = isTourMode;
@@ -399,29 +397,24 @@ export function resetOnboarding() {
 registerActions({
     'onboarding-next': (event) => {
         event.preventDefault();
-        window._onboardingNext();
+        onboardingNext();
     },
     'onboarding-skip': (event) => {
         event.preventDefault();
-        window._onboardingSkip();
+        onboardingSkip();
     },
     'onboarding-finish': (event) => {
         event.preventDefault();
-        window._onboardingFinish();
+        onboardingFinish();
     },
     'onboarding-create-team': (event) => {
-        window._onboardingCreateTeam(event);
+        onboardingCreateTeam(event);
     },
     'onboarding-create-project': (event) => {
-        window._onboardingCreateProject(event);
+        onboardingCreateProject(event);
     },
     'onboarding-create-issue': (event) => {
-        window._onboardingCreateIssue(event);
+        onboardingCreateIssue(event);
     },
 });
 
-// Expose for window access
-window.showOnboarding = showOnboarding;
-window.hideOnboarding = hideOnboarding;
-window.resetOnboarding = resetOnboarding;
-window.hasCompletedOnboarding = hasCompletedOnboarding;

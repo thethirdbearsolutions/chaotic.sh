@@ -8,6 +8,7 @@ import {
     formatActivityActor,
     formatActivityText,
     renderDescriptionContent,
+    viewIssue,
 } from './issue-detail-view.js';
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
@@ -33,11 +34,7 @@ export async function viewEpicByPath(identifier) {
         if (issue) {
             if (issue.issue_type !== 'epic') {
                 // Not an epic — redirect to issue detail view
-                if (window.viewIssue) {
-                    window.viewIssue(issue.id, false);
-                } else {
-                    navigateTo('epics', false);
-                }
+                viewIssue(issue.id, false);
                 return;
             }
             await viewEpic(issue.id, false);
@@ -65,11 +62,7 @@ export async function viewEpic(epicId, pushHistory = true) {
 
         // Validate this is actually an epic
         if (epic.issue_type !== 'epic') {
-            if (window.viewIssue) {
-                window.viewIssue(epicId, pushHistory);
-            } else {
-                navigateTo('epics', false);
-            }
+            viewIssue(epicId, pushHistory);
             return;
         }
 
@@ -253,9 +246,7 @@ export async function viewEpic(epicId, pushHistory = true) {
             subIssuesList.addEventListener('click', (e) => {
                 const row = e.target.closest('.sub-issue-item');
                 if (row && row.dataset.issueId) {
-                    if (window.viewIssue) {
-                        window.viewIssue(row.dataset.issueId);
-                    }
+                    viewIssue(row.dataset.issueId);
                 }
             });
         }

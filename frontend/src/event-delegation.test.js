@@ -58,11 +58,16 @@ describe('event-delegation', () => {
             expect(handler).not.toHaveBeenCalled();
         });
 
-        it('ignores clicks with unregistered action names', () => {
+        it('warns on unregistered action names in dev mode', () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
             document.body.innerHTML = '<button data-action="nonexistent">Click</button>';
 
-            // Should not throw
             document.querySelector('button').click();
+
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining('nonexistent')
+            );
+            warnSpy.mockRestore();
         });
 
         it('bubbles from child to ancestor with data-action', () => {
@@ -132,6 +137,34 @@ describe('event-delegation', () => {
             input.dispatchEvent(new Event('input', { bubbles: true }));
 
             expect(handler).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('keydown dispatch', () => {
+        it('dispatches keydown events to action handler', () => {
+            const handler = vi.fn();
+            registerActions({ 'key-handler': handler });
+
+            document.body.innerHTML = '<input data-action="key-handler" type="text">';
+            const input = document.querySelector('input');
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(handler.mock.calls[0][0].key).toBe('Enter');
+        });
+    });
+
+    describe('mouseover dispatch', () => {
+        it('dispatches mouseover events to action handler', () => {
+            const handler = vi.fn();
+            registerActions({ 'hover-item': handler });
+
+            document.body.innerHTML = '<div data-action="hover-item" data-index="3">Item</div>';
+            const item = document.querySelector('[data-action="hover-item"]');
+            item.dispatchEvent(new Event('mouseover', { bubbles: true }));
+
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(handler.mock.calls[0][1].index).toBe('3');
         });
     });
 

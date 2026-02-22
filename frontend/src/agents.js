@@ -8,6 +8,9 @@ import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
+import { buildAssignees, updateAssigneeFilter } from './assignees.js';
+import { getMembers } from './teams.js';
 
 // Module state
 let agents = [];
@@ -72,9 +75,8 @@ export async function loadTeamAgentsQuiet(teamId) {
 
   try {
     agents = await api.getTeamAgents(teamId);
-    // Update assignees if functions exist
-    if (window.buildAssignees) window.buildAssignees();
-    if (window.updateAssigneeFilter) window.updateAssigneeFilter();
+    buildAssignees(getMembers, getAgents);
+    updateAssigneeFilter();
   } catch (e) {
     console.error('Failed to load team agents:', e);
   }
@@ -92,8 +94,8 @@ export async function loadAgents(teamId) {
 
   try {
     agents = await api.getTeamAgents(teamId);
-    if (window.buildAssignees) window.buildAssignees();
-    if (window.updateAssigneeFilter) window.updateAssigneeFilter();
+    buildAssignees(getMembers, getAgents);
+    updateAssigneeFilter();
     renderAgents();
   } catch (e) {
     showToast(e.message, 'error');
@@ -138,7 +140,7 @@ export function renderAgents() {
  * Show the create agent modal
  */
 export function showCreateAgentModal() {
-  const projects = window.projects || [];
+  const projects = getProjects();
 
   document.getElementById('modal-title').textContent = 'Create Agent';
   document.getElementById('modal-content').innerHTML = `
@@ -272,14 +274,6 @@ export async function deleteAgent(agentId, agentName) {
   }
 }
 
-// Attach to window for remaining callers
-Object.assign(window, {
-  loadTeamAgentsQuiet,
-  loadAgents,
-  renderAgents,
-  showCreateAgentModal,
-  renderAgentAvatar,
-});
 
 // Register delegated event handlers
 registerActions({

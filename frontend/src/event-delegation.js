@@ -28,8 +28,15 @@ function handleEvent(event) {
     const target = event.target.closest('[data-action]');
     if (!target) return;
 
-    const handler = actions[target.dataset.action];
-    if (!handler) return;
+    const actionName = target.dataset.action;
+    const handler = actions[actionName];
+    if (!handler) {
+        // eslint-disable-next-line no-undef
+        if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
+            console.warn(`[event-delegation] No handler registered for action "${actionName}"`);
+        }
+        return;
+    }
 
     handler(event, target.dataset, target);
 }
@@ -55,7 +62,7 @@ export function initEventDelegation() {
     if (initialized) return;
     initialized = true;
 
-    for (const type of ['click', 'change', 'input', 'dragstart', 'dragend', 'dragover', 'dragleave', 'drop']) {
+    for (const type of ['click', 'change', 'input', 'keydown', 'mouseover', 'dragstart', 'dragend', 'dragover', 'dragleave', 'drop']) {
         document.addEventListener(type, handleEvent);
     }
 

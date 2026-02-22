@@ -37,6 +37,23 @@ vi.mock('./event-delegation.js', () => ({
   registerActions: vi.fn(),
 }));
 
+// Mock router.js
+const mockNavigateTo = vi.fn();
+vi.mock('./router.js', () => ({
+  navigateTo: (...args) => mockNavigateTo(...args),
+}));
+
+// Mock projects.js
+vi.mock('./projects.js', () => ({
+  getProjects: vi.fn(() => []),
+  getSavedProjectId: vi.fn(() => ''),
+}));
+
+// Mock gate-approvals.js
+vi.mock('./gate-approvals.js', () => ({
+  renderMarkdown: vi.fn((c) => c),
+}));
+
 describe('getDocuments', () => {
   it('returns empty array initially', () => {
     expect(getDocuments()).toEqual([]);
@@ -363,14 +380,12 @@ describe('deleteDocument', () => {
     document.body.innerHTML = '<div id="documents-list"></div>';
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.navigateTo = vi.fn();
     // Mock confirm
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.navigateTo;
     vi.restoreAllMocks();
   });
 
@@ -392,6 +407,6 @@ describe('deleteDocument', () => {
     api.getDocuments.mockResolvedValue([]);
     await deleteDocument('doc-1');
     expect(api.deleteDocument).toHaveBeenCalledWith('doc-1');
-    expect(window.navigateTo).toHaveBeenCalledWith('documents');
+    expect(mockNavigateTo).toHaveBeenCalledWith('documents');
   });
 });

@@ -6,7 +6,8 @@
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import { escapeAttr } from './utils.js';
-import { setCurrentTeam } from './state.js';
+import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
+import { initApp } from './app.js';
 
 // DOM element references (cached on first use)
 let authScreen = null;
@@ -73,11 +74,9 @@ export async function handleLogin(event) {
 
   try {
     await api.login(email, password);
-    window.currentUser = await api.getMe();
+    setCurrentUser(await api.getMe());
     // Call app's initApp for full initialization
-    if (window.initApp) {
-      await window.initApp();
-    }
+    await initApp();
     showToast('Welcome back!', 'success');
   } catch (e) {
     showToast(`Login failed: ${e.message}`, 'error');
@@ -98,11 +97,9 @@ export async function handleSignup(event) {
   try {
     await api.signup(name, email, password);
     await api.login(email, password);
-    window.currentUser = await api.getMe();
+    setCurrentUser(await api.getMe());
     // Call app's initApp for full initialization
-    if (window.initApp) {
-      await window.initApp();
-    }
+    await initApp();
     showToast('Account created successfully!', 'success');
   } catch (e) {
     showToast(`Signup failed: ${e.message}`, 'error');
@@ -115,7 +112,7 @@ export async function handleSignup(event) {
  */
 export function logout() {
   api.logout();
-  window.currentUser = null;
+  setCurrentUser(null);
   setCurrentTeam(null);
   showAuthScreen();
   showToast('Signed out', 'success');
@@ -139,7 +136,7 @@ export function isImageAvatar(avatar) {
  * Update the user info display in the header
  */
 export function updateUserInfo() {
-  const user = window.currentUser;
+  const user = getCurrentUser();
   if (!user) return;
 
   const nameEl = document.getElementById('user-name');
@@ -201,15 +198,3 @@ export function initAuth() {
   }
 }
 
-// Attach to window for backward compatibility with HTML handlers
-Object.assign(window, {
-  showAuthScreen,
-  showMainScreen,
-  showLogin,
-  showSignup,
-  handleLogin,
-  handleSignup,
-  logout,
-  updateUserInfo,
-  isImageAvatar,
-});

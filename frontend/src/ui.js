@@ -10,6 +10,13 @@ let currentDropdownKeyHandler = null;
  */
 export function showModal() {
   document.getElementById('modal-overlay').classList.remove('hidden');
+  // Auto-focus first input after animation
+  setTimeout(() => {
+    try {
+      const firstInput = document.querySelector('#modal-content input, #modal-content textarea');
+      if (firstInput) firstInput.focus();
+    } catch { /* DOM may be torn down in tests */ }
+  }, 50);
 }
 
 /**
@@ -113,11 +120,3 @@ export function registerDropdownClickOutside(dropdown, options = {}) {
   return () => document.removeEventListener('click', handler, true);
 }
 
-// Attach to window for backward compatibility with HTML handlers
-Object.assign(window, {
-  showModal,
-  closeModal,
-  showToast,
-  closeAllDropdowns,
-  registerDropdownClickOutside,
-});

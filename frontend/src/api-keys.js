@@ -155,10 +155,6 @@ export async function revokeApiKey(keyId, keyName) {
     }
 }
 
-// Window exports for remaining callers
-window.loadApiKeys = loadApiKeys;
-window.showCreateApiKeyModal = showCreateApiKeyModal;
-
 // Register delegated event handlers
 registerActions({
     'create-api-key': (event) => {

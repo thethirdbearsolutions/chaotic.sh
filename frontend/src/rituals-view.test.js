@@ -15,6 +15,7 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
+const mockSetOnRitualsChanged = vi.fn();
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
     loadProjects: vi.fn(),
@@ -23,6 +24,8 @@ vi.mock('./projects.js', () => ({
     loadProjectSettingsRituals: vi.fn(),
     renderRitualList: vi.fn(),
     setCurrentSettingsProjectId: vi.fn(),
+    showCreateProjectRitualModal: vi.fn(),
+    setOnRitualsChanged: (...args) => mockSetOnRitualsChanged(...args),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -126,7 +129,7 @@ describe('rituals-view', () => {
 
             await loadRitualsView();
 
-            expect(window._onRitualsChanged).toBe(renderRitualsView);
+            expect(mockSetOnRitualsChanged).toHaveBeenCalledWith(renderRitualsView);
         });
 
         it('auto-selects saved project from URL', async () => {

@@ -53,6 +53,23 @@ vi.mock('./event-delegation.js', () => ({
   registerActions: vi.fn(),
 }));
 
+const mockNavigateTo = vi.fn();
+vi.mock('./router.js', () => ({
+  navigateTo: (...args) => mockNavigateTo(...args),
+}));
+
+vi.mock('./gate-approvals.js', () => ({
+  renderMarkdown: vi.fn(s => {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }),
+}));
+
+vi.mock('./rituals.js', () => ({
+  renderConditionBuilder: vi.fn(() => ''),
+  collectConditions: vi.fn(() => null),
+}));
+
 describe('getProjects / setProjects', () => {
   afterEach(() => {
     setProjects([]);
@@ -322,17 +339,13 @@ describe('renderProjects', () => {
 describe('viewProject', () => {
   beforeEach(() => {
     document.body.innerHTML = '<select id="project-filter"><option value="proj-1">P1</option></select>';
-    window.navigateTo = vi.fn();
-  });
-
-  afterEach(() => {
-    delete window.navigateTo;
+    mockNavigateTo.mockClear();
   });
 
   it('sets project filter and navigates to issues', () => {
     viewProject('proj-1');
     expect(document.getElementById('project-filter').value).toBe('proj-1');
-    expect(window.navigateTo).toHaveBeenCalledWith('issues');
+    expect(mockNavigateTo).toHaveBeenCalledWith('issues');
   });
 });
 
@@ -565,7 +578,7 @@ describe('viewProjectSettings', () => {
     `;
     vi.clearAllMocks();
     setCurrentTeam({ id: 'team-1' });
-    window.navigateTo = vi.fn();
+    mockNavigateTo.mockClear();
     window.history.pushState = vi.fn();
     setProjects([{
       id: 'proj-1',
@@ -581,7 +594,6 @@ describe('viewProjectSettings', () => {
 
   afterEach(() => {
     setCurrentTeam(null);
-    delete window.navigateTo;
     setProjects([]);
   });
 
@@ -604,7 +616,7 @@ describe('viewProjectSettings', () => {
 
   it('navigates away for unknown project', async () => {
     await viewProjectSettings('unknown');
-    expect(window.navigateTo).toHaveBeenCalledWith('projects');
+    expect(mockNavigateTo).toHaveBeenCalledWith('projects');
   });
 });
 

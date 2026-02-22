@@ -115,24 +115,10 @@ describe('Integration smoke test', () => {
         await new Promise(r => setTimeout(r, 0));
     });
 
-    it('exports essential functions to window', () => {
-        // Smoke-check a handful of critical exports.
-        // For comprehensive coverage, see window-exports.test.js.
-        const essentialExports = [
-            'navigateTo',
-            'showModal',
-            'closeModal',
-            'showToast',
-            'showCreateIssueModal',
-            'showLogin',
-            'showSignup',
-            'handleLogin',
-            'handleSignup',
-            'logout',
-        ];
-
-        const missing = essentialExports.filter(fn => typeof window[fn] !== 'function');
-        expect(missing).toEqual([]);
+    it('exports third-party libs to window (marked, DOMPurify)', () => {
+        // main.js attaches marked and DOMPurify to window for use by renderMarkdown
+        expect(typeof window.marked).not.toBe('undefined');
+        expect(typeof window.DOMPurify).not.toBe('undefined');
     });
 
     it('has no initialization errors', () => {

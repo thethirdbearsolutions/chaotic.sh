@@ -11,9 +11,19 @@ vi.mock('./api.js', () => ({
     },
 }));
 
-vi.mock('./event-delegation.js', () => ({
-    registerActions: vi.fn(),
+const mockInitApp = vi.fn().mockResolvedValue(undefined);
+vi.mock('./app.js', () => ({
+    initApp: (...args) => mockInitApp(...args),
 }));
+
+vi.mock('./event-delegation.js', () => {
+    globalThis.__onboardingActions = globalThis.__onboardingActions || {};
+    return {
+        registerActions: (actions) => {
+            Object.assign(globalThis.__onboardingActions, actions);
+        },
+    };
+});
 
 import { api } from './api.js';
 import {
@@ -26,9 +36,9 @@ import {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockInitApp.mockClear();
     localStorage.clear();
     document.body.innerHTML = '<div id="app"></div>';
-    window.initApp = vi.fn();
     // Clean up any existing overlay
     hideOnboarding();
 });
@@ -97,29 +107,29 @@ describe('resetOnboarding', () => {
 });
 
 describe('onboarding navigation', () => {
-    it('_onboardingNext advances to next step', () => {
+    it('onboarding-next advances to next step', () => {
         showOnboarding();
         const overlay = document.getElementById('onboarding-overlay');
         expect(overlay.innerHTML).toContain('Welcome to Chaotic');
 
-        window._onboardingNext();
+        globalThis.__onboardingActions['onboarding-next']({ preventDefault: vi.fn() });
         expect(overlay.innerHTML).toContain('Create Your Team');
     });
 
-    it('_onboardingSkip marks complete and hides', () => {
+    it('onboarding-skip marks complete and hides', () => {
         showOnboarding();
-        window._onboardingSkip();
+        globalThis.__onboardingActions['onboarding-skip']({ preventDefault: vi.fn() });
         expect(hasCompletedOnboarding()).toBe(true);
         expect(document.getElementById('onboarding-overlay')).toBeNull();
-        expect(window.initApp).toHaveBeenCalled();
+        expect(mockInitApp).toHaveBeenCalled();
     });
 
-    it('_onboardingFinish marks complete and hides', () => {
+    it('onboarding-finish marks complete and hides', () => {
         showOnboarding();
-        window._onboardingFinish();
+        globalThis.__onboardingActions['onboarding-finish']({ preventDefault: vi.fn() });
         expect(hasCompletedOnboarding()).toBe(true);
         expect(document.getElementById('onboarding-overlay')).toBeNull();
-        expect(window.initApp).toHaveBeenCalled();
+        expect(mockInitApp).toHaveBeenCalled();
     });
 });
 
@@ -128,12 +138,12 @@ describe('onboarding team creation', () => {
         api.createTeam.mockResolvedValue({ id: 't1', name: 'Engineering', key: 'ENG' });
 
         showOnboarding();
-        window._onboardingNext(); // Go to team step
+        globalThis.__onboardingActions['onboarding-next']({ preventDefault: vi.fn() }); // Go to team step
 
         document.getElementById('onboarding-team-name').value = 'Engineering';
         document.getElementById('onboarding-team-key').value = 'ENG';
 
-        await window._onboardingCreateTeam({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-team']({ preventDefault: vi.fn() });
 
         expect(api.createTeam).toHaveBeenCalledWith({ name: 'Engineering', key: 'ENG' });
         const overlay = document.getElementById('onboarding-overlay');
@@ -144,12 +154,12 @@ describe('onboarding team creation', () => {
         api.createTeam.mockRejectedValue(new Error('Team key already taken'));
 
         showOnboarding();
-        window._onboardingNext();
+        globalThis.__onboardingActions['onboarding-next']({ preventDefault: vi.fn() });
 
         document.getElementById('onboarding-team-name').value = 'Eng';
         document.getElementById('onboarding-team-key').value = 'ENG';
 
-        await window._onboardingCreateTeam({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-team']({ preventDefault: vi.fn() });
 
         const error = document.getElementById('onboarding-team-error');
         expect(error.textContent).toBe('Team key already taken');
@@ -163,15 +173,15 @@ describe('onboarding project creation', () => {
         api.createProject.mockResolvedValue({ id: 'p1', name: 'Backend', key: 'BE' });
 
         showOnboarding();
-        window._onboardingNext(); // team step
+        globalThis.__onboardingActions['onboarding-next']({ preventDefault: vi.fn() }); // team step
 
         document.getElementById('onboarding-team-name').value = 'Eng';
         document.getElementById('onboarding-team-key').value = 'ENG';
-        await window._onboardingCreateTeam({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-team']({ preventDefault: vi.fn() });
 
         document.getElementById('onboarding-project-name').value = 'Backend';
         document.getElementById('onboarding-project-key').value = 'BE';
-        await window._onboardingCreateProject({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-project']({ preventDefault: vi.fn() });
 
         expect(api.createProject).toHaveBeenCalledWith('t1', { name: 'Backend', key: 'BE' });
         expect(document.getElementById('onboarding-overlay').innerHTML).toContain('Create Your First Issue');
@@ -185,18 +195,18 @@ describe('onboarding issue creation', () => {
         api.createIssue.mockResolvedValue({ id: 'i1', identifier: 'ENG-1', title: 'Setup CI' });
 
         showOnboarding();
-        window._onboardingNext();
+        globalThis.__onboardingActions['onboarding-next']({ preventDefault: vi.fn() });
 
         document.getElementById('onboarding-team-name').value = 'Eng';
         document.getElementById('onboarding-team-key').value = 'ENG';
-        await window._onboardingCreateTeam({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-team']({ preventDefault: vi.fn() });
 
         document.getElementById('onboarding-project-name').value = 'Backend';
         document.getElementById('onboarding-project-key').value = 'BE';
-        await window._onboardingCreateProject({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-project']({ preventDefault: vi.fn() });
 
         document.getElementById('onboarding-issue-title').value = 'Setup CI';
-        await window._onboardingCreateIssue({ preventDefault: vi.fn() });
+        await globalThis.__onboardingActions['onboarding-create-issue']({ preventDefault: vi.fn() });
 
         expect(api.createIssue).toHaveBeenCalledWith('p1', { title: 'Setup CI' });
         const overlay = document.getElementById('onboarding-overlay');
@@ -204,23 +214,5 @@ describe('onboarding issue creation', () => {
         expect(overlay.innerHTML).toContain('Eng (ENG)');
         expect(overlay.innerHTML).toContain('Backend (BE)');
         expect(overlay.innerHTML).toContain('ENG-1 - Setup CI');
-    });
-});
-
-describe('window exports', () => {
-    it('exposes showOnboarding on window', () => {
-        expect(window.showOnboarding).toBe(showOnboarding);
-    });
-
-    it('exposes hideOnboarding on window', () => {
-        expect(window.hideOnboarding).toBe(hideOnboarding);
-    });
-
-    it('exposes resetOnboarding on window', () => {
-        expect(window.resetOnboarding).toBe(resetOnboarding);
-    });
-
-    it('exposes hasCompletedOnboarding on window', () => {
-        expect(window.hasCompletedOnboarding).toBe(hasCompletedOnboarding);
     });
 });

@@ -18,6 +18,7 @@ import { renderTicketRitualActions } from './rituals-view.js';
 import { showDetailDropdown } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
+import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 
 // Module state
 let ticketRitualsCollapsed = true;
@@ -975,9 +976,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                     const issueId = item.dataset.issueId;
                     closeOverflow();
                     if (item.dataset.action === 'edit') {
-                        window.showEditIssueModal(issueId);
+                        showEditIssueModal(issueId);
                     } else if (item.dataset.action === 'delete') {
-                        window.deleteIssue(issueId);
+                        deleteIssue(issueId);
                     }
                 });
             });

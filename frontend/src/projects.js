@@ -9,9 +9,15 @@ import { showModal, closeModal, showToast } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { navigateTo } from './router.js';
+import { renderMarkdown } from './gate-approvals.js';
+import { renderConditionBuilder, collectConditions } from './rituals.js';
 
 // Module state
 let projects = [];
+
+// Callback for when rituals change (set by rituals-view)
+let _onRitualsChangedCallback = null;
 
 // Estimate scale definitions
 const ESTIMATE_SCALES = {
@@ -57,6 +63,15 @@ const ESTIMATE_SCALES = {
     { value: 8, label: 'XL' },
   ],
 };
+
+/**
+ * Set the callback to be called when rituals change.
+ * Used by rituals-view to register its refresh function.
+ * @param {Function|null} callback
+ */
+export function setOnRitualsChanged(callback) {
+  _onRitualsChangedCallback = callback;
+}
 
 /**
  * Get current projects list
@@ -299,9 +314,7 @@ export function renderProjects() {
  */
 export function viewProject(projectId) {
   setGlobalProjectSelection(projectId);
-  if (window.navigateTo) {
-    window.navigateTo('issues');
-  }
+  navigateTo('issues');
 }
 
 /**
@@ -518,7 +531,7 @@ export async function viewProjectSettings(projectId) {
   const project = projects.find(p => p.id === projectId);
   if (!project) {
     showToast('Project not found', 'error');
-    window.navigateTo('projects');
+    navigateTo('projects');
     return;
   }
 
@@ -678,8 +691,8 @@ export async function loadProjectSettingsRituals() {
     projectRituals = await api.getRituals(currentSettingsProjectId);
     renderProjectSettingsRituals();
     // Notify rituals view if active (for CRUD operations triggered from modals)
-    if (typeof window._onRitualsChanged === 'function') {
-      window._onRitualsChanged();
+    if (typeof _onRitualsChangedCallback === 'function') {
+      _onRitualsChangedCallback();
     }
   } catch (e) {
     showToast(e.message, 'error');
@@ -735,7 +748,7 @@ export function renderRitualList(containerId, rituals, type) {
       <div class="ritual-item-info">
         <div class="ritual-item-name">${escapeHtml(ritual.name)}</div>
         <div class="ritual-item-prompt-fade">
-          <div class="ritual-item-prompt markdown-body">${window.renderMarkdown ? window.renderMarkdown(ritual.prompt) : escapeHtml(ritual.prompt)}</div>
+          <div class="ritual-item-prompt markdown-body">${renderMarkdown(ritual.prompt)}</div>
         </div>
         <div class="ritual-item-mode">
           <span class="badge badge-ritual-${approvalModeClass(ritual.approval_mode)}">${escapeHtml(ritual.approval_mode || 'auto')}</span>
@@ -842,7 +855,7 @@ export async function showCreateProjectRitualModal(triggerType) {
         <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
       </div>
       <div id="ritual-conditions-section"${triggerType === 'every_sprint' ? ' style="display: none;"' : ''}>
-        ${window.renderConditionBuilder ? window.renderConditionBuilder(null) : ''}
+        ${renderConditionBuilder(null)}
       </div>
       <button type="submit" class="btn btn-primary">Create Ritual</button>
     </form>
@@ -918,7 +931,7 @@ export async function handleCreateProjectRitual(event) {
 
   let conditions;
   try {
-    conditions = window.collectConditions ? window.collectConditions() : null;
+    conditions = collectConditions();
   } catch {
     return false;
   }
@@ -1049,7 +1062,7 @@ export async function showEditProjectRitualModal(ritualId) {
         <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
       </div>
       <div id="ritual-conditions-section"${!ritual.trigger || ritual.trigger === 'every_sprint' ? ' style="display: none;"' : ''}>
-        ${window.renderConditionBuilder ? window.renderConditionBuilder(ritual.conditions) : ''}
+        ${renderConditionBuilder(ritual.conditions)}
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
     </form>
@@ -1067,7 +1080,7 @@ export async function handleUpdateProjectRitual(event, ritualId) {
 
   let conditions;
   try {
-    conditions = window.collectConditions ? window.collectConditions() : null;
+    conditions = collectConditions();
   } catch {
     return false;
   }
@@ -1169,38 +1182,3 @@ registerActions({
   },
 });
 
-// Attach to window for backward compatibility with HTML handlers
-Object.assign(window, {
-  loadProjects,
-  updateProjectFilters,
-  getSavedProjectId,
-  setGlobalProjectSelection,
-  renderProjects,
-  viewProject,
-  showCreateProjectModal,
-  handleCreateProject,
-  viewProjectSettings,
-  switchProjectSettingsTab,
-  saveProjectSettingsGeneral,
-  saveProjectSettingsRules,
-  clearProjectSettingsState,
-  showEditProjectModal,
-  handleUpdateProject,
-  confirmDeleteProject,
-  getEstimateOptions,
-  formatEstimate,
-  getEstimateScaleHint,
-  getProjects,
-  setProjects,
-  ESTIMATE_SCALES,
-  // Project settings rituals
-  showCreateProjectRitualModal,
-  handleCreateProjectRitual,
-  showEditProjectRitualModal,
-  handleUpdateProjectRitual,
-  deleteProjectRitual,
-  setCurrentSettingsProjectId,
-  getProjectRituals,
-  loadProjectSettingsRituals,
-  onRitualGroupChange,
-});
