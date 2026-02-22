@@ -180,6 +180,46 @@ describe('handleQuickCreate', () => {
         expect(firstCall[0].identifier).toBe('ABC-?');
     });
 
+    it('restores placeholder on success', async () => {
+        expect(input.placeholder).toBe('Quick create...');
+
+        let placeholderDuringCreate;
+        window.api.createIssue.mockImplementation(() => {
+            placeholderDuringCreate = input.placeholder;
+            return Promise.resolve({
+                id: 'real-1', identifier: 'TST-1', title: 'New issue',
+                status: 'backlog', priority: 'no_priority',
+            });
+        });
+
+        const event = { key: 'Enter', target: input };
+        await handleQuickCreate(event);
+        expect(placeholderDuringCreate).toBe('Creating...');
+        expect(input.placeholder).toBe('Quick create...');
+    });
+
+    it('restores placeholder on error', async () => {
+        window.api.createIssue.mockRejectedValue(new Error('fail'));
+        const event = { key: 'Enter', target: input };
+        await handleQuickCreate(event);
+        expect(input.placeholder).toBe('Quick create...');
+    });
+
+    it('focuses input after creation', async () => {
+        const focusSpy = vi.spyOn(input, 'focus');
+        const event = { key: 'Enter', target: input };
+        await handleQuickCreate(event);
+        expect(focusSpy).toHaveBeenCalled();
+    });
+
+    it('focuses input after error', async () => {
+        window.api.createIssue.mockRejectedValue(new Error('fail'));
+        const focusSpy = vi.spyOn(input, 'focus');
+        const event = { key: 'Enter', target: input };
+        await handleQuickCreate(event);
+        expect(focusSpy).toHaveBeenCalled();
+    });
+
     it('falls back to NEW-? when project not found', async () => {
         getProjects.mockReturnValue([]);
 
