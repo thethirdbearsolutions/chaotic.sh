@@ -42,13 +42,19 @@ async def list_sprints(
     return sprints
 
 
-@router.post("", response_model=SprintResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SprintResponse, status_code=status.HTTP_200_OK)
 async def create_sprint(
     project_id: str,
-    sprint_in: SprintCreate,
     current_user: CurrentUser,
+    sprint_in: SprintCreate | None = None,
 ):
-    """Create a new sprint."""
+    """No-op: sprints are managed automatically.
+
+    Returns the current active sprint. Sprint rotation happens via
+    the close endpoint. This endpoint exists so that agents/clients
+    that attempt to create sprints get a useful response instead of
+    an error.
+    """
     project_service = ProjectService()
     sprint_service = SprintService()
 
@@ -65,10 +71,8 @@ async def create_sprint(
             detail="Not a member of this team",
         )
 
-    sprint = await sprint_service.create(sprint_in, project_id)
-    response = SprintResponse.model_validate(sprint, from_attributes=True)
-    await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"))
-    return response
+    current, _ = await sprint_service.ensure_sprints_exist(project_id)
+    return current
 
 
 # NOTE: /current must come BEFORE /{sprint_id} for route matching to work
