@@ -4,26 +4,26 @@
 
    Table of Contents:
    ------------------
-   1.  Design Tokens (CSS custom properties)
-   2.  Reset & Base
-   3.  Layout (app shell, sidebar, main content)
-   4.  Auth & Onboarding
-   5.  Forms & Buttons
-   6.  Navigation & Dropdowns
-   7.  Lists & Grids
-   8.  Modals & Overlays
-   9.  Issue Views (list, detail, kanban board)
-   10. Documents
-   11. Epics & Sprints
-   12. Settings & API Keys
-   13. Comments & Activity
-   14. Filter Bar & Chips
-   15. Badges, Labels & Toasts
-   16. Command Palette
-   17. Gate Approvals & Rituals
-   18. Animations & Transitions
-   19. Utilities
-   20. Responsive Breakpoints
+   1.  DESIGN TOKENS
+   2.  RESET & BASE
+   3.  LAYOUT
+   4.  AUTH & ONBOARDING
+   5.  FORMS & BUTTONS
+   6.  NAVIGATION & DROPDOWNS
+   7.  LISTS & GRIDS
+   8.  MODALS & OVERLAYS
+   9.  ISSUE VIEWS
+   10. DOCUMENTS
+   11. EPICS & SPRINTS
+   12. SETTINGS & API KEYS
+   13. COMMENTS & ACTIVITY
+   14. FILTER BAR & CHIPS
+   15. BADGES, LABELS & TOASTS
+   16. COMMAND PALETTE
+   17. GATE APPROVALS & RITUALS
+   18. ANIMATIONS & TRANSITIONS
+   19. UTILITIES
+   20. RESPONSIVE BREAKPOINTS
    ============================================================================ */
 
 /* ============================================================================
@@ -2373,7 +2373,7 @@ input[type="checkbox"] {
     color: var(--text-muted);
 }
 
-/* --- Kanban Board --- */
+/* Kanban Board */
 .kanban-board {
     display: flex;
     gap: 16px;
@@ -7167,7 +7167,7 @@ input[type="checkbox"] {
     border-right: 1px solid var(--border-color);
 }
 
-/* --- Onboarding overlay --- */
+/* Onboarding overlay */
 .onboarding-overlay {
     position: fixed;
     inset: 0;
