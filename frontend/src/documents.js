@@ -1183,8 +1183,11 @@ export async function unlinkDocumentFromIssue(documentId, issueId) {
  * @param {Event} event - Form submit event
  * @param {string} documentId - Document ID
  */
+let docCommentSubmitting = false;
+
 export async function handleAddDocumentComment(event, documentId) {
   event.preventDefault();
+  if (docCommentSubmitting) return false;
 
   const textarea = document.getElementById('new-doc-comment');
   const content = textarea.value.trim();
@@ -1194,6 +1197,7 @@ export async function handleAddDocumentComment(event, documentId) {
     return false;
   }
 
+  docCommentSubmitting = true;
   try {
     await api.createDocumentComment(documentId, content);
     textarea.value = '';
@@ -1201,6 +1205,8 @@ export async function handleAddDocumentComment(event, documentId) {
     await viewDocument(documentId, false);
   } catch (e) {
     showToast(e.message, 'error');
+  } finally {
+    docCommentSubmitting = false;
   }
 
   return false;
