@@ -643,11 +643,17 @@ def run_migrations() -> tuple[bool, str]:
         except subprocess.CalledProcessError as e:
             output = (e.stderr or "") + (e.stdout or "")
             if "already exists" in output:
-                # Existing DB from pre-Oxyde era — fake-apply to mark as done
+                # Existing DB from pre-Oxyde era — fake-apply only the initial
+                # migration, then run migrate again to apply any new ones
                 run_command(
-                    ["uv", "run", "oxyde", "migrate", "--fake"],
+                    ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
                     cwd=backend_dir,
                     timeout=30,
+                )
+                run_command(
+                    ["uv", "run", "oxyde", "migrate"],
+                    cwd=backend_dir,
+                    timeout=120,
                 )
             else:
                 raise
@@ -1235,8 +1241,8 @@ def system_upgrade(target_version, no_backup, yes):
                 console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
         raise SystemExit(1)
 
-    # Sync dependencies
-    console.print("Syncing dependencies...")
+    # Sync dependencies and run database migrations
+    console.print("Syncing dependencies and running migrations...")
     success, message = run_migrations()
     if not success:
         console.print(f"[red]{message}[/red]")
