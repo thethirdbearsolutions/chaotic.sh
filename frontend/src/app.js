@@ -3,9 +3,6 @@
  */
 
 /* global api -- provided via window by main.js entry point */
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-
 import { showModal, closeModal, isModalOpen, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
@@ -74,7 +71,7 @@ import {
     updateGroupBy,
     getGroupByValue,
 } from './issues-view.js';
-import { loadGateApprovals, dismissApprovalsExplainer } from './gate-approvals.js';
+import { loadGateApprovals, dismissApprovalsExplainer, renderMarkdown } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
 import {
     setDependencies as setEpicDetailViewDependencies,
@@ -310,23 +307,7 @@ window.addEventListener('resize', () => {
     }
 });
 
-// Markdown rendering helper with XSS protection
-function renderMarkdown(content) {
-    if (!content) return '';
-    try {
-        marked.setOptions({ breaks: true, gfm: true });
-        const rawHtml = marked.parse(content);
-        // Escape raw-text HTML elements (title, style, textarea, xmp) whose
-        // content gets silently destroyed by DOMPurify since it treats their
-        // children as raw text, not DOM nodes (CHT-829)
-        const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
-            (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-        return DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
-    } catch (e) {
-        console.error('Markdown parsing error:', e);
-        return content.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-    }
-}
+// renderMarkdown imported from gate-approvals.js (CHT-1040)
 
 // Configure router (CHT-782)
 configureRouter({

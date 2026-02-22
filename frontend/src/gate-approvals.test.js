@@ -7,6 +7,9 @@ vi.mock('./api.js', () => ({
     api: {
         completeTicketGateRitual: vi.fn(),
         approveTicketRitual: vi.fn(),
+        getPendingApprovals: vi.fn(() => Promise.resolve([])),
+        getLimboStatus: vi.fn(() => Promise.resolve({ in_limbo: false })),
+        approveAttestation: vi.fn(),
     },
 }));
 
@@ -50,6 +53,8 @@ vi.mock('dompurify', () => ({
 
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getProjects } from './projects.js';
+import { setPendingGates } from './state.js';
 import {
     showGateApprovalModal,
     handleGateApproval,
@@ -57,6 +62,8 @@ import {
     showReviewApprovalModal,
     handleReviewApproval,
     approveReviewFromList,
+    loadGateApprovals,
+    dismissApprovalsExplainer,
 } from './gate-approvals.js';
 
 beforeEach(() => {
@@ -67,7 +74,7 @@ beforeEach(() => {
     `;
     window.navigateTo = vi.fn();
     window.viewIssue = vi.fn();
-    window.loadGateApprovals = vi.fn();
+    window.currentTeam = null;
 });
 
 describe('showGateApprovalModal', () => {
@@ -101,7 +108,9 @@ describe('handleGateApproval', () => {
         expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'i1', 'looks good');
         expect(showToast).toHaveBeenCalledWith('GATE ritual "Test" approved!', 'success');
         expect(closeModal).toHaveBeenCalled();
-        // loadGateApprovals is now called directly within the module (no longer via window)
+        // loadGateApprovals is called directly within the module after success
+        // Verify by checking that setPendingGates was called (side-effect of loadGateApprovals)
+        // Note: loadGateApprovals returns early if !window.currentTeam, so this just verifies no crash
     });
 
     it('passes null when note is empty', async () => {
@@ -190,6 +199,51 @@ describe('approveReviewFromList', () => {
         approveReviewFromList('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', 'Bob', '2026-01-01', 'note');
         expect(showModal).toHaveBeenCalled();
         expect(document.getElementById('modal-title').textContent).toBe('Approve: Review');
+    });
+});
+
+describe('loadGateApprovals', () => {
+    it('returns early if no currentTeam', async () => {
+        window.currentTeam = null;
+        await loadGateApprovals();
+        expect(api.getPendingApprovals).not.toHaveBeenCalled();
+    });
+
+    it('loads approvals from all projects', async () => {
+        window.currentTeam = { id: 'team-1' };
+        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        api.getPendingApprovals.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await loadGateApprovals();
+
+        expect(api.getPendingApprovals).toHaveBeenCalledWith('p1');
+        expect(api.getLimboStatus).toHaveBeenCalledWith('p1');
+        expect(setPendingGates).toHaveBeenCalledWith([]);
+    });
+
+    it('shows error state on failure', async () => {
+        window.currentTeam = { id: 'team-1' };
+        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        api.getPendingApprovals.mockRejectedValue(new Error('Network error'));
+
+        await loadGateApprovals();
+
+        const container = document.getElementById('gate-approvals-list');
+        expect(container.innerHTML).toContain('Error loading approvals');
+        expect(container.innerHTML).toContain('Network error');
+    });
+});
+
+describe('dismissApprovalsExplainer', () => {
+    it('sets localStorage and re-renders', () => {
+        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        const spy = vi.spyOn(Storage.prototype, 'setItem');
+        dismissApprovalsExplainer();
+        expect(spy).toHaveBeenCalledWith('chaotic_approvals_explainer_dismissed', '1');
+        spy.mockRestore();
     });
 });
 
