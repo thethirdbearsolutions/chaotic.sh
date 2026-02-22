@@ -101,15 +101,18 @@ describe('board', () => {
     });
 
     describe('renderBoard', () => {
-        it('renders columns for each status', () => {
+        it('renders columns for each status with correct headers', () => {
             setBoardIssues([]);
             renderBoard();
 
             const columns = document.querySelectorAll('.kanban-column');
             expect(columns).toHaveLength(5);
+
+            const columnStatuses = Array.from(columns).map(c => c.dataset.status);
+            expect(columnStatuses).toEqual(['backlog', 'todo', 'in_progress', 'in_review', 'done']);
         });
 
-        it('renders issues in correct columns', () => {
+        it('renders issues in correct columns with card content', () => {
             setBoardIssues([
                 { id: '1', title: 'Todo Issue', status: 'todo', identifier: 'TEST-1', priority: 'medium' },
                 { id: '2', title: 'Done Issue', status: 'done', identifier: 'TEST-2', priority: 'low' },
@@ -118,9 +121,20 @@ describe('board', () => {
 
             const todoColumn = document.querySelector('.kanban-column[data-status="todo"]');
             const doneColumn = document.querySelector('.kanban-column[data-status="done"]');
+            const backlogColumn = document.querySelector('.kanban-column[data-status="backlog"]');
 
             expect(todoColumn.querySelectorAll('.kanban-card')).toHaveLength(1);
             expect(doneColumn.querySelectorAll('.kanban-card')).toHaveLength(1);
+            expect(backlogColumn.querySelectorAll('.kanban-card')).toHaveLength(0);
+
+            const todoCard = todoColumn.querySelector('.kanban-card');
+            expect(todoCard.textContent).toContain('Todo Issue');
+            expect(todoCard.textContent).toContain('TEST-1');
+            expect(todoCard.dataset.id).toBe('1');
+
+            const doneCard = doneColumn.querySelector('.kanban-card');
+            expect(doneCard.textContent).toContain('Done Issue');
+            expect(doneCard.textContent).toContain('TEST-2');
         });
 
         it('shows empty state for columns without issues', () => {
@@ -129,6 +143,22 @@ describe('board', () => {
 
             const emptyStates = document.querySelectorAll('.kanban-column-empty');
             expect(emptyStates).toHaveLength(5);
+        });
+
+        it('renders multiple issues in same column in order', () => {
+            setBoardIssues([
+                { id: '1', title: 'First', status: 'todo', identifier: 'TEST-1', priority: 'high' },
+                { id: '2', title: 'Second', status: 'todo', identifier: 'TEST-2', priority: 'low' },
+                { id: '3', title: 'Third', status: 'todo', identifier: 'TEST-3', priority: 'medium' },
+            ]);
+            renderBoard();
+
+            const todoColumn = document.querySelector('.kanban-column[data-status="todo"]');
+            const cards = todoColumn.querySelectorAll('.kanban-card');
+            expect(cards).toHaveLength(3);
+            expect(cards[0].textContent).toContain('First');
+            expect(cards[1].textContent).toContain('Second');
+            expect(cards[2].textContent).toContain('Third');
         });
     });
 

@@ -196,40 +196,37 @@ describe('Window Exports', () => {
     expect(exports.has('showModal')).toBe(true);
   });
 
-  it('should list all required functions from the HTML template', () => {
+  it('should find a minimum number of handler functions in the HTML template', () => {
     const htmlContent = fs.readFileSync(templatePath, 'utf-8');
     const requiredFunctions = extractHandlerFunctions(htmlContent);
 
-    // This is informational - list all functions that need to be exported
-    console.log(`\nFunctions required by templates/index.html (${requiredFunctions.size}):`);
-    const sorted = [...requiredFunctions].sort();
-    sorted.forEach(fn => console.log(`  - ${fn}`));
+    expect(requiredFunctions.size).toBeGreaterThanOrEqual(20);
 
-    expect(requiredFunctions.size).toBeGreaterThan(0);
+    const critical = ['handleLogin', 'handleSignup', 'navigateTo', 'showCreateIssueModal', 'filterIssues'];
+    critical.forEach(fn => {
+      expect(requiredFunctions.has(fn)).toBe(true);
+    });
   });
 
-  it('should list all exported functions from source files', () => {
+  it('should export functions from multiple source files', () => {
     const exportedFunctions = new Set();
-    const exportsByFile = {};
+    const filesWithExports = [];
 
     for (const file of sourceFiles) {
       const filePath = path.join(srcDir, file);
       if (fs.existsSync(filePath)) {
         const jsContent = fs.readFileSync(filePath, 'utf-8');
         const exports = extractWindowExports(jsContent);
-        exportsByFile[file] = [...exports].sort();
+        if (exports.size > 0) filesWithExports.push(file);
         exports.forEach(fn => exportedFunctions.add(fn));
       }
     }
 
-    // This is informational
-    console.log(`\nWindow exports by file:`);
-    for (const [file, exports] of Object.entries(exportsByFile)) {
-      if (exports.length > 0) {
-        console.log(`  ${file}: ${exports.join(', ')}`);
-      }
-    }
+    expect(filesWithExports.length).toBeGreaterThanOrEqual(3);
+    expect(exportedFunctions.size).toBeGreaterThanOrEqual(20);
 
-    expect(exportedFunctions.size).toBeGreaterThan(0);
+    expect(exportedFunctions.has('navigateTo')).toBe(true);
+    expect(exportedFunctions.has('showToast')).toBe(true);
+    expect(exportedFunctions.has('closeModal')).toBe(true);
   });
 });
