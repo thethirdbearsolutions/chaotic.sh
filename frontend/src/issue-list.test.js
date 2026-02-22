@@ -96,7 +96,7 @@ describe('issue-list', () => {
             expect(list.querySelectorAll('.issue-row')).toHaveLength(2);
         });
 
-        it('renders grouped by status when selected', () => {
+        it('renders grouped by status with correct group count and content', () => {
             setTestIssues([
                 { id: '1', title: 'Issue 1', status: 'todo', priority: 'medium', identifier: 'TEST-1', project_id: 'p1' },
                 { id: '2', title: 'Issue 2', status: 'todo', priority: 'low', identifier: 'TEST-2', project_id: 'p1' },
@@ -108,13 +108,24 @@ describe('issue-list', () => {
 
             const list = document.getElementById('issues-list');
             const groups = list.querySelectorAll('.issue-group');
-            expect(groups.length).toBeGreaterThan(0);
+            expect(groups).toHaveLength(2);
+
+            const groupKeys = Array.from(groups).map(g => g.dataset.group);
+            expect(groupKeys).toContain('todo');
+            expect(groupKeys).toContain('done');
+
+            const todoGroup = list.querySelector('.issue-group[data-group="todo"]');
+            expect(todoGroup.querySelectorAll('.issue-row')).toHaveLength(2);
+
+            const doneGroup = list.querySelector('.issue-group[data-group="done"]');
+            expect(doneGroup.querySelectorAll('.issue-row')).toHaveLength(1);
         });
 
-        it('renders grouped by priority when selected', () => {
+        it('renders grouped by priority with correct groups', () => {
             setTestIssues([
                 { id: '1', title: 'Issue 1', status: 'todo', priority: 'high', identifier: 'TEST-1', project_id: 'p1' },
                 { id: '2', title: 'Issue 2', status: 'todo', priority: 'low', identifier: 'TEST-2', project_id: 'p1' },
+                { id: '3', title: 'Issue 3', status: 'todo', priority: 'high', identifier: 'TEST-3', project_id: 'p1' },
             ]);
             mockDeps.getGroupByValue.mockReturnValue('priority');
 
@@ -122,7 +133,13 @@ describe('issue-list', () => {
 
             const list = document.getElementById('issues-list');
             const groups = list.querySelectorAll('.issue-group');
-            expect(groups.length).toBeGreaterThan(0);
+            expect(groups).toHaveLength(2);
+
+            const highGroup = list.querySelector('.issue-group[data-group="high"]');
+            expect(highGroup.querySelectorAll('.issue-row')).toHaveLength(2);
+
+            const lowGroup = list.querySelector('.issue-group[data-group="low"]');
+            expect(lowGroup.querySelectorAll('.issue-row')).toHaveLength(1);
         });
     });
 
