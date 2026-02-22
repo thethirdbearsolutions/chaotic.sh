@@ -192,7 +192,7 @@ async def test_list_projects_not_member(client, auth_headers2, test_team):
 async def test_get_project_not_found(client, auth_headers):
     """Test getting project that doesn't exist."""
     response = await client.get(
-        "/api/projects/nonexistent-id",
+        "/api/projects/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -202,7 +202,7 @@ async def test_get_project_not_found(client, auth_headers):
 async def test_update_project_not_found(client, auth_headers):
     """Test updating project that doesn't exist."""
     response = await client.patch(
-        "/api/projects/nonexistent-id",
+        "/api/projects/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
         json={"name": "Updated"},
     )
@@ -224,7 +224,7 @@ async def test_update_project_not_member(client, auth_headers2, test_project):
 async def test_delete_project_not_found(client, auth_headers):
     """Test deleting project that doesn't exist."""
     response = await client.delete(
-        "/api/projects/nonexistent-id",
+        "/api/projects/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404

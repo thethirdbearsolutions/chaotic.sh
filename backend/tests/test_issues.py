@@ -1385,7 +1385,7 @@ async def test_add_label_to_issue(client, auth_headers, test_issue, test_label):
 async def test_add_label_issue_not_found(client, auth_headers, test_label):
     """Test adding label to non-existent issue."""
     response = await client.post(
-        "/api/issues/nonexistent-id/labels",
+        "/api/issues/00000000-0000-0000-0000-000000000000/labels",
         headers=auth_headers,
         json={"label_id": test_label.id},
     )
@@ -1398,7 +1398,7 @@ async def test_add_label_not_found(client, auth_headers, test_issue):
     response = await client.post(
         f"/api/issues/{test_issue.id}/labels",
         headers=auth_headers,
-        json={"label_id": "nonexistent-label-id"},
+        json={"label_id": "00000000-0000-0000-0000-000000000006"},
     )
     assert response.status_code == 404
 
@@ -1451,7 +1451,7 @@ async def test_remove_label_from_issue(client, auth_headers, test_issue, test_la
 async def test_remove_label_issue_not_found(client, auth_headers, test_label):
     """Test removing label from non-existent issue."""
     response = await client.delete(
-        f"/api/issues/nonexistent-id/labels/{test_label.id}",
+        f"/api/issues/00000000-0000-0000-0000-000000000000/labels/{test_label.id}",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1461,7 +1461,7 @@ async def test_remove_label_issue_not_found(client, auth_headers, test_label):
 async def test_remove_label_not_found(client, auth_headers, test_issue):
     """Test removing non-existent label from issue."""
     response = await client.delete(
-        f"/api/issues/{test_issue.id}/labels/nonexistent-label-id",
+        f"/api/issues/{test_issue.id}/labels/00000000-0000-0000-0000-000000000006",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1557,7 +1557,7 @@ async def test_list_sub_issues(client, auth_headers, test_project, test_user, db
 async def test_list_sub_issues_not_found(client, auth_headers):
     """Test listing sub-issues for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id/sub-issues",
+        "/api/issues/00000000-0000-0000-0000-000000000000/sub-issues",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1608,7 +1608,7 @@ async def test_create_relation(client, auth_headers, test_project, test_user, db
 async def test_create_relation_issue_not_found(client, auth_headers, test_issue):
     """Test creating relation with non-existent source issue."""
     response = await client.post(
-        "/api/issues/nonexistent-id/relations",
+        "/api/issues/00000000-0000-0000-0000-000000000000/relations",
         headers=auth_headers,
         json={
             "related_issue_id": test_issue.id,
@@ -1625,7 +1625,7 @@ async def test_create_relation_related_issue_not_found(client, auth_headers, tes
         f"/api/issues/{test_issue.id}/relations",
         headers=auth_headers,
         json={
-            "related_issue_id": "nonexistent-id",
+            "related_issue_id": "00000000-0000-0000-0000-000000000000",
             "relation_type": "relates_to",
         },
     )
@@ -1695,7 +1695,7 @@ async def test_list_relations(client, auth_headers, test_project, test_user, db)
 async def test_list_relations_issue_not_found(client, auth_headers):
     """Test listing relations for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id/relations",
+        "/api/issues/00000000-0000-0000-0000-000000000000/relations",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1740,7 +1740,7 @@ async def test_delete_relation(client, auth_headers, test_project, test_user, db
 async def test_delete_relation_not_found(client, auth_headers, test_issue):
     """Test deleting non-existent relation."""
     response = await client.delete(
-        f"/api/issues/{test_issue.id}/relations/nonexistent-id",
+        f"/api/issues/{test_issue.id}/relations/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1823,7 +1823,7 @@ async def test_get_issue_documents(client, auth_headers, test_issue, test_docume
 async def test_get_issue_documents_not_found(client, auth_headers):
     """Test getting documents for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id/documents",
+        "/api/issues/00000000-0000-0000-0000-000000000000/documents",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1860,7 +1860,7 @@ async def test_list_issue_activities(client, auth_headers, test_issue, db, test_
 async def test_list_issue_activities_not_found(client, auth_headers):
     """Test listing activities for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id/activities",
+        "/api/issues/00000000-0000-0000-0000-000000000000/activities",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1965,7 +1965,7 @@ async def test_list_issues_no_scope(client, auth_headers):
 async def test_list_issues_project_not_found(client, auth_headers):
     """Test listing issues with non-existent project."""
     response = await client.get(
-        "/api/issues?project_id=nonexistent-project-id",
+        "/api/issues?project_id=00000000-0000-0000-0000-000000000008",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -1975,7 +1975,7 @@ async def test_list_issues_project_not_found(client, auth_headers):
 async def test_list_issues_sprint_not_found(client, auth_headers):
     """Test listing issues with non-existent sprint."""
     response = await client.get(
-        "/api/issues?sprint_id=nonexistent-sprint-id",
+        "/api/issues?sprint_id=00000000-0000-0000-0000-000000000009",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2027,7 +2027,7 @@ async def test_batch_update_issues_not_found(client, auth_headers, test_issue):
         "/api/issues/batch-update",
         headers=auth_headers,
         json={
-            "issue_ids": [test_issue.id, "nonexistent-id"],
+            "issue_ids": [test_issue.id, "00000000-0000-0000-0000-000000000000"],
             "priority": "high",
         },
     )
@@ -2078,7 +2078,7 @@ async def test_batch_update_issues_add_labels(client, auth_headers, test_project
 async def test_update_issue_not_found(client, auth_headers):
     """Test updating non-existent issue."""
     response = await client.patch(
-        "/api/issues/nonexistent-id",
+        "/api/issues/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
         json={"title": "Updated"},
     )
@@ -2339,7 +2339,7 @@ async def test_update_issue_sprint_arrears_error(client, auth_headers, test_proj
 async def test_comment_on_nonexistent_issue(client, auth_headers):
     """Test commenting on non-existent issue."""
     response = await client.post(
-        "/api/issues/nonexistent-id/comments",
+        "/api/issues/00000000-0000-0000-0000-000000000000/comments",
         headers=auth_headers,
         json={"content": "Test comment"},
     )
@@ -2350,7 +2350,7 @@ async def test_comment_on_nonexistent_issue(client, auth_headers):
 async def test_list_comments_nonexistent_issue(client, auth_headers):
     """Test listing comments for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id/comments",
+        "/api/issues/00000000-0000-0000-0000-000000000000/comments",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2360,7 +2360,7 @@ async def test_list_comments_nonexistent_issue(client, auth_headers):
 async def test_update_comment_nonexistent_issue(client, auth_headers):
     """Test updating comment on non-existent issue."""
     response = await client.patch(
-        "/api/issues/nonexistent-id/comments/some-comment-id",
+        "/api/issues/00000000-0000-0000-0000-000000000000/comments/00000000-0000-0000-0000-00000000cc01",
         headers=auth_headers,
         json={"content": "Updated"},
     )
@@ -2371,7 +2371,7 @@ async def test_update_comment_nonexistent_issue(client, auth_headers):
 async def test_update_comment_nonexistent_comment(client, auth_headers, test_issue):
     """Test updating non-existent comment."""
     response = await client.patch(
-        f"/api/issues/{test_issue.id}/comments/nonexistent-id",
+        f"/api/issues/{test_issue.id}/comments/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
         json={"content": "Updated"},
     )
@@ -2382,7 +2382,7 @@ async def test_update_comment_nonexistent_comment(client, auth_headers, test_iss
 async def test_delete_comment_nonexistent_issue(client, auth_headers):
     """Test deleting comment on non-existent issue."""
     response = await client.delete(
-        "/api/issues/nonexistent-id/comments/some-comment-id",
+        "/api/issues/00000000-0000-0000-0000-000000000000/comments/00000000-0000-0000-0000-00000000cc01",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2392,7 +2392,7 @@ async def test_delete_comment_nonexistent_issue(client, auth_headers):
 async def test_delete_comment_nonexistent_comment(client, auth_headers, test_issue):
     """Test deleting non-existent comment."""
     response = await client.delete(
-        f"/api/issues/{test_issue.id}/comments/nonexistent-id",
+        f"/api/issues/{test_issue.id}/comments/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2430,7 +2430,7 @@ async def test_delete_comment_not_author(client, auth_headers2, test_issue, db, 
 async def test_get_issue_not_found(client, auth_headers):
     """Test getting non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-id",
+        "/api/issues/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2455,7 +2455,7 @@ async def test_get_issue_by_identifier_not_found(client, auth_headers):
 async def test_delete_issue_not_found(client, auth_headers):
     """Test deleting non-existent issue."""
     response = await client.delete(
-        "/api/issues/nonexistent-id",
+        "/api/issues/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2525,7 +2525,7 @@ async def test_list_relations_not_authorized(client, auth_headers2, test_issue):
 async def test_delete_relation_not_authorized(client, auth_headers2, test_issue):
     """Test deleting relation without project access."""
     response = await client.delete(
-        f"/api/issues/{test_issue.id}/relations/some-relation-id",
+        f"/api/issues/{test_issue.id}/relations/00000000-0000-0000-0000-0000000000e1",
         headers=auth_headers2,
     )
     assert response.status_code == 403
@@ -2600,7 +2600,7 @@ async def test_list_issues_by_sprint_only(client, auth_headers, test_sprint, tes
 async def test_list_issues_by_sprint_not_found(client, auth_headers):
     """Test listing issues by non-existent sprint_id."""
     response = await client.get(
-        "/api/issues?sprint_id=nonexistent",
+        "/api/issues?sprint_id=00000000-0000-0000-0000-000000000009",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2639,7 +2639,7 @@ async def test_list_issues_no_scope_fails(client, auth_headers):
 async def test_create_issue_project_not_found(client, auth_headers):
     """Test creating issue with non-existent project."""
     response = await client.post(
-        "/api/issues?project_id=nonexistent",
+        "/api/issues?project_id=00000000-0000-0000-0000-000000000008",
         headers=auth_headers,
         json={"title": "Test Issue"},
     )
@@ -2651,7 +2651,7 @@ async def test_create_issue_project_not_found(client, auth_headers):
 async def test_get_issue_not_found(client, auth_headers):
     """Test getting non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-issue-id",
+        "/api/issues/00000000-0000-0000-0000-000000000003",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2671,7 +2671,7 @@ async def test_get_issue_by_identifier_not_found(client, auth_headers):
 async def test_update_issue_not_found(client, auth_headers):
     """Test updating non-existent issue."""
     response = await client.patch(
-        "/api/issues/nonexistent-issue-id",
+        "/api/issues/00000000-0000-0000-0000-000000000003",
         headers=auth_headers,
         json={"title": "Updated Title"},
     )
@@ -2682,7 +2682,7 @@ async def test_update_issue_not_found(client, auth_headers):
 async def test_delete_issue_not_found(client, auth_headers):
     """Test deleting non-existent issue."""
     response = await client.delete(
-        "/api/issues/nonexistent-issue-id",
+        "/api/issues/00000000-0000-0000-0000-000000000003",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2735,7 +2735,7 @@ async def test_get_sub_issues(client, auth_headers, test_project, test_user, db)
 async def test_get_sub_issues_not_found(client, auth_headers):
     """Test getting sub-issues of non-existent parent."""
     response = await client.get(
-        "/api/issues/nonexistent-parent/sub-issues",
+        "/api/issues/00000000-0000-0000-0000-000000000007/sub-issues",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2779,7 +2779,7 @@ async def test_get_issue_documents(client, auth_headers, test_issue, test_team, 
 async def test_get_issue_documents_not_found(client, auth_headers):
     """Test getting documents for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-issue/documents",
+        "/api/issues/00000000-0000-0000-0000-000000000003/documents",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -2817,7 +2817,7 @@ async def test_list_issue_activities(client, auth_headers, test_issue):
 async def test_list_issue_activities_not_found(client, auth_headers):
     """Test listing activities for non-existent issue."""
     response = await client.get(
-        "/api/issues/nonexistent-issue/activities",
+        "/api/issues/00000000-0000-0000-0000-000000000003/activities",
         headers=auth_headers,
     )
     assert response.status_code == 404

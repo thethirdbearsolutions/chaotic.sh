@@ -321,7 +321,7 @@ class TestAPIKeyAPIEndpoints:
     async def test_revoke_api_key_not_found(self, client, auth_headers):
         """DELETE /api-keys/{id} should return 404 for non-existent key."""
         response = await client.delete(
-            "/api/api-keys/nonexistent-key-id",
+            "/api/api-keys/00000000-0000-0000-0000-000000000005",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -351,7 +351,7 @@ class TestAPIKeyAPIEndpoints:
 
     async def test_revoke_api_key_unauthenticated(self, client):
         """DELETE /api-keys/{id} without auth should return 401."""
-        response = await client.delete("/api/api-keys/some-id")
+        response = await client.delete("/api/api-keys/00000000-0000-0000-0000-000000000005")
         assert response.status_code == 401
 
     async def test_list_api_keys_empty(self, client, auth_headers):
@@ -388,7 +388,7 @@ class TestAPIKeyServiceLookups:
     async def test_get_by_id_not_found(self, db):
         """get_by_id should return None for nonexistent ID."""
         service = APIKeyService()
-        result = await service.get_by_id("nonexistent-id")
+        result = await service.get_by_id("00000000-0000-0000-0000-000000000000")
         assert result is None
 
     async def test_get_by_prefix_found(self, db, test_user):

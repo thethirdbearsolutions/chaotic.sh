@@ -22,7 +22,7 @@ async def test_get_user(client, auth_headers, test_user):
 async def test_get_user_not_found(client, auth_headers):
     """Test getting nonexistent user."""
     response = await client.get(
-        "/api/users/nonexistent-id",
+        "/api/users/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404

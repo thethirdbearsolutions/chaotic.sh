@@ -76,7 +76,7 @@ class TestDocumentCRUD:
             json={
                 "title": "Doc",
                 "content": "Content",
-                "sprint_id": "nonexistent",
+                "sprint_id": "00000000-0000-0000-0000-000000000009",
             },
         )
         assert response.status_code == 400
@@ -193,7 +193,7 @@ class TestDocumentCRUD:
     async def test_list_documents_sprint_not_found(self, client, auth_headers, test_team):
         """Test listing documents with non-existent sprint."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&sprint_id=nonexistent",
+            f"/api/documents?team_id={test_team.id}&sprint_id=00000000-0000-0000-0000-000000000009",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -232,7 +232,7 @@ class TestDocumentCRUD:
     async def test_get_document_not_found(self, client, auth_headers):
         """Test getting non-existent document."""
         response = await client.get(
-            "/api/documents/nonexistent",
+            "/api/documents/00000000-0000-0000-0000-000000000004",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -260,7 +260,7 @@ class TestDocumentCRUD:
     async def test_update_document_not_found(self, client, auth_headers):
         """Test updating non-existent document."""
         response = await client.patch(
-            "/api/documents/nonexistent",
+            "/api/documents/00000000-0000-0000-0000-000000000004",
             headers=auth_headers,
             json={"title": "Updated"},
         )
@@ -301,7 +301,7 @@ class TestDocumentCRUD:
         response = await client.patch(
             f"/api/documents/{test_document.id}",
             headers=auth_headers,
-            json={"sprint_id": "nonexistent"},
+            json={"sprint_id": "00000000-0000-0000-0000-000000000009"},
         )
         assert response.status_code == 400
         assert "Sprint not found" in response.json()["detail"]
@@ -319,7 +319,7 @@ class TestDocumentCRUD:
     async def test_delete_document_not_found(self, client, auth_headers):
         """Test deleting non-existent document."""
         response = await client.delete(
-            "/api/documents/nonexistent",
+            "/api/documents/00000000-0000-0000-0000-000000000004",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -356,7 +356,7 @@ class TestDocumentIssueLinks:
     async def test_get_document_issues_not_found(self, client, auth_headers):
         """Test getting issues for non-existent document."""
         response = await client.get(
-            "/api/documents/nonexistent/issues",
+            "/api/documents/00000000-0000-0000-0000-000000000004/issues",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -386,7 +386,7 @@ class TestDocumentIssueLinks:
     async def test_link_document_not_found(self, client, auth_headers, test_issue):
         """Test linking non-existent document."""
         response = await client.post(
-            f"/api/documents/nonexistent/issues/{test_issue.id}",
+            f"/api/documents/00000000-0000-0000-0000-000000000004/issues/{test_issue.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -395,7 +395,7 @@ class TestDocumentIssueLinks:
     async def test_link_issue_not_found(self, client, auth_headers, test_document):
         """Test linking to non-existent issue."""
         response = await client.post(
-            f"/api/documents/{test_document.id}/issues/nonexistent",
+            f"/api/documents/{test_document.id}/issues/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -429,7 +429,7 @@ class TestDocumentIssueLinks:
     async def test_unlink_document_not_found(self, client, auth_headers, test_issue):
         """Test unlinking non-existent document."""
         response = await client.delete(
-            f"/api/documents/nonexistent/issues/{test_issue.id}",
+            f"/api/documents/00000000-0000-0000-0000-000000000004/issues/{test_issue.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -437,7 +437,7 @@ class TestDocumentIssueLinks:
     async def test_unlink_issue_not_found(self, client, auth_headers, test_document):
         """Test unlinking from non-existent issue."""
         response = await client.delete(
-            f"/api/documents/{test_document.id}/issues/nonexistent",
+            f"/api/documents/{test_document.id}/issues/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -494,7 +494,7 @@ class TestDocumentLabels:
     async def test_get_document_labels_not_found(self, client, auth_headers):
         """Test getting labels for non-existent document."""
         response = await client.get(
-            "/api/documents/nonexistent/labels",
+            "/api/documents/00000000-0000-0000-0000-000000000004/labels",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -519,7 +519,7 @@ class TestDocumentLabels:
     async def test_add_label_document_not_found(self, client, auth_headers, test_label):
         """Test adding label to non-existent document."""
         response = await client.post(
-            f"/api/documents/nonexistent/labels/{test_label.id}",
+            f"/api/documents/00000000-0000-0000-0000-000000000004/labels/{test_label.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -528,7 +528,7 @@ class TestDocumentLabels:
     async def test_add_label_not_found(self, client, auth_headers, test_document):
         """Test adding non-existent label to document."""
         response = await client.post(
-            f"/api/documents/{test_document.id}/labels/nonexistent",
+            f"/api/documents/{test_document.id}/labels/00000000-0000-0000-0000-000000000006",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -584,7 +584,7 @@ class TestDocumentLabels:
     async def test_remove_label_document_not_found(self, client, auth_headers, test_label):
         """Test removing label from non-existent document."""
         response = await client.delete(
-            f"/api/documents/nonexistent/labels/{test_label.id}",
+            f"/api/documents/00000000-0000-0000-0000-000000000004/labels/{test_label.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -617,7 +617,7 @@ class TestDocumentComments:
     async def test_create_comment_document_not_found(self, client, auth_headers):
         """Test creating comment on non-existent document."""
         response = await client.post(
-            "/api/documents/nonexistent/comments",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments",
             headers=auth_headers,
             json={"content": "Comment"},
         )
@@ -652,7 +652,7 @@ class TestDocumentComments:
     async def test_list_comments_document_not_found(self, client, auth_headers):
         """Test listing comments on non-existent document."""
         response = await client.get(
-            "/api/documents/nonexistent/comments",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -685,7 +685,7 @@ class TestDocumentComments:
     async def test_update_comment_document_not_found(self, client, auth_headers):
         """Test updating comment on non-existent document."""
         response = await client.patch(
-            "/api/documents/nonexistent/comments/some-id",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
             json={"content": "Updated"},
         )
@@ -695,7 +695,7 @@ class TestDocumentComments:
     async def test_update_comment_not_found(self, client, auth_headers, test_document):
         """Test updating non-existent comment."""
         response = await client.patch(
-            f"/api/documents/{test_document.id}/comments/nonexistent",
+            f"/api/documents/{test_document.id}/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
             json={"content": "Updated"},
         )
@@ -740,7 +740,7 @@ class TestDocumentComments:
     async def test_delete_comment_document_not_found(self, client, auth_headers):
         """Test deleting comment on non-existent document."""
         response = await client.delete(
-            "/api/documents/nonexistent/comments/some-id",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -749,7 +749,7 @@ class TestDocumentComments:
     async def test_delete_comment_not_found(self, client, auth_headers, test_document):
         """Test deleting non-existent comment."""
         response = await client.delete(
-            f"/api/documents/{test_document.id}/comments/nonexistent",
+            f"/api/documents/{test_document.id}/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -984,7 +984,7 @@ async def test_document_service_link_issue_not_found(db):
 
     service = DocumentService()
     with pytest.raises(ValueError, match="Document or issue not found"):
-        await service.link_issue("nonexistent-doc", "nonexistent-issue")
+        await service.link_issue("00000000-0000-0000-0000-000000000004", "00000000-0000-0000-0000-000000000003")
 
 
 @pytest.mark.asyncio

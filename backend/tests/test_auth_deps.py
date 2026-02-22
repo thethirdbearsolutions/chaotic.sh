@@ -44,7 +44,7 @@ async def test_jwt_missing_sub_claim(client):
 async def test_jwt_user_not_found(client):
     """JWT with valid structure but non-existent user returns 401."""
     token = jwt.encode(
-        {"sub": "nonexistent-user-id", "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+        {"sub": "00000000-0000-0000-0000-00000000000c", "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
         SECRET_KEY,
         algorithm=ALGORITHM,
     )
@@ -104,7 +104,7 @@ async def test_api_key_agent_not_found(client, db, test_user):
     # Disable FK checks since we're deliberately setting an invalid FK
     from oxyde import execute_raw
     await execute_raw("PRAGMA foreign_keys = OFF")
-    api_key_record.agent_user_id = "nonexistent-agent-id"
+    api_key_record.agent_user_id = "00000000-0000-0000-0000-000000000001"
     await api_key_record.save(update_fields={"agent_user_id"})
     await execute_raw("PRAGMA foreign_keys = ON")
 
@@ -130,7 +130,7 @@ async def test_api_key_user_not_found(client, db, test_user):
     # Disable FK checks since we're deliberately setting an invalid FK
     from oxyde import execute_raw
     await execute_raw("PRAGMA foreign_keys = OFF")
-    api_key_record.user_id = "nonexistent-user-id"
+    api_key_record.user_id = "00000000-0000-0000-0000-00000000000c"
     api_key_record.agent_user_id = None
     await api_key_record.save(update_fields={"user_id", "agent_user_id"})
     await execute_raw("PRAGMA foreign_keys = ON")

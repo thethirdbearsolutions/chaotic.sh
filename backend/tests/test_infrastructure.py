@@ -133,7 +133,7 @@ class TestConnectionManager:
         ws = MagicMock(spec=WebSocket)
 
         # Should not raise
-        manager.disconnect(ws, "nonexistent-team")
+        manager.disconnect(ws, "00000000-0000-0000-0000-00000000000a")
 
     @pytest.mark.asyncio
     async def test_broadcast_to_team(self):
@@ -156,7 +156,7 @@ class TestConnectionManager:
         manager = ConnectionManager()
 
         # Should not raise
-        await manager.broadcast_to_team("nonexistent", {"data": "test"})
+        await manager.broadcast_to_team("00000000-0000-0000-0000-00000000000a", {"data": "test"})
 
     @pytest.mark.asyncio
     async def test_broadcast_removes_dead_connections(self):

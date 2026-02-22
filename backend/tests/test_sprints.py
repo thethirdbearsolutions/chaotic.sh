@@ -547,7 +547,7 @@ async def test_enter_limbo_not_active_fails(db, test_project):
 async def test_list_sprints_project_not_found(client, auth_headers):
     """Test listing sprints for project that doesn't exist."""
     response = await client.get(
-        "/api/sprints?project_id=nonexistent-id",
+        "/api/sprints?project_id=00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -567,7 +567,7 @@ async def test_list_sprints_not_member(client, auth_headers2, test_project):
 async def test_get_current_sprint_project_not_found(client, auth_headers):
     """Test getting current sprint for project that doesn't exist."""
     response = await client.get(
-        "/api/sprints/current?project_id=nonexistent-id",
+        "/api/sprints/current?project_id=00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -587,7 +587,7 @@ async def test_get_current_sprint_not_member(client, auth_headers2, test_project
 async def test_get_sprint_not_found(client, auth_headers):
     """Test getting sprint that doesn't exist."""
     response = await client.get(
-        "/api/sprints/nonexistent-id",
+        "/api/sprints/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -607,7 +607,7 @@ async def test_get_sprint_not_member(client, auth_headers2, test_sprint):
 async def test_update_sprint_not_found(client, auth_headers):
     """Test updating sprint that doesn't exist."""
     response = await client.patch(
-        "/api/sprints/nonexistent-id",
+        "/api/sprints/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
         json={"name": "Updated"},
     )
@@ -629,7 +629,7 @@ async def test_update_sprint_not_member(client, auth_headers2, test_sprint):
 async def test_close_sprint_not_found(client, auth_headers):
     """Test closing sprint that doesn't exist."""
     response = await client.post(
-        "/api/sprints/nonexistent-id/close",
+        "/api/sprints/00000000-0000-0000-0000-000000000000/close",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -912,7 +912,7 @@ async def test_list_transactions_empty(client, auth_headers, test_project, db):
 async def test_list_transactions_not_found(client, auth_headers):
     """Test GET /sprints/{sprint_id}/transactions returns 404 for nonexistent sprint."""
     response = await client.get(
-        "/api/sprints/nonexistent-id/transactions",
+        "/api/sprints/00000000-0000-0000-0000-000000000000/transactions",
         headers=auth_headers,
     )
     assert response.status_code == 404

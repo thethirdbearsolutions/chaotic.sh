@@ -177,7 +177,7 @@ class TestTicketRitualAttestation:
         )
 
         response = await client.post(
-            f"/api/rituals/{ritual.id}/attest-issue/nonexistent-id",
+            f"/api/rituals/{ritual.id}/attest-issue/00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
             json={"note": "test"},
         )
@@ -188,7 +188,7 @@ class TestTicketRitualAttestation:
     ):
         """Complete gate ritual with nonexistent issue → 404 (line 570)."""
         response = await client.post(
-            f"/api/rituals/{gate_ritual.id}/complete-issue/nonexistent",
+            f"/api/rituals/{gate_ritual.id}/complete-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
             json={"note": "gate done"},
         )
@@ -199,7 +199,7 @@ class TestTicketRitualAttestation:
     ):
         """Approve issue attestation with nonexistent issue → 404 (line 664)."""
         response = await client.post(
-            f"/api/rituals/{review_ticket_ritual.id}/approve-issue/nonexistent",
+            f"/api/rituals/{review_ticket_ritual.id}/approve-issue/00000000-0000-0000-0000-000000000003",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -253,7 +253,7 @@ class TestRitualGroupErrors:
         await execute_raw(
             'INSERT INTO ritual_groups (id, project_id, name, selection_mode, created_at) '
             'VALUES (?, ?, ?, ?, datetime("now"))',
-            [group_id, "nonexistent-project", "Orphan Group", "RANDOM_ONE"],
+            [group_id, "00000000-0000-0000-0000-000000000008", "Orphan Group", "RANDOM_ONE"],
         )
         await execute_raw('PRAGMA foreign_keys = ON', [])
 
@@ -275,7 +275,7 @@ class TestRitualGroupErrors:
         await execute_raw(
             'INSERT INTO ritual_groups (id, project_id, name, selection_mode, created_at) '
             'VALUES (?, ?, ?, ?, datetime("now"))',
-            [group_id, "nonexistent-project", "Orphan Group 2", "RANDOM_ONE"],
+            [group_id, "00000000-0000-0000-0000-000000000008", "Orphan Group 2", "RANDOM_ONE"],
         )
         await execute_raw('PRAGMA foreign_keys = ON', [])
 
@@ -314,7 +314,7 @@ class TestRitualCRUDErrors:
         await execute_raw(
             'INSERT INTO rituals (id, project_id, name, prompt, trigger, approval_mode, is_active, created_at, updated_at) '
             'VALUES (?, ?, ?, ?, ?, ?, 1, datetime("now"), datetime("now"))',
-            [ritual_id, "nonexistent-project", "orphan-ritual", "test", "EVERY_SPRINT", "AUTO"],
+            [ritual_id, "00000000-0000-0000-0000-000000000008", "orphan-ritual", "test", "EVERY_SPRINT", "AUTO"],
         )
         await execute_raw('PRAGMA foreign_keys = ON', [])
 
@@ -336,7 +336,7 @@ class TestRitualCRUDErrors:
         await execute_raw(
             'INSERT INTO rituals (id, project_id, name, prompt, trigger, approval_mode, is_active, created_at, updated_at) '
             'VALUES (?, ?, ?, ?, ?, ?, 1, datetime("now"), datetime("now"))',
-            [ritual_id, "nonexistent-project", "orphan-ritual-2", "test", "EVERY_SPRINT", "AUTO"],
+            [ritual_id, "00000000-0000-0000-0000-000000000008", "orphan-ritual-2", "test", "EVERY_SPRINT", "AUTO"],
         )
         await execute_raw('PRAGMA foreign_keys = ON', [])
 
