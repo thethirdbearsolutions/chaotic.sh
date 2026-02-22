@@ -1085,12 +1085,16 @@ export async function handleAddComment(event, issueId) {
     event.preventDefault();
     const content = document.getElementById('new-comment').value;
 
+    // Clear draft early to avoid stale restore on re-render (CHT-1041)
+    const draftKey = `chaotic_comment_draft_${issueId}`;
+    localStorage.removeItem(draftKey);
     try {
         await deps.api.createComment(issueId, content);
-        localStorage.removeItem(`chaotic_comment_draft_${issueId}`);
         await viewIssue(issueId);
         deps.showToast('Comment added!', 'success');
     } catch (e) {
+        // Restore draft on failure so user doesn't lose their comment
+        if (content) localStorage.setItem(draftKey, content);
         deps.showToast(`Failed to add comment: ${e.message}`, 'error');
     }
     return false;

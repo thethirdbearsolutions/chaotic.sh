@@ -621,6 +621,16 @@ describe('issue-detail-view', () => {
 
             expect(localStorage.getItem('chaotic_comment_draft_i1')).toBeNull();
         });
+
+        it('restores comment draft on failure (CHT-1041)', async () => {
+            mockApi.createComment.mockRejectedValue(new Error('fail'));
+            document.getElementById('new-comment').value = 'My comment';
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(localStorage.getItem('chaotic_comment_draft_i1')).toBe('My comment');
+            localStorage.removeItem('chaotic_comment_draft_i1');
+        });
     });
 
     describe('editDescription', () => {
