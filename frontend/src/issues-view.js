@@ -266,11 +266,11 @@ export function loadFiltersFromUrl() {
     if (!hasFilterParams) {
         const saved = getIssueFilters(getCurrentTeam()?.id);
         if (saved) {
-            // Merge: preserve project from URL, restore other filters from localStorage
+            // Merge: URL project takes precedence, restore filters from localStorage
             const savedParams = new URLSearchParams(saved);
             const project = params.get('project');
             params = savedParams;
-            if (project && !savedParams.has('project')) {
+            if (project) {
                 params.set('project', project);
             }
             // Update URL to reflect restored filters
