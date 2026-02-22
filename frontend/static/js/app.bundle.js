@@ -54,169 +54,16 @@ ${e}</tr>
 `}strong({tokens:e}){return`<strong>${this.parser.parseInline(e)}</strong>`}em({tokens:e}){return`<em>${this.parser.parseInline(e)}</em>`}codespan({text:e}){return`<code>${He(e,!0)}</code>`}br(e){return"<br>"}del({tokens:e}){return`<del>${this.parser.parseInline(e)}</del>`}link({href:e,title:t,tokens:n}){const s=this.parser.parseInline(n),i=za(e);if(i===null)return s;e=i;let a='<a href="'+e+'"';return t&&(a+=' title="'+He(t)+'"'),a+=">"+s+"</a>",a}image({href:e,title:t,text:n,tokens:s}){s&&(n=this.parser.parseInline(s,this.parser.textRenderer));const i=za(e);if(i===null)return He(n);e=i;let a=`<img src="${e}" alt="${n}"`;return t&&(a+=` title="${He(t)}"`),a+=">",a}text(e){return"tokens"in e&&e.tokens?this.parser.parseInline(e.tokens):"escaped"in e&&e.escaped?e.text:He(e.text)}},Ys=class{strong({text:e}){return e}em({text:e}){return e}codespan({text:e}){return e}del({text:e}){return e}html({text:e}){return e}text({text:e}){return e}link({text:e}){return""+e}image({text:e}){return""+e}br(){return""}},Qe=class Ba{constructor(t){O(this,"options");O(this,"renderer");O(this,"textRenderer");this.options=t||ue,this.options.renderer=this.options.renderer||new Yn,this.renderer=this.options.renderer,this.renderer.options=this.options,this.renderer.parser=this,this.textRenderer=new Ys}static parse(t,n){return new Ba(n).parse(t)}static parseInline(t,n){return new Ba(n).parseInline(t)}parse(t,n=!0){var i,a;let s="";for(let o=0;o<t.length;o++){const r=t[o];if((a=(i=this.options.extensions)==null?void 0:i.renderers)!=null&&a[r.type]){const c=r,l=this.options.extensions.renderers[c.type].call({parser:this},c);if(l!==!1||!["space","hr","heading","code","table","blockquote","list","html","paragraph","text"].includes(c.type)){s+=l||"";continue}}const d=r;switch(d.type){case"space":{s+=this.renderer.space(d);continue}case"hr":{s+=this.renderer.hr(d);continue}case"heading":{s+=this.renderer.heading(d);continue}case"code":{s+=this.renderer.code(d);continue}case"table":{s+=this.renderer.table(d);continue}case"blockquote":{s+=this.renderer.blockquote(d);continue}case"list":{s+=this.renderer.list(d);continue}case"html":{s+=this.renderer.html(d);continue}case"paragraph":{s+=this.renderer.paragraph(d);continue}case"text":{let c=d,l=this.renderer.text(c);for(;o+1<t.length&&t[o+1].type==="text";)c=t[++o],l+=`
 `+this.renderer.text(c);n?s+=this.renderer.paragraph({type:"paragraph",raw:l,text:l,tokens:[{type:"text",raw:l,text:l,escaped:!0}]}):s+=l;continue}default:{const c='Token with "'+d.type+'" type was not found.';if(this.options.silent)return console.error(c),"";throw new Error(c)}}}return s}parseInline(t,n=this.renderer){var i,a;let s="";for(let o=0;o<t.length;o++){const r=t[o];if((a=(i=this.options.extensions)==null?void 0:i.renderers)!=null&&a[r.type]){const c=this.options.extensions.renderers[r.type].call({parser:this},r);if(c!==!1||!["escape","html","link","image","strong","em","codespan","br","del","text"].includes(r.type)){s+=c||"";continue}}const d=r;switch(d.type){case"escape":{s+=n.text(d);break}case"html":{s+=n.html(d);break}case"link":{s+=n.link(d);break}case"image":{s+=n.image(d);break}case"strong":{s+=n.strong(d);break}case"em":{s+=n.em(d);break}case"codespan":{s+=n.codespan(d);break}case"br":{s+=n.br(d);break}case"del":{s+=n.del(d);break}case"text":{s+=n.text(d);break}default:{const c='Token with "'+d.type+'" type was not found.';if(this.options.silent)return console.error(c),"";throw new Error(c)}}}return s}},Zn=(va=class{constructor(e){O(this,"options");O(this,"block");this.options=e||ue}preprocess(e){return e}postprocess(e){return e}processAllTokens(e){return e}provideLexer(){return this.block?Xe.lex:Xe.lexInline}provideParser(){return this.block?Qe.parse:Qe.parseInline}},O(va,"passThroughHooks",new Set(["preprocess","postprocess","processAllTokens"])),va),tc=class{constructor(...e){O(this,"defaults",Ze());O(this,"options",this.setOptions);O(this,"parse",this.parseMarkdown(!0));O(this,"parseInline",this.parseMarkdown(!1));O(this,"Parser",Qe);O(this,"Renderer",Yn);O(this,"TextRenderer",Ys);O(this,"Lexer",Xe);O(this,"Tokenizer",Kn);O(this,"Hooks",Zn);this.use(...e)}walkTokens(e,t){var s,i;let n=[];for(const a of e)switch(n=n.concat(t.call(this,a)),a.type){case"table":{const o=a;for(const r of o.header)n=n.concat(this.walkTokens(r.tokens,t));for(const r of o.rows)for(const d of r)n=n.concat(this.walkTokens(d.tokens,t));break}case"list":{const o=a;n=n.concat(this.walkTokens(o.items,t));break}default:{const o=a;(i=(s=this.defaults.extensions)==null?void 0:s.childTokens)!=null&&i[o.type]?this.defaults.extensions.childTokens[o.type].forEach(r=>{const d=o[r].flat(1/0);n=n.concat(this.walkTokens(d,t))}):o.tokens&&(n=n.concat(this.walkTokens(o.tokens,t)))}}return n}use(...e){const t=this.defaults.extensions||{renderers:{},childTokens:{}};return e.forEach(n=>{const s={...n};if(s.async=this.defaults.async||s.async||!1,n.extensions&&(n.extensions.forEach(i=>{if(!i.name)throw new Error("extension name required");if("renderer"in i){const a=t.renderers[i.name];a?t.renderers[i.name]=function(...o){let r=i.renderer.apply(this,o);return r===!1&&(r=a.apply(this,o)),r}:t.renderers[i.name]=i.renderer}if("tokenizer"in i){if(!i.level||i.level!=="block"&&i.level!=="inline")throw new Error("extension level must be 'block' or 'inline'");const a=t[i.level];a?a.unshift(i.tokenizer):t[i.level]=[i.tokenizer],i.start&&(i.level==="block"?t.startBlock?t.startBlock.push(i.start):t.startBlock=[i.start]:i.level==="inline"&&(t.startInline?t.startInline.push(i.start):t.startInline=[i.start]))}"childTokens"in i&&i.childTokens&&(t.childTokens[i.name]=i.childTokens)}),s.extensions=t),n.renderer){const i=this.defaults.renderer||new Yn(this.defaults);for(const a in n.renderer){if(!(a in i))throw new Error(`renderer '${a}' does not exist`);if(["options","parser"].includes(a))continue;const o=a,r=n.renderer[o],d=i[o];i[o]=(...c)=>{let l=r.apply(i,c);return l===!1&&(l=d.apply(i,c)),l||""}}s.renderer=i}if(n.tokenizer){const i=this.defaults.tokenizer||new Kn(this.defaults);for(const a in n.tokenizer){if(!(a in i))throw new Error(`tokenizer '${a}' does not exist`);if(["options","rules","lexer"].includes(a))continue;const o=a,r=n.tokenizer[o],d=i[o];i[o]=(...c)=>{let l=r.apply(i,c);return l===!1&&(l=d.apply(i,c)),l}}s.tokenizer=i}if(n.hooks){const i=this.defaults.hooks||new Zn;for(const a in n.hooks){if(!(a in i))throw new Error(`hook '${a}' does not exist`);if(["options","block"].includes(a))continue;const o=a,r=n.hooks[o],d=i[o];Zn.passThroughHooks.has(a)?i[o]=c=>{if(this.defaults.async)return Promise.resolve(r.call(i,c)).then(f=>d.call(i,f));const l=r.call(i,c);return d.call(i,l)}:i[o]=(...c)=>{let l=r.apply(i,c);return l===!1&&(l=d.apply(i,c)),l}}s.hooks=i}if(n.walkTokens){const i=this.defaults.walkTokens,a=n.walkTokens;s.walkTokens=function(o){let r=[];return r.push(a.call(this,o)),i&&(r=r.concat(i.call(this,o))),r}}this.defaults={...this.defaults,...s}}),this}setOptions(e){return this.defaults={...this.defaults,...e},this}lexer(e,t){return Xe.lex(e,t??this.defaults)}parser(e,t){return Qe.parse(e,t??this.defaults)}parseMarkdown(e){return(n,s)=>{const i={...s},a={...this.defaults,...i},o=this.onError(!!a.silent,!!a.async);if(this.defaults.async===!0&&i.async===!1)return o(new Error("marked(): The async option was set to true by an extension. Remove async: false from the parse options object to return a Promise."));if(typeof n>"u"||n===null)return o(new Error("marked(): input parameter is undefined or null"));if(typeof n!="string")return o(new Error("marked(): input parameter is of type "+Object.prototype.toString.call(n)+", string expected"));a.hooks&&(a.hooks.options=a,a.hooks.block=e);const r=a.hooks?a.hooks.provideLexer():e?Xe.lex:Xe.lexInline,d=a.hooks?a.hooks.provideParser():e?Qe.parse:Qe.parseInline;if(a.async)return Promise.resolve(a.hooks?a.hooks.preprocess(n):n).then(c=>r(c,a)).then(c=>a.hooks?a.hooks.processAllTokens(c):c).then(c=>a.walkTokens?Promise.all(this.walkTokens(c,a.walkTokens)).then(()=>c):c).then(c=>d(c,a)).then(c=>a.hooks?a.hooks.postprocess(c):c).catch(o);try{a.hooks&&(n=a.hooks.preprocess(n));let c=r(n,a);a.hooks&&(c=a.hooks.processAllTokens(c)),a.walkTokens&&this.walkTokens(c,a.walkTokens);let l=d(c,a);return a.hooks&&(l=a.hooks.postprocess(l)),l}catch(c){return o(c)}}}onError(e,t){return n=>{if(n.message+=`
 Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An error occurred:</p><pre>"+He(n.message+"",!0)+"</pre>";return t?Promise.resolve(s):s}if(t)return Promise.reject(n);throw n}}},$t=new tc;function M(e,t){return $t.parse(e,t)}M.options=M.setOptions=function(e){return $t.setOptions(e),M.defaults=$t.defaults,kt(M.defaults),M},M.getDefaults=Ze,M.defaults=ue,M.use=function(...e){return $t.use(...e),M.defaults=$t.defaults,kt(M.defaults),M},M.walkTokens=function(e,t){return $t.walkTokens(e,t)},M.parseInline=$t.parseInline,M.Parser=Qe,M.parser=Qe.parse,M.Renderer=Yn,M.TextRenderer=Ys,M.Lexer=Xe,M.lexer=Xe.lex,M.Tokenizer=Kn,M.Hooks=Zn,M.parse=M,M.options,M.setOptions,M.use,M.walkTokens,M.parseInline,Qe.parse,Xe.lex;/*! @license DOMPurify 3.3.1 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.3.1/LICENSE */const{entries:Va,setPrototypeOf:Ka,isFrozen:nc,getPrototypeOf:sc,getOwnPropertyDescriptor:ic}=Object;let{freeze:me,seal:Se,create:Zs}=Object,{apply:Xs,construct:Qs}=typeof Reflect<"u"&&Reflect;me||(me=function(t){return t}),Se||(Se=function(t){return t}),Xs||(Xs=function(t,n){for(var s=arguments.length,i=new Array(s>2?s-2:0),a=2;a<s;a++)i[a-2]=arguments[a];return t.apply(n,i)}),Qs||(Qs=function(t){for(var n=arguments.length,s=new Array(n>1?n-1:0),i=1;i<n;i++)s[i-1]=arguments[i];return new t(...s)});const Xn=fe(Array.prototype.forEach),ac=fe(Array.prototype.lastIndexOf),Ya=fe(Array.prototype.pop),ln=fe(Array.prototype.push),oc=fe(Array.prototype.splice),Qn=fe(String.prototype.toLowerCase),Js=fe(String.prototype.toString),ei=fe(String.prototype.match),cn=fe(String.prototype.replace),rc=fe(String.prototype.indexOf),lc=fe(String.prototype.trim),Ae=fe(Object.prototype.hasOwnProperty),ge=fe(RegExp.prototype.test),dn=cc(TypeError);function fe(e){return function(t){t instanceof RegExp&&(t.lastIndex=0);for(var n=arguments.length,s=new Array(n>1?n-1:0),i=1;i<n;i++)s[i-1]=arguments[i];return Xs(e,t,s)}}function cc(e){return function(){for(var t=arguments.length,n=new Array(t),s=0;s<t;s++)n[s]=arguments[s];return Qs(e,n)}}function S(e,t){let n=arguments.length>2&&arguments[2]!==void 0?arguments[2]:Qn;Ka&&Ka(e,null);let s=t.length;for(;s--;){let i=t[s];if(typeof i=="string"){const a=n(i);a!==i&&(nc(t)||(t[s]=a),i=a)}e[i]=!0}return e}function dc(e){for(let t=0;t<e.length;t++)Ae(e,t)||(e[t]=null);return e}function Fe(e){const t=Zs(null);for(const[n,s]of Va(e))Ae(e,n)&&(Array.isArray(s)?t[n]=dc(s):s&&typeof s=="object"&&s.constructor===Object?t[n]=Fe(s):t[n]=s);return t}function un(e,t){for(;e!==null;){const s=ic(e,t);if(s){if(s.get)return fe(s.get);if(typeof s.value=="function")return fe(s.value)}e=sc(e)}function n(){return null}return n}const Za=me(["a","abbr","acronym","address","area","article","aside","audio","b","bdi","bdo","big","blink","blockquote","body","br","button","canvas","caption","center","cite","code","col","colgroup","content","data","datalist","dd","decorator","del","details","dfn","dialog","dir","div","dl","dt","element","em","fieldset","figcaption","figure","font","footer","form","h1","h2","h3","h4","h5","h6","head","header","hgroup","hr","html","i","img","input","ins","kbd","label","legend","li","main","map","mark","marquee","menu","menuitem","meter","nav","nobr","ol","optgroup","option","output","p","picture","pre","progress","q","rp","rt","ruby","s","samp","search","section","select","shadow","slot","small","source","spacer","span","strike","strong","style","sub","summary","sup","table","tbody","td","template","textarea","tfoot","th","thead","time","tr","track","tt","u","ul","var","video","wbr"]),ti=me(["svg","a","altglyph","altglyphdef","altglyphitem","animatecolor","animatemotion","animatetransform","circle","clippath","defs","desc","ellipse","enterkeyhint","exportparts","filter","font","g","glyph","glyphref","hkern","image","inputmode","line","lineargradient","marker","mask","metadata","mpath","part","path","pattern","polygon","polyline","radialgradient","rect","stop","style","switch","symbol","text","textpath","title","tref","tspan","view","vkern"]),ni=me(["feBlend","feColorMatrix","feComponentTransfer","feComposite","feConvolveMatrix","feDiffuseLighting","feDisplacementMap","feDistantLight","feDropShadow","feFlood","feFuncA","feFuncB","feFuncG","feFuncR","feGaussianBlur","feImage","feMerge","feMergeNode","feMorphology","feOffset","fePointLight","feSpecularLighting","feSpotLight","feTile","feTurbulence"]),uc=me(["animate","color-profile","cursor","discard","font-face","font-face-format","font-face-name","font-face-src","font-face-uri","foreignobject","hatch","hatchpath","mesh","meshgradient","meshpatch","meshrow","missing-glyph","script","set","solidcolor","unknown","use"]),si=me(["math","menclose","merror","mfenced","mfrac","mglyph","mi","mlabeledtr","mmultiscripts","mn","mo","mover","mpadded","mphantom","mroot","mrow","ms","mspace","msqrt","mstyle","msub","msup","msubsup","mtable","mtd","mtext","mtr","munder","munderover","mprescripts"]),pc=me(["maction","maligngroup","malignmark","mlongdiv","mscarries","mscarry","msgroup","mstack","msline","msrow","semantics","annotation","annotation-xml","mprescripts","none"]),Xa=me(["#text"]),Qa=me(["accept","action","align","alt","autocapitalize","autocomplete","autopictureinpicture","autoplay","background","bgcolor","border","capture","cellpadding","cellspacing","checked","cite","class","clear","color","cols","colspan","controls","controlslist","coords","crossorigin","datetime","decoding","default","dir","disabled","disablepictureinpicture","disableremoteplayback","download","draggable","enctype","enterkeyhint","exportparts","face","for","headers","height","hidden","high","href","hreflang","id","inert","inputmode","integrity","ismap","kind","label","lang","list","loading","loop","low","max","maxlength","media","method","min","minlength","multiple","muted","name","nonce","noshade","novalidate","nowrap","open","optimum","part","pattern","placeholder","playsinline","popover","popovertarget","popovertargetaction","poster","preload","pubdate","radiogroup","readonly","rel","required","rev","reversed","role","rows","rowspan","spellcheck","scope","selected","shape","size","sizes","slot","span","srclang","start","src","srcset","step","style","summary","tabindex","title","translate","type","usemap","valign","value","width","wrap","xmlns","slot"]),ii=me(["accent-height","accumulate","additive","alignment-baseline","amplitude","ascent","attributename","attributetype","azimuth","basefrequency","baseline-shift","begin","bias","by","class","clip","clippathunits","clip-path","clip-rule","color","color-interpolation","color-interpolation-filters","color-profile","color-rendering","cx","cy","d","dx","dy","diffuseconstant","direction","display","divisor","dur","edgemode","elevation","end","exponent","fill","fill-opacity","fill-rule","filter","filterunits","flood-color","flood-opacity","font-family","font-size","font-size-adjust","font-stretch","font-style","font-variant","font-weight","fx","fy","g1","g2","glyph-name","glyphref","gradientunits","gradienttransform","height","href","id","image-rendering","in","in2","intercept","k","k1","k2","k3","k4","kerning","keypoints","keysplines","keytimes","lang","lengthadjust","letter-spacing","kernelmatrix","kernelunitlength","lighting-color","local","marker-end","marker-mid","marker-start","markerheight","markerunits","markerwidth","maskcontentunits","maskunits","max","mask","mask-type","media","method","mode","min","name","numoctaves","offset","operator","opacity","order","orient","orientation","origin","overflow","paint-order","path","pathlength","patterncontentunits","patterntransform","patternunits","points","preservealpha","preserveaspectratio","primitiveunits","r","rx","ry","radius","refx","refy","repeatcount","repeatdur","restart","result","rotate","scale","seed","shape-rendering","slope","specularconstant","specularexponent","spreadmethod","startoffset","stddeviation","stitchtiles","stop-color","stop-opacity","stroke-dasharray","stroke-dashoffset","stroke-linecap","stroke-linejoin","stroke-miterlimit","stroke-opacity","stroke","stroke-width","style","surfacescale","systemlanguage","tabindex","tablevalues","targetx","targety","transform","transform-origin","text-anchor","text-decoration","text-rendering","textlength","type","u1","u2","unicode","values","viewbox","visibility","version","vert-adv-y","vert-origin-x","vert-origin-y","width","word-spacing","wrap","writing-mode","xchannelselector","ychannelselector","x","x1","x2","xmlns","y","y1","y2","z","zoomandpan"]),Ja=me(["accent","accentunder","align","bevelled","close","columnsalign","columnlines","columnspan","denomalign","depth","dir","display","displaystyle","encoding","fence","frame","height","href","id","largeop","length","linethickness","lspace","lquote","mathbackground","mathcolor","mathsize","mathvariant","maxsize","minsize","movablelimits","notation","numalign","open","rowalign","rowlines","rowspacing","rowspan","rspace","rquote","scriptlevel","scriptminsize","scriptsizemultiplier","selection","separator","separators","stretchy","subscriptshift","supscriptshift","symmetric","voffset","width","xmlns"]),Jn=me(["xlink:href","xml:id","xlink:title","xml:space","xmlns:xlink"]),mc=Se(/\{\{[\w\W]*|[\w\W]*\}\}/gm),gc=Se(/<%[\w\W]*|[\w\W]*%>/gm),fc=Se(/\$\{[\w\W]*/gm),hc=Se(/^data-[\-\w.\u00B7-\uFFFF]+$/),vc=Se(/^aria-[\-\w]+$/),eo=Se(/^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i),bc=Se(/^(?:\w+script|data):/i),yc=Se(/[\u0000-\u0020\u00A0\u1680\u180E\u2000-\u2029\u205F\u3000]/g),to=Se(/^html$/i),wc=Se(/^[a-z][.\w]*(-[.\w]+)+$/i);var no=Object.freeze({__proto__:null,ARIA_ATTR:vc,ATTR_WHITESPACE:yc,CUSTOM_ELEMENT:wc,DATA_ATTR:hc,DOCTYPE_NAME:to,ERB_EXPR:gc,IS_ALLOWED_URI:eo,IS_SCRIPT_OR_DATA:bc,MUSTACHE_EXPR:mc,TMPLIT_EXPR:fc});const pn={element:1,text:3,progressingInstruction:7,comment:8,document:9},kc=function(){return typeof window>"u"?null:window},$c=function(t,n){if(typeof t!="object"||typeof t.createPolicy!="function")return null;let s=null;const i="data-tt-policy-suffix";n&&n.hasAttribute(i)&&(s=n.getAttribute(i));const a="dompurify"+(s?"#"+s:"");try{return t.createPolicy(a,{createHTML(o){return o},createScriptURL(o){return o}})}catch{return console.warn("TrustedTypes policy "+a+" could not be created."),null}},so=function(){return{afterSanitizeAttributes:[],afterSanitizeElements:[],afterSanitizeShadowDOM:[],beforeSanitizeAttributes:[],beforeSanitizeElements:[],beforeSanitizeShadowDOM:[],uponSanitizeAttribute:[],uponSanitizeElement:[],uponSanitizeShadowNode:[]}};function io(){let e=arguments.length>0&&arguments[0]!==void 0?arguments[0]:kc();const t=I=>io(I);if(t.version="3.3.1",t.removed=[],!e||!e.document||e.document.nodeType!==pn.document||!e.Element)return t.isSupported=!1,t;let{document:n}=e;const s=n,i=s.currentScript,{DocumentFragment:a,HTMLTemplateElement:o,Node:r,Element:d,NodeFilter:c,NamedNodeMap:l=e.NamedNodeMap||e.MozNamedAttrMap,HTMLFormElement:f,DOMParser:p,trustedTypes:h}=e,y=d.prototype,k=un(y,"cloneNode"),E=un(y,"remove"),T=un(y,"nextSibling"),j=un(y,"childNodes"),N=un(y,"parentNode");if(typeof o=="function"){const I=n.createElement("template");I.content&&I.content.ownerDocument&&(n=I.content.ownerDocument)}let B,H="";const{implementation:Z,createNodeIterator:q,createDocumentFragment:J,getElementsByTagName:ie}=n,{importNode:X}=s;let D=so();t.isSupported=typeof Va=="function"&&typeof N=="function"&&Z&&Z.createHTMLDocument!==void 0;const{MUSTACHE_EXPR:le,ERB_EXPR:ce,TMPLIT_EXPR:Te,DATA_ATTR:w,ARIA_ATTR:Oe,IS_SCRIPT_OR_DATA:ee,ATTR_WHITESPACE:wt,CUSTOM_ELEMENT:af}=no;let{IS_ALLOWED_URI:Xr}=no,ne=null;const Qr=S({},[...Za,...ti,...ni,...si,...Xa]);let ae=null;const Jr=S({},[...Qa,...ii,...Ja,...Jn]);let K=Object.seal(Zs(null,{tagNameCheck:{writable:!0,configurable:!1,enumerable:!0,value:null},attributeNameCheck:{writable:!0,configurable:!1,enumerable:!0,value:null},allowCustomizedBuiltInElements:{writable:!0,configurable:!1,enumerable:!0,value:!1}})),Hn=null,ba=null;const Zt=Object.seal(Zs(null,{tagCheck:{writable:!0,configurable:!1,enumerable:!0,value:null},attributeCheck:{writable:!0,configurable:!1,enumerable:!0,value:null}}));let el=!0,ya=!0,tl=!1,nl=!0,Xt=!1,Ms=!0,Bt=!1,wa=!1,ka=!1,Qt=!1,Ds=!1,Rs=!1,sl=!0,il=!1;const of="user-content-";let $a=!0,Fn=!1,Jt={},Ke=null;const Ea=S({},["annotation-xml","audio","colgroup","desc","foreignobject","head","iframe","math","mi","mn","mo","ms","mtext","noembed","noframes","noscript","plaintext","script","style","svg","template","thead","title","video","xmp"]);let al=null;const ol=S({},["audio","video","img","source","image","track"]);let _a=null;const rl=S({},["alt","class","for","id","label","name","pattern","placeholder","role","summary","title","value","style","xmlns"]),Ps="http://www.w3.org/1998/Math/MathML",Ns="http://www.w3.org/2000/svg",rt="http://www.w3.org/1999/xhtml";let en=rt,Ia=!1,xa=null;const rf=S({},[Ps,Ns,rt],Js);let qs=S({},["mi","mo","mn","ms","mtext"]),Os=S({},["annotation-xml"]);const lf=S({},["title","style","font","a","script"]);let Un=null;const cf=["application/xhtml+xml","text/html"],df="text/html";let te=null,tn=null;const uf=n.createElement("form"),ll=function(m){return m instanceof RegExp||m instanceof Function},Ta=function(){let m=arguments.length>0&&arguments[0]!==void 0?arguments[0]:{};if(!(tn&&tn===m)){if((!m||typeof m!="object")&&(m={}),m=Fe(m),Un=cf.indexOf(m.PARSER_MEDIA_TYPE)===-1?df:m.PARSER_MEDIA_TYPE,te=Un==="application/xhtml+xml"?Js:Qn,ne=Ae(m,"ALLOWED_TAGS")?S({},m.ALLOWED_TAGS,te):Qr,ae=Ae(m,"ALLOWED_ATTR")?S({},m.ALLOWED_ATTR,te):Jr,xa=Ae(m,"ALLOWED_NAMESPACES")?S({},m.ALLOWED_NAMESPACES,Js):rf,_a=Ae(m,"ADD_URI_SAFE_ATTR")?S(Fe(rl),m.ADD_URI_SAFE_ATTR,te):rl,al=Ae(m,"ADD_DATA_URI_TAGS")?S(Fe(ol),m.ADD_DATA_URI_TAGS,te):ol,Ke=Ae(m,"FORBID_CONTENTS")?S({},m.FORBID_CONTENTS,te):Ea,Hn=Ae(m,"FORBID_TAGS")?S({},m.FORBID_TAGS,te):Fe({}),ba=Ae(m,"FORBID_ATTR")?S({},m.FORBID_ATTR,te):Fe({}),Jt=Ae(m,"USE_PROFILES")?m.USE_PROFILES:!1,el=m.ALLOW_ARIA_ATTR!==!1,ya=m.ALLOW_DATA_ATTR!==!1,tl=m.ALLOW_UNKNOWN_PROTOCOLS||!1,nl=m.ALLOW_SELF_CLOSE_IN_ATTR!==!1,Xt=m.SAFE_FOR_TEMPLATES||!1,Ms=m.SAFE_FOR_XML!==!1,Bt=m.WHOLE_DOCUMENT||!1,Qt=m.RETURN_DOM||!1,Ds=m.RETURN_DOM_FRAGMENT||!1,Rs=m.RETURN_TRUSTED_TYPE||!1,ka=m.FORCE_BODY||!1,sl=m.SANITIZE_DOM!==!1,il=m.SANITIZE_NAMED_PROPS||!1,$a=m.KEEP_CONTENT!==!1,Fn=m.IN_PLACE||!1,Xr=m.ALLOWED_URI_REGEXP||eo,en=m.NAMESPACE||rt,qs=m.MATHML_TEXT_INTEGRATION_POINTS||qs,Os=m.HTML_INTEGRATION_POINTS||Os,K=m.CUSTOM_ELEMENT_HANDLING||{},m.CUSTOM_ELEMENT_HANDLING&&ll(m.CUSTOM_ELEMENT_HANDLING.tagNameCheck)&&(K.tagNameCheck=m.CUSTOM_ELEMENT_HANDLING.tagNameCheck),m.CUSTOM_ELEMENT_HANDLING&&ll(m.CUSTOM_ELEMENT_HANDLING.attributeNameCheck)&&(K.attributeNameCheck=m.CUSTOM_ELEMENT_HANDLING.attributeNameCheck),m.CUSTOM_ELEMENT_HANDLING&&typeof m.CUSTOM_ELEMENT_HANDLING.allowCustomizedBuiltInElements=="boolean"&&(K.allowCustomizedBuiltInElements=m.CUSTOM_ELEMENT_HANDLING.allowCustomizedBuiltInElements),Xt&&(ya=!1),Ds&&(Qt=!0),Jt&&(ne=S({},Xa),ae=[],Jt.html===!0&&(S(ne,Za),S(ae,Qa)),Jt.svg===!0&&(S(ne,ti),S(ae,ii),S(ae,Jn)),Jt.svgFilters===!0&&(S(ne,ni),S(ae,ii),S(ae,Jn)),Jt.mathMl===!0&&(S(ne,si),S(ae,Ja),S(ae,Jn))),m.ADD_TAGS&&(typeof m.ADD_TAGS=="function"?Zt.tagCheck=m.ADD_TAGS:(ne===Qr&&(ne=Fe(ne)),S(ne,m.ADD_TAGS,te))),m.ADD_ATTR&&(typeof m.ADD_ATTR=="function"?Zt.attributeCheck=m.ADD_ATTR:(ae===Jr&&(ae=Fe(ae)),S(ae,m.ADD_ATTR,te))),m.ADD_URI_SAFE_ATTR&&S(_a,m.ADD_URI_SAFE_ATTR,te),m.FORBID_CONTENTS&&(Ke===Ea&&(Ke=Fe(Ke)),S(Ke,m.FORBID_CONTENTS,te)),m.ADD_FORBID_CONTENTS&&(Ke===Ea&&(Ke=Fe(Ke)),S(Ke,m.ADD_FORBID_CONTENTS,te)),$a&&(ne["#text"]=!0),Bt&&S(ne,["html","head","body"]),ne.table&&(S(ne,["tbody"]),delete Hn.tbody),m.TRUSTED_TYPES_POLICY){if(typeof m.TRUSTED_TYPES_POLICY.createHTML!="function")throw dn('TRUSTED_TYPES_POLICY configuration option must provide a "createHTML" hook.');if(typeof m.TRUSTED_TYPES_POLICY.createScriptURL!="function")throw dn('TRUSTED_TYPES_POLICY configuration option must provide a "createScriptURL" hook.');B=m.TRUSTED_TYPES_POLICY,H=B.createHTML("")}else B===void 0&&(B=$c(h,i)),B!==null&&typeof H=="string"&&(H=B.createHTML(""));me&&me(m),tn=m}},cl=S({},[...ti,...ni,...uc]),dl=S({},[...si,...pc]),pf=function(m){let $=N(m);(!$||!$.tagName)&&($={namespaceURI:en,tagName:"template"});const _=Qn(m.tagName),G=Qn($.tagName);return xa[m.namespaceURI]?m.namespaceURI===Ns?$.namespaceURI===rt?_==="svg":$.namespaceURI===Ps?_==="svg"&&(G==="annotation-xml"||qs[G]):!!cl[_]:m.namespaceURI===Ps?$.namespaceURI===rt?_==="math":$.namespaceURI===Ns?_==="math"&&Os[G]:!!dl[_]:m.namespaceURI===rt?$.namespaceURI===Ns&&!Os[G]||$.namespaceURI===Ps&&!qs[G]?!1:!dl[_]&&(lf[_]||!cl[_]):!!(Un==="application/xhtml+xml"&&xa[m.namespaceURI]):!1},Ye=function(m){ln(t.removed,{element:m});try{N(m).removeChild(m)}catch{E(m)}},At=function(m,$){try{ln(t.removed,{attribute:$.getAttributeNode(m),from:$})}catch{ln(t.removed,{attribute:null,from:$})}if($.removeAttribute(m),m==="is")if(Qt||Ds)try{Ye($)}catch{}else try{$.setAttribute(m,"")}catch{}},ul=function(m){let $=null,_=null;if(ka)m="<remove></remove>"+m;else{const Q=ei(m,/^[\r\n\t ]+/);_=Q&&Q[0]}Un==="application/xhtml+xml"&&en===rt&&(m='<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body>'+m+"</body></html>");const G=B?B.createHTML(m):m;if(en===rt)try{$=new p().parseFromString(G,Un)}catch{}if(!$||!$.documentElement){$=Z.createDocument(en,"template",null);try{$.documentElement.innerHTML=Ia?H:G}catch{}}const de=$.body||$.documentElement;return m&&_&&de.insertBefore(n.createTextNode(_),de.childNodes[0]||null),en===rt?ie.call($,Bt?"html":"body")[0]:Bt?$.documentElement:de},pl=function(m){return q.call(m.ownerDocument||m,m,c.SHOW_ELEMENT|c.SHOW_COMMENT|c.SHOW_TEXT|c.SHOW_PROCESSING_INSTRUCTION|c.SHOW_CDATA_SECTION,null)},Sa=function(m){return m instanceof f&&(typeof m.nodeName!="string"||typeof m.textContent!="string"||typeof m.removeChild!="function"||!(m.attributes instanceof l)||typeof m.removeAttribute!="function"||typeof m.setAttribute!="function"||typeof m.namespaceURI!="string"||typeof m.insertBefore!="function"||typeof m.hasChildNodes!="function")},ml=function(m){return typeof r=="function"&&m instanceof r};function lt(I,m,$){Xn(I,_=>{_.call(t,m,$,tn)})}const gl=function(m){let $=null;if(lt(D.beforeSanitizeElements,m,null),Sa(m))return Ye(m),!0;const _=te(m.nodeName);if(lt(D.uponSanitizeElement,m,{tagName:_,allowedTags:ne}),Ms&&m.hasChildNodes()&&!ml(m.firstElementChild)&&ge(/<[/\w!]/g,m.innerHTML)&&ge(/<[/\w!]/g,m.textContent)||m.nodeType===pn.progressingInstruction||Ms&&m.nodeType===pn.comment&&ge(/<[/\w]/g,m.data))return Ye(m),!0;if(!(Zt.tagCheck instanceof Function&&Zt.tagCheck(_))&&(!ne[_]||Hn[_])){if(!Hn[_]&&hl(_)&&(K.tagNameCheck instanceof RegExp&&ge(K.tagNameCheck,_)||K.tagNameCheck instanceof Function&&K.tagNameCheck(_)))return!1;if($a&&!Ke[_]){const G=N(m)||m.parentNode,de=j(m)||m.childNodes;if(de&&G){const Q=de.length;for(let Ee=Q-1;Ee>=0;--Ee){const ct=k(de[Ee],!0);ct.__removalCount=(m.__removalCount||0)+1,G.insertBefore(ct,T(m))}}}return Ye(m),!0}return m instanceof d&&!pf(m)||(_==="noscript"||_==="noembed"||_==="noframes")&&ge(/<\/no(script|embed|frames)/i,m.innerHTML)?(Ye(m),!0):(Xt&&m.nodeType===pn.text&&($=m.textContent,Xn([le,ce,Te],G=>{$=cn($,G," ")}),m.textContent!==$&&(ln(t.removed,{element:m.cloneNode()}),m.textContent=$)),lt(D.afterSanitizeElements,m,null),!1)},fl=function(m,$,_){if(sl&&($==="id"||$==="name")&&(_ in n||_ in uf))return!1;if(!(ya&&!ba[$]&&ge(w,$))){if(!(el&&ge(Oe,$))){if(!(Zt.attributeCheck instanceof Function&&Zt.attributeCheck($,m))){if(!ae[$]||ba[$]){if(!(hl(m)&&(K.tagNameCheck instanceof RegExp&&ge(K.tagNameCheck,m)||K.tagNameCheck instanceof Function&&K.tagNameCheck(m))&&(K.attributeNameCheck instanceof RegExp&&ge(K.attributeNameCheck,$)||K.attributeNameCheck instanceof Function&&K.attributeNameCheck($,m))||$==="is"&&K.allowCustomizedBuiltInElements&&(K.tagNameCheck instanceof RegExp&&ge(K.tagNameCheck,_)||K.tagNameCheck instanceof Function&&K.tagNameCheck(_))))return!1}else if(!_a[$]){if(!ge(Xr,cn(_,wt,""))){if(!(($==="src"||$==="xlink:href"||$==="href")&&m!=="script"&&rc(_,"data:")===0&&al[m])){if(!(tl&&!ge(ee,cn(_,wt,"")))){if(_)return!1}}}}}}}return!0},hl=function(m){return m!=="annotation-xml"&&ei(m,af)},vl=function(m){lt(D.beforeSanitizeAttributes,m,null);const{attributes:$}=m;if(!$||Sa(m))return;const _={attrName:"",attrValue:"",keepAttr:!0,allowedAttributes:ae,forceKeepAttr:void 0};let G=$.length;for(;G--;){const de=$[G],{name:Q,namespaceURI:Ee,value:ct}=de,nn=te(Q),La=ct;let oe=Q==="value"?La:lc(La);if(_.attrName=nn,_.attrValue=oe,_.keepAttr=!0,_.forceKeepAttr=void 0,lt(D.uponSanitizeAttribute,m,_),oe=_.attrValue,il&&(nn==="id"||nn==="name")&&(At(Q,m),oe=of+oe),Ms&&ge(/((--!?|])>)|<\/(style|title|textarea)/i,oe)){At(Q,m);continue}if(nn==="attributename"&&ei(oe,"href")){At(Q,m);continue}if(_.forceKeepAttr)continue;if(!_.keepAttr){At(Q,m);continue}if(!nl&&ge(/\/>/i,oe)){At(Q,m);continue}Xt&&Xn([le,ce,Te],yl=>{oe=cn(oe,yl," ")});const bl=te(m.nodeName);if(!fl(bl,nn,oe)){At(Q,m);continue}if(B&&typeof h=="object"&&typeof h.getAttributeType=="function"&&!Ee)switch(h.getAttributeType(bl,nn)){case"TrustedHTML":{oe=B.createHTML(oe);break}case"TrustedScriptURL":{oe=B.createScriptURL(oe);break}}if(oe!==La)try{Ee?m.setAttributeNS(Ee,Q,oe):m.setAttribute(Q,oe),Sa(m)?Ye(m):Ya(t.removed)}catch{At(Q,m)}}lt(D.afterSanitizeAttributes,m,null)},mf=function I(m){let $=null;const _=pl(m);for(lt(D.beforeSanitizeShadowDOM,m,null);$=_.nextNode();)lt(D.uponSanitizeShadowNode,$,null),gl($),vl($),$.content instanceof a&&I($.content);lt(D.afterSanitizeShadowDOM,m,null)};return t.sanitize=function(I){let m=arguments.length>1&&arguments[1]!==void 0?arguments[1]:{},$=null,_=null,G=null,de=null;if(Ia=!I,Ia&&(I="<!-->"),typeof I!="string"&&!ml(I))if(typeof I.toString=="function"){if(I=I.toString(),typeof I!="string")throw dn("dirty is not a string, aborting")}else throw dn("toString is not a function");if(!t.isSupported)return I;if(wa||Ta(m),t.removed=[],typeof I=="string"&&(Fn=!1),Fn){if(I.nodeName){const ct=te(I.nodeName);if(!ne[ct]||Hn[ct])throw dn("root node is forbidden and cannot be sanitized in-place")}}else if(I instanceof r)$=ul("<!---->"),_=$.ownerDocument.importNode(I,!0),_.nodeType===pn.element&&_.nodeName==="BODY"||_.nodeName==="HTML"?$=_:$.appendChild(_);else{if(!Qt&&!Xt&&!Bt&&I.indexOf("<")===-1)return B&&Rs?B.createHTML(I):I;if($=ul(I),!$)return Qt?null:Rs?H:""}$&&ka&&Ye($.firstChild);const Q=pl(Fn?I:$);for(;G=Q.nextNode();)gl(G),vl(G),G.content instanceof a&&mf(G.content);if(Fn)return I;if(Qt){if(Ds)for(de=J.call($.ownerDocument);$.firstChild;)de.appendChild($.firstChild);else de=$;return(ae.shadowroot||ae.shadowrootmode)&&(de=X.call(s,de,!0)),de}let Ee=Bt?$.outerHTML:$.innerHTML;return Bt&&ne["!doctype"]&&$.ownerDocument&&$.ownerDocument.doctype&&$.ownerDocument.doctype.name&&ge(to,$.ownerDocument.doctype.name)&&(Ee="<!DOCTYPE "+$.ownerDocument.doctype.name+`>
-`+Ee),Xt&&Xn([le,ce,Te],ct=>{Ee=cn(Ee,ct," ")}),B&&Rs?B.createHTML(Ee):Ee},t.setConfig=function(){let I=arguments.length>0&&arguments[0]!==void 0?arguments[0]:{};Ta(I),wa=!0},t.clearConfig=function(){tn=null,wa=!1},t.isValidAttribute=function(I,m,$){tn||Ta({});const _=te(I),G=te(m);return fl(_,G,$)},t.addHook=function(I,m){typeof m=="function"&&ln(D[I],m)},t.removeHook=function(I,m){if(m!==void 0){const $=ac(D[I],m);return $===-1?void 0:oc(D[I],$,1)[0]}return Ya(D[I])},t.removeHooks=function(I){D[I]=[]},t.removeAllHooks=function(){D=so()},t}var ao=io();const ai="chaotic_";function je(e){try{return localStorage.getItem(ai+e)}catch{return null}}function Me(e,t){try{localStorage.setItem(ai+e,t)}catch{}}function Je(e){try{localStorage.removeItem(ai+e)}catch{}}function Ec(){return je("token")}function _c(e){e?Me("token",e):Je("token")}function Ic(){return je("theme")}function xc(e){Me("theme",e)}function Tc(){return je("last_project")}function oo(e){Me("last_project",e)}function Sc(){return je("onboarding_complete")==="true"}function Lc(){Me("onboarding_complete","true")}function Cc(){Je("onboarding_complete")}function Bc(e){return e?je(`issues_filters_${e}`):null}function Ac(e,t){e&&(t?Me(`issues_filters_${e}`,t):Je(`issues_filters_${e}`))}function jc(e){return je(`comment_draft_${e}`)}function oi(e,t){t?Me(`comment_draft_${e}`,t):Je(`comment_draft_${e}`)}function Mc(e){return je(`description_draft_${e}`)}function es(e,t){t?Me(`description_draft_${e}`,t):Je(`description_draft_${e}`)}function Dc(){return{title:je("create_issue_title"),description:je("create_issue_description")}}function ro(e,t){e?Me("create_issue_title",e):Je("create_issue_title"),t?Me("create_issue_description",t):Je("create_issue_description")}function Rc(){Je("create_issue_title"),Je("create_issue_description")}function Pc(){return je("doc_view_mode")}function Nc(e){Me("doc_view_mode",e)}function qc(){return je("approvals_explainer_dismissed")==="1"}function Oc(){Me("approvals_explainer_dismissed","1")}const Hc="/api";class Fc{constructor(){this.token=Ec()}setToken(t){this.token=t,_c(t)}getToken(){return this.token}async request(t,n,s=null){const i={"Content-Type":"application/json"};this.token&&(i.Authorization=`Bearer ${this.token}`);const a={method:t,headers:i};s&&(t==="POST"||t==="PATCH"||t==="PUT")&&(a.body=JSON.stringify(s));const o=await fetch(`${Hc}${n}`,a);if(o.status===204)return null;let r;try{r=await o.json()}catch{const d=o.headers.get("content-type")||"unknown";throw o.ok?new Error(`Invalid response from server (expected JSON, got ${d})`):new Error(`Request failed (${o.status})`)}if(!o.ok){let d;typeof r.detail=="string"?d=r.detail:r.detail&&typeof r.detail=="object"&&r.detail.message?d=r.detail.message:d="An error occurred";const c=new Error(d);throw c.status=o.status,c.detail=r.detail,c}return r}async signup(t,n,s){return this.request("POST","/auth/signup",{name:t,email:n,password:s})}async login(t,n){const s=await this.request("POST","/auth/login",{email:t,password:n});return this.setToken(s.access_token),s}async getMe(){return this.request("GET","/auth/me")}logout(){this.setToken(null)}async getUser(t){return this.request("GET",`/users/${t}`)}async updateMe(t){return this.request("PATCH","/users/me",t)}async createTeam(t){return this.request("POST","/teams",t)}async getMyTeams(){return this.request("GET","/teams")}async getTeam(t){return this.request("GET",`/teams/${t}`)}async updateTeam(t,n){return this.request("PATCH",`/teams/${t}`,n)}async deleteTeam(t){return this.request("DELETE",`/teams/${t}`)}async getTeamMembers(t){return this.request("GET",`/teams/${t}/members`)}async updateMemberRole(t,n,s){return this.request("PATCH",`/teams/${t}/members/${n}?role=${s}`)}async removeMember(t,n){return this.request("DELETE",`/teams/${t}/members/${n}`)}async createInvitation(t,n,s="member"){return this.request("POST",`/teams/${t}/invitations`,{email:n,role:s})}async getTeamInvitations(t){return this.request("GET",`/teams/${t}/invitations`)}async acceptInvitation(t){return this.request("POST",`/teams/invitations/${t}/accept`)}async deleteInvitation(t,n){return this.request("DELETE",`/teams/${t}/invitations/${n}`)}async createProject(t,n){return this.request("POST",`/projects?team_id=${t}`,n)}async getProjects(t){return this.request("GET",`/projects?team_id=${t}`)}async getProject(t){return this.request("GET",`/projects/${t}`)}async updateProject(t,n){return this.request("PATCH",`/projects/${t}`,n)}async deleteProject(t){return this.request("DELETE",`/projects/${t}`)}async createIssue(t,n){return this.request("POST",`/issues?project_id=${t}`,n)}async getIssues(t={}){const n=new URLSearchParams;return Object.entries(t).forEach(([s,i])=>{i==null||i===""||(Array.isArray(i)?i.forEach(a=>n.append(s,a)):n.append(s,i))}),this.request("GET",`/issues?${n.toString()}`)}async searchIssues(t,n,s=null,i=0,a=50){let o=`/issues/search?team_id=${t}&q=${encodeURIComponent(n)}&skip=${i}&limit=${a}`;return s&&(o+=`&project_id=${s}`),this.request("GET",o)}async getTeamIssues(t,n={}){const s=new URLSearchParams({team_id:t});return Object.entries(n).forEach(([i,a])=>{a==null||a===""||(Array.isArray(a)?a.forEach(o=>s.append(i,o)):s.append(i,a))}),this.request("GET",`/issues?${s.toString()}`)}async getIssue(t){return this.request("GET",`/issues/${t}`)}async getIssueByIdentifier(t){return this.request("GET",`/issues/identifier/${t}`)}async updateIssue(t,n){return this.request("PATCH",`/issues/${t}`,n)}async deleteIssue(t){return this.request("DELETE",`/issues/${t}`)}async createComment(t,n){return this.request("POST",`/issues/${t}/comments`,{content:n})}async getComments(t){return this.request("GET",`/issues/${t}/comments`)}async updateComment(t,n,s){return this.request("PATCH",`/issues/${t}/comments/${n}`,{content:s})}async deleteComment(t,n){return this.request("DELETE",`/issues/${t}/comments/${n}`)}async getActivities(t,n=0,s=50){return this.request("GET",`/issues/${t}/activities?skip=${n}&limit=${s}`)}async getTeamActivities(t,n=0,s=20){return this.request("GET",`/issues/activities?team_id=${t}&skip=${n}&limit=${s}`)}async getSubIssues(t){return this.request("GET",`/issues/${t}/sub-issues`)}async getRelations(t){return this.request("GET",`/issues/${t}/relations`)}async createRelation(t,n,s="blocks"){return this.request("POST",`/issues/${t}/relations`,{related_issue_id:n,relation_type:s})}async deleteRelation(t,n){return this.request("DELETE",`/issues/${t}/relations/${n}`)}async getSprints(t,n=null){let s=`/sprints?project_id=${t}`;return n&&(s+=`&sprint_status=${n}`),this.request("GET",s)}async getSprint(t){return this.request("GET",`/sprints/${t}`)}async updateSprint(t,n){return this.request("PATCH",`/sprints/${t}`,n)}async closeSprint(t){return this.request("POST",`/sprints/${t}/close`)}async getCurrentSprint(t){return this.request("GET",`/sprints/current?project_id=${t}`)}async getSprintTransactions(t){return this.request("GET",`/sprints/${t}/transactions`)}async createRitual(t,n){return this.request("POST",`/rituals?project_id=${t}`,n)}async getRituals(t){return this.request("GET",`/rituals?project_id=${t}`)}async getRitual(t){return this.request("GET",`/rituals/${t}`)}async updateRitual(t,n){return this.request("PATCH",`/rituals/${t}`,n)}async deleteRitual(t){return this.request("DELETE",`/rituals/${t}`)}async getLimboStatus(t){return this.request("GET",`/rituals/limbo?project_id=${t}`)}async getPendingGates(t){return this.request("GET",`/rituals/pending-gates?project_id=${t}`)}async getPendingApprovals(t){return this.request("GET",`/rituals/pending-approvals?project_id=${t}`)}async attestRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/attest?project_id=${n}`,i)}async approveAttestation(t,n){return this.request("POST",`/rituals/${t}/approve?project_id=${n}`,{})}async completeGateRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/complete?project_id=${n}`,i)}async getRitualGroups(t){return this.request("GET",`/rituals/groups?project_id=${t}`)}async createRitualGroup(t,n){return this.request("POST",`/rituals/groups?project_id=${t}`,n)}async updateRitualGroup(t,n){return this.request("PATCH",`/rituals/groups/${t}`,n)}async deleteRitualGroup(t){return this.request("DELETE",`/rituals/groups/${t}`)}async getTicketRitualsStatus(t){return this.request("GET",`/rituals/issue/${t}/pending`)}async attestTicketRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/attest-issue/${n}`,i)}async completeTicketGateRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/complete-issue/${n}`,i)}async approveTicketRitual(t,n){return this.request("POST",`/rituals/${t}/approve-issue/${n}`,{})}async createDocument(t,n){return this.request("POST",`/documents?team_id=${t}`,n)}async getDocuments(t,n=null,s=null,i=null){let a=`/documents?team_id=${t}`;return n&&(a+=`&project_id=${n}`),i&&(a+=`&sprint_id=${i}`),s&&(a+=`&search=${encodeURIComponent(s)}`),this.request("GET",a)}async getDocument(t){return this.request("GET",`/documents/${t}`)}async updateDocument(t,n){return this.request("PATCH",`/documents/${t}`,n)}async deleteDocument(t){return this.request("DELETE",`/documents/${t}`)}async getDocumentIssues(t){return this.request("GET",`/documents/${t}/issues`)}async linkDocumentToIssue(t,n){return this.request("POST",`/documents/${t}/issues/${n}`)}async unlinkDocumentFromIssue(t,n){return this.request("DELETE",`/documents/${t}/issues/${n}`)}async getIssueDocuments(t){return this.request("GET",`/issues/${t}/documents`)}async getDocumentComments(t){return this.request("GET",`/documents/${t}/comments`)}async createDocumentComment(t,n){return this.request("POST",`/documents/${t}/comments`,{content:n})}async updateDocumentComment(t,n,s){return this.request("PATCH",`/documents/${t}/comments/${n}`,{content:s})}async deleteDocumentComment(t,n){return this.request("DELETE",`/documents/${t}/comments/${n}`)}async getDocumentLabels(t){return this.request("GET",`/documents/${t}/labels`)}async addLabelToDocument(t,n){return this.request("POST",`/documents/${t}/labels/${n}`)}async removeLabelFromDocument(t,n){return this.request("DELETE",`/documents/${t}/labels/${n}`)}async createLabel(t,n){return this.request("POST",`/labels?team_id=${t}`,n)}async getLabels(t){return this.request("GET",`/labels?team_id=${t}`)}async getLabel(t){return this.request("GET",`/labels/${t}`)}async updateLabel(t,n){return this.request("PATCH",`/labels/${t}`,n)}async deleteLabel(t){return this.request("DELETE",`/labels/${t}`)}async createApiKey(t){return this.request("POST","/api-keys",{name:t})}async getApiKeys(){return this.request("GET","/api-keys")}async revokeApiKey(t){return this.request("DELETE",`/api-keys/${t}`)}async createTeamAgent(t,n,s=null){return this.request("POST",`/teams/${t}/agents`,{name:n,avatar_url:s})}async createProjectAgent(t,n,s=null){return this.request("POST",`/projects/${t}/agents`,{name:n,avatar_url:s})}async getTeamAgents(t){return this.request("GET",`/teams/${t}/agents`)}async getAgent(t){return this.request("GET",`/agents/${t}`)}async updateAgent(t,n){return this.request("PATCH",`/agents/${t}`,n)}async deleteAgent(t){return this.request("DELETE",`/agents/${t}`)}}const b=new Fc;let jt=null;function R(){document.getElementById("modal-overlay").classList.remove("hidden"),setTimeout(()=>{try{const e=document.querySelector("#modal-content input, #modal-content textarea");e&&e.focus()}catch{}},50)}function A(){var e;dt(),document.getElementById("modal-overlay").classList.add("hidden"),(e=document.querySelector(".modal"))==null||e.classList.remove("modal-wide")}function ts(){const e=document.getElementById("modal-overlay");return e?!e.classList.contains("hidden"):!1}function v(e,t="success"){const n=document.getElementById("toast-container"),s=document.createElement("div");s.className=`toast toast-${t}`,s.textContent=e,n.appendChild(s),setTimeout(()=>{s.classList.add("toast-exit"),s.addEventListener("animationend",()=>s.remove(),{once:!0}),setTimeout(()=>{s.parentNode&&s.remove()},500)},3e3)}function dt(){document.querySelectorAll(".inline-dropdown").forEach(e=>e.remove()),jt&&(document.removeEventListener("keydown",jt),jt=null)}function mn(e){jt&&document.removeEventListener("keydown",jt),jt=e,e&&document.addEventListener("keydown",e)}function gn(e,t={}){const{multiSelect:n=!1}=t,s=i=>{n&&e.contains(i.target)||(dt(),document.removeEventListener("click",s,!0))};return setTimeout(()=>document.addEventListener("click",s,!0),0),()=>document.removeEventListener("click",s,!0)}function ye(e){return e?e.replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase()):""}function we(e){return e?e==="no_priority"?"No Priority":e.replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase()):""}function ri(e){if(!e)return"";const t=new Date(e);return isNaN(t.getTime())?"":t.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}function W(e){if(typeof e!="string"||!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e))return"#888888";if(e.length===4){const[,t,n,s]=e;return`#${t}${t}${n}${n}${s}${s}`}return e}function g(e){if(!e)return"";const t={"&":"&amp;","<":"&lt;",">":"&gt;"};return String(e).replace(/[&<>]/g,n=>t[n])}function u(e){return g(e).replace(/'/g,"&#39;").replace(/"/g,"&quot;")}function Ue(e){if(!e)return"";const t=new Date(e);if(isNaN(t.getTime()))return"";const s=new Date-t;if(s<0)return"in the future";const i=Math.floor(s/6e4),a=Math.floor(s/36e5),o=Math.floor(s/864e5);return i<1?"just now":i<60?`${i}m ago`:a<24?`${a}h ago`:o<7?`${o}d ago`:t.toLocaleDateString()}function et(e){return{task:"Task",bug:"Bug",feature:"Feature",chore:"Chore",docs:"Docs",tech_debt:"Tech Debt",epic:"Epic"}[e]||"Task"}function Uc(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function Mt(e,t="avatar-small"){const n=(e==null?void 0:e.name)||(e==null?void 0:e.email)||"User",s=e==null?void 0:e.avatar_url;return s?Uc(s)?`<img class="${t} avatar-img" src="${u(s)}" alt="${u(n)}">`:`<div class="${t} avatar-emoji">${g(s)}</div>`:`<div class="${t}">${n.charAt(0).toUpperCase()}</div>`}let se={...{currentUser:null,currentView:"my-issues",issues:[],assignees:[],labels:[],activeFilterCategory:"status",selectedIssueIndex:-1,selectedDocIndex:-1,pendingGates:[],searchDebounceTimer:null,websocket:null,currentTeam:null,currentDetailIssue:null,currentDetailSprints:null}};const zc=new Set;function _e(e,t){if(typeof e=="string"){const n=se[e];se[e]=t,lo(e,t,n)}else if(typeof e=="object"){const n=[];for(const[s,i]of Object.entries(e)){const a=se[s];se[s]=i,n.push({key:s,value:i,oldValue:a})}n.forEach(({key:s,value:i,oldValue:a})=>{lo(s,i,a)})}}function lo(e,t,n){t!==n&&zc.forEach(s=>{try{s(e,t,n)}catch(i){console.error("State subscriber error:",i)}})}const fn=()=>se.currentUser,ns=e=>_e("currentUser",e),L=()=>se.currentView,Gc=e=>_e("currentView",e),ke=()=>se.issues,ze=e=>_e("issues",e),co=()=>se.labels,ss=e=>_e("labels",e),uo=()=>se.activeFilterCategory,Wc=e=>_e("activeFilterCategory",e),Vc=()=>se.selectedIssueIndex,po=e=>_e("selectedIssueIndex",e),Kc=()=>se.selectedDocIndex,mo=e=>_e("selectedDocIndex",e),Yc=()=>se.pendingGates,Zc=e=>_e("pendingGates",e),Xc=()=>se.searchDebounceTimer,Qc=e=>_e("searchDebounceTimer",e),Jc=()=>se.websocket,go=e=>_e("websocket",e),x=()=>se.currentTeam,li=e=>_e("currentTeam",e),he=()=>se.currentDetailIssue,is=e=>_e("currentDetailIssue",e),ed=()=>se.currentDetailSprints,fo=e=>_e("currentDetailSprints",e),ci={};function Y(e){Object.assign(ci,e)}function td(e){var a;const t=e.target.closest("[data-action]");if(!t||t.tagName==="FORM")return;const n=e.type;if((n==="keydown"||n==="input")&&t!==e.target){const o=e.target.tagName;if(o==="INPUT"||o==="TEXTAREA"||o==="SELECT")return}const s=t.dataset.action,i=ci[s];if(!i){typeof process<"u"&&((a=process.env)==null?void 0:a.NODE_ENV)!=="production"&&console.warn(`[event-delegation] No handler registered for action "${s}"`);return}i(e,t.dataset,t)}let ho=!1;function nd(){if(!ho){ho=!0;for(const e of["click","change","input","keydown","dragstart","dragend","dragover","dragleave","drop"])document.addEventListener(e,td);document.addEventListener("submit",e=>{const t=e.target;if(!t.dataset||!t.dataset.action)return;const n=ci[t.dataset.action];n&&(e.preventDefault(),n(e,t.dataset,t))})}}function Dt(){const t=new URLSearchParams(window.location.search).get("project");return t||Ln()}function di(e){const t=new URLSearchParams(window.location.search);e?t.set("project",e):t.delete("project");const n=t.toString(),s=n?`${window.location.pathname}?${n}`:window.location.pathname;history.replaceState(history.state,"",s)}const ui={},as=new Map;let pi=null,mi=null,gi=null,fi=null,hi=null,vi=null,vo=!1;function sd(e){Object.assign(ui,e)}function id({beforeNavigate:e,detailRoute:t,detailPopstate:n,restoreProject:s,issueNavigate:i,epicNavigate:a}={}){e&&(pi=e),t&&(mi=t),n&&(gi=n),s&&(fi=s),i&&(hi=i),a&&(vi=a)}function ad(){return Object.keys(ui)}function C(e,t=!0){if(t&&as.set(window.location.href,window.scrollY),Gc(e),t){let i;const a=Dt(),o=["issues","board","sprints"];e==="my-issues"?i="/":e==="issues"&&window.location.search?i=`/issues${window.location.search}`:o.includes(e)&&a?i=`/${e}?project=${a}`:i=`/${e}`,history.pushState({view:e},"",i)}document.querySelectorAll(".nav-item").forEach(i=>{i.classList.toggle("active",i.dataset.view===e)}),pi&&pi();const n=()=>{document.querySelectorAll(".view").forEach(a=>a.classList.add("hidden"));const i=document.getElementById(`${e}-view`);i&&i.classList.remove("hidden")};document.startViewTransition?document.startViewTransition(n):n();const s=ui[e];s&&s(),t&&window.scrollTo(0,0)}function bo(){var s;const t=window.location.pathname.split("/").filter(Boolean);fi&&fi();let n="my-issues";if(t.length===0||t[0]==="")C("my-issues",!1);else{if(mi&&mi(t))return;n=t[0],ad().includes(n)?C(n,!1):(n="my-issues",C("my-issues",!1))}(s=history.state)!=null&&s.view||history.replaceState({view:n},"",window.location.href)}function yo(e){as.set(window.location.href,window.scrollY),history.pushState({view:"issue",identifier:e},"",`/issue/${e}`),hi&&hi(e)}function od(e){as.set(window.location.href,window.scrollY),history.pushState({view:"epic",identifier:e},"",`/epic/${e}`),vi&&vi(e)}function wo(){const e=as.get(window.location.href);e!==void 0&&requestAnimationFrame(()=>{window.scrollTo(0,e)})}function rd(){vo||(vo=!0,window.addEventListener("popstate",e=>{var t;if(e.state&&gi&&gi(e.state)){wo();return}(t=e.state)!=null&&t.view?C(e.state.view,!1):bo(),wo()}))}let hn=[];function ld(e){const t=e.user_name||e.name||e.user_email||e.email||"Unknown";return{id:e.user_id||e.id,name:t,email:e.user_email||e.email||null,is_agent:!1,parent_user_id:null,parent_user_name:null}}function cd(e){return{id:e.id,name:e.name,email:null,is_agent:!0,parent_user_id:e.parent_user_id||null,parent_user_name:e.parent_user_name||null,avatar_url:e.avatar_url||null}}function os(e,t){const n=e().map(ld),s=t().map(cd);hn=[...n,...s]}function vn(e){return e&&hn.find(t=>t.id===e)||null}function Et(e){return e?e.is_agent?e.name||"Agent":e.name||e.email||"User":null}function bi(e,t=!1){const n=g(e.name||e.email||"Unknown");if(!e.is_agent)return n;const s=e.parent_user_name?` (${g(e.parent_user_name)})`:" (agent)";return`${t?"&nbsp;&nbsp;- ":""}${n}${s}`}function rs(){const e=hn.filter(a=>!a.is_agent),t=new Map,n=new Set(e.map(a=>a.id));hn.filter(a=>a.is_agent).forEach(a=>{const o=a.parent_user_id;t.has(o)||t.set(o,[]),t.get(o).push(a)});const s=[];e.forEach(a=>{s.push({assignee:a,indent:!1});const o=t.get(a.id)||[];o.sort((r,d)=>r.name.localeCompare(d.name)),o.forEach(r=>s.push({assignee:r,indent:!0}))});const i=hn.filter(a=>a.is_agent&&!n.has(a.parent_user_id));return i.sort((a,o)=>a.name.localeCompare(o.name)),i.forEach(a=>s.push({assignee:a,indent:!1})),s}function ls(){const e=document.getElementById("assignee-filter");if(!e)return;const t=e.value;let n=`
+`+Ee),Xt&&Xn([le,ce,Te],ct=>{Ee=cn(Ee,ct," ")}),B&&Rs?B.createHTML(Ee):Ee},t.setConfig=function(){let I=arguments.length>0&&arguments[0]!==void 0?arguments[0]:{};Ta(I),wa=!0},t.clearConfig=function(){tn=null,wa=!1},t.isValidAttribute=function(I,m,$){tn||Ta({});const _=te(I),G=te(m);return fl(_,G,$)},t.addHook=function(I,m){typeof m=="function"&&ln(D[I],m)},t.removeHook=function(I,m){if(m!==void 0){const $=ac(D[I],m);return $===-1?void 0:oc(D[I],$,1)[0]}return Ya(D[I])},t.removeHooks=function(I){D[I]=[]},t.removeAllHooks=function(){D=so()},t}var ao=io();const ai="chaotic_";function je(e){try{return localStorage.getItem(ai+e)}catch{return null}}function Me(e,t){try{localStorage.setItem(ai+e,t)}catch{}}function Je(e){try{localStorage.removeItem(ai+e)}catch{}}function Ec(){return je("token")}function _c(e){e?Me("token",e):Je("token")}function Ic(){return je("theme")}function xc(e){Me("theme",e)}function Tc(){return je("last_project")}function oo(e){Me("last_project",e)}function Sc(){return je("onboarding_complete")==="true"}function Lc(){Me("onboarding_complete","true")}function Cc(){Je("onboarding_complete")}function Bc(e){return e?je(`issues_filters_${e}`):null}function Ac(e,t){e&&(t?Me(`issues_filters_${e}`,t):Je(`issues_filters_${e}`))}function jc(e){return je(`comment_draft_${e}`)}function oi(e,t){t?Me(`comment_draft_${e}`,t):Je(`comment_draft_${e}`)}function Mc(e){return je(`description_draft_${e}`)}function es(e,t){t?Me(`description_draft_${e}`,t):Je(`description_draft_${e}`)}function Dc(){return{title:je("create_issue_title"),description:je("create_issue_description")}}function ro(e,t){e?Me("create_issue_title",e):Je("create_issue_title"),t?Me("create_issue_description",t):Je("create_issue_description")}function Rc(){Je("create_issue_title"),Je("create_issue_description")}function Pc(){return je("doc_view_mode")}function Nc(e){Me("doc_view_mode",e)}function qc(){return je("approvals_explainer_dismissed")==="1"}function Oc(){Me("approvals_explainer_dismissed","1")}const Hc="/api";class Fc{constructor(){this.token=Ec()}setToken(t){this.token=t,_c(t)}getToken(){return this.token}async request(t,n,s=null){const i={"Content-Type":"application/json"};this.token&&(i.Authorization=`Bearer ${this.token}`);const a={method:t,headers:i};s&&(t==="POST"||t==="PATCH"||t==="PUT")&&(a.body=JSON.stringify(s));const o=await fetch(`${Hc}${n}`,a);if(o.status===204)return null;let r;try{r=await o.json()}catch{const d=o.headers.get("content-type")||"unknown";throw o.ok?new Error(`Invalid response from server (expected JSON, got ${d})`):new Error(`Request failed (${o.status})`)}if(!o.ok){let d;typeof r.detail=="string"?d=r.detail:r.detail&&typeof r.detail=="object"&&r.detail.message?d=r.detail.message:d="An error occurred";const c=new Error(d);throw c.status=o.status,c.detail=r.detail,c}return r}async signup(t,n,s){return this.request("POST","/auth/signup",{name:t,email:n,password:s})}async login(t,n){const s=await this.request("POST","/auth/login",{email:t,password:n});return this.setToken(s.access_token),s}async getMe(){return this.request("GET","/auth/me")}logout(){this.setToken(null)}async getUser(t){return this.request("GET",`/users/${t}`)}async updateMe(t){return this.request("PATCH","/users/me",t)}async createTeam(t){return this.request("POST","/teams",t)}async getMyTeams(){return this.request("GET","/teams")}async getTeam(t){return this.request("GET",`/teams/${t}`)}async updateTeam(t,n){return this.request("PATCH",`/teams/${t}`,n)}async deleteTeam(t){return this.request("DELETE",`/teams/${t}`)}async getTeamMembers(t){return this.request("GET",`/teams/${t}/members`)}async updateMemberRole(t,n,s){return this.request("PATCH",`/teams/${t}/members/${n}?role=${s}`)}async removeMember(t,n){return this.request("DELETE",`/teams/${t}/members/${n}`)}async createInvitation(t,n,s="member"){return this.request("POST",`/teams/${t}/invitations`,{email:n,role:s})}async getTeamInvitations(t){return this.request("GET",`/teams/${t}/invitations`)}async acceptInvitation(t){return this.request("POST",`/teams/invitations/${t}/accept`)}async deleteInvitation(t,n){return this.request("DELETE",`/teams/${t}/invitations/${n}`)}async createProject(t,n){return this.request("POST",`/projects?team_id=${t}`,n)}async getProjects(t){return this.request("GET",`/projects?team_id=${t}`)}async getProject(t){return this.request("GET",`/projects/${t}`)}async updateProject(t,n){return this.request("PATCH",`/projects/${t}`,n)}async deleteProject(t){return this.request("DELETE",`/projects/${t}`)}async createIssue(t,n){return this.request("POST",`/issues?project_id=${t}`,n)}async getIssues(t={}){const n=new URLSearchParams;return Object.entries(t).forEach(([s,i])=>{i==null||i===""||(Array.isArray(i)?i.forEach(a=>n.append(s,a)):n.append(s,i))}),this.request("GET",`/issues?${n.toString()}`)}async searchIssues(t,n,s=null,i=0,a=50){let o=`/issues/search?team_id=${t}&q=${encodeURIComponent(n)}&skip=${i}&limit=${a}`;return s&&(o+=`&project_id=${s}`),this.request("GET",o)}async getTeamIssues(t,n={}){const s=new URLSearchParams({team_id:t});return Object.entries(n).forEach(([i,a])=>{a==null||a===""||(Array.isArray(a)?a.forEach(o=>s.append(i,o)):s.append(i,a))}),this.request("GET",`/issues?${s.toString()}`)}async getIssue(t){return this.request("GET",`/issues/${t}`)}async getIssueByIdentifier(t){return this.request("GET",`/issues/identifier/${t}`)}async updateIssue(t,n){return this.request("PATCH",`/issues/${t}`,n)}async deleteIssue(t){return this.request("DELETE",`/issues/${t}`)}async createComment(t,n){return this.request("POST",`/issues/${t}/comments`,{content:n})}async getComments(t){return this.request("GET",`/issues/${t}/comments`)}async updateComment(t,n,s){return this.request("PATCH",`/issues/${t}/comments/${n}`,{content:s})}async deleteComment(t,n){return this.request("DELETE",`/issues/${t}/comments/${n}`)}async getActivities(t,n=0,s=50){return this.request("GET",`/issues/${t}/activities?skip=${n}&limit=${s}`)}async getTeamActivities(t,n=0,s=20){return this.request("GET",`/issues/activities?team_id=${t}&skip=${n}&limit=${s}`)}async getSubIssues(t){return this.request("GET",`/issues/${t}/sub-issues`)}async getRelations(t){return this.request("GET",`/issues/${t}/relations`)}async createRelation(t,n,s="blocks"){return this.request("POST",`/issues/${t}/relations`,{related_issue_id:n,relation_type:s})}async deleteRelation(t,n){return this.request("DELETE",`/issues/${t}/relations/${n}`)}async getSprints(t,n=null){let s=`/sprints?project_id=${t}`;return n&&(s+=`&sprint_status=${n}`),this.request("GET",s)}async getSprint(t){return this.request("GET",`/sprints/${t}`)}async updateSprint(t,n){return this.request("PATCH",`/sprints/${t}`,n)}async closeSprint(t){return this.request("POST",`/sprints/${t}/close`)}async getCurrentSprint(t){return this.request("GET",`/sprints/current?project_id=${t}`)}async getSprintTransactions(t){return this.request("GET",`/sprints/${t}/transactions`)}async createRitual(t,n){return this.request("POST",`/rituals?project_id=${t}`,n)}async getRituals(t){return this.request("GET",`/rituals?project_id=${t}`)}async getRitual(t){return this.request("GET",`/rituals/${t}`)}async updateRitual(t,n){return this.request("PATCH",`/rituals/${t}`,n)}async deleteRitual(t){return this.request("DELETE",`/rituals/${t}`)}async getLimboStatus(t){return this.request("GET",`/rituals/limbo?project_id=${t}`)}async getPendingGates(t){return this.request("GET",`/rituals/pending-gates?project_id=${t}`)}async getPendingApprovals(t){return this.request("GET",`/rituals/pending-approvals?project_id=${t}`)}async attestRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/attest?project_id=${n}`,i)}async approveAttestation(t,n){return this.request("POST",`/rituals/${t}/approve?project_id=${n}`,{})}async completeGateRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/complete?project_id=${n}`,i)}async getRitualGroups(t){return this.request("GET",`/rituals/groups?project_id=${t}`)}async createRitualGroup(t,n){return this.request("POST",`/rituals/groups?project_id=${t}`,n)}async updateRitualGroup(t,n){return this.request("PATCH",`/rituals/groups/${t}`,n)}async deleteRitualGroup(t){return this.request("DELETE",`/rituals/groups/${t}`)}async getTicketRitualsStatus(t){return this.request("GET",`/rituals/issue/${t}/pending`)}async attestTicketRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/attest-issue/${n}`,i)}async completeTicketGateRitual(t,n,s=null){const i={};return s&&(i.note=s),this.request("POST",`/rituals/${t}/complete-issue/${n}`,i)}async approveTicketRitual(t,n){return this.request("POST",`/rituals/${t}/approve-issue/${n}`,{})}async createDocument(t,n){return this.request("POST",`/documents?team_id=${t}`,n)}async getDocuments(t,n=null,s=null,i=null){let a=`/documents?team_id=${t}`;return n&&(a+=`&project_id=${n}`),i&&(a+=`&sprint_id=${i}`),s&&(a+=`&search=${encodeURIComponent(s)}`),this.request("GET",a)}async getDocument(t){return this.request("GET",`/documents/${t}`)}async updateDocument(t,n){return this.request("PATCH",`/documents/${t}`,n)}async deleteDocument(t){return this.request("DELETE",`/documents/${t}`)}async getDocumentIssues(t){return this.request("GET",`/documents/${t}/issues`)}async linkDocumentToIssue(t,n){return this.request("POST",`/documents/${t}/issues/${n}`)}async unlinkDocumentFromIssue(t,n){return this.request("DELETE",`/documents/${t}/issues/${n}`)}async getIssueDocuments(t){return this.request("GET",`/issues/${t}/documents`)}async getDocumentComments(t){return this.request("GET",`/documents/${t}/comments`)}async createDocumentComment(t,n){return this.request("POST",`/documents/${t}/comments`,{content:n})}async updateDocumentComment(t,n,s){return this.request("PATCH",`/documents/${t}/comments/${n}`,{content:s})}async deleteDocumentComment(t,n){return this.request("DELETE",`/documents/${t}/comments/${n}`)}async getDocumentLabels(t){return this.request("GET",`/documents/${t}/labels`)}async addLabelToDocument(t,n){return this.request("POST",`/documents/${t}/labels/${n}`)}async removeLabelFromDocument(t,n){return this.request("DELETE",`/documents/${t}/labels/${n}`)}async createLabel(t,n){return this.request("POST",`/labels?team_id=${t}`,n)}async getLabels(t){return this.request("GET",`/labels?team_id=${t}`)}async getLabel(t){return this.request("GET",`/labels/${t}`)}async updateLabel(t,n){return this.request("PATCH",`/labels/${t}`,n)}async deleteLabel(t){return this.request("DELETE",`/labels/${t}`)}async createApiKey(t){return this.request("POST","/api-keys",{name:t})}async getApiKeys(){return this.request("GET","/api-keys")}async revokeApiKey(t){return this.request("DELETE",`/api-keys/${t}`)}async createTeamAgent(t,n,s=null){return this.request("POST",`/teams/${t}/agents`,{name:n,avatar_url:s})}async createProjectAgent(t,n,s=null){return this.request("POST",`/projects/${t}/agents`,{name:n,avatar_url:s})}async getTeamAgents(t){return this.request("GET",`/teams/${t}/agents`)}async getAgent(t){return this.request("GET",`/agents/${t}`)}async updateAgent(t,n){return this.request("PATCH",`/agents/${t}`,n)}async deleteAgent(t){return this.request("DELETE",`/agents/${t}`)}}const b=new Fc;let jt=null;function R(){document.getElementById("modal-overlay").classList.remove("hidden"),setTimeout(()=>{try{const e=document.querySelector("#modal-content input, #modal-content textarea");e&&e.focus()}catch{}},50)}function A(){var e;dt(),document.getElementById("modal-overlay").classList.add("hidden"),(e=document.querySelector(".modal"))==null||e.classList.remove("modal-wide")}function ts(){const e=document.getElementById("modal-overlay");return e?!e.classList.contains("hidden"):!1}function v(e,t="success"){const n=document.getElementById("toast-container"),s=document.createElement("div");s.className=`toast toast-${t}`,s.textContent=e,n.appendChild(s),setTimeout(()=>{s.classList.add("toast-exit"),s.addEventListener("animationend",()=>s.remove(),{once:!0}),setTimeout(()=>{s.parentNode&&s.remove()},500)},3e3)}function dt(){document.querySelectorAll(".inline-dropdown").forEach(e=>e.remove()),jt&&(document.removeEventListener("keydown",jt),jt=null)}function mn(e){jt&&document.removeEventListener("keydown",jt),jt=e,e&&document.addEventListener("keydown",e)}function gn(e,t={}){const{multiSelect:n=!1}=t,s=i=>{n&&e.contains(i.target)||(dt(),document.removeEventListener("click",s,!0))};return setTimeout(()=>document.addEventListener("click",s,!0),0),()=>document.removeEventListener("click",s,!0)}function ye(e){return e?e.replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase()):""}function we(e){return e?e==="no_priority"?"No Priority":e.replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase()):""}function ri(e){if(!e)return"";const t=new Date(e);return isNaN(t.getTime())?"":t.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}function W(e){if(typeof e!="string"||!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e))return"#888888";if(e.length===4){const[,t,n,s]=e;return`#${t}${t}${n}${n}${s}${s}`}return e}function g(e){if(!e)return"";const t={"&":"&amp;","<":"&lt;",">":"&gt;"};return String(e).replace(/[&<>]/g,n=>t[n])}function u(e){return g(e).replace(/'/g,"&#39;").replace(/"/g,"&quot;")}function Ue(e){if(!e)return"";const t=new Date(e);if(isNaN(t.getTime()))return"";const s=new Date-t;if(s<0)return"in the future";const i=Math.floor(s/6e4),a=Math.floor(s/36e5),o=Math.floor(s/864e5);return i<1?"just now":i<60?`${i}m ago`:a<24?`${a}h ago`:o<7?`${o}d ago`:t.toLocaleDateString()}function et(e){return{task:"Task",bug:"Bug",feature:"Feature",chore:"Chore",docs:"Docs",tech_debt:"Tech Debt",epic:"Epic"}[e]||"Task"}function Uc(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function Mt(e,t="avatar-small"){const n=(e==null?void 0:e.name)||(e==null?void 0:e.email)||"User",s=e==null?void 0:e.avatar_url;return s?Uc(s)?`<img class="${t} avatar-img" src="${u(s)}" alt="${u(n)}">`:`<div class="${t} avatar-emoji">${g(s)}</div>`:`<div class="${t}">${n.charAt(0).toUpperCase()}</div>`}let se={...{currentUser:null,currentView:"my-issues",issues:[],assignees:[],labels:[],activeFilterCategory:"status",selectedIssueIndex:-1,selectedDocIndex:-1,pendingGates:[],searchDebounceTimer:null,websocket:null,currentTeam:null,currentDetailIssue:null,currentDetailSprints:null}};const zc=new Set;function _e(e,t){if(typeof e=="string"){const n=se[e];se[e]=t,lo(e,t,n)}else if(typeof e=="object"){const n=[];for(const[s,i]of Object.entries(e)){const a=se[s];se[s]=i,n.push({key:s,value:i,oldValue:a})}n.forEach(({key:s,value:i,oldValue:a})=>{lo(s,i,a)})}}function lo(e,t,n){t!==n&&zc.forEach(s=>{try{s(e,t,n)}catch(i){console.error("State subscriber error:",i)}})}const fn=()=>se.currentUser,ns=e=>_e("currentUser",e),L=()=>se.currentView,Gc=e=>_e("currentView",e),ke=()=>se.issues,ze=e=>_e("issues",e),co=()=>se.labels,ss=e=>_e("labels",e),uo=()=>se.activeFilterCategory,Wc=e=>_e("activeFilterCategory",e),Vc=()=>se.selectedIssueIndex,po=e=>_e("selectedIssueIndex",e),Kc=()=>se.selectedDocIndex,mo=e=>_e("selectedDocIndex",e),Yc=()=>se.pendingGates,Zc=e=>_e("pendingGates",e),Xc=()=>se.searchDebounceTimer,Qc=e=>_e("searchDebounceTimer",e),Jc=()=>se.websocket,go=e=>_e("websocket",e),x=()=>se.currentTeam,li=e=>_e("currentTeam",e),he=()=>se.currentDetailIssue,is=e=>_e("currentDetailIssue",e),ed=()=>se.currentDetailSprints,fo=e=>_e("currentDetailSprints",e),ci={};function Y(e){Object.assign(ci,e)}function td(e){var a;const t=e.target.closest("[data-action]");if(!t||t.tagName==="FORM")return;const n=e.type;if((n==="keydown"||n==="input")&&t!==e.target){const o=e.target.tagName;if(o==="INPUT"||o==="TEXTAREA"||o==="SELECT")return}const s=t.dataset.action,i=ci[s];if(!i){typeof process<"u"&&((a=process.env)==null?void 0:a.NODE_ENV)!=="production"&&console.warn(`[event-delegation] No handler registered for action "${s}"`);return}i(e,t.dataset,t)}let ho=!1;function nd(){if(!ho){ho=!0;for(const e of["click","change","input","keydown","dragstart","dragend","dragover","dragleave","drop"])document.addEventListener(e,td);document.addEventListener("submit",e=>{const t=e.target;if(!t.dataset||!t.dataset.action)return;const n=ci[t.dataset.action];n&&(e.preventDefault(),n(e,t.dataset,t))})}}let hn=[];function sd(e){const t=e.user_name||e.name||e.user_email||e.email||"Unknown";return{id:e.user_id||e.id,name:t,email:e.user_email||e.email||null,is_agent:!1,parent_user_id:null,parent_user_name:null}}function id(e){return{id:e.id,name:e.name,email:null,is_agent:!0,parent_user_id:e.parent_user_id||null,parent_user_name:e.parent_user_name||null,avatar_url:e.avatar_url||null}}function as(e,t){const n=e().map(sd),s=t().map(id);hn=[...n,...s]}function vn(e){return e&&hn.find(t=>t.id===e)||null}function Et(e){return e?e.is_agent?e.name||"Agent":e.name||e.email||"User":null}function di(e,t=!1){const n=g(e.name||e.email||"Unknown");if(!e.is_agent)return n;const s=e.parent_user_name?` (${g(e.parent_user_name)})`:" (agent)";return`${t?"&nbsp;&nbsp;- ":""}${n}${s}`}function os(){const e=hn.filter(a=>!a.is_agent),t=new Map,n=new Set(e.map(a=>a.id));hn.filter(a=>a.is_agent).forEach(a=>{const o=a.parent_user_id;t.has(o)||t.set(o,[]),t.get(o).push(a)});const s=[];e.forEach(a=>{s.push({assignee:a,indent:!1});const o=t.get(a.id)||[];o.sort((r,d)=>r.name.localeCompare(d.name)),o.forEach(r=>s.push({assignee:r,indent:!0}))});const i=hn.filter(a=>a.is_agent&&!n.has(a.parent_user_id));return i.sort((a,o)=>a.name.localeCompare(o.name)),i.forEach(a=>s.push({assignee:a,indent:!1})),s}function rs(){const e=document.getElementById("assignee-filter");if(!e)return;const t=e.value;let n=`
         <option value="">All Assignees</option>
         <option value="me">Assigned to me</option>
         <option value="unassigned">Unassigned</option>
-    `;rs().forEach(({assignee:s,indent:i})=>{n+=`<option value="${s.id}">${bi(s,i)}</option>`}),e.innerHTML=n,t&&(e.value=t)}let bn=[];function cs(){return bn}function dd(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function ud(e){const t=e==null?void 0:e.avatar_url,n=u((e==null?void 0:e.name)||"Agent");return t?dd(t)?`
-        <div class="agent-avatar agent-avatar-purple">
-          <img class="avatar-img" src="${u(t)}" alt="${n}">
-        </div>
-      `:`<div class="agent-avatar agent-avatar-purple avatar-emoji">${g(t)}</div>`:`
-    <div class="agent-avatar agent-avatar-purple">
-      <span class="agent-emoji">🤖</span>
-      <span class="agent-initial">${n.charAt(0).toUpperCase()}</span>
-    </div>
-  `}async function pd(e){var t;if(e||(e=(t=x())==null?void 0:t.id),!!e)try{bn=await b.getTeamAgents(e),os(It,cs),ls()}catch(n){console.error("Failed to load team agents:",n)}}async function yi(e){var t;if(e||(e=(t=x())==null?void 0:t.id),!!e)try{bn=await b.getTeamAgents(e),os(It,cs),ls(),md()}catch(n){v(n.message,"error")}}function md(){const e=document.getElementById("agents-list");if(e){if(bn.length===0){e.innerHTML='<p class="empty-state">No agents yet. Create an agent to enable CLI automation with its own identity.</p>';return}e.innerHTML=bn.map(t=>{const n=g(t.name),s=g(t.parent_user_name||"Unknown");return`
-      <div class="agent-item">
-        ${ud(t)}
-        <div class="agent-info">
-          <div class="agent-name">${n}</div>
-          <div class="agent-meta">
-            <span class="agent-scope">${t.agent_project_id?"Project-scoped":"Team-wide"}</span>
-            <span class="agent-date">Created by ${s} ${ri(t.created_at)}</span>
-          </div>
-        </div>
-        <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${u(t.id)}" data-agent-name="${u(t.name||"Agent")}">Delete</button>
-      </div>
-    `}).join("")}}function gd(){const e=U();document.getElementById("modal-title").textContent="Create Agent",document.getElementById("modal-content").innerHTML=`
-    <form data-action="create-agent">
-      <div class="form-group">
-        <label for="agent-name">Agent Name</label>
-        <input type="text" id="agent-name" placeholder="e.g., claude-bot, ci-agent" required>
-        <p class="form-help">A display name for this agent (shown in activity feeds).</p>
-      </div>
-      <div class="form-group">
-        <label for="agent-avatar">Avatar (emoji)</label>
-        <input type="text" id="agent-avatar" placeholder="🤖" maxlength="2">
-        <p class="form-help">Optional emoji avatar (shown in issue lists and activity).</p>
-      </div>
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="agent-project-scoped">
-          Project-scoped (can only access selected project)
-        </label>
-      </div>
-      <div class="form-group" id="agent-project-select" style="display: none;">
-        <label for="agent-project">Project</label>
-        <select id="agent-project">
-          ${e.map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join("")}
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary">Create Agent</button>
-    </form>
-  `;const t=document.getElementById("agent-project-scoped");t&&t.addEventListener("change",function(){document.getElementById("agent-project-select").style.display=this.checked?"block":"none"}),R()}async function fd(e){var o,r,d;e.preventDefault();const t=(o=x())==null?void 0:o.id;if(!t)return v("No team selected","error"),!1;const n=document.getElementById("agent-name").value.trim(),s=((r=document.getElementById("agent-avatar"))==null?void 0:r.value.trim())||null,i=document.getElementById("agent-project-scoped").checked,a=(d=document.getElementById("agent-project"))==null?void 0:d.value;try{let c;i&&a?c=await b.createProjectAgent(a,n,s):c=await b.createTeamAgent(t,n,s),A();const l=g(c.api_key);document.getElementById("modal-title").textContent="Agent Created",document.getElementById("modal-content").innerHTML=`
-      <div class="api-key-created">
-        <p class="warning-text">Copy the agent's API key now. You won't be able to see it again!</p>
-        <div class="api-key-display">
-          <code id="new-agent-key">${l}</code>
-          <button type="button" class="btn btn-secondary" data-action="copy-agent-key">Copy</button>
-        </div>
-        <div class="api-key-instructions">
-          <p>Configure the CLI to use this agent:</p>
-          <code>chaotic auth set-key ${l}</code>
-        </div>
-        <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
-      </div>
-    `,R()}catch(c){v(`Failed to create agent: ${c.message}`,"error")}return!1}function hd(){const e=document.getElementById("new-agent-key").textContent;navigator.clipboard.writeText(e).then(()=>{v("Agent API key copied to clipboard","success")}).catch(()=>{v("Failed to copy","error")})}async function vd(e,t){if(confirm(`Delete agent "${t}"? This will revoke all its API keys and cannot be undone.`))try{await b.deleteAgent(e),v("Agent deleted","success"),yi()}catch(n){v(`Failed to delete agent: ${n.message}`,"error")}}Y({"create-agent":e=>{fd(e)},"copy-agent-key":()=>{hd()},"dismiss-agent-modal":()=>{A(),yi()},"delete-agent":(e,t)=>{vd(t.agentId,t.agentName)}});let yn=0,wn=null;const _t=new Map;function tt(e,t){return _t.has(e)||_t.set(e,new Set),_t.get(e).add(t),()=>{var n;return(n=_t.get(e))==null?void 0:n.delete(t)}}function bd(e){const t=Math.min(1e3*Math.pow(2,e),3e4),n=t*.25*(Math.random()*2-1);return Math.max(500,Math.round(t+n))}function ko(e){wn&&(clearTimeout(wn),wn=null);const t=Jc();t&&(t.close(),go(null));const n=b.getToken();if(!n)return;const i=`${window.location.protocol==="https:"?"wss:":"ws:"}//${window.location.host}/ws?token=${encodeURIComponent(n)}&team_id=${encodeURIComponent(e)}`;try{const a=new WebSocket(i);go(a),a.onopen=()=>{console.log("WebSocket connected"),yn>0&&v("Live updates reconnected","success"),yn=0},a.onmessage=o=>{let r;try{r=JSON.parse(o.data)}catch(d){console.error("WebSocket: malformed message",d);return}yd(r)},a.onclose=()=>{console.log("WebSocket disconnected"),yn++,yn===1&&v("Live updates disconnected. Reconnecting...","warning");const o=bd(yn-1);wn=setTimeout(()=>{wn=null,x()&&x().id===e&&ko(e)},o)},a.onerror=o=>{console.error("WebSocket error:",o)}}catch(a){console.error("Failed to connect WebSocket:",a)}}function yd(e){const{type:t,entity:n,data:s}=e;if(!t||!n){console.warn("WebSocket: ignoring message with missing type/entity",e);return}const i={type:t,entity:n},a=_t.get(`${n}:${t}`);if(a)for(const d of a)try{d(s,i)}catch(c){console.error(`WebSocket handler error (${n}:${t}):`,c)}const o=_t.get(n);if(o)for(const d of o)try{d(s,i)}catch(c){console.error(`WebSocket handler error (${n}):`,c)}const r=_t.get("*");if(r)for(const d of r)try{d(s,i)}catch(c){console.error("WebSocket handler error (*):",c)}}let ds=[],us=[],wi=[],ki=[];function wd(){return ds}function It(){return us}async function $i(){try{ds=await b.getMyTeams(),kd()}catch(e){v(e.message,"error")}}function kd(){const e=document.getElementById("team-list");ds.length===0?e.innerHTML='<div class="dropdown-item" style="color: var(--text-secondary)">No teams yet</div>':e.innerHTML=ds.map(t=>`
-            <button class="dropdown-item" data-action="select-team" data-team-json="${u(JSON.stringify(t))}">${g(t.name)}</button>
-        `).join("")}async function Ei(e,t=!1){li(e),document.getElementById("current-team-name").textContent=e.name;const n=document.getElementById("mobile-team-name");n&&(n.textContent=e.name);const s=document.getElementById("team-description-text");s&&(s.textContent=e.description||"No description"),document.getElementById("team-dropdown").classList.add("hidden"),ko(e.id),await Promise.all([$e(),Md(),Ed(),pd()]),t?bo():C(L())}function $o(){document.getElementById("team-dropdown").classList.toggle("hidden")}function $d(){document.getElementById("user-dropdown").classList.toggle("hidden")}async function Ed(){if(x())try{us=await b.getTeamMembers(x().id),os(It,cs),ls()}catch(e){console.error("Failed to load team members:",e)}}async function Eo(){if(x())try{us=await b.getTeamMembers(x().id),os(It,cs),ls(),_d()}catch(e){v(e.message,"error")}}function _d(){const e=document.getElementById("team-members-list");e.innerHTML=us.map(t=>`
-        <div class="list-item member-item">
-            <div class="member-info">
-                <div class="avatar">${(t.user_name||"U").charAt(0).toUpperCase()}</div>
-                <div class="member-details">
-                    <span class="member-name">${g(t.user_name||"Unknown")}</span>
-                    <span class="member-email">${g(t.user_email||"")}</span>
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span class="member-role">${t.role}</span>
-                ${t.user_id!==fn().id&&t.role!=="owner"?`
-                    <button class="btn btn-danger btn-small" data-action="remove-member" data-user-id="${u(t.user_id)}">Remove</button>
-                `:""}
-            </div>
-        </div>
-    `).join("")}async function _i(){if(x())try{wi=await b.getTeamInvitations(x().id),Id()}catch{document.getElementById("team-invitations-list").innerHTML=""}}function Id(){const e=document.getElementById("team-invitations-list");if(wi.length===0){e.innerHTML='<div class="empty-state" style="padding: 1rem"><p>No pending invitations</p></div>';return}e.innerHTML=wi.map(t=>`
-        <div class="list-item">
-            <div class="list-item-content">
-                <div class="list-item-title">${g(t.email)}</div>
-                <div class="list-item-meta">
-                    <span class="member-role">${g(t.role)}</span>
-                    <span>Expires: ${new Date(t.expires_at).toLocaleDateString()}</span>
-                </div>
-            </div>
-            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${u(t.id)}">Cancel</button>
-        </div>
-    `).join("")}async function xd(){if(x())try{ki=await b.getTeamAgents(x().id),Td()}catch(e){v(e.message,"error")}}function Td(){const e=document.getElementById("team-agents-list");if(e){if(ki.length===0){e.innerHTML='<div class="empty-state" style="padding: 1rem"><p>No agents yet. <a href="#" data-action="navigate-to" data-view="settings">Create an agent</a> to enable CLI automation with its own identity.</p></div>';return}e.innerHTML=ki.map(t=>{const n=g(t.name),s=g(t.parent_user_name||"Unknown"),i=t.avatar_url||"🤖";return`
-        <div class="list-item member-item">
-            <div class="member-info">
-                <div class="avatar agent-avatar" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">${g(i)}</div>
-                <div class="member-details">
-                    <span class="member-name">${n}</span>
-                    <span class="member-email">Created by ${s} • ${t.agent_project_id?"Project-scoped":"Team-wide"}</span>
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span class="member-role" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">Agent</span>
-            </div>
-        </div>
-      `}).join("")}}function _o(){document.getElementById("modal-title").textContent="Invite Team Member",document.getElementById("modal-content").innerHTML=`
-        <form data-action="invite-member">
-            <div class="form-group">
-                <label for="invite-email">Email</label>
-                <input type="email" id="invite-email" required>
-            </div>
-            <div class="form-group">
-                <label for="invite-role">Role</label>
-                <select id="invite-role">
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
-                </select>
-            </div>
-            <button type="submit" class="btn btn-primary">Send Invitation</button>
-        </form>
-    `,R()}async function Sd(e){e.preventDefault();const t=document.getElementById("invite-email").value,n=document.getElementById("invite-role").value;try{await b.createInvitation(x().id,t,n),await _i(),A(),v("Invitation sent!","success")}catch(s){v(`Failed to send invitation: ${s.message}`,"error")}return!1}async function Ld(e){if(confirm("Are you sure you want to remove this member?"))try{await b.removeMember(x().id,e),await Eo(),v("Member removed!","success")}catch(t){v(`Failed to remove member: ${t.message}`,"error")}}async function Cd(e){try{await b.deleteInvitation(x().id,e),await _i(),v("Invitation canceled!","success")}catch(t){v(`Failed to cancel invitation: ${t.message}`,"error")}}function Io(){$o(),document.getElementById("modal-title").textContent="Create Team",document.getElementById("modal-content").innerHTML=`
-        <form data-action="create-team">
-            <div class="form-group">
-                <label for="team-name">Team Name</label>
-                <input type="text" id="team-name" required>
-            </div>
-            <div class="form-group">
-                <label for="team-key">Team Key (2-10 uppercase letters/numbers)</label>
-                <input type="text" id="team-key" pattern="[A-Z0-9]{2,10}" required
-                    style="text-transform: uppercase">
-            </div>
-            <div class="form-group">
-                <label for="team-description">Description</label>
-                <textarea id="team-description"></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">Create Team</button>
-        </form>
-    `,R()}function Bd(){x()&&(document.getElementById("modal-title").textContent="Edit Team",document.getElementById("modal-content").innerHTML=`
-        <form data-action="update-team">
-            <div class="form-group">
-                <label for="team-name">Team Name</label>
-                <input type="text" id="team-name" value="${u(x().name)}" required>
-            </div>
-            <div class="form-group">
-                <label for="team-key">Team Key</label>
-                <input type="text" id="team-key" value="${u(x().key)}" disabled class="input-disabled">
-                <small class="form-hint">Team key cannot be changed</small>
-            </div>
-            <div class="form-group">
-                <label for="team-description">Description</label>
-                <textarea id="team-description">${g(x().description||"")}</textarea>
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">Save Changes</button>
-            </div>
-        </form>
-    `,R())}async function Ad(e){e.preventDefault();const t={name:document.getElementById("team-name").value,key:document.getElementById("team-key").value.toUpperCase(),description:document.getElementById("team-description").value};try{const n=await b.createTeam(t);await $i(),await Ei(n),A(),v("Team created!","success")}catch(n){v(`Failed to create team: ${n.message}`,"error")}return!1}async function jd(e){if(e.preventDefault(),!x())return!1;const t={name:document.getElementById("team-name").value,description:document.getElementById("team-description").value};try{const n=await b.updateTeam(x().id,t);li(n),document.getElementById("current-team-name").textContent=n.name;const s=document.getElementById("team-description-text");s&&(s.textContent=n.description||"No description"),await $i(),A(),v("Team updated!","success")}catch(n){v(`Failed to update team: ${n.message}`,"error")}return!1}async function Md(){if(x())try{const e=await b.getLabels(x().id);ss(e)}catch(e){console.error("Failed to load labels:",e)}}document.addEventListener("click",e=>{if(!e.target.closest(".team-selector")&&!e.target.closest("#team-dropdown")){const t=document.getElementById("team-dropdown");t&&t.classList.add("hidden")}if(!e.target.closest(".user-menu")&&!e.target.closest("#user-dropdown")){const t=document.getElementById("user-dropdown");t&&t.classList.add("hidden")}}),Y({"select-team":(e,t)=>{Ei(JSON.parse(t.teamJson))},"remove-member":(e,t)=>{Ld(t.userId)},"delete-invitation":(e,t)=>{Cd(t.invitationId)},"invite-member":e=>{Sd(e)},"create-team":e=>{Ad(e)},"update-team":e=>{jd(e)}});const xo=[{key:"backlog",label:"Backlog"},{key:"todo",label:"Todo"},{key:"in_progress",label:"In Progress"},{key:"in_review",label:"In Review"},{key:"done",label:"Done"}];let ut=[],Ii=null;function xi(){const e=document.getElementById("board-project-filter");if(!e)return;const t=U();if(e.innerHTML='<option value="">Select Project</option>'+t.map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join(""),!e.value){const n=Dt();n&&t.some(s=>s.id===n)&&(e.value=n)}if(e.value)To(e.value);else{const n=document.getElementById("kanban-board");n&&(n.innerHTML=`
+    `;os().forEach(({assignee:s,indent:i})=>{n+=`<option value="${s.id}">${di(s,i)}</option>`}),e.innerHTML=n,t&&(e.value=t)}const vo=[{key:"backlog",label:"Backlog"},{key:"todo",label:"Todo"},{key:"in_progress",label:"In Progress"},{key:"in_review",label:"In Review"},{key:"done",label:"Done"}];let ut=[],ui=null;function pi(){const e=document.getElementById("board-project-filter");if(!e)return;const t=U();if(e.innerHTML='<option value="">Select Project</option>'+t.map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join(""),!e.value){const n=Gt();n&&t.some(s=>s.id===n)&&(e.value=n)}if(e.value)bo(e.value);else{const n=document.getElementById("kanban-board");n&&(n.innerHTML=`
                 <div class="empty-state" style="width: 100%; padding: 3rem;">
                     <h3>Select a project</h3>
                     <p>Choose a project to view its board</p>
                 </div>
-            `)}}function Dd(){var t;const e=(t=document.getElementById("board-project-filter"))==null?void 0:t.value;e&&(Ft(e),di(e)),To(e)}async function To(e){var s;const t=e||((s=document.getElementById("board-project-filter"))==null?void 0:s.value);if(!t){xi();return}const n=document.getElementById("kanban-board");n&&(n.innerHTML='<div class="loading-spinner" style="margin: 2rem auto;"></div>');try{ut=await b.getIssues({project_id:t}),pt()}catch(i){v(`Failed to load board: ${i.message}`,"error")}}function pt(){const e=document.getElementById("kanban-board");e&&(e.innerHTML=xo.map(t=>{const n=ut.filter(s=>s.status===t.key);return`
+            `)}}function ad(){var t;const e=(t=document.getElementById("board-project-filter"))==null?void 0:t.value;e&&(Ut(e),zi(e)),bo(e)}async function bo(e){var s;const t=e||((s=document.getElementById("board-project-filter"))==null?void 0:s.value);if(!t){pi();return}const n=document.getElementById("kanban-board");n&&(n.innerHTML='<div class="loading-spinner" style="margin: 2rem auto;"></div>');try{ut=await b.getIssues({project_id:t}),pt()}catch(i){v(`Failed to load board: ${i.message}`,"error")}}function pt(){const e=document.getElementById("kanban-board");e&&(e.innerHTML=vo.map(t=>{const n=ut.filter(s=>s.status===t.key);return`
             <div class="kanban-column" data-action="board-column" data-status="${t.key}">
                 <div class="kanban-column-header">
                     <div class="kanban-column-title">
@@ -239,18 +86,18 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     `).join("")}
                 </div>
             </div>
-        `}).join(""))}function Rd(e,t){e.dataTransfer.setData("text/plain",t.dataset.id),Ii=t.dataset.id,t.classList.add("dragging")}function Pd(e,t){t.classList.remove("dragging"),Ii=null}function Nd(e,t){e.preventDefault(),t.classList.add("drag-over")}function qd(e,t){t.classList.remove("drag-over")}function Od(e,t){e.preventDefault(),t.classList.add("drag-over")}function Hd(e,t){t.classList.remove("drag-over")}async function Fd(e,t){e.preventDefault(),t.classList.remove("drag-over");const n=e.dataTransfer.getData("text/plain"),s=t.dataset.status,i=ut.find(o=>o.id===n);if(!i)return;const a=i.status;if(i.status=s,So(s,n),pt(),a!==s)try{await b.updateIssue(n,{status:s}),v("Status updated","success")}catch(o){i.status=a,pt(),v(`Failed to update status: ${o.message}`,"error")}}async function Ud(e,t){e.preventDefault(),e.stopPropagation(),t.classList.remove("drag-over");const n=Ii||e.dataTransfer.getData("text/plain"),s=t.dataset.id;if(!n||!s||n===s)return;const i=t.closest(".kanban-column"),a=i==null?void 0:i.dataset.status;if(!a)return;const o=ut.find(d=>d.id===n);if(!o)return;const r=o.status;if(o.status=a,So(a,n,s),pt(),r!==a)try{await b.updateIssue(n,{status:a}),v("Status updated","success")}catch(d){o.status=r,pt(),v(`Failed to update status: ${d.message}`,"error")}}function So(e,t,n=null){const s=ut.filter(o=>o.status===e&&o.id!==t),i=ut.find(o=>o.id===t);if(!i)return;if(n){const o=s.findIndex(r=>r.id===n);o>=0?s.splice(o,0,i):s.push(i)}else s.push(i);const a=[];xo.forEach(o=>{o.key===e?a.push(...s):a.push(...ut.filter(r=>r.status===o.key))}),ut=a}Y({"board-card":(e,t,n)=>{e.type==="click"?e.metaKey||e.ctrlKey||e.shiftKey||e.button===1?window.open(`/issue/${encodeURIComponent(t.identifier)}`,"_blank"):(e.preventDefault(),F(t.id)):e.type==="dragstart"?Rd(e,n):e.type==="dragend"?Pd(e,n):e.type==="dragover"?Od(e,n):e.type==="dragleave"?Hd(e,n):e.type==="drop"&&Ud(e,n)},"board-column":(e,t,n)=>{e.type==="dragover"?Nd(e,n):e.type==="dragleave"?qd(e,n):e.type==="drop"&&Fd(e,n)}});function Ti(e){const n=document.getElementById(e).querySelector(".multi-select-options"),s=!n.classList.contains("hidden");document.querySelectorAll(".multi-select-options").forEach(i=>{i.classList.add("hidden")}),s||(n.classList.remove("hidden"),setTimeout(()=>{document.addEventListener("click",Lo)},0))}function Lo(e){e.target.closest(".multi-select-dropdown")||(document.querySelectorAll(".multi-select-options").forEach(t=>{t.classList.add("hidden")}),document.removeEventListener("click",Lo))}function xt(){const e=document.getElementById("status-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function Tt(){const e=document.getElementById("priority-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function St(){const e=document.getElementById("label-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function ps(){const e=xt(),n=document.getElementById("status-filter-dropdown").querySelector(".multi-select-label");e.length===0?n.textContent="All Statuses":e.length===1?n.textContent=ye(e[0]):n.innerHTML=`${e.length} statuses<span class="multi-select-badge">${e.length}</span>`,De(),Le(),Ce()}function Si(){document.getElementById("status-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),ps()}function Li(){const e=Tt(),n=document.getElementById("priority-filter-dropdown").querySelector(".multi-select-label");e.length===0?n.textContent="All Priorities":e.length===1?n.textContent=we(e[0]):n.innerHTML=`${e.length} priorities<span class="multi-select-badge">${e.length}</span>`,De(),Le(),Ce()}function Ci(){document.getElementById("priority-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),Li()}function Bi(){var s,i;const e=St(),t=document.getElementById("label-filter-dropdown"),n=t.querySelector(".multi-select-label");if(e.length===0)n.textContent="All Labels";else if(e.length===1){const a=t.querySelector(`input[value="${e[0]}"]`),o=((i=(s=a==null?void 0:a.closest("label"))==null?void 0:s.querySelector(".label-name"))==null?void 0:i.textContent)||"1 Label";n.textContent=o}else n.textContent=`${e.length} Labels`;De(),Le(),Ce()}function ms(){document.getElementById("label-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),Bi()}function Co(){var s,i;const e=St(),t=document.getElementById("label-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");if(n)if(e.length===0)n.textContent="All Labels";else if(e.length===1){const a=t.querySelector(`input[value="${e[0]}"]`),o=((i=(s=a==null?void 0:a.closest("label"))==null?void 0:s.querySelector(".label-name"))==null?void 0:i.textContent)||"1 Label";n.textContent=o}else n.textContent=`${e.length} Labels`}async function zd(){const e=document.getElementById("label-filter-dropdown");if(!e||!x())return;const t=e.querySelector(".multi-select-options");try{const n=await b.getLabels(x().id);t.innerHTML="",n.length===0?t.innerHTML='<div class="multi-select-empty">No labels available</div>':n.forEach(i=>{const a=document.createElement("label");a.className="multi-select-option",a.innerHTML=`
+        `}).join(""))}function od(e,t){e.dataTransfer.setData("text/plain",t.dataset.id),ui=t.dataset.id,t.classList.add("dragging")}function rd(e,t){t.classList.remove("dragging"),ui=null}function ld(e,t){e.preventDefault(),t.classList.add("drag-over")}function cd(e,t){t.classList.remove("drag-over")}function dd(e,t){e.preventDefault(),t.classList.add("drag-over")}function ud(e,t){t.classList.remove("drag-over")}async function pd(e,t){e.preventDefault(),t.classList.remove("drag-over");const n=e.dataTransfer.getData("text/plain"),s=t.dataset.status,i=ut.find(o=>o.id===n);if(!i)return;const a=i.status;if(i.status=s,yo(s,n),pt(),a!==s)try{await b.updateIssue(n,{status:s}),v("Status updated","success")}catch(o){i.status=a,pt(),v(`Failed to update status: ${o.message}`,"error")}}async function md(e,t){e.preventDefault(),e.stopPropagation(),t.classList.remove("drag-over");const n=ui||e.dataTransfer.getData("text/plain"),s=t.dataset.id;if(!n||!s||n===s)return;const i=t.closest(".kanban-column"),a=i==null?void 0:i.dataset.status;if(!a)return;const o=ut.find(d=>d.id===n);if(!o)return;const r=o.status;if(o.status=a,yo(a,n,s),pt(),r!==a)try{await b.updateIssue(n,{status:a}),v("Status updated","success")}catch(d){o.status=r,pt(),v(`Failed to update status: ${d.message}`,"error")}}function yo(e,t,n=null){const s=ut.filter(o=>o.status===e&&o.id!==t),i=ut.find(o=>o.id===t);if(!i)return;if(n){const o=s.findIndex(r=>r.id===n);o>=0?s.splice(o,0,i):s.push(i)}else s.push(i);const a=[];vo.forEach(o=>{o.key===e?a.push(...s):a.push(...ut.filter(r=>r.status===o.key))}),ut=a}Y({"board-card":(e,t,n)=>{e.type==="click"?e.metaKey||e.ctrlKey||e.shiftKey||e.button===1?window.open(`/issue/${encodeURIComponent(t.identifier)}`,"_blank"):(e.preventDefault(),F(t.id)):e.type==="dragstart"?od(e,n):e.type==="dragend"?rd(e,n):e.type==="dragover"?dd(e,n):e.type==="dragleave"?ud(e,n):e.type==="drop"&&md(e,n)},"board-column":(e,t,n)=>{e.type==="dragover"?ld(e,n):e.type==="dragleave"?cd(e,n):e.type==="drop"&&pd(e,n)}});function mi(e){const n=document.getElementById(e).querySelector(".multi-select-options"),s=!n.classList.contains("hidden");document.querySelectorAll(".multi-select-options").forEach(i=>{i.classList.add("hidden")}),s||(n.classList.remove("hidden"),setTimeout(()=>{document.addEventListener("click",wo)},0))}function wo(e){e.target.closest(".multi-select-dropdown")||(document.querySelectorAll(".multi-select-options").forEach(t=>{t.classList.add("hidden")}),document.removeEventListener("click",wo))}function _t(){const e=document.getElementById("status-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function It(){const e=document.getElementById("priority-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function xt(){const e=document.getElementById("label-filter-dropdown");if(!e)return[];const t=e.querySelectorAll('input[type="checkbox"]:checked');return Array.from(t).map(n=>n.value)}function ls(){const e=_t(),n=document.getElementById("status-filter-dropdown").querySelector(".multi-select-label");e.length===0?n.textContent="All Statuses":e.length===1?n.textContent=ye(e[0]):n.innerHTML=`${e.length} statuses<span class="multi-select-badge">${e.length}</span>`,De(),Le(),Ce()}function gi(){document.getElementById("status-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),ls()}function fi(){const e=It(),n=document.getElementById("priority-filter-dropdown").querySelector(".multi-select-label");e.length===0?n.textContent="All Priorities":e.length===1?n.textContent=we(e[0]):n.innerHTML=`${e.length} priorities<span class="multi-select-badge">${e.length}</span>`,De(),Le(),Ce()}function hi(){document.getElementById("priority-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),fi()}function vi(){var s,i;const e=xt(),t=document.getElementById("label-filter-dropdown"),n=t.querySelector(".multi-select-label");if(e.length===0)n.textContent="All Labels";else if(e.length===1){const a=t.querySelector(`input[value="${e[0]}"]`),o=((i=(s=a==null?void 0:a.closest("label"))==null?void 0:s.querySelector(".label-name"))==null?void 0:i.textContent)||"1 Label";n.textContent=o}else n.textContent=`${e.length} Labels`;De(),Le(),Ce()}function cs(){document.getElementById("label-filter-dropdown").querySelectorAll('input[type="checkbox"]').forEach(n=>n.checked=!1),vi()}function ko(){var s,i;const e=xt(),t=document.getElementById("label-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");if(n)if(e.length===0)n.textContent="All Labels";else if(e.length===1){const a=t.querySelector(`input[value="${e[0]}"]`),o=((i=(s=a==null?void 0:a.closest("label"))==null?void 0:s.querySelector(".label-name"))==null?void 0:i.textContent)||"1 Label";n.textContent=o}else n.textContent=`${e.length} Labels`}async function gd(){const e=document.getElementById("label-filter-dropdown");if(!e||!x())return;const t=e.querySelector(".multi-select-options");try{const n=await b.getLabels(x().id);t.innerHTML="",n.length===0?t.innerHTML='<div class="multi-select-empty">No labels available</div>':n.forEach(i=>{const a=document.createElement("label");a.className="multi-select-option",a.innerHTML=`
                     <input type="checkbox" value="${i.id}" data-action="update-label-filter">
                     <span class="label-badge" style="background: ${W(i.color)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
                         <span class="label-name">${g(i.name)}</span>
                     </span>
-                `,t.appendChild(a)});const s=document.createElement("div");s.className="multi-select-actions",s.innerHTML='<button type="button" class="btn btn-small" data-action="clear-label-filter">Clear</button>',t.appendChild(s)}catch(n){console.error("Failed to load labels for filter:",n)}}function Bo(){var f,p,h,y,k,E;const e=new URLSearchParams,t=xt(),n=Tt(),s=St(),i=(f=document.getElementById("assignee-filter"))==null?void 0:f.value,a=(p=document.getElementById("project-filter"))==null?void 0:p.value,o=(h=document.getElementById("sprint-filter"))==null?void 0:h.value,r=(y=document.getElementById("issue-type-filter"))==null?void 0:y.value,d=(k=document.getElementById("group-by-select"))==null?void 0:k.value;t.forEach(T=>e.append("status",T)),n.forEach(T=>e.append("priority",T)),s.forEach(T=>e.append("label",T)),i&&e.set("assignee",i),a&&e.set("project",a),o&&e.set("sprint",o),r&&e.set("issue_type",r),d&&e.set("groupBy",d);const c=e.toString(),l=c?`/issues?${c}`:"/issues";history.replaceState({view:"issues"},"",l),Ac((E=x())==null?void 0:E.id,c)}function Gd(){var c;let e=new URLSearchParams(window.location.search);if(e.toString()===""){const l=Bc((c=x())==null?void 0:c.id);if(l){e=new URLSearchParams(l);const f=`/issues?${l}`;history.replaceState({view:"issues"},"",f)}}const t=e.getAll("status");if(t.length>0){const l=document.getElementById("status-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=t.includes(p.value)}),Wd())}const n=e.getAll("priority");if(n.length>0){const l=document.getElementById("priority-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=n.includes(p.value)}),Vd())}const s=e.get("assignee");if(s){const l=document.getElementById("assignee-filter");l&&(l.value=s)}const i=e.get("project");if(i){const l=document.getElementById("project-filter");l&&(l.value=i)}const a=e.get("sprint");if(a){const l=document.getElementById("sprint-filter");l&&(l.value=a)}const o=e.get("issue_type");if(o){const l=document.getElementById("issue-type-filter");l&&(l.value=o)}const r=e.getAll("label");if(r.length>0){const l=document.getElementById("label-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=r.includes(p.value)}),Co())}const d=e.get("groupBy");if(d){const l=document.getElementById("group-by-select");l&&(l.value=d)}}function Wd(){const e=xt(),t=document.getElementById("status-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");n&&(e.length===0?n.textContent="All Statuses":e.length===1?n.textContent=ye(e[0]):n.innerHTML=`${e.length} statuses<span class="multi-select-badge">${e.length}</span>`)}function Vd(){const e=Tt(),t=document.getElementById("priority-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");n&&(e.length===0?n.textContent="All Priorities":e.length===1?n.textContent=we(e[0]):n.innerHTML=`${e.length} priorities<span class="multi-select-badge">${e.length}</span>`)}const Ao=[{key:"project",label:"Project"},{key:"status",label:"Status"},{key:"priority",label:"Priority"},{key:"type",label:"Type"},{key:"assignee",label:"Assignee"},{key:"sprint",label:"Sprint"},{key:"labels",label:"Labels"}];function Kd(e){e.stopPropagation();const t=document.getElementById("filter-menu-dropdown"),n=document.getElementById("display-menu-dropdown");if(!t)return;n&&!n.classList.contains("hidden")&&n.classList.add("hidden"),!t.classList.contains("hidden")?(t.classList.add("hidden"),document.removeEventListener("click",Rt)):(t.classList.remove("hidden"),Ie(),xe(uo()),setTimeout(()=>{document.addEventListener("click",Rt)},0))}function Yd(e){e.stopPropagation();const t=document.getElementById("display-menu-dropdown"),n=document.getElementById("filter-menu-dropdown");if(!t)return;n&&!n.classList.contains("hidden")&&n.classList.add("hidden"),!t.classList.contains("hidden")?(t.classList.add("hidden"),document.removeEventListener("click",Rt)):(t.classList.remove("hidden"),fu(),setTimeout(()=>{document.addEventListener("click",Rt)},0))}function Rt(e){const t=document.getElementById("filter-menu-dropdown"),n=document.getElementById("display-menu-dropdown");!e.target.closest(".filter-menu-container")&&!e.target.closest(".display-menu-container")&&(t&&t.classList.add("hidden"),n&&n.classList.add("hidden"),document.removeEventListener("click",Rt))}function jo(){const e=document.getElementById("filter-menu-dropdown"),t=document.getElementById("display-menu-dropdown");e&&e.classList.add("hidden"),t&&t.classList.add("hidden"),document.removeEventListener("click",Rt)}function Mo(e){var t,n,s,i;switch(e){case"project":return(t=document.getElementById("project-filter"))!=null&&t.value?1:0;case"status":return xt().length;case"priority":return Tt().length;case"type":return(n=document.getElementById("issue-type-filter"))!=null&&n.value?1:0;case"assignee":return(s=document.getElementById("assignee-filter"))!=null&&s.value?1:0;case"sprint":return(i=document.getElementById("sprint-filter"))!=null&&i.value?1:0;case"labels":return St().length;default:return 0}}function Zd(){let e=0;return Ao.forEach(t=>{e+=Mo(t.key)}),e}function Ie(){const e=document.getElementById("filter-menu-categories");e&&(e.innerHTML=Ao.map(t=>{const n=Mo(t.key);return`
+                `,t.appendChild(a)});const s=document.createElement("div");s.className="multi-select-actions",s.innerHTML='<button type="button" class="btn btn-small" data-action="clear-label-filter">Clear</button>',t.appendChild(s)}catch(n){console.error("Failed to load labels for filter:",n)}}function $o(){var f,p,h,y,k,E;const e=new URLSearchParams,t=_t(),n=It(),s=xt(),i=(f=document.getElementById("assignee-filter"))==null?void 0:f.value,a=(p=document.getElementById("project-filter"))==null?void 0:p.value,o=(h=document.getElementById("sprint-filter"))==null?void 0:h.value,r=(y=document.getElementById("issue-type-filter"))==null?void 0:y.value,d=(k=document.getElementById("group-by-select"))==null?void 0:k.value;t.forEach(T=>e.append("status",T)),n.forEach(T=>e.append("priority",T)),s.forEach(T=>e.append("label",T)),i&&e.set("assignee",i),a&&e.set("project",a),o&&e.set("sprint",o),r&&e.set("issue_type",r),d&&e.set("groupBy",d);const c=e.toString(),l=c?`/issues?${c}`:"/issues";history.replaceState({view:"issues"},"",l),Ac((E=x())==null?void 0:E.id,c)}function fd(){var c;let e=new URLSearchParams(window.location.search);if(e.toString()===""){const l=Bc((c=x())==null?void 0:c.id);if(l){e=new URLSearchParams(l);const f=`/issues?${l}`;history.replaceState({view:"issues"},"",f)}}const t=e.getAll("status");if(t.length>0){const l=document.getElementById("status-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=t.includes(p.value)}),hd())}const n=e.getAll("priority");if(n.length>0){const l=document.getElementById("priority-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=n.includes(p.value)}),vd())}const s=e.get("assignee");if(s){const l=document.getElementById("assignee-filter");l&&(l.value=s)}const i=e.get("project");if(i){const l=document.getElementById("project-filter");l&&(l.value=i)}const a=e.get("sprint");if(a){const l=document.getElementById("sprint-filter");l&&(l.value=a)}const o=e.get("issue_type");if(o){const l=document.getElementById("issue-type-filter");l&&(l.value=o)}const r=e.getAll("label");if(r.length>0){const l=document.getElementById("label-filter-dropdown");l&&(l.querySelectorAll('input[type="checkbox"]').forEach(p=>{p.checked=r.includes(p.value)}),ko())}const d=e.get("groupBy");if(d){const l=document.getElementById("group-by-select");l&&(l.value=d)}}function hd(){const e=_t(),t=document.getElementById("status-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");n&&(e.length===0?n.textContent="All Statuses":e.length===1?n.textContent=ye(e[0]):n.innerHTML=`${e.length} statuses<span class="multi-select-badge">${e.length}</span>`)}function vd(){const e=It(),t=document.getElementById("priority-filter-dropdown"),n=t==null?void 0:t.querySelector(".multi-select-label");n&&(e.length===0?n.textContent="All Priorities":e.length===1?n.textContent=we(e[0]):n.innerHTML=`${e.length} priorities<span class="multi-select-badge">${e.length}</span>`)}const Eo=[{key:"project",label:"Project"},{key:"status",label:"Status"},{key:"priority",label:"Priority"},{key:"type",label:"Type"},{key:"assignee",label:"Assignee"},{key:"sprint",label:"Sprint"},{key:"labels",label:"Labels"}];function bd(e){e.stopPropagation();const t=document.getElementById("filter-menu-dropdown"),n=document.getElementById("display-menu-dropdown");if(!t)return;n&&!n.classList.contains("hidden")&&n.classList.add("hidden"),!t.classList.contains("hidden")?(t.classList.add("hidden"),document.removeEventListener("click",Dt)):(t.classList.remove("hidden"),Ie(),xe(uo()),setTimeout(()=>{document.addEventListener("click",Dt)},0))}function yd(e){e.stopPropagation();const t=document.getElementById("display-menu-dropdown"),n=document.getElementById("filter-menu-dropdown");if(!t)return;n&&!n.classList.contains("hidden")&&n.classList.add("hidden"),!t.classList.contains("hidden")?(t.classList.add("hidden"),document.removeEventListener("click",Dt)):(t.classList.remove("hidden"),qd(),setTimeout(()=>{document.addEventListener("click",Dt)},0))}function Dt(e){const t=document.getElementById("filter-menu-dropdown"),n=document.getElementById("display-menu-dropdown");!e.target.closest(".filter-menu-container")&&!e.target.closest(".display-menu-container")&&(t&&t.classList.add("hidden"),n&&n.classList.add("hidden"),document.removeEventListener("click",Dt))}function _o(){const e=document.getElementById("filter-menu-dropdown"),t=document.getElementById("display-menu-dropdown");e&&e.classList.add("hidden"),t&&t.classList.add("hidden"),document.removeEventListener("click",Dt)}function Io(e){var t,n,s,i;switch(e){case"project":return(t=document.getElementById("project-filter"))!=null&&t.value?1:0;case"status":return _t().length;case"priority":return It().length;case"type":return(n=document.getElementById("issue-type-filter"))!=null&&n.value?1:0;case"assignee":return(s=document.getElementById("assignee-filter"))!=null&&s.value?1:0;case"sprint":return(i=document.getElementById("sprint-filter"))!=null&&i.value?1:0;case"labels":return xt().length;default:return 0}}function wd(){let e=0;return Eo.forEach(t=>{e+=Io(t.key)}),e}function Ie(){const e=document.getElementById("filter-menu-categories");e&&(e.innerHTML=Eo.map(t=>{const n=Io(t.key);return`
             <div class="filter-menu-category ${uo()===t.key?"active":""}"
                  data-action="show-filter-category" data-category="${u(t.key)}">
                 <span>${t.label}</span>
                 ${n>0?`<span class="filter-menu-category-count">${n}</span>`:'<span class="filter-menu-category-arrow">→</span>'}
             </div>
-        `}).join(""))}function xe(e){Wc(e),Ie();const t=document.getElementById("filter-menu-options");if(t)switch(e){case"project":Xd(t);break;case"status":Qd(t);break;case"priority":Jd(t);break;case"type":eu(t);break;case"assignee":tu(t);break;case"sprint":nu(t);break;case"labels":su(t);break}}function Xd(e){const t=document.getElementById("project-filter"),n=(t==null?void 0:t.value)||"",s=U()||[];let i=`
+        `}).join(""))}function xe(e){Wc(e),Ie();const t=document.getElementById("filter-menu-options");if(t)switch(e){case"project":kd(t);break;case"status":$d(t);break;case"priority":Ed(t);break;case"type":_d(t);break;case"assignee":Id(t);break;case"sprint":xd(t);break;case"labels":Td(t);break}}function kd(e){const t=document.getElementById("project-filter"),n=(t==null?void 0:t.value)||"",s=U()||[];let i=`
         <div class="filter-options-header">
             <span class="filter-options-title">Project</span>
             ${n?'<button class="filter-options-clear" data-action="set-project-filter" data-value="">Clear</button>':""}
@@ -265,7 +112,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${W(a.color)};"></span>
                 <span class="filter-option-label">${g(a.name)}</span>
             </label>
-        `}),e.innerHTML=i}const gs=["backlog","todo","in_progress","in_review"],fs=["done","canceled"];function Qd(e){const t=xt(),n=[{value:"backlog",label:"Backlog",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-backlog"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>'},{value:"todo",label:"Todo",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-todo"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'},{value:"in_progress",label:"In Progress",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-in-progress"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor"/></svg>'},{value:"in_review",label:"In Review",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-in-review"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 6 6 6 6 0 0 1-6 6" fill="currentColor"/></svg>'},{value:"done",label:"Done",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-done"><circle cx="8" cy="8" r="6" fill="currentColor"/><path d="M5 8l2 2 4-4" stroke="var(--bg-primary)" stroke-width="1.5" fill="none"/></svg>'},{value:"canceled",label:"Canceled",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>'}],s=gs.every(o=>t.includes(o))&&!fs.some(o=>t.includes(o))&&t.length===gs.length,i=fs.every(o=>t.includes(o))&&!gs.some(o=>t.includes(o))&&t.length===fs.length;let a=`
+        `}),e.innerHTML=i}const ds=["backlog","todo","in_progress","in_review"],us=["done","canceled"];function $d(e){const t=_t(),n=[{value:"backlog",label:"Backlog",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-backlog"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>'},{value:"todo",label:"Todo",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-todo"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'},{value:"in_progress",label:"In Progress",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-in-progress"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor"/></svg>'},{value:"in_review",label:"In Review",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-in-review"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 6 6 6 6 0 0 1-6 6" fill="currentColor"/></svg>'},{value:"done",label:"Done",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-done"><circle cx="8" cy="8" r="6" fill="currentColor"/><path d="M5 8l2 2 4-4" stroke="var(--bg-primary)" stroke-width="1.5" fill="none"/></svg>'},{value:"canceled",label:"Canceled",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>'}],s=ds.every(o=>t.includes(o))&&!us.some(o=>t.includes(o))&&t.length===ds.length,i=us.every(o=>t.includes(o))&&!ds.some(o=>t.includes(o))&&t.length===us.length;let a=`
         <div class="filter-options-header">
             <span class="filter-options-title">Status</span>
             ${t.length>0?'<button class="filter-options-clear" data-action="clear-status-filter-new">Clear</button>':""}
@@ -280,7 +127,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <span class="filter-option-icon">${o.icon}</span>
                 <span class="filter-option-label">${o.label}</span>
             </label>
-        `}),e.innerHTML=a}function Jd(e){const t=Tt(),n=[{value:"urgent",label:"Urgent",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="priority-urgent"><rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/><text x="8" y="11.5" text-anchor="middle" fill="var(--bg-primary)" font-size="10" font-weight="bold">!</text></svg>'},{value:"high",label:"High",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-high"><rect x="1" y="3" width="3" height="12" rx="1"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"medium",label:"Medium",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-medium"><rect x="1" y="6" width="3" height="9" rx="1" opacity="0.3"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"low",label:"Low",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-low"><rect x="1" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="6" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"no_priority",label:"No Priority",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="priority-none"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/><line x1="3" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/></svg>'}];let s=`
+        `}),e.innerHTML=a}function Ed(e){const t=It(),n=[{value:"urgent",label:"Urgent",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="priority-urgent"><rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/><text x="8" y="11.5" text-anchor="middle" fill="var(--bg-primary)" font-size="10" font-weight="bold">!</text></svg>'},{value:"high",label:"High",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-high"><rect x="1" y="3" width="3" height="12" rx="1"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"medium",label:"Medium",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-medium"><rect x="1" y="6" width="3" height="9" rx="1" opacity="0.3"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"low",label:"Low",icon:'<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="priority-low"><rect x="1" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="6" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>'},{value:"no_priority",label:"No Priority",icon:'<svg width="14" height="14" viewBox="0 0 16 16" class="priority-none"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/><line x1="3" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/></svg>'}];let s=`
         <div class="filter-options-header">
             <span class="filter-options-title">Priority</span>
             ${t.length>0?'<button class="filter-options-clear" data-action="clear-priority-filter-new">Clear</button>':""}
@@ -291,7 +138,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <span class="filter-option-icon">${i.icon}</span>
                 <span class="filter-option-label">${i.label}</span>
             </label>
-        `}),e.innerHTML=s}function eu(e){const t=document.getElementById("issue-type-filter"),n=(t==null?void 0:t.value)||"",s=[{value:"",label:"All Types"},{value:"task",label:"Task"},{value:"bug",label:"Bug"},{value:"feature",label:"Feature"},{value:"chore",label:"Chore"},{value:"docs",label:"Docs"},{value:"tech_debt",label:"Tech Debt"},{value:"epic",label:"Epic"}];let i=`
+        `}),e.innerHTML=s}function _d(e){const t=document.getElementById("issue-type-filter"),n=(t==null?void 0:t.value)||"",s=[{value:"",label:"All Types"},{value:"task",label:"Task"},{value:"bug",label:"Bug"},{value:"feature",label:"Feature"},{value:"chore",label:"Chore"},{value:"docs",label:"Docs"},{value:"tech_debt",label:"Tech Debt"},{value:"epic",label:"Epic"}];let i=`
         <div class="filter-options-header">
             <span class="filter-options-title">Type</span>
             ${n?'<button class="filter-options-clear" data-action="set-type-filter" data-value="">Clear</button>':""}
@@ -301,7 +148,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <input type="radio" name="type-filter-radio" value="${a.value}" ${n===a.value?"checked":""}>
                 <span class="filter-option-label">${a.label}</span>
             </label>
-        `}),e.innerHTML=i}function tu(e){const t=document.getElementById("assignee-filter"),n=(t==null?void 0:t.value)||"",s=It()||[];let i=`
+        `}),e.innerHTML=i}function Id(e){const t=document.getElementById("assignee-filter"),n=(t==null?void 0:t.value)||"",s=Ct()||[];let i=`
         <div class="filter-options-header">
             <span class="filter-options-title">Assignee</span>
             ${n?'<button class="filter-options-clear" data-action="set-assignee-filter" data-value="">Clear</button>':""}
@@ -323,7 +170,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <input type="radio" name="assignee-filter-radio" value="${u(a.user_id)}" ${n===a.user_id?"checked":""}>
                 <span class="filter-option-label">${g(a.name||a.email)}</span>
             </label>
-        `}),e.innerHTML=i}function nu(e){const t=document.getElementById("sprint-filter"),n=(t==null?void 0:t.value)||"",s=t?Array.from(t.options):[];let i=`
+        `}),e.innerHTML=i}function xd(e){const t=document.getElementById("sprint-filter"),n=(t==null?void 0:t.value)||"",s=t?Array.from(t.options):[];let i=`
         <div class="filter-options-header">
             <span class="filter-options-title">Sprint</span>
             ${n?'<button class="filter-options-clear" data-action="set-sprint-filter" data-value="">Clear</button>':""}
@@ -333,7 +180,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <input type="radio" name="sprint-filter-radio" value="${u(a.value)}" ${n===a.value?"checked":""}>
                 <span class="filter-option-label">${g(a.text)}</span>
             </label>
-        `}),e.innerHTML=i}function su(e){const t=St(),n=document.getElementById("label-filter-dropdown"),s=(n==null?void 0:n.querySelectorAll('.multi-select-option input[type="checkbox"]'))||[];let i=`
+        `}),e.innerHTML=i}function Td(e){const t=xt(),n=document.getElementById("label-filter-dropdown"),s=(n==null?void 0:n.querySelectorAll('.multi-select-option input[type="checkbox"]'))||[];let i=`
         <div class="filter-options-header">
             <span class="filter-options-title">Labels</span>
             ${t.length>0?'<button class="filter-options-clear" data-action="clear-label-filter-new">Clear</button>':""}
@@ -344,7 +191,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${W(l)};"></span>
                     <span class="filter-option-label">${g(c)}</span>
                 </label>
-            `}),e.innerHTML=i}function Do(e){const t=document.getElementById("project-filter");t&&(t.value=e,Oo()),Ie(),xe("project"),Le(),Ce()}function iu(){Do("")}function au(e){const t=e==="open"?gs:fs,n=document.getElementById("status-filter-dropdown");if(!n)return;n.querySelectorAll('input[type="checkbox"]').forEach(i=>{i.checked=t.includes(i.value)}),ps(),Ie(),xe("status")}function ou(e,t){const n=document.getElementById("status-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,ps()),Ie(),xe("status")}function ru(){Si(),Ie(),xe("status"),Le(),Ce()}function lu(e,t){const n=document.getElementById("priority-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,Li()),Ie(),xe("priority")}function cu(){Ci(),Ie(),xe("priority"),Le(),Ce()}function Ro(e){const t=document.getElementById("issue-type-filter");t&&(t.value=e,De()),Ie(),xe("type"),Le(),Ce()}function du(){Ro("")}function Po(e){const t=document.getElementById("assignee-filter");t&&(t.value=e,De()),Ie(),xe("assignee"),Le(),Ce()}function uu(){Po("")}function No(e){const t=document.getElementById("sprint-filter");t&&(t.value=e,De()),Ie(),xe("sprint"),Le(),Ce()}function pu(){No("")}function mu(e,t){const n=document.getElementById("label-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,Bi()),Ie(),xe("labels")}function gu(){ms(),Ie(),xe("labels"),Le(),Ce()}function fu(){const e=document.getElementById("display-menu-dropdown");if(!e)return;const t=document.getElementById("sort-by-select"),n=document.getElementById("group-by-select"),s=(t==null?void 0:t.value)||"created-desc",i=(n==null?void 0:n.value)||"",a=[{value:"created-desc",label:"Newest"},{value:"created-asc",label:"Oldest"},{value:"updated-desc",label:"Recently Updated"},{value:"updated-asc",label:"Least Recently Updated"},{value:"priority-asc",label:"Priority ↑"},{value:"priority-desc",label:"Priority ↓"},{value:"title-asc",label:"Title A-Z"},{value:"title-desc",label:"Title Z-A"},{value:"random",label:"Random"}],o=[{value:"",label:"No grouping"},{value:"status",label:"Status"},{value:"priority",label:"Priority"},{value:"type",label:"Type"},{value:"assignee",label:"Assignee"},{value:"sprint",label:"Sprint"}];let r=`
+            `}),e.innerHTML=i}function xo(e){const t=document.getElementById("project-filter");t&&(t.value=e,Bo()),Ie(),xe("project"),Le(),Ce()}function Sd(){xo("")}function Ld(e){const t=e==="open"?ds:us,n=document.getElementById("status-filter-dropdown");if(!n)return;n.querySelectorAll('input[type="checkbox"]').forEach(i=>{i.checked=t.includes(i.value)}),ls(),Ie(),xe("status")}function Cd(e,t){const n=document.getElementById("status-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,ls()),Ie(),xe("status")}function Bd(){gi(),Ie(),xe("status"),Le(),Ce()}function Ad(e,t){const n=document.getElementById("priority-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,fi()),Ie(),xe("priority")}function jd(){hi(),Ie(),xe("priority"),Le(),Ce()}function To(e){const t=document.getElementById("issue-type-filter");t&&(t.value=e,De()),Ie(),xe("type"),Le(),Ce()}function Md(){To("")}function So(e){const t=document.getElementById("assignee-filter");t&&(t.value=e,De()),Ie(),xe("assignee"),Le(),Ce()}function Dd(){So("")}function Lo(e){const t=document.getElementById("sprint-filter");t&&(t.value=e,De()),Ie(),xe("sprint"),Le(),Ce()}function Rd(){Lo("")}function Pd(e,t){const n=document.getElementById("label-filter-dropdown"),s=n==null?void 0:n.querySelector(`input[value="${e}"]`),i=(t==null?void 0:t.target)||document.querySelector(`#filter-menu-options input[value="${e}"]`);s&&i&&(s.checked=i.checked,vi()),Ie(),xe("labels")}function Nd(){cs(),Ie(),xe("labels"),Le(),Ce()}function qd(){const e=document.getElementById("display-menu-dropdown");if(!e)return;const t=document.getElementById("sort-by-select"),n=document.getElementById("group-by-select"),s=(t==null?void 0:t.value)||"created-desc",i=(n==null?void 0:n.value)||"",a=[{value:"created-desc",label:"Newest"},{value:"created-asc",label:"Oldest"},{value:"updated-desc",label:"Recently Updated"},{value:"updated-asc",label:"Least Recently Updated"},{value:"priority-asc",label:"Priority ↑"},{value:"priority-desc",label:"Priority ↓"},{value:"title-asc",label:"Title A-Z"},{value:"title-desc",label:"Title Z-A"},{value:"random",label:"Random"}],o=[{value:"",label:"No grouping"},{value:"status",label:"Status"},{value:"priority",label:"Priority"},{value:"type",label:"Type"},{value:"assignee",label:"Assignee"},{value:"sprint",label:"Sprint"}];let r=`
         <div class="display-section">
             <div class="display-section-title">Sort by</div>
             ${a.map(d=>`
@@ -363,16 +210,16 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
             `).join("")}
         </div>
-    `;e.innerHTML=r}function hu(e){const t=document.getElementById("sort-by-select");t&&(t.value=e,Lt()),jo()}function vu(e){const t=document.getElementById("group-by-select");t&&(t.value=e,Ho()),jo()}function Le(){const e=document.getElementById("filter-chips-row");if(!e)return;const t=[],n=document.getElementById("project-filter");if(n!=null&&n.value){const f=(U()||[]).find(p=>p.id===n.value);t.push({category:"project",label:"Project",value:(f==null?void 0:f.name)||"Unknown",clearAction:"clear-project-filter"})}const s=xt();if(s.length>0){const l=s.map(f=>ye(f)).join(", ");t.push({category:"status",label:"Status",value:l,clearAction:"clear-status-filter-new"})}const i=Tt();if(i.length>0){const l=i.map(f=>we(f)).join(", ");t.push({category:"priority",label:"Priority",value:l,clearAction:"clear-priority-filter-new"})}const a=document.getElementById("issue-type-filter");if(a!=null&&a.value){const l=a.options[a.selectedIndex];t.push({category:"type",label:"Type",value:l?l.text:a.value,clearAction:"clear-type-filter"})}const o=document.getElementById("assignee-filter");if(o!=null&&o.value){let l;if(o.value==="me")l="Me";else if(o.value==="unassigned")l="Unassigned";else{const p=(It()||[]).find(h=>h.user_id===o.value);l=(p==null?void 0:p.name)||(p==null?void 0:p.email)||"Unknown"}t.push({category:"assignee",label:"Assignee",value:l,clearAction:"clear-assignee-filter"})}const r=document.getElementById("sprint-filter");if(r!=null&&r.value){const l=r.options[r.selectedIndex];t.push({category:"sprint",label:"Sprint",value:(l==null?void 0:l.text)||r.value,clearAction:"clear-sprint-filter"})}const d=St();if(d.length>0){const l=document.getElementById("label-filter-dropdown"),f=d.map(p=>{var k;const h=l==null?void 0:l.querySelector(`input[value="${p}"]`),y=(k=h==null?void 0:h.closest("label"))==null?void 0:k.querySelector(".label-name");return(y==null?void 0:y.textContent)||"Label"}).join(", ");t.push({category:"labels",label:"Labels",value:f,clearAction:"clear-label-filter-new"})}if(t.length===0){e.classList.add("hidden"),e.innerHTML="";return}e.classList.remove("hidden");let c=t.map(l=>`
+    `;e.innerHTML=r}function Od(e){const t=document.getElementById("sort-by-select");t&&(t.value=e,Tt()),_o()}function Hd(e){const t=document.getElementById("group-by-select");t&&(t.value=e,Ao()),_o()}function Le(){const e=document.getElementById("filter-chips-row");if(!e)return;const t=[],n=document.getElementById("project-filter");if(n!=null&&n.value){const f=(U()||[]).find(p=>p.id===n.value);t.push({category:"project",label:"Project",value:(f==null?void 0:f.name)||"Unknown",clearAction:"clear-project-filter"})}const s=_t();if(s.length>0){const l=s.map(f=>ye(f)).join(", ");t.push({category:"status",label:"Status",value:l,clearAction:"clear-status-filter-new"})}const i=It();if(i.length>0){const l=i.map(f=>we(f)).join(", ");t.push({category:"priority",label:"Priority",value:l,clearAction:"clear-priority-filter-new"})}const a=document.getElementById("issue-type-filter");if(a!=null&&a.value){const l=a.options[a.selectedIndex];t.push({category:"type",label:"Type",value:l?l.text:a.value,clearAction:"clear-type-filter"})}const o=document.getElementById("assignee-filter");if(o!=null&&o.value){let l;if(o.value==="me")l="Me";else if(o.value==="unassigned")l="Unassigned";else{const p=(Ct()||[]).find(h=>h.user_id===o.value);l=(p==null?void 0:p.name)||(p==null?void 0:p.email)||"Unknown"}t.push({category:"assignee",label:"Assignee",value:l,clearAction:"clear-assignee-filter"})}const r=document.getElementById("sprint-filter");if(r!=null&&r.value){const l=r.options[r.selectedIndex];t.push({category:"sprint",label:"Sprint",value:(l==null?void 0:l.text)||r.value,clearAction:"clear-sprint-filter"})}const d=xt();if(d.length>0){const l=document.getElementById("label-filter-dropdown"),f=d.map(p=>{var k;const h=l==null?void 0:l.querySelector(`input[value="${p}"]`),y=(k=h==null?void 0:h.closest("label"))==null?void 0:k.querySelector(".label-name");return(y==null?void 0:y.textContent)||"Label"}).join(", ");t.push({category:"labels",label:"Labels",value:f,clearAction:"clear-label-filter-new"})}if(t.length===0){e.classList.add("hidden"),e.innerHTML="";return}e.classList.remove("hidden");let c=t.map(l=>`
         <span class="filter-chip">
             <span class="filter-chip-label">${l.label}:</span>
             <span class="filter-chip-value">${g(l.value)}</span>
             <button class="filter-chip-remove" data-action="${l.clearAction}" title="Remove filter">×</button>
         </span>
-    `).join("");t.length>1&&(c+='<button class="filter-chips-clear-all" data-action="clear-all-filters">Clear all</button>'),e.innerHTML=c}function bu(){const e=document.getElementById("project-filter");e&&(e.value=""),Si(),Ci();const t=document.getElementById("issue-type-filter");t&&(t.value="");const n=document.getElementById("assignee-filter");n&&(n.value="");const s=document.getElementById("sprint-filter");s&&(s.value=""),ms(),De(),Le(),Ce()}function Ce(){const e=document.getElementById("filter-count-badge");if(!e)return;const t=Zd();t===0?e.classList.add("hidden"):(e.textContent=t,e.classList.remove("hidden"))}function yu(){Le(),Ce();const e=document.getElementById("filter-menu-dropdown"),t=document.getElementById("display-menu-dropdown");e&&!e._clickHandlerAdded&&(e.addEventListener("click",n=>{n.stopPropagation()}),e._clickHandlerAdded=!0),t&&!t._clickHandlerAdded&&(t.addEventListener("click",n=>{n.stopPropagation()}),t._clickHandlerAdded=!0)}async function qo(){var i;const e=document.getElementById("sprint-filter");if(!e)return;const t=(i=document.getElementById("project-filter"))==null?void 0:i.value,n=e.value;let s=`
+    `).join("");t.length>1&&(c+='<button class="filter-chips-clear-all" data-action="clear-all-filters">Clear all</button>'),e.innerHTML=c}function Fd(){const e=document.getElementById("project-filter");e&&(e.value=""),gi(),hi();const t=document.getElementById("issue-type-filter");t&&(t.value="");const n=document.getElementById("assignee-filter");n&&(n.value="");const s=document.getElementById("sprint-filter");s&&(s.value=""),cs(),De(),Le(),Ce()}function Ce(){const e=document.getElementById("filter-count-badge");if(!e)return;const t=wd();t===0?e.classList.add("hidden"):(e.textContent=t,e.classList.remove("hidden"))}function Ud(){Le(),Ce();const e=document.getElementById("filter-menu-dropdown"),t=document.getElementById("display-menu-dropdown");e&&!e._clickHandlerAdded&&(e.addEventListener("click",n=>{n.stopPropagation()}),e._clickHandlerAdded=!0),t&&!t._clickHandlerAdded&&(t.addEventListener("click",n=>{n.stopPropagation()}),t._clickHandlerAdded=!0)}async function Co(){var i;const e=document.getElementById("sprint-filter");if(!e)return;const t=(i=document.getElementById("project-filter"))==null?void 0:i.value,n=e.value;let s=`
         <option value="">All Sprints</option>
         <option value="no_sprint">No Sprint</option>
-    `;if(t||Ai(null),t)try{const a=await b.getSprints(t),o=a.find(r=>r.status==="active");o&&(s+=`<option value="current">Current Sprint (${g(o.name)})</option>`),Ai(o||null),a.forEach(r=>{const d=r.status==="active"?" (Active)":r.status==="completed"?" (Done)":"";s+=`<option value="${r.id}">${g(r.name)}${d}</option>`})}catch(a){console.error("Failed to load sprints:",a)}e.innerHTML=s,n&&Array.from(e.options).some(o=>o.value===n)&&(e.value=n)}function Ai(e){const t=document.getElementById("sprint-budget-bar");if(!t)return;if(!e){t.classList.add("hidden");return}const n=e.points_spent||0,s=e.budget;if(s==null){t.classList.remove("hidden","arrears"),t.innerHTML=`
+    `;if(t||bi(null),t)try{const a=await b.getSprints(t),o=a.find(r=>r.status==="active");o&&(s+=`<option value="current">Current Sprint (${g(o.name)})</option>`),bi(o||null),a.forEach(r=>{const d=r.status==="active"?" (Active)":r.status==="completed"?" (Done)":"";s+=`<option value="${r.id}">${g(r.name)}${d}</option>`})}catch(a){console.error("Failed to load sprints:",a)}e.innerHTML=s,n&&Array.from(e.options).some(o=>o.value===n)&&(e.value=n)}function bi(e){const t=document.getElementById("sprint-budget-bar");if(!t)return;if(!e){t.classList.add("hidden");return}const n=e.points_spent||0,s=e.budget;if(s==null){t.classList.remove("hidden","arrears"),t.innerHTML=`
             <span class="budget-label">${g(e.name)}</span>
             <span class="budget-text">${n} points spent (no budget)</span>
         `;return}const i=s>0?Math.min(n/s*100,100):0,a=n>s,o=i>=80&&!a,r=a?"budget-over":o?"budget-warning":"";t.classList.remove("hidden"),t.classList.toggle("arrears",a),t.innerHTML=`
@@ -382,12 +229,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         </div>
         <span class="budget-text">${n} / ${s} points</span>
         ${a?'<span class="arrears-badge">In Arrears</span>':""}
-    `}async function Lt(){var f,p,h,y,k,E,T;if(po(-1),!x())return;const e=document.getElementById("project-filter").value,t=xt(),n=Tt(),s=(f=document.getElementById("assignee-filter"))==null?void 0:f.value,i=(h=(p=document.getElementById("issue-search"))==null?void 0:p.value)==null?void 0:h.trim();if(!e&&U().length===0){document.getElementById("issues-list").innerHTML=`
+    `}async function Tt(){var f,p,h,y,k,E,T;if(po(-1),!x())return;const e=document.getElementById("project-filter").value,t=_t(),n=It(),s=(f=document.getElementById("assignee-filter"))==null?void 0:f.value,i=(h=(p=document.getElementById("issue-search"))==null?void 0:p.value)==null?void 0:h.trim();if(!e&&U().length===0){document.getElementById("issues-list").innerHTML=`
             <div class="empty-state">
                 <h3>No projects yet</h3>
                 <p>Create a project first to add issues</p>
             </div>
-        `;return}ku();const a={limit:1e3},o=((y=document.getElementById("sort-by-select"))==null?void 0:y.value)||"created-desc",[r,d]=o.includes("-")?o.split("-"):[o,null];a.sort_by=r,d&&(a.order=d),t.length>0&&(a.status=t),n.length>0&&(a.priority=n),s&&(s==="me"?a.assignee_id=(k=fn())==null?void 0:k.id:a.assignee_id=s);const c=(E=document.getElementById("sprint-filter"))==null?void 0:E.value;if(c)if(c==="current"){if(e)try{const N=(await b.getSprints(e)).find(B=>B.status==="active");N&&(a.sprint_id=N.id)}catch(j){console.error("Failed to resolve current sprint:",j)}}else a.sprint_id=c;const l=(T=document.getElementById("issue-type-filter"))==null?void 0:T.value;l&&(a.issue_type=l),i&&i.length>=2&&(a.search=i);try{let j;e?(a.project_id=e,j=await b.getIssues(a)):U().length>0&&(j=await b.getTeamIssues(x().id,a));const N=St();N.length>0&&(j=j.filter(H=>!H.labels||H.labels.length===0?!1:H.labels.some(Z=>N.includes(Z.id)))),ze(j);const B=[...new Set(j.map(H=>H.project_id))];await pr(B),nt()}catch(j){v(j.message,"error")}}function wu(){clearTimeout(Xc()),Qc(setTimeout(()=>{Lt()},300))}function ku(){const e=document.getElementById("issues-list");e.innerHTML=Array(5).fill(0).map(()=>`
+        `;return}Gd();const a={limit:1e3},o=((y=document.getElementById("sort-by-select"))==null?void 0:y.value)||"created-desc",[r,d]=o.includes("-")?o.split("-"):[o,null];a.sort_by=r,d&&(a.order=d),t.length>0&&(a.status=t),n.length>0&&(a.priority=n),s&&(s==="me"?a.assignee_id=(k=fn())==null?void 0:k.id:a.assignee_id=s);const c=(E=document.getElementById("sprint-filter"))==null?void 0:E.value;if(c)if(c==="current"){if(e)try{const N=(await b.getSprints(e)).find(B=>B.status==="active");N&&(a.sprint_id=N.id)}catch(j){console.error("Failed to resolve current sprint:",j)}}else a.sprint_id=c;const l=(T=document.getElementById("issue-type-filter"))==null?void 0:T.value;l&&(a.issue_type=l),i&&i.length>=2&&(a.search=i);try{let j;e?(a.project_id=e,j=await b.getIssues(a)):U().length>0&&(j=await b.getTeamIssues(x().id,a));const N=xt();N.length>0&&(j=j.filter(H=>!H.labels||H.labels.length===0?!1:H.labels.some(Z=>N.includes(Z.id)))),ze(j);const B=[...new Set(j.map(H=>H.project_id))];await dr(B),tt()}catch(j){v(j.message,"error")}}function zd(){clearTimeout(Xc()),Qc(setTimeout(()=>{Tt()},300))}function Gd(){const e=document.getElementById("issues-list");e.innerHTML=Array(5).fill(0).map(()=>`
         <div class="skeleton-list-item">
             <div style="flex: 1">
                 <div class="skeleton skeleton-title"></div>
@@ -397,23 +244,23 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
             </div>
         </div>
-    `).join("")}function De(){Bo(),Lt()}async function Oo(){var t;const e=(t=document.getElementById("project-filter"))==null?void 0:t.value;e&&Ft(e),await qo(),xi(),dr(),De()}async function Ho(){if(Bo(),Fo()==="sprint"){const e=ke(),t=[...new Set(e.map(n=>n.project_id))];await pr(t)}nt()}function Fo(){const e=document.getElementById("group-by-select");return e?e.value:""}Y({"update-label-filter":()=>Bi(),"clear-label-filter":()=>ms(),"show-filter-category":(e,t)=>xe(t.category),"set-project-filter":(e,t)=>Do(t.value),"clear-project-filter":()=>iu(),"clear-status-filter-new":()=>ru(),"set-status-preset":(e,t)=>au(t.value),"toggle-status-option":(e,t)=>ou(t.filterValue,e),"clear-priority-filter-new":()=>cu(),"toggle-priority-option":(e,t)=>lu(t.filterValue,e),"set-type-filter":(e,t)=>Ro(t.value),"clear-type-filter":()=>du(),"set-assignee-filter":(e,t)=>Po(t.value),"clear-assignee-filter":()=>uu(),"set-sprint-filter":(e,t)=>No(t.value),"clear-sprint-filter":()=>pu(),"clear-label-filter-new":()=>gu(),"toggle-label-option":(e,t)=>mu(t.filterValue,e),"set-sort":(e,t)=>hu(t.value),"set-group-by":(e,t)=>vu(t.value),"clear-all-filters":()=>bu()});let kn=[],ji=[];function mt(){return kn}function Pt(e){kn=e}async function Mi(){var i,a;const e=x(),t=fn();if(!e||!t)return;const n=(i=document.getElementById("my-issues-status-filter"))==null?void 0:i.value,s=(a=document.getElementById("dashboard-project-filter"))==null?void 0:a.value;Eu();try{const o={assignee_id:t.id,status:n||void 0,limit:1e3};let r;s?r=await b.getIssues({...o,project_id:s}):r=await b.getTeamIssues(e.id,o),kn=r,$n()}catch(o){v(o.message,"error")}}async function Nt({showLoading:e=!0}={}){const t=x();if(!t)return;const n=document.getElementById("dashboard-activity-list");e&&n&&(n.innerHTML=`
+    `).join("")}function De(){$o(),Tt()}async function Bo(){var t;const e=(t=document.getElementById("project-filter"))==null?void 0:t.value;e&&Ut(e),await Co(),pi(),lr(),De()}async function Ao(){if($o(),jo()==="sprint"){const e=ke(),t=[...new Set(e.map(n=>n.project_id))];await dr(t)}tt()}function jo(){const e=document.getElementById("group-by-select");return e?e.value:""}Y({"update-label-filter":()=>vi(),"clear-label-filter":()=>cs(),"show-filter-category":(e,t)=>xe(t.category),"set-project-filter":(e,t)=>xo(t.value),"clear-project-filter":()=>Sd(),"clear-status-filter-new":()=>Bd(),"set-status-preset":(e,t)=>Ld(t.value),"toggle-status-option":(e,t)=>Cd(t.filterValue,e),"clear-priority-filter-new":()=>jd(),"toggle-priority-option":(e,t)=>Ad(t.filterValue,e),"set-type-filter":(e,t)=>To(t.value),"clear-type-filter":()=>Md(),"set-assignee-filter":(e,t)=>So(t.value),"clear-assignee-filter":()=>Dd(),"set-sprint-filter":(e,t)=>Lo(t.value),"clear-sprint-filter":()=>Rd(),"clear-label-filter-new":()=>Nd(),"toggle-label-option":(e,t)=>Pd(t.filterValue,e),"set-sort":(e,t)=>Od(t.value),"set-group-by":(e,t)=>Hd(t.value),"clear-all-filters":()=>Fd()});let bn=[],yi=[];function mt(){return bn}function Rt(e){bn=e}async function wi(){var i,a;const e=x(),t=fn();if(!e||!t)return;const n=(i=document.getElementById("my-issues-status-filter"))==null?void 0:i.value,s=(a=document.getElementById("dashboard-project-filter"))==null?void 0:a.value;Vd();try{const o={assignee_id:t.id,status:n||void 0,limit:1e3};let r;s?r=await b.getIssues({...o,project_id:s}):r=await b.getTeamIssues(e.id,o),bn=r,yn()}catch(o){v(o.message,"error")}}async function Pt({showLoading:e=!0}={}){const t=x();if(!t)return;const n=document.getElementById("dashboard-activity-list");e&&n&&(n.innerHTML=`
             <div class="activity-item">
                 <div class="activity-icon">⏳</div>
                 <div class="activity-content">
                     <span class="activity-text">Loading activity...</span>
                 </div>
             </div>
-        `);try{ji=await b.getTeamActivities(t.id,0,10),$u()}catch{n&&(n.innerHTML='<div class="activity-empty">Failed to load activity</div>')}}function $u(){const e=document.getElementById("dashboard-activity-list");if(e){if(!ji.length){e.innerHTML='<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>';return}e.innerHTML=ji.map(t=>{let n="";if(t.issue_identifier)n=` on <a href="#" class="activity-issue-link" data-action="navigate-to-issue-by-identifier" data-identifier="${u(t.issue_identifier)}"><strong>${g(t.issue_identifier)}</strong></a>`;else if(t.document_id&&t.document_title){const s=t.document_icon||"📄";n=` <a href="#" class="activity-doc-link" data-action="view-document" data-document-id="${u(t.document_id)}"><strong>${s} ${g(t.document_title)}</strong></a>`}else t.document_title&&(n=` <strong>${t.document_icon||"📄"} ${g(t.document_title)}</strong>`);return`
+        `);try{yi=await b.getTeamActivities(t.id,0,10),Wd()}catch{n&&(n.innerHTML='<div class="activity-empty">Failed to load activity</div>')}}function Wd(){const e=document.getElementById("dashboard-activity-list");if(e){if(!yi.length){e.innerHTML='<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>';return}e.innerHTML=yi.map(t=>{let n="";if(t.issue_identifier)n=` on <a href="#" class="activity-issue-link" data-action="navigate-to-issue-by-identifier" data-identifier="${u(t.issue_identifier)}"><strong>${g(t.issue_identifier)}</strong></a>`;else if(t.document_id&&t.document_title){const s=t.document_icon||"📄";n=` <a href="#" class="activity-doc-link" data-action="view-document" data-document-id="${u(t.document_id)}"><strong>${s} ${g(t.document_title)}</strong></a>`}else t.document_title&&(n=` <strong>${t.document_icon||"📄"} ${g(t.document_title)}</strong>`);return`
         <div class="activity-item">
-            <div class="activity-icon">${qi(t.activity_type)}</div>
+            <div class="activity-icon">${Ii(t.activity_type)}</div>
             <div class="activity-content">
-                <span class="activity-text">${Hi(t)}${n}</span>
-                <span class="activity-actor">by ${g(Oi(t))}</span>
+                <span class="activity-text">${Ti(t)}${n}</span>
+                <span class="activity-actor">by ${g(xi(t))}</span>
                 <span class="activity-time">${Ue(t.created_at)}</span>
             </div>
         </div>
-    `}).join("")}}function Eu(){const e=document.getElementById("my-issues-list");e&&(e.innerHTML=Array(5).fill(0).map(()=>`
+    `}).join("")}}function Vd(){const e=document.getElementById("my-issues-list");e&&(e.innerHTML=Array(5).fill(0).map(()=>`
         <div class="skeleton-list-item">
             <div style="flex: 1">
                 <div class="skeleton skeleton-title"></div>
@@ -423,14 +270,14 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
             </div>
         </div>
-    `).join(""))}function Di(){Mi()}function $n(){const e=document.getElementById("my-issues-list");if(e){if(e.classList.add("issue-list-linear"),kn.length===0){e.innerHTML=`
+    `).join(""))}function ki(){wi()}function yn(){const e=document.getElementById("my-issues-list");if(e){if(e.classList.add("issue-list-linear"),bn.length===0){e.innerHTML=`
             <div class="empty-state">
                 <h3>No issues assigned to you</h3>
                 <p>Issues assigned to you will appear here</p>
             </div>
-        `;return}e.innerHTML=kn.map(t=>Re(t)).join("")}}Y({"filter-my-issues":()=>Di(),"navigate-to-issue-by-identifier":(e,t)=>{e.preventDefault(),yo(t.identifier)}});const Uo=["backlog","todo","in_progress","in_review","done","canceled"],zo=["no_priority","urgent","high","medium","low"],_u=["task","bug","feature","chore","docs","tech_debt","epic"];let Ge=[],Go=Promise.resolve();function Wo(){return Ge}function Vo(e){Ge=e}async function Ko(e,t,n,s){var f,p;e.preventDefault(),dt();const a=(s||e.currentTarget).getBoundingClientRect(),o=document.createElement("div");if(o.className="inline-dropdown",t==="status")o.innerHTML=`
+        `;return}e.innerHTML=bn.map(t=>Re(t)).join("")}}Y({"filter-my-issues":()=>ki(),"navigate-to-issue-by-identifier":(e,t)=>{e.preventDefault(),Tr(t.identifier)}});const Mo=["backlog","todo","in_progress","in_review","done","canceled"],Do=["no_priority","urgent","high","medium","low"],Kd=["task","bug","feature","chore","docs","tech_debt","epic"];let Ge=[],Ro=Promise.resolve();function Po(){return Ge}function No(e){Ge=e}async function qo(e,t,n,s){var f,p;e.preventDefault(),dt();const a=(s||e.currentTarget).getBoundingClientRect(),o=document.createElement("div");if(o.className="inline-dropdown",t==="status")o.innerHTML=`
             <div class="dropdown-header">Change status...</div>
-            ${Uo.map((h,y)=>`
+            ${Mo.map((h,y)=>`
                 <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="status" data-value="${h}">
                     ${ve(h)}
                     <span>${ye(h)}</span>
@@ -439,7 +286,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             `).join("")}
         `;else if(t==="priority")o.innerHTML=`
             <div class="dropdown-header">Change priority...</div>
-            ${zo.map((h,y)=>`
+            ${Do.map((h,y)=>`
                 <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="priority" data-value="${h}">
                     ${We(h)}
                     <span>${we(h)}</span>
@@ -448,12 +295,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             `).join("")}
         `;else if(t==="type")o.innerHTML=`
             <div class="dropdown-header">Change type...</div>
-            ${_u.map(h=>`
+            ${Kd.map(h=>`
                 <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="issue_type" data-value="${h}">
                     <span class="issue-type-badge type-${h}">${et(h)}</span>
                 </button>
             `).join("")}
-        `;else if(t==="assignee"){const h=rs();o.innerHTML=`
+        `;else if(t==="assignee"){const h=os();o.innerHTML=`
             <div class="dropdown-header">Assign to...</div>
             <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="assignee_id" data-value="__null__">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
@@ -465,11 +312,11 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             `:h.map(({assignee:y,indent:k},E)=>`
                 <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="assignee_id" data-value="${u(y.id)}">
                     ${Mt(y,"avatar-small")}
-                    <span>${bi(y,k)}</span>
+                    <span>${di(y,k)}</span>
                     ${E<9?`<span class="dropdown-shortcut">${E+1}</span>`:""}
                 </button>
             `).join("")}
-        `}else if(t==="estimate"){const h=document.querySelector(`.issue-row[data-issue-id="${n}"]`),y=(h==null?void 0:h.dataset.projectId)||((f=he())==null?void 0:f.project_id),k=Sn(y);o.innerHTML=`
+        `}else if(t==="estimate"){const h=document.querySelector(`.issue-row[data-issue-id="${n}"]`),y=(h==null?void 0:h.dataset.projectId)||((f=he())==null?void 0:f.project_id),k=Tn(y);o.innerHTML=`
             <div class="dropdown-header">Set estimate...</div>
             ${k.map((E,T)=>`
                 <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="estimate" data-value="${E.value}">
@@ -478,7 +325,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${T<9?`<span class="dropdown-shortcut">${T}</span>`:""}
                 </button>
             `).join("")}
-        `}else if(t==="labels"){const h=ke(),y=mt(),k=he(),E=h.find(X=>X.id===n)||y.find(X=>X.id===n)||k,T=new Set(((E==null?void 0:E.labels)||[]).map(X=>X.id));o.innerHTML='<div class="dropdown-header">Loading labels...</div>',o.classList.add("dropdown-positioning"),document.body.appendChild(o);const j=o.getBoundingClientRect();let N=a.bottom+4,B=a.left;B+j.width>window.innerWidth-8&&(B=a.right-j.width),N+j.height>window.innerHeight-8&&(N=a.top-j.height-4),o.style.top=`${N}px`,o.style.left=`${Math.max(8,B)}px`,gn(o,{multiSelect:!0});let H=[];const Z=x();if(Z)try{H=await b.getLabels(Z.id)}catch(X){console.error("Failed to load labels:",X)}if(!o.parentNode)return;Zo(o,n,H,T);const q=o.getBoundingClientRect();let J=a.bottom+4,ie=a.left;ie+q.width>window.innerWidth-8&&(ie=a.right-q.width),J+q.height>window.innerHeight-8&&(J=a.top-q.height-4),o.style.top=`${J}px`,o.style.left=`${Math.max(8,ie)}px`,o.classList.remove("dropdown-positioning");return}else if(t==="sprint"){const h=ke(),y=mt(),k=he(),E=h.find(D=>D.id===n)||y.find(D=>D.id===n)||k,T=(E==null?void 0:E.project_id)||((p=document.querySelector(`.issue-row[data-issue-id="${n}"]`))==null?void 0:p.dataset.projectId);o.innerHTML='<div class="dropdown-header">Loading sprints...</div>',o.classList.add("dropdown-positioning"),document.body.appendChild(o);const j=o.getBoundingClientRect();let N=a.bottom+4,B=a.left;B+j.width>window.innerWidth-8&&(B=a.right-j.width),N+j.height>window.innerHeight-8&&(N=a.top-j.height-4),o.style.top=`${N}px`,o.style.left=`${Math.max(8,B)}px`,gn(o);let H=[];if(T)try{H=await b.getSprints(T),xp(T,H)}catch(D){console.error("Failed to load sprints:",D)}if(!o.parentNode)return;const Z=H.filter(D=>D.status!=="completed"||D.id===(E==null?void 0:E.sprint_id));o.innerHTML=`
+        `}else if(t==="labels"){const h=ke(),y=mt(),k=he(),E=h.find(X=>X.id===n)||y.find(X=>X.id===n)||k,T=new Set(((E==null?void 0:E.labels)||[]).map(X=>X.id));o.innerHTML='<div class="dropdown-header">Loading labels...</div>',o.classList.add("dropdown-positioning"),document.body.appendChild(o);const j=o.getBoundingClientRect();let N=a.bottom+4,B=a.left;B+j.width>window.innerWidth-8&&(B=a.right-j.width),N+j.height>window.innerHeight-8&&(N=a.top-j.height-4),o.style.top=`${N}px`,o.style.left=`${Math.max(8,B)}px`,gn(o,{multiSelect:!0});let H=[];const Z=x();if(Z)try{H=await b.getLabels(Z.id)}catch(X){console.error("Failed to load labels:",X)}if(!o.parentNode)return;Ho(o,n,H,T);const q=o.getBoundingClientRect();let J=a.bottom+4,ie=a.left;ie+q.width>window.innerWidth-8&&(ie=a.right-q.width),J+q.height>window.innerHeight-8&&(J=a.top-q.height-4),o.style.top=`${J}px`,o.style.left=`${Math.max(8,ie)}px`,o.classList.remove("dropdown-positioning");return}else if(t==="sprint"){const h=ke(),y=mt(),k=he(),E=h.find(D=>D.id===n)||y.find(D=>D.id===n)||k,T=(E==null?void 0:E.project_id)||((p=document.querySelector(`.issue-row[data-issue-id="${n}"]`))==null?void 0:p.dataset.projectId);o.innerHTML='<div class="dropdown-header">Loading sprints...</div>',o.classList.add("dropdown-positioning"),document.body.appendChild(o);const j=o.getBoundingClientRect();let N=a.bottom+4,B=a.left;B+j.width>window.innerWidth-8&&(B=a.right-j.width),N+j.height>window.innerHeight-8&&(N=a.top-j.height-4),o.style.top=`${N}px`,o.style.left=`${Math.max(8,B)}px`,gn(o);let H=[];if(T)try{H=await b.getSprints(T),$p(T,H)}catch(D){console.error("Failed to load sprints:",D)}if(!o.parentNode)return;const Z=H.filter(D=>D.status!=="completed"||D.id===(E==null?void 0:E.sprint_id));o.innerHTML=`
             <div class="dropdown-header">Assign to sprint...</div>
             <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${u(n)}" data-field="sprint_id" data-value="__null__">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -492,9 +339,9 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${le<9?`<span class="dropdown-shortcut">${le+1}</span>`:""}
                 </button>
             `).join("")}
-        `;const q=o.getBoundingClientRect();let J=a.bottom+4,ie=a.left;ie+q.width>window.innerWidth-8&&(ie=a.right-q.width),J+q.height>window.innerHeight-8&&(J=a.top-q.height-4),o.style.top=`${J}px`,o.style.left=`${Math.max(8,ie)}px`,o.classList.remove("dropdown-positioning");const X=D=>{const le=D.key;if(le==="Escape"){dt(),document.removeEventListener("keydown",X),mn(null);return}const ce=parseInt(le);if(isNaN(ce))return;const Te=o.querySelectorAll(".dropdown-option");let w=!1;ce===0?(qt(n,"sprint_id",null),w=!0):ce>=1&&ce<Te.length&&(Te[ce].click(),w=!0),w&&(document.removeEventListener("keydown",X),mn(null))};mn(X),document.addEventListener("keydown",X);return}o.classList.add("dropdown-positioning"),document.body.appendChild(o);const r=o.getBoundingClientRect();let d=a.bottom+4,c=a.left;c+r.width>window.innerWidth-8&&(c=a.right-r.width),d+r.height>window.innerHeight-8&&(d=a.top-r.height-4),o.style.top=`${d}px`,o.style.left=`${Math.max(8,c)}px`,o.classList.remove("dropdown-positioning");const l=h=>{const y=h.key;if(y==="Escape"){dt(),document.removeEventListener("keydown",l);return}const k=parseInt(y);if(isNaN(k))return;let E=!1;if(t==="status"&&k>=1&&k<=6)qt(n,"status",Uo[k-1]),E=!0;else if(t==="priority"&&k>=0&&k<=4)qt(n,"priority",zo[k]),E=!0;else if(t==="estimate"){const T=he(),j=Sn(T==null?void 0:T.project_id);k>=0&&k<j.length&&(qt(n,"estimate",j[k].value),E=!0)}E&&(document.removeEventListener("keydown",l),mn(null))};mn(l),document.addEventListener("keydown",l),gn(o)}function Iu(e,t,n,s){e.stopPropagation(),Ko(e,t,n,s)}function xu(e,t,n){Go=Go.then(()=>Yo(e,t,n))}async function Yo(e,t,n){const s=ke(),i=mt(),a=he(),o=s.find(l=>l.id===e)||i.find(l=>l.id===e)||a;if(!o)return;const r=(o.labels||[]).map(l=>l.id),d=r.indexOf(t);let c;if(d>=0?c=r.filter(l=>l!==t):c=[...r,t],n){const l=d<0;n.classList.toggle("selected",l),n.querySelector(".label-check").textContent=l?"✓":""}try{const f=(await b.updateIssue(e,{label_ids:c})).labels||[],p=s.findIndex(E=>E.id===e);p!==-1&&(s[p].labels=f,ze([...s]));const h=i.findIndex(E=>E.id===e);h!==-1&&(i[h].labels=f,Pt([...i])),(a==null?void 0:a.id)===e&&is({...a,labels:f});const y=document.querySelector(`.issue-row[data-issue-id="${e}"]`);if(y&&y.parentNode){const E=s.find(T=>T.id===e)||i.find(T=>T.id===e);E&&(y.outerHTML=Re(E))}const k=document.querySelector(".property-labels-btn");k&&(k.innerHTML=f.length>0?f.map(E=>`
+        `;const q=o.getBoundingClientRect();let J=a.bottom+4,ie=a.left;ie+q.width>window.innerWidth-8&&(ie=a.right-q.width),J+q.height>window.innerHeight-8&&(J=a.top-q.height-4),o.style.top=`${J}px`,o.style.left=`${Math.max(8,ie)}px`,o.classList.remove("dropdown-positioning");const X=D=>{const le=D.key;if(le==="Escape"){dt(),document.removeEventListener("keydown",X),mn(null);return}const ce=parseInt(le);if(isNaN(ce))return;const Te=o.querySelectorAll(".dropdown-option");let w=!1;ce===0?(Nt(n,"sprint_id",null),w=!0):ce>=1&&ce<Te.length&&(Te[ce].click(),w=!0),w&&(document.removeEventListener("keydown",X),mn(null))};mn(X),document.addEventListener("keydown",X);return}o.classList.add("dropdown-positioning"),document.body.appendChild(o);const r=o.getBoundingClientRect();let d=a.bottom+4,c=a.left;c+r.width>window.innerWidth-8&&(c=a.right-r.width),d+r.height>window.innerHeight-8&&(d=a.top-r.height-4),o.style.top=`${d}px`,o.style.left=`${Math.max(8,c)}px`,o.classList.remove("dropdown-positioning");const l=h=>{const y=h.key;if(y==="Escape"){dt(),document.removeEventListener("keydown",l);return}const k=parseInt(y);if(isNaN(k))return;let E=!1;if(t==="status"&&k>=1&&k<=6)Nt(n,"status",Mo[k-1]),E=!0;else if(t==="priority"&&k>=0&&k<=4)Nt(n,"priority",Do[k]),E=!0;else if(t==="estimate"){const T=he(),j=Tn(T==null?void 0:T.project_id);k>=0&&k<j.length&&(Nt(n,"estimate",j[k].value),E=!0)}E&&(document.removeEventListener("keydown",l),mn(null))};mn(l),document.addEventListener("keydown",l),gn(o)}function Yd(e,t,n,s){e.stopPropagation(),qo(e,t,n,s)}function Zd(e,t,n){Ro=Ro.then(()=>Oo(e,t,n))}async function Oo(e,t,n){const s=ke(),i=mt(),a=he(),o=s.find(l=>l.id===e)||i.find(l=>l.id===e)||a;if(!o)return;const r=(o.labels||[]).map(l=>l.id),d=r.indexOf(t);let c;if(d>=0?c=r.filter(l=>l!==t):c=[...r,t],n){const l=d<0;n.classList.toggle("selected",l),n.querySelector(".label-check").textContent=l?"✓":""}try{const f=(await b.updateIssue(e,{label_ids:c})).labels||[],p=s.findIndex(E=>E.id===e);p!==-1&&(s[p].labels=f,ze([...s]));const h=i.findIndex(E=>E.id===e);h!==-1&&(i[h].labels=f,Rt([...i])),(a==null?void 0:a.id)===e&&is({...a,labels:f});const y=document.querySelector(`.issue-row[data-issue-id="${e}"]`);if(y&&y.parentNode){const E=s.find(T=>T.id===e)||i.find(T=>T.id===e);E&&(y.outerHTML=Re(E))}const k=document.querySelector(".property-labels-btn");k&&(k.innerHTML=f.length>0?f.map(E=>`
                     <span class="issue-label" style="background: ${W(E.color)}20; color: ${W(E.color)}">${g(E.name)}</span>
-                `).join(""):'<span class="text-muted">No Labels</span>')}catch{if(v("Failed to update labels","error"),n){const l=d>=0;n.classList.toggle("selected",l),n.querySelector(".label-check").textContent=l?"✓":""}}}function Zo(e,t,n,s){e.dataset.dropdownType="labels",e.dataset.issueId=t,e.innerHTML=`
+                `).join(""):'<span class="text-muted">No Labels</span>')}catch{if(v("Failed to update labels","error"),n){const l=d>=0;n.classList.toggle("selected",l),n.querySelector(".label-check").textContent=l?"✓":""}}}function Ho(e,t,n,s){e.dataset.dropdownType="labels",e.dataset.issueId=t,e.innerHTML=`
         <div class="dropdown-header">Toggle labels...</div>
         <div class="label-create-row">
             <input type="text" class="label-create-input" placeholder="New label..." data-action="label-create-key" data-issue-id="${u(t)}">
@@ -507,7 +354,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <span class="issue-label" style="background: ${W(i.color)}20; color: ${W(i.color)}">${g(i.name)}</span>
                 </button>
             `}).join("")}
-    `}async function Xo(e){const t=document.querySelector(`.inline-dropdown[data-dropdown-type="labels"][data-issue-id="${e}"]`),n=t==null?void 0:t.querySelector(".label-create-input"),s=x();if(!n||!s)return;const i=n.value.trim();if(i){n.disabled=!0;try{const a=await b.createLabel(s.id,{name:i}),o=await b.getLabels(s.id);ss(o),a!=null&&a.id&&await Yo(e,a.id,null);const r=ke(),d=mt(),c=he(),l=r.find(p=>p.id===e)||d.find(p=>p.id===e)||c,f=new Set(((l==null?void 0:l.labels)||[]).map(p=>p.id));t&&Zo(t,e,o,f),n.value=""}catch(a){v(a.message||"Failed to create label","error")}finally{n.disabled=!1,n.focus()}}}function hs(){const e=document.getElementById("create-issue-labels-label");e&&(Ge.length===0?e.textContent="Labels":e.textContent=`Labels (${Ge.length})`)}function Ri(e){const t=co();e.dataset.dropdownType="create-labels",e.innerHTML=`
+    `}async function Fo(e){const t=document.querySelector(`.inline-dropdown[data-dropdown-type="labels"][data-issue-id="${e}"]`),n=t==null?void 0:t.querySelector(".label-create-input"),s=x();if(!n||!s)return;const i=n.value.trim();if(i){n.disabled=!0;try{const a=await b.createLabel(s.id,{name:i}),o=await b.getLabels(s.id);ss(o),a!=null&&a.id&&await Oo(e,a.id,null);const r=ke(),d=mt(),c=he(),l=r.find(p=>p.id===e)||d.find(p=>p.id===e)||c,f=new Set(((l==null?void 0:l.labels)||[]).map(p=>p.id));t&&Ho(t,e,o,f),n.value=""}catch(a){v(a.message||"Failed to create label","error")}finally{n.disabled=!1,n.focus()}}}function ps(){const e=document.getElementById("create-issue-labels-label");e&&(Ge.length===0?e.textContent="Labels":e.textContent=`Labels (${Ge.length})`)}function $i(e){const t=co();e.dataset.dropdownType="create-labels",e.innerHTML=`
         <div class="dropdown-header">Labels</div>
         <div class="label-create-row">
             <input type="text" class="label-create-input" placeholder="New label..." data-action="create-issue-label-key">
@@ -520,7 +367,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <span class="issue-label" style="background: ${W(n.color)}20; color: ${W(n.color)}">${g(n.name)}</span>
                 </button>
             `}).join("")}
-    `}function Tu(e){const t=Ge.indexOf(e);t>=0?Ge.splice(t,1):Ge.push(e),hs();const n=document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]');n&&Ri(n)}async function Qo(){const e=x();if(!e)return;const t=document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]'),n=t==null?void 0:t.querySelector(".label-create-input");if(!n)return;const s=n.value.trim();if(s){n.disabled=!0;try{const i=await b.createLabel(e.id,{name:s}),a=await b.getLabels(e.id);ss(a),i!=null&&i.id&&!Ge.includes(i.id)&&Ge.push(i.id),hs(),t&&Ri(t),n.value=""}catch(i){v(i.message||"Failed to create label","error")}finally{n.disabled=!1,n.focus()}}}async function qt(e,t,n){var i;dt();const s=document.querySelector(`.issue-row[data-issue-id="${e}"]`);s&&s.classList.add("updating");try{const a={};a[t]=n;const o=await b.updateIssue(e,a);if(!o||!o.id)throw new Error("Invalid response from server");const r=ke(),d=r.findIndex(p=>p.id===e);d!==-1&&(r[d]=o,ze([...r]));const c=mt(),l=c.findIndex(p=>p.id===e);l!==-1&&(c[l]=o,Pt([...c]));const f=he();if((f==null?void 0:f.id)===e&&is(o),s&&s.parentNode){const p=r.find(h=>h.id===e)||c.find(h=>h.id===e)||o;if(p){s.outerHTML=Re(p);const h=document.querySelector(`.issue-row[data-issue-id="${e}"]`);h&&(h.classList.add("updated"),setTimeout(()=>h.classList.remove("updated"),500))}}if(v("Issue updated","success"),t==="status"){const p=(i=document.getElementById("project-filter"))==null?void 0:i.value;if(p)try{const y=(await b.getSprints(p)).find(k=>k.status==="active");Ai(y||null)}catch{}}if(t==="sprint_id"||t==="status"||t==="priority"||t==="assignee_id"||t==="estimate"||t==="issue_type"){const p=document.getElementById("issue-detail-view");p&&!p.classList.contains("hidden")&&Su(t,o)}}catch(a){v(a.message||"Failed to update issue","error"),s&&s.classList.remove("updating")}}function Su(e,t){const n=document.getElementById("issue-detail-view");if(!n||n.classList.contains("hidden"))return;const s=n.querySelector(".issue-detail-sidebar");if(!s)return;let i=e;e==="assignee_id"&&(i="assignee"),e==="sprint_id"&&(i="sprint"),e==="issue_type"&&(i="type");const a=s.querySelectorAll(".property-row");let o=null;for(const d of a){const c=d.querySelector(".property-label");if(c&&c.textContent.toLowerCase()===i.toLowerCase()){o=d;break}}if(!o)return;const r=o.querySelector(".property-value");if(r){if(e==="status")r.innerHTML=`
+    `}function Xd(e){const t=Ge.indexOf(e);t>=0?Ge.splice(t,1):Ge.push(e),ps();const n=document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]');n&&$i(n)}async function Uo(){const e=x();if(!e)return;const t=document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]'),n=t==null?void 0:t.querySelector(".label-create-input");if(!n)return;const s=n.value.trim();if(s){n.disabled=!0;try{const i=await b.createLabel(e.id,{name:s}),a=await b.getLabels(e.id);ss(a),i!=null&&i.id&&!Ge.includes(i.id)&&Ge.push(i.id),ps(),t&&$i(t),n.value=""}catch(i){v(i.message||"Failed to create label","error")}finally{n.disabled=!1,n.focus()}}}async function Nt(e,t,n){var i;dt();const s=document.querySelector(`.issue-row[data-issue-id="${e}"]`);s&&s.classList.add("updating");try{const a={};a[t]=n;const o=await b.updateIssue(e,a);if(!o||!o.id)throw new Error("Invalid response from server");const r=ke(),d=r.findIndex(p=>p.id===e);d!==-1&&(r[d]=o,ze([...r]));const c=mt(),l=c.findIndex(p=>p.id===e);l!==-1&&(c[l]=o,Rt([...c]));const f=he();if((f==null?void 0:f.id)===e&&is(o),s&&s.parentNode){const p=r.find(h=>h.id===e)||c.find(h=>h.id===e)||o;if(p){s.outerHTML=Re(p);const h=document.querySelector(`.issue-row[data-issue-id="${e}"]`);h&&(h.classList.add("updated"),setTimeout(()=>h.classList.remove("updated"),500))}}if(v("Issue updated","success"),t==="status"){const p=(i=document.getElementById("project-filter"))==null?void 0:i.value;if(p)try{const y=(await b.getSprints(p)).find(k=>k.status==="active");bi(y||null)}catch{}}if(t==="sprint_id"||t==="status"||t==="priority"||t==="assignee_id"||t==="estimate"||t==="issue_type"){const p=document.getElementById("issue-detail-view");p&&!p.classList.contains("hidden")&&Qd(t,o)}}catch(a){v(a.message||"Failed to update issue","error"),s&&s.classList.remove("updating")}}function Qd(e,t){const n=document.getElementById("issue-detail-view");if(!n||n.classList.contains("hidden"))return;const s=n.querySelector(".issue-detail-sidebar");if(!s)return;let i=e;e==="assignee_id"&&(i="assignee"),e==="sprint_id"&&(i="sprint"),e==="issue_type"&&(i="type");const a=s.querySelectorAll(".property-row");let o=null;for(const d of a){const c=d.querySelector(".property-label");if(c&&c.textContent.toLowerCase()===i.toLowerCase()){o=d;break}}if(!o)return;const r=o.querySelector(".property-value");if(r){if(e==="status")r.innerHTML=`
             ${ve(t.status)}
             <span>${ye(t.status)}</span>
         `;else if(e==="priority")r.innerHTML=`
@@ -533,13 +380,13 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             <span>${c?g(c.name):'<span class="text-muted">No Sprint</span>'}</span>
         `}else e==="estimate"&&(r.innerHTML=`
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            <span>${Ss(t.estimate,t.project_id)}</span>
-        `);r.classList.add("updated"),setTimeout(()=>r.classList.remove("updated"),500)}}Y({"update-issue-field":(e,t)=>{const n=t.value==="__null__"?null:t.value,s=t.field;s==="estimate"?qt(t.issueId,s,n==="null"?null:Number(n)):qt(t.issueId,s,n)},"toggle-issue-label":(e,t,n)=>{xu(t.issueId,t.labelId,n)},"create-label-from-dropdown":(e,t)=>{Xo(t.issueId)},"toggle-create-issue-label":(e,t)=>{Tu(t.labelId)},"create-label-for-create-issue":()=>{Qo()},"label-create-key":(e,t)=>{e.key==="Enter"&&(e.preventDefault(),Xo(t.issueId))},"create-issue-label-key":e=>{e.key==="Enter"&&(e.preventDefault(),Qo())}});const Jo=["backlog","todo","in_progress","in_review","done","canceled"],er=["urgent","high","medium","low","no_priority"],tr=["task","bug","feature","chore","docs","tech_debt","epic"];function gt(e){return e.reduce((t,n)=>t+(n.estimate||0),0)}function Ot(e){const t=gt(e);return`<div class="issue-list-summary">${e.length} issues · ${t}pt</div>`}function nt(){const e=document.getElementById("issues-list");if(!e)return;e.classList.add("issue-list-linear");const t=ke();if(t.length===0){e.innerHTML=`
+            <span>${_s(t.estimate,t.project_id)}</span>
+        `);r.classList.add("updated"),setTimeout(()=>r.classList.remove("updated"),500)}}Y({"update-issue-field":(e,t)=>{const n=t.value==="__null__"?null:t.value,s=t.field;s==="estimate"?Nt(t.issueId,s,n==="null"?null:Number(n)):Nt(t.issueId,s,n)},"toggle-issue-label":(e,t,n)=>{Zd(t.issueId,t.labelId,n)},"create-label-from-dropdown":(e,t)=>{Fo(t.issueId)},"toggle-create-issue-label":(e,t)=>{Xd(t.labelId)},"create-label-for-create-issue":()=>{Uo()},"label-create-key":(e,t)=>{e.key==="Enter"&&(e.preventDefault(),Fo(t.issueId))},"create-issue-label-key":e=>{e.key==="Enter"&&(e.preventDefault(),Uo())}});const zo=["backlog","todo","in_progress","in_review","done","canceled"],Go=["urgent","high","medium","low","no_priority"],Wo=["task","bug","feature","chore","docs","tech_debt","epic"];function gt(e){return e.reduce((t,n)=>t+(n.estimate||0),0)}function qt(e){const t=gt(e);return`<div class="issue-list-summary">${e.length} issues · ${t}pt</div>`}function tt(){const e=document.getElementById("issues-list");if(!e)return;e.classList.add("issue-list-linear");const t=ke();if(t.length===0){e.innerHTML=`
             <div class="empty-state">
                 <h3>No issues found</h3>
                 <p>Create your first issue to get started</p>
             </div>
-        `;return}const n=Fo();n==="status"?Lu(e,t):n==="priority"?Cu(e,t):n==="type"?Bu(e,t):n==="assignee"?Au(e,t):n==="sprint"?ju(e,t):e.innerHTML=Ot(t)+t.map(s=>Re(s)).join("")}function Lu(e,t){const n={};Jo.forEach(i=>n[i]=[]),t.forEach(i=>{n[i.status]&&n[i.status].push(i)});let s=Ot(t);Jo.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
+        `;return}const n=jo();n==="status"?Jd(e,t):n==="priority"?eu(e,t):n==="type"?tu(e,t):n==="assignee"?nu(e,t):n==="sprint"?su(e,t):e.innerHTML=qt(t)+t.map(s=>Re(s)).join("")}function Jd(e,t){const n={};zo.forEach(i=>n[i]=[]),t.forEach(i=>{n[i.status]&&n[i.status].push(i)});let s=qt(t);zo.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
             <div class="issue-group" data-group="${i}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${i}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -554,7 +401,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${a.map(o=>Re(o)).join("")}
                 </div>
             </div>
-        `)}),e.innerHTML=s}function Cu(e,t){const n={};er.forEach(i=>n[i]=[]),t.forEach(i=>{n[i.priority]&&n[i.priority].push(i)});let s=Ot(t);er.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
+        `)}),e.innerHTML=s}function eu(e,t){const n={};Go.forEach(i=>n[i]=[]),t.forEach(i=>{n[i.priority]&&n[i.priority].push(i)});let s=qt(t);Go.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
             <div class="issue-group" data-group="${i}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${i}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -569,7 +416,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${a.map(o=>Re(o)).join("")}
                 </div>
             </div>
-        `)}),e.innerHTML=s}function Bu(e,t){const n={};tr.forEach(i=>n[i]=[]),t.forEach(i=>{const a=i.issue_type||"task";n[a]&&n[a].push(i)});let s=Ot(t);tr.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
+        `)}),e.innerHTML=s}function tu(e,t){const n={};Wo.forEach(i=>n[i]=[]),t.forEach(i=>{const a=i.issue_type||"task";n[a]&&n[a].push(i)});let s=qt(t);Wo.forEach(i=>{const a=n[i];a.length!==0&&(s+=`
             <div class="issue-group" data-group="${i}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${i}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -584,7 +431,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${a.map(o=>Re(o)).join("")}
                 </div>
             </div>
-        `)}),e.innerHTML=s}function Au(e,t){const n={},s="__unassigned__";n[s]=[];const i=rs();i.forEach(({assignee:o})=>{n[o.id]=[]}),t.forEach(o=>{o.assignee_id&&n[o.assignee_id]?n[o.assignee_id].push(o):n[s].push(o)});let a=Ot(t);n[s].length>0&&(a+=`
+        `)}),e.innerHTML=s}function nu(e,t){const n={},s="__unassigned__";n[s]=[];const i=os();i.forEach(({assignee:o})=>{n[o.id]=[]}),t.forEach(o=>{o.assignee_id&&n[o.assignee_id]?n[o.assignee_id].push(o):n[s].push(o)});let a=qt(t);n[s].length>0&&(a+=`
             <div class="issue-group" data-group="${s}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${s}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -614,7 +461,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${r.map(l=>Re(l)).join("")}
                 </div>
             </div>
-        `}),e.innerHTML=a}function ju(e,t){const n="__no_sprint__",s={};s[n]=[];const i=[];t.forEach(d=>{d.sprint_id?(s[d.sprint_id]||(s[d.sprint_id]=[],i.push(d.sprint_id)),s[d.sprint_id].push(d)):s[n].push(d)});const a={active:0,planned:1,completed:2},o=cr();i.sort((d,c)=>{const l=o[d],f=o[c],p=l?a[l.status]??3:3,h=f?a[f.status]??3:3;return p-h});let r=Ot(t);i.forEach(d=>{const c=s[d];if(c.length===0)return;const l=o[d],f=l?l.name:d,p=l?l.status==="active"?" (Active)":l.status==="completed"?" (Done)":"":"",h=d.replace(/[^a-zA-Z0-9_-]/g,"_");r+=`
+        `}),e.innerHTML=a}function su(e,t){const n="__no_sprint__",s={};s[n]=[];const i=[];t.forEach(d=>{d.sprint_id?(s[d.sprint_id]||(s[d.sprint_id]=[],i.push(d.sprint_id)),s[d.sprint_id].push(d)):s[n].push(d)});const a={active:0,planned:1,completed:2},o=rr();i.sort((d,c)=>{const l=o[d],f=o[c],p=l?a[l.status]??3:3,h=f?a[f.status]??3:3;return p-h});let r=qt(t);i.forEach(d=>{const c=s[d];if(c.length===0)return;const l=o[d],f=l?l.name:d,p=l?l.status==="active"?" (Active)":l.status==="completed"?" (Done)":"":"",h=d.replace(/[^a-zA-Z0-9_-]/g,"_");r+=`
             <div class="issue-group" data-group="${h}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${h}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -644,7 +491,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     ${s[n].map(d=>Re(d)).join("")}
                 </div>
             </div>
-        `),e.innerHTML=r}function Mu(e){const t=document.querySelector(`.issue-group[data-group="${e}"]`);t&&t.classList.toggle("collapsed")}function Re(e){const t=e.assignee_id?vn(e.assignee_id):null,n=t?Et(t):null,s=new Date(e.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}),i=e.estimate?Ss(e.estimate,e.project_id):"",a=e.sprint_id?cr()[e.sprint_id]:null,o=a?a.name:null;return`
+        `),e.innerHTML=r}function iu(e){const t=document.querySelector(`.issue-group[data-group="${e}"]`);t&&t.classList.toggle("collapsed")}function Re(e){const t=e.assignee_id?vn(e.assignee_id):null,n=t?Et(t):null,s=new Date(e.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}),i=e.estimate?_s(e.estimate,e.project_id):"",a=e.sprint_id?rr()[e.sprint_id]:null,o=a?a.name:null;return`
         <div class="issue-row" data-issue-id="${u(e.id)}" data-status="${e.status}" data-priority="${e.priority}" data-issue-type="${e.issue_type||"task"}" data-project-id="${u(e.project_id)}">
             <div class="issue-row-left">
                 <button class="issue-icon-btn priority-btn" data-action="show-inline-dropdown" data-dropdown-type="priority" data-issue-id="${u(e.id)}" title="Priority: ${we(e.priority)}">
@@ -677,12 +524,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </button>
             </div>
         </div>
-    `}function We(e){const t={urgent:'<svg width="16" height="16" viewBox="0 0 16 16" class="priority-urgent"><rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/><text x="8" y="11.5" text-anchor="middle" fill="var(--bg-primary)" font-size="10" font-weight="bold">!</text></svg>',high:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-high"><rect x="1" y="3" width="3" height="12" rx="1"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',medium:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-medium"><rect x="1" y="6" width="3" height="9" rx="1" opacity="0.3"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',low:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-low"><rect x="1" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="6" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',no_priority:'<svg width="16" height="16" viewBox="0 0 16 16" class="priority-none"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/><line x1="3" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/></svg>'};return t[e]||t.no_priority}function ve(e){const t={backlog:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-backlog"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>',todo:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-todo"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',in_progress:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-in-progress"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor"/></svg>',in_review:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-in-review"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 6 6 6 6 0 0 1-6 6" fill="currentColor"/></svg>',done:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-done"><circle cx="8" cy="8" r="6" fill="currentColor"/><path d="M5 8l2 2 4-4" stroke="var(--bg-primary)" stroke-width="1.5" fill="none"/></svg>',canceled:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>'};return t[e]||t.backlog}Y({"toggle-group":(e,t)=>{Mu(t.group)},"show-inline-dropdown":(e,t,n)=>{Ko(e,t.dropdownType,t.issueId,n)},"navigate-issue":(e,t)=>{e.metaKey||e.ctrlKey||e.shiftKey||e.button===1||(e.preventDefault(),F(t.issueId))}});function Du(e){return e.name?e.name.split(" ")[0].toLowerCase():e.email?e.email.split("@")[0].toLowerCase():"user"}function Ru(){const e=document.getElementById("new-comment"),t=document.getElementById("mention-suggestions");if(!e||!t||e.dataset.mentionsBound==="true")return;e.dataset.mentionsBound="true";const n=()=>{t.classList.add("hidden"),t.innerHTML=""},s=()=>{const i=e.selectionStart||0,o=e.value.slice(0,i).match(/(^|\s)@([a-zA-Z0-9._-]*)$/);if(!o){n();return}const r=o[2].toLowerCase(),d=It().map(c=>({id:c.id,name:c.name||c.email||"User",email:c.email||"",handle:Du(c)})).filter(c=>!r||c.handle.includes(r)||c.name.toLowerCase().includes(r)||c.email.toLowerCase().includes(r)).slice(0,6);if(!d.length){n();return}t.innerHTML=d.map(c=>`
+    `}function We(e){const t={urgent:'<svg width="16" height="16" viewBox="0 0 16 16" class="priority-urgent"><rect x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/><text x="8" y="11.5" text-anchor="middle" fill="var(--bg-primary)" font-size="10" font-weight="bold">!</text></svg>',high:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-high"><rect x="1" y="3" width="3" height="12" rx="1"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',medium:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-medium"><rect x="1" y="6" width="3" height="9" rx="1" opacity="0.3"/><rect x="6" y="6" width="3" height="9" rx="1"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',low:'<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="priority-low"><rect x="1" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="6" y="9" width="3" height="6" rx="1" opacity="0.3"/><rect x="11" y="9" width="3" height="6" rx="1"/></svg>',no_priority:'<svg width="16" height="16" viewBox="0 0 16 16" class="priority-none"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/><line x1="3" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/></svg>'};return t[e]||t.no_priority}function ve(e){const t={backlog:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-backlog"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>',todo:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-todo"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',in_progress:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-in-progress"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor"/></svg>',in_review:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-in-review"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 6 6 6 6 0 0 1-6 6" fill="currentColor"/></svg>',done:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-done"><circle cx="8" cy="8" r="6" fill="currentColor"/><path d="M5 8l2 2 4-4" stroke="var(--bg-primary)" stroke-width="1.5" fill="none"/></svg>',canceled:'<svg width="16" height="16" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>'};return t[e]||t.backlog}Y({"toggle-group":(e,t)=>{iu(t.group)},"show-inline-dropdown":(e,t,n)=>{qo(e,t.dropdownType,t.issueId,n)},"navigate-issue":(e,t)=>{e.metaKey||e.ctrlKey||e.shiftKey||e.button===1||(e.preventDefault(),F(t.issueId))}});function au(e){return e.name?e.name.split(" ")[0].toLowerCase():e.email?e.email.split("@")[0].toLowerCase():"user"}function ou(){const e=document.getElementById("new-comment"),t=document.getElementById("mention-suggestions");if(!e||!t||e.dataset.mentionsBound==="true")return;e.dataset.mentionsBound="true";const n=()=>{t.classList.add("hidden"),t.innerHTML=""},s=()=>{const i=e.selectionStart||0,o=e.value.slice(0,i).match(/(^|\s)@([a-zA-Z0-9._-]*)$/);if(!o){n();return}const r=o[2].toLowerCase(),d=Ct().map(c=>({id:c.id,name:c.name||c.email||"User",email:c.email||"",handle:au(c)})).filter(c=>!r||c.handle.includes(r)||c.name.toLowerCase().includes(r)||c.email.toLowerCase().includes(r)).slice(0,6);if(!d.length){n();return}t.innerHTML=d.map(c=>`
             <button type="button" class="mention-suggestion" data-handle="${u(c.handle)}">
                 <span class="mention-name">${g(c.name)}</span>
                 <span class="mention-handle">@${g(c.handle)}</span>
             </button>
-        `).join(""),t.classList.remove("hidden"),t.querySelectorAll(".mention-suggestion").forEach(c=>{c.addEventListener("click",()=>{const l=c.dataset.handle,f=e.value.slice(0,i).replace(/@([a-zA-Z0-9._-]*)$/,`@${l} `),p=e.value.slice(i);e.value=f+p,e.focus(),n()})})};e.addEventListener("input",s),e.addEventListener("click",s),e.addEventListener("keydown",i=>{i.key==="Escape"&&n()}),e.addEventListener("blur",()=>{setTimeout(n,150)})}const nr=[{id:"none",label:"No template",title:"",description:""},{id:"bug",label:"Bug report",title:"Bug: ",description:`## Summary
+        `).join(""),t.classList.remove("hidden"),t.querySelectorAll(".mention-suggestion").forEach(c=>{c.addEventListener("click",()=>{const l=c.dataset.handle,f=e.value.slice(0,i).replace(/@([a-zA-Z0-9._-]*)$/,`@${l} `),p=e.value.slice(i);e.value=f+p,e.focus(),n()})})};e.addEventListener("input",s),e.addEventListener("click",s),e.addEventListener("keydown",i=>{i.key==="Escape"&&n()}),e.addEventListener("blur",()=>{setTimeout(n,150)})}const Vo=[{id:"none",label:"No template",title:"",description:""},{id:"bug",label:"Bug report",title:"Bug: ",description:`## Summary
 
 ## Steps to Reproduce
 1.
@@ -711,7 +558,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
 -
 
 ## Notes
-`}];function En(e=null){var o;const t=e||((o=document.getElementById("project-filter"))==null?void 0:o.value);Vo([]);const n=U().map(r=>`
+`}];function wn(e=null){var o;const t=e||((o=document.getElementById("project-filter"))==null?void 0:o.value);No([]);const n=U().map(r=>`
         <option value="${r.id}" ${r.id===t?"selected":""}>${g(r.name)}</option>
     `).join("");document.getElementById("modal-title").textContent="",document.getElementById("modal-content").innerHTML=`
         <div class="create-issue-modal">
@@ -735,7 +582,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <div class="create-issue-template">
                         <label for="create-issue-template">Template</label>
                         <select id="create-issue-template" data-action="apply-template">
-                            ${nr.map(r=>`<option value="${r.id}">${r.label}</option>`).join("")}
+                            ${Vo.map(r=>`<option value="${r.id}">${r.label}</option>`).join("")}
                         </select>
                     </div>
                     <div class="create-issue-meta">
@@ -787,7 +634,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             <input type="hidden" id="create-issue-estimate" value="">
             <input type="hidden" id="create-issue-sprint" value="">
         </div>
-    `,R(),hs();const s=document.getElementById("create-issue-title"),i=document.getElementById("create-issue-description"),a=Dc();a.title&&(s.value=a.title),a.description&&(i.value=a.description),s.addEventListener("input",()=>{ro(s.value,i.value)}),i.addEventListener("input",()=>{ro(s.value,i.value)}),s.focus()}function Pu(){const e=document.getElementById("create-issue-options-panel"),t=document.getElementById("more-options-toggle");e&&t&&(e.classList.toggle("collapsed"),t.classList.toggle("expanded"))}function Nu(e){const t=nr.find(i=>i.id===e);if(!t)return;const n=document.getElementById("create-issue-title"),s=document.getElementById("create-issue-description");n&&t.title!==void 0&&(n.value=t.title),s&&t.description!==void 0&&(s.value=t.description)}function qu(e,t){const n=U().find(s=>s.id===t);Vo([]),document.getElementById("modal-title").textContent="",document.getElementById("modal-content").innerHTML=`
+    `,R(),ps();const s=document.getElementById("create-issue-title"),i=document.getElementById("create-issue-description"),a=Dc();a.title&&(s.value=a.title),a.description&&(i.value=a.description),s.addEventListener("input",()=>{ro(s.value,i.value)}),i.addEventListener("input",()=>{ro(s.value,i.value)}),s.focus()}function ru(){const e=document.getElementById("create-issue-options-panel"),t=document.getElementById("more-options-toggle");e&&t&&(e.classList.toggle("collapsed"),t.classList.toggle("expanded"))}function lu(e){const t=Vo.find(i=>i.id===e);if(!t)return;const n=document.getElementById("create-issue-title"),s=document.getElementById("create-issue-description");n&&t.title!==void 0&&(n.value=t.title),s&&t.description!==void 0&&(s.value=t.description)}function cu(e,t){const n=U().find(s=>s.id===t);No([]),document.getElementById("modal-title").textContent="",document.getElementById("modal-content").innerHTML=`
         <div class="create-issue-modal">
             <div class="create-issue-header">
                 <span class="project-name">${n?g(n.name):"Project"}</span>
@@ -840,7 +687,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             <input type="hidden" id="create-issue-assignee" value="">
             <input type="hidden" id="create-issue-estimate" value="">
         </div>
-    `,R(),hs(),document.getElementById("create-issue-title").focus()}async function Ou(e,t){const n=document.getElementById("create-issue-title").value.trim(),s=document.getElementById("create-issue-description").value.trim(),i=document.getElementById("create-issue-status").value,a=document.getElementById("create-issue-priority").value,o=document.getElementById("create-issue-type").value||"task",r=document.getElementById("create-issue-assignee").value||null,d=document.getElementById("create-issue-estimate").value,c=d?parseInt(d):null;if(!n){v("Please enter a title","error");return}try{const l=await b.createIssue(t,{title:n,description:s||null,status:i,priority:a,issue_type:o,assignee_id:r,estimate:c,label_ids:Wo(),parent_id:e});A(),v(`Created sub-issue ${l.identifier}`,"success"),F(e)}catch(l){v(`Failed to create sub-issue: ${l.message}`,"error")}}async function Hu(e,t,n){var o,r;dt();const i=(n||t.currentTarget).getBoundingClientRect(),a=document.createElement("div");if(a.className="inline-dropdown dropdown-positioning",a.style.top=`${i.top-8}px`,a.style.left=`${i.left}px`,a.style.transform="translateY(-100%)",a.style.animation="none",e==="status"){const d=document.getElementById("create-issue-status").value;a.innerHTML=`
+    `,R(),ps(),document.getElementById("create-issue-title").focus()}async function du(e,t){const n=document.getElementById("create-issue-title").value.trim(),s=document.getElementById("create-issue-description").value.trim(),i=document.getElementById("create-issue-status").value,a=document.getElementById("create-issue-priority").value,o=document.getElementById("create-issue-type").value||"task",r=document.getElementById("create-issue-assignee").value||null,d=document.getElementById("create-issue-estimate").value,c=d?parseInt(d):null;if(!n){v("Please enter a title","error");return}try{const l=await b.createIssue(t,{title:n,description:s||null,status:i,priority:a,issue_type:o,assignee_id:r,estimate:c,label_ids:Po(),parent_id:e});A(),v(`Created sub-issue ${l.identifier}`,"success"),F(e)}catch(l){v(`Failed to create sub-issue: ${l.message}`,"error")}}async function uu(e,t,n){var o,r;dt();const i=(n||t.currentTarget).getBoundingClientRect(),a=document.createElement("div");if(a.className="inline-dropdown dropdown-positioning",a.style.top=`${i.top-8}px`,a.style.left=`${i.left}px`,a.style.transform="translateY(-100%)",a.style.animation="none",e==="status"){const d=document.getElementById("create-issue-status").value;a.innerHTML=`
             <div class="dropdown-header">Status</div>
             ${["backlog","todo","in_progress","in_review","done"].map(c=>`
                 <button class="dropdown-option ${c===d?"selected":""}" data-action="set-create-field" data-field="status" data-value="${c}" data-label="${u(ye(c))}">
@@ -863,7 +710,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <span class="issue-type-badge type-${c}">${et(c)}</span>
                 </button>
             `).join("")}
-        `}else if(e==="labels")if(!x())a.innerHTML='<div class="dropdown-header">Select a team first</div>';else{let d=co();if(d.length===0)try{d=await b.getLabels(x().id),ss(d)}catch(c){console.error("Failed to load labels:",c)}Ri(a),document.body.appendChild(a),requestAnimationFrame(()=>{requestAnimationFrame(()=>{a.classList.remove("dropdown-positioning")})}),gn(a,{multiSelect:!0});return}else if(e==="assignee"){const d=document.getElementById("create-issue-assignee").value,c=rs();a.innerHTML=`
+        `}else if(e==="labels")if(!x())a.innerHTML='<div class="dropdown-header">Select a team first</div>';else{let d=co();if(d.length===0)try{d=await b.getLabels(x().id),ss(d)}catch(c){console.error("Failed to load labels:",c)}$i(a),document.body.appendChild(a),requestAnimationFrame(()=>{requestAnimationFrame(()=>{a.classList.remove("dropdown-positioning")})}),gn(a,{multiSelect:!0});return}else if(e==="assignee"){const d=document.getElementById("create-issue-assignee").value,c=os();a.innerHTML=`
             <div class="dropdown-header">Assignee</div>
             <button class="dropdown-option ${d?"":"selected"}" data-action="set-create-field" data-field="assignee" data-value="" data-label="Assignee">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
@@ -874,10 +721,10 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             `:c.map(({assignee:l,indent:f})=>{const p=Et(l)||"User";return`
                 <button class="dropdown-option ${l.id===d?"selected":""}" data-action="set-create-field" data-field="assignee" data-value="${u(l.id)}" data-label="${u(p)}">
                     ${Mt(l,"avatar-small")}
-                    <span>${bi(l,f)}</span>
+                    <span>${di(l,f)}</span>
                 </button>
             `}).join("")}
-        `}else if(e==="estimate"){const d=document.getElementById("create-issue-estimate").value,c=(o=document.getElementById("create-issue-project"))==null?void 0:o.value,l=Sn(c);a.innerHTML=`
+        `}else if(e==="estimate"){const d=document.getElementById("create-issue-estimate").value,c=(o=document.getElementById("create-issue-project"))==null?void 0:o.value,l=Tn(c);a.innerHTML=`
             <div class="dropdown-header">Estimate</div>
             ${l.map(f=>{const p=f.value===null?"":String(f.value);return`
                 <button class="dropdown-option ${p===d?"selected":""}" data-action="set-create-field" data-field="estimate" data-value="${u(p)}" data-label="${u(f.value?f.label:"Estimate")}">
@@ -896,7 +743,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                             <span>${g(p.name)}${p.status==="active"?" (Active)":""}</span>
                         </button>
                     `).join("")}
-                `}catch{a.innerHTML='<div class="dropdown-header">Failed to load sprints</div>'}}document.body.appendChild(a),requestAnimationFrame(()=>{requestAnimationFrame(()=>{a.classList.remove("dropdown-positioning")})}),gn(a)}function Fu(){const e=document.getElementById("create-issue-sprint"),t=document.getElementById("create-issue-sprint-label");e&&(e.value=""),t&&(t.textContent="Sprint")}function Uu(e,t,n){document.getElementById(`create-issue-${e}`).value=t,document.getElementById(`create-issue-${e}-label`).textContent=n;const s=g(n);if(e==="status"){const i=document.querySelector(".toolbar-btn:first-child");i.innerHTML=`${ve(t)}<span id="create-issue-status-label">${s}</span>`}else if(e==="priority"){const i=document.querySelectorAll(".toolbar-btn")[1];i.innerHTML=`${We(t)}<span id="create-issue-priority-label">${s}</span>`}else if(e==="type"){const i=document.getElementById("create-issue-type-btn");i&&(i.innerHTML=`<span class="issue-type-badge type-${t}">${et(t)}</span><span id="create-issue-type-label">${s}</span>`)}dt()}async function sr({keepOpen:e=!1}={}){var k,E;const t=document.getElementById("create-issue-project").value,n=document.getElementById("create-issue-title").value.trim(),s=document.getElementById("create-issue-description").value.trim(),i=document.getElementById("create-issue-status").value,a=document.getElementById("create-issue-priority").value,o=document.getElementById("create-issue-type").value||"task",r=document.getElementById("create-issue-assignee").value||null,d=document.getElementById("create-issue-estimate").value,c=d?parseInt(d):null,l=((k=document.getElementById("create-issue-sprint"))==null?void 0:k.value)||null,f=(E=document.getElementById("create-issue-due-date"))==null?void 0:E.value,p=f?new Date(`${f}T00:00:00Z`).toISOString():null;if(!t){v("Please select a project","error");return}if(!n){v("Please enter a title","error");return}const h=document.getElementById("btn-create-issue"),y=document.getElementById("btn-create-and-new");h&&(h.disabled=!0),y&&(y.disabled=!0);try{const T=await b.createIssue(t,{title:n,description:s||null,status:i,priority:a,issue_type:o,assignee_id:r,estimate:c,sprint_id:l,label_ids:Wo(),due_date:p});v(`Created ${T.identifier}`,"success"),Rc(),L()==="issues"?Lt():L()==="my-issues"&&Mi(),e?(document.getElementById("create-issue-title").value="",document.getElementById("create-issue-description").value="",document.getElementById("create-issue-title").focus()):(A(),F(T.id))}catch(T){v(`Failed to create issue: ${T.message}`,"error")}finally{h&&(h.disabled=!1),y&&(y.disabled=!1)}}async function zu(){await sr({keepOpen:!1})}async function Gu(){await sr({keepOpen:!0})}Y({"toggle-create-dropdown":(e,t,n)=>{Hu(t.dropdownType,e,n)},"set-create-field":(e,t)=>{Uu(t.field,t.value,t.label)},"create-issue-submit":()=>{zu()},"create-issue-and-new":()=>{Gu()},"update-create-project":()=>{Fu()},"apply-template":e=>{Nu(e.target.value)},"toggle-create-options":()=>{Pu()},"create-sub-issue-submit":(e,t)=>{Ou(t.parentId,t.projectId)}});async function ir(e){try{const t=await b.getIssue(e),n=await b.getSprints(t.project_id),i=Sn(t.project_id).map(a=>`
+                `}catch{a.innerHTML='<div class="dropdown-header">Failed to load sprints</div>'}}document.body.appendChild(a),requestAnimationFrame(()=>{requestAnimationFrame(()=>{a.classList.remove("dropdown-positioning")})}),gn(a)}function pu(){const e=document.getElementById("create-issue-sprint"),t=document.getElementById("create-issue-sprint-label");e&&(e.value=""),t&&(t.textContent="Sprint")}function mu(e,t,n){document.getElementById(`create-issue-${e}`).value=t,document.getElementById(`create-issue-${e}-label`).textContent=n;const s=g(n);if(e==="status"){const i=document.querySelector(".toolbar-btn:first-child");i.innerHTML=`${ve(t)}<span id="create-issue-status-label">${s}</span>`}else if(e==="priority"){const i=document.querySelectorAll(".toolbar-btn")[1];i.innerHTML=`${We(t)}<span id="create-issue-priority-label">${s}</span>`}else if(e==="type"){const i=document.getElementById("create-issue-type-btn");i&&(i.innerHTML=`<span class="issue-type-badge type-${t}">${et(t)}</span><span id="create-issue-type-label">${s}</span>`)}dt()}async function Ko({keepOpen:e=!1}={}){var k,E;const t=document.getElementById("create-issue-project").value,n=document.getElementById("create-issue-title").value.trim(),s=document.getElementById("create-issue-description").value.trim(),i=document.getElementById("create-issue-status").value,a=document.getElementById("create-issue-priority").value,o=document.getElementById("create-issue-type").value||"task",r=document.getElementById("create-issue-assignee").value||null,d=document.getElementById("create-issue-estimate").value,c=d?parseInt(d):null,l=((k=document.getElementById("create-issue-sprint"))==null?void 0:k.value)||null,f=(E=document.getElementById("create-issue-due-date"))==null?void 0:E.value,p=f?new Date(`${f}T00:00:00Z`).toISOString():null;if(!t){v("Please select a project","error");return}if(!n){v("Please enter a title","error");return}const h=document.getElementById("btn-create-issue"),y=document.getElementById("btn-create-and-new");h&&(h.disabled=!0),y&&(y.disabled=!0);try{const T=await b.createIssue(t,{title:n,description:s||null,status:i,priority:a,issue_type:o,assignee_id:r,estimate:c,sprint_id:l,label_ids:Po(),due_date:p});v(`Created ${T.identifier}`,"success"),Rc(),L()==="issues"?Tt():L()==="my-issues"&&wi(),e?(document.getElementById("create-issue-title").value="",document.getElementById("create-issue-description").value="",document.getElementById("create-issue-title").focus()):(A(),F(T.id))}catch(T){v(`Failed to create issue: ${T.message}`,"error")}finally{h&&(h.disabled=!1),y&&(y.disabled=!1)}}async function gu(){await Ko({keepOpen:!1})}async function fu(){await Ko({keepOpen:!0})}Y({"toggle-create-dropdown":(e,t,n)=>{uu(t.dropdownType,e,n)},"set-create-field":(e,t)=>{mu(t.field,t.value,t.label)},"create-issue-submit":()=>{gu()},"create-issue-and-new":()=>{fu()},"update-create-project":()=>{pu()},"apply-template":e=>{lu(e.target.value)},"toggle-create-options":()=>{ru()},"create-sub-issue-submit":(e,t)=>{du(t.parentId,t.projectId)}});async function Yo(e){try{const t=await b.getIssue(e),n=await b.getSprints(t.project_id),i=Tn(t.project_id).map(a=>`
             <option value="${a.value===null?"":a.value}" ${t.estimate===a.value?"selected":""}>${g(a.label)}</option>
         `).join("");document.getElementById("modal-title").textContent="Edit Issue",document.getElementById("modal-content").innerHTML=`
             <form data-action="update-issue" data-issue-id="${u(e)}">
@@ -958,7 +805,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
                 <button type="submit" class="btn btn-primary">Update Issue</button>
             </form>
-        `,R()}catch(t){v(`Failed to load issue: ${t.message}`,"error")}}async function Wu(e,t){try{const n=document.getElementById("edit-issue-title"),s=document.getElementById("edit-issue-description"),i=document.getElementById("edit-issue-status"),a=document.getElementById("edit-issue-priority"),o=document.getElementById("edit-issue-type"),r=document.getElementById("edit-issue-estimate"),d=document.getElementById("edit-issue-sprint");if(!n||!i||!a||!o)throw new Error("Required form fields not found");const c={title:n.value,description:s?s.value:"",status:i.value,priority:a.value,issue_type:o.value,estimate:r&&r.value?parseInt(r.value):null,sprint_id:d&&d.value?d.value:null};await b.updateIssue(t,c),A(),await F(t),v("Issue updated!","success")}catch(n){v(`Failed to update issue: ${n.message}`,"error")}}async function Vu(e){if(confirm("Are you sure you want to delete this issue?"))try{await b.deleteIssue(e),await Lt(),await $e(),C("issues"),v("Issue deleted!","success")}catch(t){v(`Failed to delete issue: ${t.message}`,"error")}}Y({"update-issue":(e,t)=>{Wu(e,t.issueId)}});let ft=!0,_n=null,Pi=null,Ni=null,vs=null;function qi(e){return{created:"✨",updated:"✏️",status_changed:"🔄",priority_changed:"⚡",assigned:"👤",unassigned:"👤",commented:"💬",labeled:"🏷️",unlabeled:"🏷️",moved_to_sprint:"🏃",removed_from_sprint:"🏃",doc_created:"📄",doc_updated:"📝",doc_deleted:"🗑️",doc_commented:"💬",ritual_attested:"✅"}[e]||"•"}function Oi(e){return e.user_name||e.user_email||"Unknown"}function Hi(e){const t=s=>s?s.replace(/^(IssueStatus\.|IssuePriority\.)/,"").toLowerCase():"",n={status:"status",priority:"priority",assignee_id:"assignee",sprint_id:"sprint",title:"title",description:"description",estimate:"estimate"};switch(e.activity_type){case"created":return"Created issue";case"commented":{const s=e.new_value?g(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"",i=e.new_value?u(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"";return s?`<a href="#comments-section" class="activity-comment-link" title="${i}" data-action="scroll-to-comments">Added a comment</a>`:"Added a comment"}case"status_changed":return`Changed status from <strong>${g(ye(t(e.old_value)))}</strong> to <strong>${g(ye(t(e.new_value)))}</strong>`;case"priority_changed":return`Changed priority from <strong>${g(we(t(e.old_value)))}</strong> to <strong>${g(we(t(e.new_value)))}</strong>`;case"assigned":return"Assigned to someone";case"unassigned":return"Removed assignee";case"moved_to_sprint":return e.sprint_name?`Moved to sprint <strong>${g(e.sprint_name)}</strong>`:"Moved to sprint";case"removed_from_sprint":return e.sprint_name?`Removed from sprint <strong>${g(e.sprint_name)}</strong>`:"Removed from sprint";case"doc_created":return"Created document";case"doc_updated":return"Updated document";case"doc_deleted":return"Deleted document";case"doc_commented":return"Commented on document";case"ritual_attested":{const s=g(e.field_name||"ritual"),i=e.new_value?u(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"";return i?`<span class="activity-attestation-link" title="${i}">Attested to <strong>${s}</strong></span>`:`Attested to <strong>${s}</strong>`}case"updated":return e.field_name?`Updated ${n[e.field_name]||g(e.field_name)}`:"Updated issue";default:return e.field_name?`Updated ${n[e.field_name]||g(e.field_name)}`:"Updated issue"}}function ar(e,t){const n=document.createTreeWalker(e,NodeFilter.SHOW_TEXT,{acceptNode:function(a){let o=a.parentElement;for(;o&&o!==e;){if(o.tagName==="CODE"||o.tagName==="PRE")return NodeFilter.FILTER_REJECT;o=o.parentElement}return NodeFilter.FILTER_ACCEPT}},!1),s=[];let i;for(;i=n.nextNode();)s.push(i);s.forEach(a=>{t(a)})}function Ku(e){const t=e.textContent;if(!t)return;const n=/\b([A-Z]{2,10}-\d+)\b/g,s=/(^|\s)@([a-zA-Z0-9._-]+)/g,i=n.test(t),a=s.test(t);if(!i&&!a)return;const o=document.createDocumentFragment();let r=0,d=!1;const c=/\b([A-Z]{2,10}-\d+)\b|(^|\s)@([a-zA-Z0-9._-]+)/g;let l;for(;(l=c.exec(t))!==null;)if(d=!0,l.index>r&&o.appendChild(document.createTextNode(t.slice(r,l.index))),l[1]){const f=l[1],p=document.createElement("a");p.href=`#/issue/${f}`,p.className="issue-link",p.textContent=f,o.appendChild(p),r=l.index+l[0].length}else if(l[3]){l[2]&&o.appendChild(document.createTextNode(l[2]));const f=document.createElement("span");f.className="mention",f.textContent="@"+l[3],o.appendChild(f),r=l.index+l[0].length}d&&(r<t.length&&o.appendChild(document.createTextNode(t.slice(r))),e.parentNode.replaceChild(o,e))}function Yu(e){const t=e.textContent;if(!t)return;const n=/\b([A-Z]{2,10}-\d+)\b/g;if(!n.test(t))return;const s=document.createDocumentFragment();let i=0,a=!1;n.lastIndex=0;let o;for(;(o=n.exec(t))!==null;){a=!0,o.index>i&&s.appendChild(document.createTextNode(t.slice(i,o.index)));const r=o[1],d=document.createElement("a");d.href=`#/issue/${r}`,d.className="issue-link",d.textContent=r,s.appendChild(d),i=o.index+o[0].length}a&&(i<t.length&&s.appendChild(document.createTextNode(t.slice(i))),e.parentNode.replaceChild(s,e))}function Zu(e){if(!e)return"";const t=Be(e),n=document.createElement("div");return n.innerHTML=t,ar(n,Ku),n.innerHTML}function bs(e){if(!e)return"";const t=Be(e),n=document.createElement("div");return n.innerHTML=t,ar(n,Yu),n.innerHTML}function Xu(e){const t=document.getElementById(`${e}-section`);if(!t)return;const n=t.querySelector(".section-collapsible-content"),s=t.querySelector(".section-toggle-icon");n&&n.classList.toggle("collapsed"),s&&s.classList.toggle("rotated")}function Qu(){ft=!ft;const e=document.getElementById("ticket-rituals-section");if(!e)return;const t=e.querySelector(".ticket-rituals-content"),n=e.querySelector(".section-toggle-icon");t&&t.classList.toggle("collapsed",ft),n&&n.classList.toggle("rotated",ft)}async function ys(e){try{_n=await b.getTicketRitualsStatus(e),or(e)}catch(t){console.error("Failed to load ticket rituals:",t),_n=null}}function or(e){const t=document.getElementById("ticket-rituals-section");if(!t)return;if(!_n){t.classList.add("hidden");return}const{pending_rituals:n,completed_rituals:s}=_n;if(n.length===0&&s.length===0){t.classList.add("hidden");return}t.classList.remove("hidden"),n.some(l=>l.approval_mode==="gate")&&(ft=!1);const a=t.querySelector(".ticket-rituals-content");if(!a)return;a.classList.toggle("collapsed",ft);const o=t.querySelector(".section-toggle-icon");o&&o.classList.toggle("rotated",ft);const r=n.some(l=>l.trigger==="ticket_close"),d=n.some(l=>l.trigger==="ticket_claim");let c="⚠️ Complete these rituals:";r&&d?c="⚠️ Pending rituals (claim before starting, close before completing):":d?c="⚠️ Complete these rituals before claiming this ticket:":r&&(c="⚠️ Complete these rituals before closing this ticket:"),a.innerHTML=`
+        `,R()}catch(t){v(`Failed to load issue: ${t.message}`,"error")}}async function hu(e,t){try{const n=document.getElementById("edit-issue-title"),s=document.getElementById("edit-issue-description"),i=document.getElementById("edit-issue-status"),a=document.getElementById("edit-issue-priority"),o=document.getElementById("edit-issue-type"),r=document.getElementById("edit-issue-estimate"),d=document.getElementById("edit-issue-sprint");if(!n||!i||!a||!o)throw new Error("Required form fields not found");const c={title:n.value,description:s?s.value:"",status:i.value,priority:a.value,issue_type:o.value,estimate:r&&r.value?parseInt(r.value):null,sprint_id:d&&d.value?d.value:null};await b.updateIssue(t,c),A(),await F(t),v("Issue updated!","success")}catch(n){v(`Failed to update issue: ${n.message}`,"error")}}async function vu(e){if(confirm("Are you sure you want to delete this issue?"))try{await b.deleteIssue(e),await Tt(),await $e(),C("issues"),v("Issue deleted!","success")}catch(t){v(`Failed to delete issue: ${t.message}`,"error")}}Y({"update-issue":(e,t)=>{hu(e,t.issueId)}});let ft=!0,kn=null,Ei=null,_i=null,ms=null;function Ii(e){return{created:"✨",updated:"✏️",status_changed:"🔄",priority_changed:"⚡",assigned:"👤",unassigned:"👤",commented:"💬",labeled:"🏷️",unlabeled:"🏷️",moved_to_sprint:"🏃",removed_from_sprint:"🏃",doc_created:"📄",doc_updated:"📝",doc_deleted:"🗑️",doc_commented:"💬",ritual_attested:"✅"}[e]||"•"}function xi(e){return e.user_name||e.user_email||"Unknown"}function Ti(e){const t=s=>s?s.replace(/^(IssueStatus\.|IssuePriority\.)/,"").toLowerCase():"",n={status:"status",priority:"priority",assignee_id:"assignee",sprint_id:"sprint",title:"title",description:"description",estimate:"estimate"};switch(e.activity_type){case"created":return"Created issue";case"commented":{const s=e.new_value?g(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"",i=e.new_value?u(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"";return s?`<a href="#comments-section" class="activity-comment-link" title="${i}" data-action="scroll-to-comments">Added a comment</a>`:"Added a comment"}case"status_changed":return`Changed status from <strong>${g(ye(t(e.old_value)))}</strong> to <strong>${g(ye(t(e.new_value)))}</strong>`;case"priority_changed":return`Changed priority from <strong>${g(we(t(e.old_value)))}</strong> to <strong>${g(we(t(e.new_value)))}</strong>`;case"assigned":return"Assigned to someone";case"unassigned":return"Removed assignee";case"moved_to_sprint":return e.sprint_name?`Moved to sprint <strong>${g(e.sprint_name)}</strong>`:"Moved to sprint";case"removed_from_sprint":return e.sprint_name?`Removed from sprint <strong>${g(e.sprint_name)}</strong>`:"Removed from sprint";case"doc_created":return"Created document";case"doc_updated":return"Updated document";case"doc_deleted":return"Deleted document";case"doc_commented":return"Commented on document";case"ritual_attested":{const s=g(e.field_name||"ritual"),i=e.new_value?u(e.new_value.substring(0,200))+(e.new_value.length>200?"...":""):"";return i?`<span class="activity-attestation-link" title="${i}">Attested to <strong>${s}</strong></span>`:`Attested to <strong>${s}</strong>`}case"updated":return e.field_name?`Updated ${n[e.field_name]||g(e.field_name)}`:"Updated issue";default:return e.field_name?`Updated ${n[e.field_name]||g(e.field_name)}`:"Updated issue"}}function Zo(e,t){const n=document.createTreeWalker(e,NodeFilter.SHOW_TEXT,{acceptNode:function(a){let o=a.parentElement;for(;o&&o!==e;){if(o.tagName==="CODE"||o.tagName==="PRE")return NodeFilter.FILTER_REJECT;o=o.parentElement}return NodeFilter.FILTER_ACCEPT}},!1),s=[];let i;for(;i=n.nextNode();)s.push(i);s.forEach(a=>{t(a)})}function bu(e){const t=e.textContent;if(!t)return;const n=/\b([A-Z]{2,10}-\d+)\b/g,s=/(^|\s)@([a-zA-Z0-9._-]+)/g,i=n.test(t),a=s.test(t);if(!i&&!a)return;const o=document.createDocumentFragment();let r=0,d=!1;const c=/\b([A-Z]{2,10}-\d+)\b|(^|\s)@([a-zA-Z0-9._-]+)/g;let l;for(;(l=c.exec(t))!==null;)if(d=!0,l.index>r&&o.appendChild(document.createTextNode(t.slice(r,l.index))),l[1]){const f=l[1],p=document.createElement("a");p.href=`#/issue/${f}`,p.className="issue-link",p.textContent=f,o.appendChild(p),r=l.index+l[0].length}else if(l[3]){l[2]&&o.appendChild(document.createTextNode(l[2]));const f=document.createElement("span");f.className="mention",f.textContent="@"+l[3],o.appendChild(f),r=l.index+l[0].length}d&&(r<t.length&&o.appendChild(document.createTextNode(t.slice(r))),e.parentNode.replaceChild(o,e))}function yu(e){const t=e.textContent;if(!t)return;const n=/\b([A-Z]{2,10}-\d+)\b/g;if(!n.test(t))return;const s=document.createDocumentFragment();let i=0,a=!1;n.lastIndex=0;let o;for(;(o=n.exec(t))!==null;){a=!0,o.index>i&&s.appendChild(document.createTextNode(t.slice(i,o.index)));const r=o[1],d=document.createElement("a");d.href=`#/issue/${r}`,d.className="issue-link",d.textContent=r,s.appendChild(d),i=o.index+o[0].length}a&&(i<t.length&&s.appendChild(document.createTextNode(t.slice(i))),e.parentNode.replaceChild(s,e))}function wu(e){if(!e)return"";const t=Be(e),n=document.createElement("div");return n.innerHTML=t,Zo(n,bu),n.innerHTML}function gs(e){if(!e)return"";const t=Be(e),n=document.createElement("div");return n.innerHTML=t,Zo(n,yu),n.innerHTML}function ku(e){const t=document.getElementById(`${e}-section`);if(!t)return;const n=t.querySelector(".section-collapsible-content"),s=t.querySelector(".section-toggle-icon");n&&n.classList.toggle("collapsed"),s&&s.classList.toggle("rotated")}function $u(){ft=!ft;const e=document.getElementById("ticket-rituals-section");if(!e)return;const t=e.querySelector(".ticket-rituals-content"),n=e.querySelector(".section-toggle-icon");t&&t.classList.toggle("collapsed",ft),n&&n.classList.toggle("rotated",ft)}async function fs(e){try{kn=await b.getTicketRitualsStatus(e),Xo(e)}catch(t){console.error("Failed to load ticket rituals:",t),kn=null}}function Xo(e){const t=document.getElementById("ticket-rituals-section");if(!t)return;if(!kn){t.classList.add("hidden");return}const{pending_rituals:n,completed_rituals:s}=kn;if(n.length===0&&s.length===0){t.classList.add("hidden");return}t.classList.remove("hidden"),n.some(l=>l.approval_mode==="gate")&&(ft=!1);const a=t.querySelector(".ticket-rituals-content");if(!a)return;a.classList.toggle("collapsed",ft);const o=t.querySelector(".section-toggle-icon");o&&o.classList.toggle("rotated",ft);const r=n.some(l=>l.trigger==="ticket_close"),d=n.some(l=>l.trigger==="ticket_claim");let c="⚠️ Complete these rituals:";r&&d?c="⚠️ Pending rituals (claim before starting, close before completing):":d?c="⚠️ Complete these rituals before claiming this ticket:":r&&(c="⚠️ Complete these rituals before closing this ticket:"),a.innerHTML=`
         ${n.length>0?`
             <div class="ticket-rituals-pending">
                 <p class="ticket-rituals-warning">${c}</p>
@@ -979,7 +826,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                             </div>
                         `:""}
                         <div class="ticket-ritual-actions">
-                            ${Mp(l,e)}
+                            ${Cp(l,e)}
                         </div>
                     </div>
                 `).join("")}
@@ -1003,7 +850,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 `).join("")}
             </div>
         `:""}
-    `}async function Fi(e){try{let t;e.includes("-")?t=await b.getIssueByIdentifier(e):t=await b.getIssue(e),t?await F(t.id,!1):C("my-issues",!1)}catch{C("my-issues",!1)}}async function F(e,t=!0){try{ft=!0;const[n,s,i,a,o,r]=await Promise.all([b.getIssue(e),b.getComments(e),b.getActivities(e),b.getSubIssues(e),b.getRelations(e),b.getTicketRitualsStatus(e).catch(()=>({pending_rituals:[],completed_rituals:[]}))]),c=[...r.pending_rituals||[],...r.completed_rituals||[]].filter(w=>w.attestation&&w.attestation.note).map(w=>({id:`attestation-${w.attestation.id}`,author_name:w.attestation.attested_by_name||"Unknown",content:w.attestation.note,created_at:w.attestation.attested_at,is_attestation:!0,ritual_name:w.name,is_pending:!w.attestation.approved_at}));_n=r;const l=[...s,...c].sort((w,Oe)=>new Date(w.created_at)-new Date(Oe.created_at)),f=[n.parent_id?b.getIssue(n.parent_id):Promise.resolve(null),b.getSprints(n.project_id).catch(w=>(console.error("Failed to load sprints:",w),[]))],[p,h]=await Promise.all(f),y=o.filter(w=>w.relation_type==="blocks"&&w.direction==="outgoing"),k=o.filter(w=>w.relation_type==="blocked_by"||w.relation_type==="blocks"&&w.direction==="incoming"),E=o.filter(w=>w.relation_type==="relates_to");t&&history.pushState({issueId:e,view:L()},"",`/issue/${n.identifier}`),is(n),fo(h),document.querySelectorAll(".view").forEach(w=>w.classList.add("hidden"));const T=document.getElementById("issue-detail-view");T.classList.remove("hidden");const j=L()||"my-issues",N=U().find(w=>w.id===n.project_id),B=n.assignee_id?vn(n.assignee_id):null,H=B?Et(B):null,Z=n.sprint_id?h.find(w=>w.id===n.sprint_id):null,q=ke(),J=q.findIndex(w=>w.id===n.id),ie=J>0?q[J-1]:null,X=J>=0&&J<q.length-1?q[J+1]:null,D=J>=0;T.querySelector("#issue-detail-content").innerHTML=`
+    `}async function Si(e){try{let t;e.includes("-")?t=await b.getIssueByIdentifier(e):t=await b.getIssue(e),t?await F(t.id,!1):C("my-issues",!1)}catch{C("my-issues",!1)}}async function F(e,t=!0){try{ft=!0;const[n,s,i,a,o,r]=await Promise.all([b.getIssue(e),b.getComments(e),b.getActivities(e),b.getSubIssues(e),b.getRelations(e),b.getTicketRitualsStatus(e).catch(()=>({pending_rituals:[],completed_rituals:[]}))]),c=[...r.pending_rituals||[],...r.completed_rituals||[]].filter(w=>w.attestation&&w.attestation.note).map(w=>({id:`attestation-${w.attestation.id}`,author_name:w.attestation.attested_by_name||"Unknown",content:w.attestation.note,created_at:w.attestation.attested_at,is_attestation:!0,ritual_name:w.name,is_pending:!w.attestation.approved_at}));kn=r;const l=[...s,...c].sort((w,Oe)=>new Date(w.created_at)-new Date(Oe.created_at)),f=[n.parent_id?b.getIssue(n.parent_id):Promise.resolve(null),b.getSprints(n.project_id).catch(w=>(console.error("Failed to load sprints:",w),[]))],[p,h]=await Promise.all(f),y=o.filter(w=>w.relation_type==="blocks"&&w.direction==="outgoing"),k=o.filter(w=>w.relation_type==="blocked_by"||w.relation_type==="blocks"&&w.direction==="incoming"),E=o.filter(w=>w.relation_type==="relates_to");t&&history.pushState({issueId:e,view:L()},"",`/issue/${n.identifier}`),is(n),fo(h),document.querySelectorAll(".view").forEach(w=>w.classList.add("hidden"));const T=document.getElementById("issue-detail-view");T.classList.remove("hidden");const j=L()||"my-issues",N=U().find(w=>w.id===n.project_id),B=n.assignee_id?vn(n.assignee_id):null,H=B?Et(B):null,Z=n.sprint_id?h.find(w=>w.id===n.sprint_id):null,q=ke(),J=q.findIndex(w=>w.id===n.id),ie=J>0?q[J-1]:null,X=J>=0&&J<q.length-1?q[J+1]:null,D=J>=0;T.querySelector("#issue-detail-content").innerHTML=`
             <div class="issue-detail-layout">
                 <div class="issue-detail-main">
                     <div class="issue-detail-nav">
@@ -1043,7 +890,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                             </button>
                         </div>
                         <div class="description-content markdown-body ${n.description?"":"empty"}"${n.description?"":` data-action="edit-description" data-issue-id="${u(n.id)}"`}>
-                            ${n.description?bs(n.description):'<span class="add-description-link">Add description...</span>'}
+                            ${n.description?gs(n.description):'<span class="add-description-link">Add description...</span>'}
                         </div>
                     </div>
 
@@ -1160,10 +1007,10 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                                 <div class="activity-empty">No activity yet</div>
                             `:i.map(w=>`
                                 <div class="activity-item">
-                                    <div class="activity-icon">${qi(w.activity_type)}</div>
+                                    <div class="activity-icon">${Ii(w.activity_type)}</div>
                                     <div class="activity-content">
-                                        <span class="activity-text">${Hi(w)}</span>
-                                        <span class="activity-actor">by ${g(Oi(w))}</span>
+                                        <span class="activity-text">${Ti(w)}</span>
+                                        <span class="activity-actor">by ${g(xi(w))}</span>
                                         <span class="activity-time">${Ue(w.created_at)}</span>
                                     </div>
                                 </div>
@@ -1192,7 +1039,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                                             ${w.is_attestation?`<span class="comment-ritual-badge">${w.is_pending?"Pending approval — ":""}Ritual: ${g(w.ritual_name)}</span>`:""}
                                             <span class="comment-date">${Ue(w.created_at)}</span>
                                         </div>
-                                        <div class="comment-content markdown-body">${Zu(w.content)}</div>
+                                        <div class="comment-content markdown-body">${wu(w.content)}</div>
                                     </div>
                                 </div>
                             `).join("")}
@@ -1268,7 +1115,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                             <span class="property-label">Estimate</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                                <span>${Ss(n.estimate,n.project_id)}</span>
+                                <span>${_s(n.estimate,n.project_id)}</span>
                             </button>
                         </div>
 
@@ -1309,7 +1156,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     </div>
                 </aside>
             </div>
-        `;const le=document.querySelector(".sidebar-overflow-trigger"),ce=document.querySelector(".overflow-menu-dropdown");if(le&&ce){const w=()=>{ce.classList.add("hidden"),le.setAttribute("aria-expanded","false")},Oe=()=>{const ee=ce.classList.toggle("hidden");le.setAttribute("aria-expanded",String(!ee))};le.addEventListener("click",Oe),document.addEventListener("click",ee=>{!le.contains(ee.target)&&!ce.contains(ee.target)&&w()}),ce.addEventListener("keydown",ee=>{ee.key==="Escape"&&(w(),le.focus())}),ce.querySelectorAll(".overflow-menu-item").forEach(ee=>{ee.addEventListener("click",()=>{const wt=ee.dataset.issueId;w(),ee.dataset.action==="edit"?ir(wt):ee.dataset.action==="delete"&&Vu(wt)})})}or(n.id),Ru();const Te=document.getElementById("new-comment");if(Te){const w=jc(n.id);w&&(Te.value=w),Te.addEventListener("input",()=>{oi(n.id,Te.value)}),Te.addEventListener("keydown",Oe=>{var ee;Oe.key==="Enter"&&(Oe.metaKey||Oe.ctrlKey)&&(Oe.preventDefault(),(ee=Te.closest("form"))==null||ee.requestSubmit())})}Pi=ie?ie.id:null,Ni=X?X.id:null,vs&&document.removeEventListener("keydown",vs),vs=w=>{if(w.metaKey||w.ctrlKey||w.altKey||document.getElementById("issue-detail-view").classList.contains("hidden")||w.target.tagName==="INPUT"||w.target.tagName==="TEXTAREA"||w.target.tagName==="SELECT"||w.target.isContentEditable||document.querySelector(".modal-overlay:not(.hidden)")||document.querySelector(".description-inline-editor"))return;w.key==="ArrowLeft"&&Pi?(w.preventDefault(),F(Pi)):w.key==="ArrowRight"&&Ni&&(w.preventDefault(),F(Ni));const ee={s:"status",p:"priority",a:"assignee",l:"labels",e:"estimate",t:"type"}[w.key];if(ee){const wt=document.querySelector(`.property-row[data-field="${ee}"]`);wt&&(w.preventDefault(),wt.click())}},document.addEventListener("keydown",vs)}catch(n){v(`Failed to load issue: ${n.message}`,"error")}}async function Ju(e,t){e.preventDefault();const n=document.getElementById("new-comment").value;oi(t,null);try{await b.createComment(t,n),await F(t),v("Comment added!","success")}catch(s){oi(t,n),v(`Failed to add comment: ${s.message}`,"error")}return!1}async function ep(e){const t=he()||await b.getIssue(e),n=document.querySelector(".issue-detail-description");if(!n||n.querySelector(".description-inline-editor"))return;const s=n.querySelector(".section-header");s&&(s.style.display="none");const i=n.querySelector(".description-content");if(!i)return;i.innerHTML=`
+        `;const le=document.querySelector(".sidebar-overflow-trigger"),ce=document.querySelector(".overflow-menu-dropdown");if(le&&ce){const w=()=>{ce.classList.add("hidden"),le.setAttribute("aria-expanded","false")},Oe=()=>{const ee=ce.classList.toggle("hidden");le.setAttribute("aria-expanded",String(!ee))};le.addEventListener("click",Oe),document.addEventListener("click",ee=>{!le.contains(ee.target)&&!ce.contains(ee.target)&&w()}),ce.addEventListener("keydown",ee=>{ee.key==="Escape"&&(w(),le.focus())}),ce.querySelectorAll(".overflow-menu-item").forEach(ee=>{ee.addEventListener("click",()=>{const wt=ee.dataset.issueId;w(),ee.dataset.action==="edit"?Yo(wt):ee.dataset.action==="delete"&&vu(wt)})})}Xo(n.id),ou();const Te=document.getElementById("new-comment");if(Te){const w=jc(n.id);w&&(Te.value=w),Te.addEventListener("input",()=>{oi(n.id,Te.value)}),Te.addEventListener("keydown",Oe=>{var ee;Oe.key==="Enter"&&(Oe.metaKey||Oe.ctrlKey)&&(Oe.preventDefault(),(ee=Te.closest("form"))==null||ee.requestSubmit())})}Ei=ie?ie.id:null,_i=X?X.id:null,ms&&document.removeEventListener("keydown",ms),ms=w=>{if(w.metaKey||w.ctrlKey||w.altKey||document.getElementById("issue-detail-view").classList.contains("hidden")||w.target.tagName==="INPUT"||w.target.tagName==="TEXTAREA"||w.target.tagName==="SELECT"||w.target.isContentEditable||document.querySelector(".modal-overlay:not(.hidden)")||document.querySelector(".description-inline-editor"))return;w.key==="ArrowLeft"&&Ei?(w.preventDefault(),F(Ei)):w.key==="ArrowRight"&&_i&&(w.preventDefault(),F(_i));const ee={s:"status",p:"priority",a:"assignee",l:"labels",e:"estimate",t:"type"}[w.key];if(ee){const wt=document.querySelector(`.property-row[data-field="${ee}"]`);wt&&(w.preventDefault(),wt.click())}},document.addEventListener("keydown",ms)}catch(n){v(`Failed to load issue: ${n.message}`,"error")}}async function Eu(e,t){e.preventDefault();const n=document.getElementById("new-comment").value;oi(t,null);try{await b.createComment(t,n),await F(t),v("Comment added!","success")}catch(s){oi(t,n),v(`Failed to add comment: ${s.message}`,"error")}return!1}async function _u(e){const t=he()||await b.getIssue(e),n=document.querySelector(".issue-detail-description");if(!n||n.querySelector(".description-inline-editor"))return;const s=n.querySelector(".section-header");s&&(s.style.display="none");const i=n.querySelector(".description-content");if(!i)return;i.innerHTML=`
         <div class="description-inline-editor">
             <div class="editor-tabs">
                 <button type="button" class="editor-tab active" id="edit-description-tab-write" data-action="set-description-editor-mode" data-mode="write">Write</button>
@@ -1322,7 +1169,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <button type="button" class="btn btn-primary btn-sm" id="save-description-edit">Save</button>
             </div>
         </div>
-    `,i.classList.remove("empty"),i.removeAttribute("onclick");const a=document.getElementById("edit-description"),o=Mc(e);o&&(a.value=o),a.addEventListener("input",()=>{const r=a.value;r!==(t.description||"")?es(e,r):es(e,null);const d=document.getElementById("edit-description-preview");d&&d.style.display!=="none"&&rr()}),a.addEventListener("keydown",r=>{var d,c;r.key==="Enter"&&(r.metaKey||r.ctrlKey)&&(r.preventDefault(),(d=document.getElementById("save-description-edit"))==null||d.click()),r.key==="Escape"&&(r.preventDefault(),(c=document.getElementById("cancel-description-edit"))==null||c.click())}),a.focus(),document.getElementById("cancel-description-edit").addEventListener("click",()=>{es(e,null),s&&(s.style.display=""),i.className=`description-content markdown-body ${t.description?"":"empty"}`,t.description||(i.setAttribute("data-action","edit-description"),i.setAttribute("data-issue-id",t.id)),i.innerHTML=t.description?bs(t.description):'<span class="add-description-link">Add description...</span>'}),document.getElementById("save-description-edit").addEventListener("click",async()=>{var d;const r=(d=document.getElementById("edit-description"))==null?void 0:d.value;if(r!==void 0)try{await b.updateIssue(e,{description:r}),es(e,null),v("Description updated","success"),F(e,!1)}catch(c){v(`Failed to update description: ${c.message}`,"error")}})}function rr(){const e=document.getElementById("edit-description"),t=document.getElementById("edit-description-preview");if(!e||!t)return;const n=e.value.trim();t.innerHTML=n?bs(n):'<span class="text-muted">Nothing to preview.</span>'}function tp(e){const t=document.getElementById("edit-description-tab-write"),n=document.getElementById("edit-description-tab-preview"),s=document.getElementById("edit-description"),i=document.getElementById("edit-description-preview");if(!t||!n||!s||!i)return;const a=e==="preview";t.classList.toggle("active",!a),n.classList.toggle("active",a),s.style.display=a?"none":"block",i.style.display=a?"block":"none",a?rr():s.focus()}function np(e){document.getElementById("modal-title").textContent="Add Relation",document.getElementById("modal-content").innerHTML=`
+    `,i.classList.remove("empty"),i.removeAttribute("onclick");const a=document.getElementById("edit-description"),o=Mc(e);o&&(a.value=o),a.addEventListener("input",()=>{const r=a.value;r!==(t.description||"")?es(e,r):es(e,null);const d=document.getElementById("edit-description-preview");d&&d.style.display!=="none"&&Qo()}),a.addEventListener("keydown",r=>{var d,c;r.key==="Enter"&&(r.metaKey||r.ctrlKey)&&(r.preventDefault(),(d=document.getElementById("save-description-edit"))==null||d.click()),r.key==="Escape"&&(r.preventDefault(),(c=document.getElementById("cancel-description-edit"))==null||c.click())}),a.focus(),document.getElementById("cancel-description-edit").addEventListener("click",()=>{es(e,null),s&&(s.style.display=""),i.className=`description-content markdown-body ${t.description?"":"empty"}`,t.description||(i.setAttribute("data-action","edit-description"),i.setAttribute("data-issue-id",t.id)),i.innerHTML=t.description?gs(t.description):'<span class="add-description-link">Add description...</span>'}),document.getElementById("save-description-edit").addEventListener("click",async()=>{var d;const r=(d=document.getElementById("edit-description"))==null?void 0:d.value;if(r!==void 0)try{await b.updateIssue(e,{description:r}),es(e,null),v("Description updated","success"),F(e,!1)}catch(c){v(`Failed to update description: ${c.message}`,"error")}})}function Qo(){const e=document.getElementById("edit-description"),t=document.getElementById("edit-description-preview");if(!e||!t)return;const n=e.value.trim();t.innerHTML=n?gs(n):'<span class="text-muted">Nothing to preview.</span>'}function Iu(e){const t=document.getElementById("edit-description-tab-write"),n=document.getElementById("edit-description-tab-preview"),s=document.getElementById("edit-description"),i=document.getElementById("edit-description-preview");if(!t||!n||!s||!i)return;const a=e==="preview";t.classList.toggle("active",!a),n.classList.toggle("active",a),s.style.display=a?"none":"block",i.style.display=a?"block":"none",a?Qo():s.focus()}function xu(e){document.getElementById("modal-title").textContent="Add Relation",document.getElementById("modal-content").innerHTML=`
         <form data-action="handle-add-relation" data-issue-id="${u(e)}">
             <div class="form-group">
                 <label for="relation-type">Relation Type</label>
@@ -1347,790 +1194,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             </div>
             <button type="submit" class="btn btn-primary" id="add-relation-btn" disabled>Add Relation</button>
         </form>
-    `,R(),document.getElementById("relation-issue-search").focus()}async function sp(e,t){var s;const n=document.getElementById("relation-search-results");if(!e||e.length<2){n.innerHTML='<p class="empty-state-small">Enter a search term to find issues</p>';return}try{const i=(s=x())==null?void 0:s.id,o=(await b.searchIssues(i,e)).filter(r=>r.id!==t);if(o.length===0){n.innerHTML='<p class="empty-state-small">No issues found</p>';return}n.innerHTML=o.map(r=>`
+    `,R(),document.getElementById("relation-issue-search").focus()}async function Tu(e,t){var s;const n=document.getElementById("relation-search-results");if(!e||e.length<2){n.innerHTML='<p class="empty-state-small">Enter a search term to find issues</p>';return}try{const i=(s=x())==null?void 0:s.id,o=(await b.searchIssues(i,e)).filter(r=>r.id!==t);if(o.length===0){n.innerHTML='<p class="empty-state-small">No issues found</p>';return}n.innerHTML=o.map(r=>`
             <div class="link-result-item" data-action="select-issue-for-relation" data-issue-id="${u(r.id)}" data-identifier="${u(r.identifier)}" data-title="${u(r.title)}">
                 <span class="link-result-id">${g(r.identifier)}</span>
                 <span class="link-result-title">${g(r.title)}</span>
             </div>
-        `).join("")}catch{n.innerHTML='<p class="empty-state-small error">Error searching issues</p>'}}function ip(e,t,n){document.getElementById("selected-related-issue-id").value=e,document.getElementById("selected-issue-info").textContent=`${t}: ${n}`,document.getElementById("selected-issue-display").style.display="flex",document.getElementById("relation-search-results").style.display="none",document.getElementById("relation-issue-search").value=t,document.getElementById("add-relation-btn").disabled=!1}function ap(){document.getElementById("selected-related-issue-id").value="",document.getElementById("selected-issue-display").style.display="none",document.getElementById("relation-search-results").style.display="block",document.getElementById("relation-issue-search").value="",document.getElementById("add-relation-btn").disabled=!0,document.getElementById("relation-issue-search").focus()}async function op(e,t){e.preventDefault();const n=document.getElementById("relation-type").value,s=document.getElementById("selected-related-issue-id").value;if(!s)return v("Please select an issue","error"),!1;try{n==="blocked_by"?await b.createRelation(s,t,"blocks"):await b.createRelation(t,s,n),A(),v("Relation added","success"),F(t)}catch(i){v(`Failed to add relation: ${i.message}`,"error")}return!1}async function rp(e,t){try{await b.deleteRelation(e,t),v("Relation removed","success"),F(e)}catch(n){v(`Failed to remove relation: ${n.message}`,"error")}}Y({"show-detail-dropdown":(e,t,n)=>{Iu(e,t.dropdownType,t.issueId,n)},"edit-description":(e,t)=>{ep(t.issueId)},"toggle-section":(e,t)=>{Xu(t.section)},"toggle-ticket-rituals":()=>{Qu()},"save-comment":(e,t)=>{Ju(e,t.issueId)},"show-add-relation-modal":(e,t)=>{np(t.issueId)},"remove-relation":(e,t)=>{e.stopPropagation(),rp(t.issueId,t.relationId)},"show-create-sub-issue-modal":(e,t)=>{qu(t.issueId,t.projectId)},"handle-add-relation":(e,t)=>{op(e,t.issueId)},"search-issues-to-relate":(e,t,n)=>{sp(n.value,t.issueId)},"select-issue-for-relation":(e,t)=>{ip(t.issueId,t.identifier,t.title)},"clear-selected-relation":()=>{ap()},"set-description-editor-mode":(e,t)=>{tp(t.mode)},"scroll-to-comments":e=>{var t;e.preventDefault(),(t=document.getElementById("comments-section"))==null||t.scrollIntoView({behavior:"smooth"})}});let Ht=[],ws={},ks=new Set,st=null,lr=null,Ui=[],In=[],zi=[];function cr(){return ws}function lp(){return st}function dr(){const e=document.getElementById("sprint-project-filter");if(e){if(!e.value){const t=Dt();t&&U().some(n=>n.id===t)&&(e.value=t)}e.value?ht(e.value):document.getElementById("sprints-list").innerHTML=`
-            <div class="empty-state">
-                <h3>Select a project</h3>
-                <p>Choose a project to view its sprints</p>
-            </div>
-        `}}function cp(){const e=document.getElementById("sprint-project-filter").value;e&&(Ft(e),di(e)),ht(e)}async function ht(e){const t=e||document.getElementById("sprint-project-filter").value;if(t){Ip();try{await b.getCurrentSprint(t),Ht=await b.getSprints(t),dp(),await $s()}catch(n){v(n.message,"error")}}}function dp(){const e=document.getElementById("sprints-list");if(!e)return;const t=Ht.find(a=>a.status==="active"),n=Ht.find(a=>a.status==="planned"),s=Ht.filter(a=>a.status==="completed");let i="";if(t){const a=t.budget?`${t.points_spent||0} / ${t.budget} points`:"No budget set",o=t.budget&&(t.points_spent||0)>t.budget;i+=`
-            <div class="sprint-card sprint-now ${t.limbo?"sprint-limbo":""} ${o?"sprint-arrears":""}"
-                 data-action="view-sprint" data-sprint-id="${u(t.id)}" data-sprint-url="/sprint/${u(t.id)}" style="cursor: pointer;">
-                <div class="sprint-card-header">
-                    <div class="sprint-card-label">NOW</div>
-                    ${t.limbo?'<span class="badge badge-limbo">IN LIMBO</span>':""}
-                    ${o?'<span class="badge badge-arrears">IN ARREARS</span>':""}
-                </div>
-                <div class="sprint-card-title">${g(t.name)}</div>
-                <div class="sprint-card-budget ${o?"budget-arrears":""}">
-                    ${a}
-                </div>
-                <div class="sprint-card-actions" data-action="stop-propagation">
-                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${u(t.id)}" data-sprint-name="${u(t.name)}" data-budget="${t.budget||""}" data-project-id="${u(t.project_id)}">Edit Budget</button>
-                    ${t.limbo?`
-                        <button class="btn btn-primary btn-small" data-action="show-limbo-details-modal">View Rituals</button>
-                    `:`
-                        <button class="btn btn-primary btn-small" data-action="show-close-sprint-confirmation" data-sprint-id="${u(t.id)}">Close Sprint</button>
-                    `}
-                </div>
-            </div>
-        `,i+=up(t)}if(n){const a=n.budget?`${n.budget} point budget`:"No budget set";i+=`
-            <div class="sprint-card sprint-next" data-action="view-sprint" data-sprint-id="${u(n.id)}" data-sprint-url="/sprint/${u(n.id)}" style="cursor: pointer;">
-                <div class="sprint-card-header">
-                    <div class="sprint-card-label">NEXT</div>
-                </div>
-                <div class="sprint-card-title">${g(n.name)}</div>
-                <div class="sprint-card-budget">${a}</div>
-                <div class="sprint-card-actions" data-action="stop-propagation">
-                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${u(n.id)}" data-sprint-name="${u(n.name)}" data-budget="${n.budget||""}" data-project-id="${u(n.project_id)}">Edit Budget</button>
-                </div>
-            </div>
-        `}s.length>0&&(i+=`
-            <details class="sprint-history">
-                <summary>Completed Sprints (${s.length})</summary>
-                <div class="sprint-history-list">
-                    ${s.map(a=>`
-                        <div class="sprint-history-item" data-action="view-sprint" data-sprint-id="${u(a.id)}" data-sprint-url="/sprint/${u(a.id)}" style="cursor: pointer;">
-                            <span class="sprint-history-name">${g(a.name)}</span>
-                            <span class="sprint-history-budget">${a.points_spent||0}${a.budget?` / ${a.budget}`:""} pts</span>
-                        </div>
-                    `).join("")}
-                </div>
-            </details>
-        `),e.innerHTML=i||`
-        <div class="empty-state">
-            <h3>No sprints yet</h3>
-            <p>Sprints are created automatically when you close the current one, or you can create one from the project settings.</p>
-        </div>
-    `}function up(e){const t=e.start_date&&e.end_date,n=e.budget!==null&&e.budget!==void 0;if(!t||!n)return`
-            <div class="sprint-burndown-card">
-                <div class="sprint-burndown-header">
-                    <h4>Burndown</h4>
-                    <span class="text-muted">Set sprint dates and budget to see burndown</span>
-                </div>
-            </div>
-        `;const s=e.budget,i=e.points_spent||0,a=Math.max(s-i,0),o=new Date(e.start_date),r=new Date(e.end_date),l=((q,J,ie)=>Math.min(Math.max(q,J),ie))((new Date-o)/(r-o),0,1),f=360,p=120,h=16,y=h,k=f-h,E=h,T=p-h,j=q=>s===0?T:E+(1-q/s)*(T-E),N=j(s),B=j(0),H=y+(k-y)*l,Z=j(a);return`
-        <div class="sprint-burndown-card">
-            <div class="sprint-burndown-header">
-                <h4>Burndown</h4>
-                <div class="sprint-burndown-meta">
-                    <span>${Es(e.start_date)} → ${Es(e.end_date)}</span>
-                    <span>${a} of ${s} pts remaining</span>
-                </div>
-            </div>
-            <svg viewBox="0 0 ${f} ${p}" class="sprint-burndown-chart" role="img" aria-label="Sprint burndown chart">
-                <line x1="${y}" y1="${N}" x2="${k}" y2="${B}" class="burndown-ideal" />
-                <line x1="${y}" y1="${N}" x2="${H}" y2="${Z}" class="burndown-actual" />
-                <circle cx="${H}" cy="${Z}" r="4" class="burndown-actual-point" />
-            </svg>
-        </div>
-    `}async function Gi(e,t=!0){var n;try{const s=await b.getSprint(e);if(!s){v("Sprint not found","error"),C("sprints");return}lr=s;const i=(n=x())==null?void 0:n.id,[a,o,r]=await Promise.all([b.getIssues({sprint_id:e,limit:500}),b.getSprintTransactions(e).catch(()=>[]),i?b.getDocuments(i,s.project_id,null,e).catch(()=>[]):[]]);Ui=a,zi=o,In=r,t&&history.pushState({sprintId:e,view:"sprint"},"",`/sprint/${e}`),mp()}catch(s){console.error("Failed to load sprint:",s),v("Failed to load sprint","error"),C("sprints")}}async function pp(e){if(!e||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e)){v("Invalid sprint ID","error"),C("sprints",!1);return}try{await Gi(e,!1)}catch{C("sprints",!1)}}function mp(){const e=lr,t=Ui;document.querySelectorAll(".view").forEach(l=>l.classList.add("hidden"));let n=document.getElementById("sprint-detail-view");n||(n=document.createElement("div"),n.id="sprint-detail-view",n.className="view",document.querySelector(".main-content").appendChild(n)),n.classList.remove("hidden");const s=["backlog","todo","in_progress","in_review"],i=t.filter(l=>s.includes(l.status)),a=t.filter(l=>l.status==="done"),o=t.reduce((l,f)=>l+(f.estimate||0),0),r=a.reduce((l,f)=>l+(f.estimate||0),0);let d="";e.status==="active"?d='<span class="badge badge-status-active">Active</span>':e.status==="planned"?d='<span class="badge badge-status-planned">Planned</span>':e.status==="completed"&&(d='<span class="badge badge-status-completed">Completed</span>');const c=e.budget?`${e.points_spent||0} / ${e.budget} points`:`${e.points_spent||0} points spent`;n.innerHTML=`
-        <div class="sprint-detail-header">
-            <div class="sprint-detail-nav">
-                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="sprints">
-                    ← Back to Sprints
-                </button>
-            </div>
-            <div class="sprint-detail-title-row">
-                <h2>${g(e.name)}</h2>
-                ${d}
-                ${e.limbo?'<span class="badge badge-limbo">IN LIMBO</span>':""}
-            </div>
-            ${e.start_date&&e.end_date?`
-                <div class="sprint-detail-dates">
-                    ${Es(e.start_date)} → ${Es(e.end_date)}
-                </div>
-            `:""}
-        </div>
-
-        <div class="sprint-detail-stats">
-            <div class="stat-card">
-                <div class="stat-value">${i.length}</div>
-                <div class="stat-label">Open Issues</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${a.length}</div>
-                <div class="stat-label">Completed</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${c}</div>
-                <div class="stat-label">Budget</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${r} / ${o}</div>
-                <div class="stat-label">Points Done</div>
-            </div>
-        </div>
-
-        <div class="sprint-detail-sections">
-            <div class="sprint-detail-section">
-                <h3>Open Issues (${i.length})</h3>
-                ${i.length===0?`
-                    <div class="empty-state-small">No open issues in this sprint</div>
-                `:`
-                    <div class="sprint-issues-list">
-                        ${i.map(l=>ur(l)).join("")}
-                    </div>
-                `}
-            </div>
-
-            <details class="sprint-detail-section" ${a.length>0?"open":""}>
-                <summary><h3>Completed Issues (${a.length})</h3></summary>
-                ${a.length===0?`
-                    <div class="empty-state-small">No completed issues yet</div>
-                `:`
-                    <div class="sprint-issues-list">
-                        ${a.map(l=>ur(l)).join("")}
-                    </div>
-                `}
-            </details>
-
-            <div class="sprint-detail-section sprint-budget-section">
-                <h3>Budget Ledger</h3>
-                ${fp()}
-            </div>
-
-            ${In.length>0?`
-            <div class="sprint-detail-section">
-                <h3>Documents (${In.length})</h3>
-                <div class="sprint-issues-list">
-                    ${In.map(l=>gp(l)).join("")}
-                </div>
-            </div>
-            `:""}
-        </div>
-    `}function ur(e){const t=["urgent","high","medium","low"],n=["backlog","todo","in_progress","in_review","done"],s=t.includes(e.priority)?e.priority:"",i=n.includes(e.status)?e.status:"backlog",a=s?`badge-priority-${s}`:"",o=`status-dot-${i}`;return`
-        <div class="sprint-issue-row" data-action="navigate-sprint-issue" data-issue-id="${u(e.id)}" data-issue-url="/issue/${encodeURIComponent(e.identifier)}">
-            <span class="status-dot ${o}"></span>
-            <span class="sprint-issue-identifier">${g(e.identifier)}</span>
-            <span class="sprint-issue-title">${g(e.title)}</span>
-            <span class="sprint-issue-meta">
-                ${s?`<span class="badge ${a}">${Tp(s)}</span>`:""}
-                ${e.estimate?`<span class="badge badge-estimate">${e.estimate}pt</span>`:""}
-            </span>
-        </div>
-    `}function gp(e){const t=g(e.icon)||"📄";return`
-        <div class="sprint-issue-row" data-action="navigate-sprint-document" data-document-id="${u(e.id)}" data-document-url="/document/${u(encodeURIComponent(e.id))}">
-            <span class="sprint-issue-identifier">${t}</span>
-            <span class="sprint-issue-title">${g(e.title||"Untitled")}</span>
-            <span class="sprint-issue-meta">
-                <span class="text-muted">${Ue(e.created_at)}</span>
-            </span>
-        </div>
-    `}function fp(){const e=zi;if(!e||e.length===0)return`
-            <div class="empty-state-small">
-                <p>No budget transactions yet. Points are recorded when issues are marked done.</p>
-            </div>
-        `;const t=e.reduce((n,s)=>n+s.points,0);return`
-        <div class="budget-ledger">
-            <div class="budget-ledger-header">
-                <span class="text-muted">${e.length} transaction${e.length===1?"":"s"}</span>
-                <span class="budget-ledger-total">${t} points total</span>
-            </div>
-            <div class="budget-ledger-list">
-                ${e.map(n=>`
-                    <div class="budget-ledger-item">
-                        <div class="ledger-item-info">
-                            <span class="ledger-item-identifier">${g(n.issue_identifier)}</span>
-                            <span class="ledger-item-title">${g(n.issue_title)}</span>
-                        </div>
-                        <div class="ledger-item-meta">
-                            <span class="ledger-item-points">-${n.points} pt</span>
-                            <span class="ledger-item-date">${hp(n.created_at)}</span>
-                        </div>
-                    </div>
-                `).join("")}
-            </div>
-        </div>
-    `}function hp(e){return e?new Date(e).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}function vp(e,t,n,s){const i=s?Xp(s):"";document.getElementById("modal-title").textContent=`Edit Sprint: ${t}`,document.getElementById("modal-content").innerHTML=`
-        <form data-action="handle-update-budget" data-sprint-id="${u(e)}" data-project-id="${u(s)}">
-            <div class="form-group">
-                <label for="sprint-budget">Point Budget</label>
-                <input type="number" id="sprint-budget" min="1" value="${n||""}" placeholder="Leave empty for unlimited">
-                <small class="form-hint">Set a point budget to track velocity. When exceeded, sprint enters arrears.</small>
-                ${i?`<small class="form-hint">${g(i)}</small>`:""}
-            </div>
-            <div class="form-group">
-                <label>Apply to:</label>
-                <div class="radio-group">
-                    <label class="radio-label">
-                        <input type="radio" name="budget-scope" value="this" checked>
-                        This sprint only
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="budget-scope" value="planned">
-                        This sprint + planned sprints
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="budget-scope" value="default">
-                        Also set as project default
-                    </label>
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary">Save Budget</button>
-        </form>
-    `,R()}async function bp(e,t,n){var o;e.preventDefault();const s=document.getElementById("sprint-budget").value,i=s?parseInt(s):null,a=((o=document.querySelector('input[name="budget-scope"]:checked'))==null?void 0:o.value)||"this";try{if(await b.updateSprint(t,{budget:i}),a==="planned"||a==="default"){const d=Ht.filter(c=>c.status==="planned"&&c.id!==t);for(const c of d)await b.updateSprint(c.id,{budget:i})}a==="default"&&n&&await b.updateProject(n,{default_sprint_budget:i}),await ht(),A(),v(`Budget updated${a==="planned"?" (and planned sprints)":a==="default"?" (and set as project default)":""}!`,"success")}catch(r){v(`Failed to update budget: ${r.message}`,"error")}return!1}async function yp(e){const t=Ht.find(d=>d.id===e);if(!t)return;document.getElementById("modal-title").textContent="Close Sprint",document.getElementById("modal-content").innerHTML=`
-        <div style="text-align: center; padding: 12px 0;">
-            <p style="color: var(--text-secondary); margin-bottom: 16px;">Loading sprint details...</p>
-        </div>
-    `,R();const n=["backlog","todo","in_progress","in_review"];let s=0,i=!1,a=!1;try{const[d,c]=await Promise.all([b.getIssues({sprint_id:e,limit:500}),b.getRituals(t.project_id)]);s=d.filter(l=>n.includes(l.status)).length,i=c.some(l=>l.is_active&&l.trigger==="every_sprint")}catch(d){console.error("Failed to load sprint details:",d),a=!0}const o=t.points_spent||0,r=t.budget!==null&&t.budget!==void 0?`<strong>${o}</strong> / <strong>${t.budget}</strong> points spent`:`<strong>${o}</strong> points spent (no budget)`;document.getElementById("modal-content").innerHTML=`
-        <div class="close-sprint-confirmation">
-            <div class="info-box" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; margin-bottom: 16px;">
-                <p style="margin-bottom: 8px; font-size: 14px;"><strong>${g(t.name)}</strong></p>
-                <p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);">${r}</p>
-                ${a?'<p style="margin-bottom: 4px; font-size: 13px; color: var(--warning-color, #f59e0b);">Could not load issue details</p>':s>0?`<p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);"><strong>${s}</strong> incomplete issue${s===1?"":"s"} will migrate to next sprint</p>`:'<p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);">No incomplete issues</p>'}
-                ${i?'<p style="margin-top: 8px; font-size: 13px; color: var(--accent-color);">Sprint will enter <strong>limbo</strong> until rituals are attested</p>':""}
-            </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="btn btn-secondary" data-action="close-modal">Cancel</button>
-                <button class="btn btn-primary" data-action="confirm-close-sprint" data-sprint-id="${u(e)}">Close Sprint</button>
-            </div>
-        </div>
-    `}async function wp(e){try{const t=await b.closeSprint(e);await ht(),t.limbo?$p(t):v("Sprint completed!","success")}catch(t){v(`Failed to complete sprint: ${t.message}`,"error")}}async function $s(){var t;const e=(t=document.getElementById("sprint-project-filter"))==null?void 0:t.value;if(e)try{st=await b.getLimboStatus(e),kp()}catch(n){console.error("Failed to load limbo status:",n)}}function kp(){const e=document.getElementById("limbo-banner");if(e&&e.remove(),!st||!st.in_limbo)return;const t=document.createElement("div");t.id="limbo-banner",t.className="limbo-banner",t.innerHTML=`
-        <div class="limbo-banner-content">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-            <span><strong>Sprint in Limbo</strong> - ${st.pending_rituals.length} ritual(s) pending</span>
-            <button class="btn btn-small" data-action="show-limbo-details-modal">View Details</button>
-        </div>
-    `;const n=document.querySelector(".main-content");n&&n.insertBefore(t,n.firstChild)}function $p(e){const t=document.getElementById("sprint-project-filter").value;document.getElementById("modal-title").textContent="Sprint In Limbo",document.getElementById("modal-content").innerHTML=`
-        <div class="limbo-modal">
-            <div class="limbo-alert">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="12"></line>
-                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-                <div>
-                    <strong>Sprint "${g(e.name)}" is now in limbo.</strong>
-                    <p>Complete all pending rituals to activate the next sprint.</p>
-                </div>
-            </div>
-            <div id="limbo-rituals-list" class="limbo-rituals">
-                <p class="loading">Loading rituals...</p>
-            </div>
-            <button type="button" class="btn btn-primary" data-action="dismiss-limbo-modal">Got it</button>
-        </div>
-    `,R(),Ep(t)}async function Ep(e){try{const t=await b.getLimboStatus(e),n=document.getElementById("limbo-rituals-list");if(!n)return;if(t.pending_rituals.length===0){n.innerHTML="<p>No pending rituals.</p>";return}n.innerHTML=t.pending_rituals.map(s=>`
-            <div class="limbo-ritual-item">
-                <div class="ritual-status">
-                    ${s.attestation?s.attestation.approved_at?'<span class="ritual-done">✓</span>':'<span class="ritual-pending">⏳</span>':'<span class="ritual-todo">○</span>'}
-                </div>
-                <div class="ritual-info">
-                    <div class="ritual-name">${g(s.name)} <span class="ritual-mode">(${g(s.approval_mode)})</span></div>
-                    <div class="ritual-prompt markdown-body">${Be(s.prompt)}</div>
-                    ${Vi(s.attestation)}
-                </div>
-            </div>
-        `).join("")}catch(t){console.error("Failed to load limbo rituals:",t)}}function Wi(){var t,n,s,i;if(!st)return;const e=((t=document.getElementById("sprint-project-filter"))==null?void 0:t.value)||((n=document.getElementById("ritual-project-filter"))==null?void 0:n.value);document.getElementById("modal-title").textContent="Limbo Status",(s=document.querySelector(".modal"))==null||s.classList.add("modal-wide"),document.getElementById("modal-content").innerHTML=`
-        <div class="limbo-details">
-            <p>Complete all pending rituals to exit limbo and activate the next sprint.</p>
-            <div class="limbo-rituals-detail">
-                ${st.pending_rituals.map(a=>`
-                    <div class="limbo-ritual-detail-item">
-                        <div class="ritual-header">
-                            <span class="ritual-status-icon">
-                                ${a.attestation?a.attestation.approved_at?"✓":"⏳":"○"}
-                            </span>
-                            <strong>${g(a.name)}</strong>
-                            <span class="badge badge-ritual-${u(a.approval_mode)}">${g(a.approval_mode)}</span>
-                        </div>
-                        <div class="ritual-prompt markdown-body">${Be(a.prompt)}</div>
-                        ${Vi(a.attestation)}
-                        ${_p(a,e)}
-                    </div>
-                `).join("")}
-            </div>
-            ${((i=st.completed_rituals)==null?void 0:i.length)>0?`
-                <h4>Completed</h4>
-                <div class="completed-rituals">
-                    ${st.completed_rituals.map(a=>`
-                        <div class="completed-ritual">
-                            <div class="completed-ritual-header">✓ ${g(a.name)}</div>
-                            ${Vi(a.attestation)}
-                        </div>
-                    `).join("")}
-                </div>
-            `:""}
-        </div>
-    `,R()}function Vi(e){return!e||!e.note?"":`
-        <div class="ritual-attestation-note">
-            <div class="attestation-note-header">
-                <span class="attestation-by">${g(e.attested_by_name||"Unknown")}</span>
-                ${e.attested_at?`<span class="attestation-time">${g(Ue(e.attested_at))}</span>`:""}
-            </div>
-            <div class="attestation-note-content markdown-body">${Be(e.note)}</div>
-        </div>
-    `}function _p(e,t){return e.attestation&&e.attestation.approved_at?'<div class="ritual-actions"><span class="text-success">Completed</span></div>':e.attestation&&!e.attestation.approved_at?`
-            <div class="ritual-actions">
-                <span class="text-warning">Pending approval</span>
-                <button class="btn btn-small btn-primary" data-action="approve-ritual" data-ritual-id="${u(e.id)}" data-project-id="${u(t)}">Approve</button>
-            </div>
-        `:e.approval_mode==="gate"?`
-            <div class="ritual-actions">
-                <button class="btn btn-small btn-primary" data-action="complete-gate-ritual" data-ritual-id="${u(e.id)}" data-project-id="${u(t)}" data-ritual-name="${u(e.name)}">Complete</button>
-            </div>
-        `:'<div class="ritual-actions"><span class="text-muted">Awaiting agent attestation</span></div>'}async function pr(e){for(const t of e)if(!ks.has(t))try{(await b.getSprints(t)).forEach(s=>{ws[s.id]=s}),ks.add(t)}catch(n){console.error("Failed to load sprints for project",t,n)}}function Ip(){ws={},ks=new Set,Ui=[],zi=[],In=[]}function xp(e,t){t.forEach(n=>{ws[n.id]=n}),ks.add(e)}Y({"view-sprint":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.sprintUrl,"_blank");return}Gi(t.sprintId)},"stop-propagation":e=>{e.stopPropagation()},"show-edit-budget-modal":(e,t)=>{e.stopPropagation();const n=t.budget?parseFloat(t.budget):null;vp(t.sprintId,t.sprintName,n,t.projectId)},"show-limbo-details-modal":e=>{e.stopPropagation(),Wi()},"show-close-sprint-confirmation":(e,t)=>{e.stopPropagation(),yp(t.sprintId)},"handle-update-budget":(e,t)=>{bp(e,t.sprintId,t.projectId)},"close-modal":()=>{A()},"confirm-close-sprint":(e,t,n)=>{n.disabled=!0,A(),wp(t.sprintId)},"dismiss-limbo-modal":()=>{A(),$s()},"approve-ritual":(e,t)=>{Ap(t.ritualId,t.projectId)},"complete-gate-ritual":(e,t)=>{gr(t.ritualId,t.projectId,t.ritualName)},"navigate-sprint-issue":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.issueUrl,"_blank");return}F(t.issueId)},"navigate-sprint-document":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.documentUrl,"_blank");return}Pe(t.documentId)}});function Es(e){return e?new Date(e).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}function Tp(e){return{urgent:"Urgent",high:"High",medium:"Medium",low:"Low"}[e]||e}async function Sp(){const e=document.getElementById("ritual-project-filter");e&&(await $e(),e.innerHTML='<option value="">Select Project</option>'+U().map(t=>`<option value="${u(t.id)}">${g(t.name)}</option>`).join(""))}async function Lp(){const e=document.getElementById("rituals-project-filter");if(!e)return;kr(Cp),await $e(),e.innerHTML='<option value="">Select a project</option>'+U().map(n=>`<option value="${u(n.id)}">${g(n.name)}</option>`).join("");const t=Dt()||Ln();t&&U().some(n=>n.id===t)?(e.value=t,mr()):document.getElementById("rituals-content").innerHTML='<div class="empty-state">Select a project to view and manage rituals.</div>'}async function mr(){const e=document.getElementById("rituals-project-filter").value,t=document.getElementById("rituals-content");if(!e){document.getElementById("rituals-tabs").classList.add("hidden"),t.innerHTML='<div class="empty-state">Select a project to view and manage rituals.</div>';return}im(e),t.innerHTML='<div class="loading">Loading rituals...</div>';try{await Bn()}catch(n){t.innerHTML=`<div class="empty-state">Error loading rituals: ${g(n.message)}</div>`}}function Cp(){const e=document.getElementById("rituals-content"),t=am(),n=t.filter(a=>!a.trigger||a.trigger==="every_sprint"),s=t.filter(a=>a.trigger==="ticket_close"),i=t.filter(a=>a.trigger==="ticket_claim");document.getElementById("rituals-tabs").classList.remove("hidden"),e.innerHTML=`
-        <div id="rituals-tab-sprint" class="settings-tab-content">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when closing a sprint</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="every_sprint">+ Create Ritual</button>
-            </div>
-            <div id="rv-sprint-rituals-list" class="rituals-list"></div>
-        </div>
-        <div id="rituals-tab-close" class="settings-tab-content hidden">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when closing a ticket</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_close">+ Create Ritual</button>
-            </div>
-            <div id="rv-close-rituals-list" class="rituals-list"></div>
-        </div>
-        <div id="rituals-tab-claim" class="settings-tab-content hidden">
-            <div class="settings-section-header">
-                <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
-                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
-            </div>
-            <div id="rv-claim-rituals-list" class="rituals-list"></div>
-        </div>
-    `,Ut("rv-sprint-rituals-list",n,"sprint"),Ut("rv-close-rituals-list",s,"close"),Ut("rv-claim-rituals-list",i,"claim")}function Bp(e){const t=document.getElementById("rituals-tabs");t.querySelectorAll(".settings-tab").forEach(n=>n.classList.remove("active")),t.querySelector(`[data-tab="${e}"]`).classList.add("active"),document.querySelectorAll("#rituals-content > .settings-tab-content").forEach(n=>n.classList.add("hidden")),document.getElementById(`rituals-tab-${e}`).classList.remove("hidden")}async function Ap(e,t){try{await b.approveAttestation(e,t),v("Ritual approved!","success"),await $s(),Wi()}catch(n){v(n.message,"error")}}async function gr(e,t,n){document.getElementById("modal-title").textContent=`Complete: ${n}`,document.getElementById("modal-content").innerHTML=`
-        <form id="complete-gate-ritual-form">
-            <div class="form-group">
-                <label for="gate-note">Note (optional)</label>
-                <textarea id="gate-note" placeholder="Describe what was done..."></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">Complete Ritual</button>
-        </form>
-    `,document.getElementById("complete-gate-ritual-form").addEventListener("submit",s=>{jp(s,e,t)}),R()}async function jp(e,t,n){e.preventDefault();const s=document.getElementById("gate-note").value;try{await b.completeGateRitual(t,n,s||null),v("Ritual completed!","success"),await $s();const i=lp();i&&!i.in_limbo?(A(),v("Limbo cleared! Next sprint is now active.","success")):Wi()}catch(i){v(i.message,"error")}return!1}function Mp(e,t){return e.attestation&&e.attestation.approved_at?'<span class="text-success">Completed</span>':e.attestation&&!e.attestation.approved_at?`
-            <span class="text-warning">Awaiting approval</span>
-            <button class="btn btn-small btn-primary" data-action="approve-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}">Approve</button>
-        `:e.approval_mode==="gate"?`<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}" data-ritual-name="${u(e.name)}">Complete</button>`:e.note_required?`<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual-modal" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}" data-ritual-name="${u(e.name)}" data-ritual-prompt="${u(e.prompt||"")}">Attest</button>`:`<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}">Attest</button>`}function Dp(e,t,n,s){document.getElementById("modal-title").textContent=`Attest: ${n}`,document.getElementById("modal-content").innerHTML=`
-        <form id="attest-ticket-ritual-form">
-            ${s?`<p class="ritual-prompt-hint">${g(s)}</p>`:""}
-            <div class="form-group">
-                <label for="attest-ritual-note">Note (required)</label>
-                <textarea id="attest-ritual-note" placeholder="Describe what was done..." required></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">Attest</button>
-        </form>
-    `,document.getElementById("attest-ticket-ritual-form").addEventListener("submit",i=>{Rp(i,e,t)}),R()}async function Rp(e,t,n){e.preventDefault();const s=document.getElementById("attest-ritual-note").value.trim();if(!s)return v("A note is required for this attestation.","error"),!1;try{await b.attestTicketRitual(t,n,s),v("Ritual attested!","success"),A(),await ys(n)}catch(i){v(i.message,"error")}return!1}async function Pp(e,t){try{await b.attestTicketRitual(e,t),v("Ritual attested!","success"),await ys(t)}catch(n){v(n.message,"error")}}async function Np(e,t){try{await b.approveTicketRitual(e,t),v("Ritual approved!","success"),await ys(t)}catch(n){v(n.message,"error")}}function qp(e,t,n){document.getElementById("modal-title").textContent=`Complete: ${n}`,document.getElementById("modal-content").innerHTML=`
-        <form id="complete-ticket-ritual-form">
-            <div class="form-group">
-                <label for="ticket-ritual-note">Note (optional)</label>
-                <textarea id="ticket-ritual-note" placeholder="Describe what was done..."></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">Complete Ritual</button>
-        </form>
-    `,document.getElementById("complete-ticket-ritual-form").addEventListener("submit",s=>{Op(s,e,t)}),R()}async function Op(e,t,n){e.preventDefault();const s=document.getElementById("ticket-ritual-note").value;try{await b.completeTicketGateRitual(t,n,s||null),v("Ritual completed!","success"),A(),await ys(n)}catch(i){v(i.message,"error")}return!1}Y({"show-create-ritual-modal":(e,t)=>{Ir(t.trigger)},"approve-ticket-ritual":(e,t)=>{Np(t.ritualId,t.issueId)},"complete-ticket-ritual":(e,t)=>{qp(t.ritualId,t.issueId,t.ritualName)},"attest-ticket-ritual-modal":(e,t)=>{Dp(t.ritualId,t.issueId,t.ritualName,t.ritualPrompt)},"attest-ticket-ritual":(e,t)=>{Pp(t.ritualId,t.issueId)}});function Be(e){if(!e)return"";try{M.setOptions({breaks:!0,gfm:!0});const n=M.parse(e).replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,s=>s.replace(/</g,"&lt;").replace(/>/g,"&gt;"));return ao.sanitize(n,{FORCE_BODY:!0})}catch(t){return console.error("Markdown parsing error:",t),e.replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>")}}function Ki(e){if(!e)return"";const t=new Date(e);if(isNaN(t.getTime()))return"";const s=new Date-t;if(s<0)return"just now";const i=Math.floor(s/1e3),a=Math.floor(i/60),o=Math.floor(a/60),r=Math.floor(o/24);return i<60?"just now":a<60?`${a}m ago`:o<24?`${o}h ago`:r===1?"yesterday":r<7?`${r}d ago`:t.toLocaleDateString()}function Hp(e,t,n,s,i,a,o,r){var d;document.getElementById("modal-title").textContent=`Approve: ${n}`,document.getElementById("modal-content").innerHTML=`
-        <div class="gate-approval-modal">
-            <div class="gate-approval-issue">
-                <div class="gate-approval-issue-header">
-                    <span class="gate-approval-issue-id">${g(i)}</span>
-                    <span class="gate-approval-issue-title">${g(a)}</span>
-                </div>
-                <a href="/issue/${encodeURIComponent(i)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${u(t)}">View full ticket details &rarr;</a>
-            </div>
-            <div class="gate-approval-ritual">
-                <div class="gate-approval-prompt">${g(s)}</div>
-                ${o?`<div class="gate-approval-requested">Requested by <strong>${g(o)}</strong>${r?` ${Ki(r)}`:""}</div>`:""}
-            </div>
-            <form id="gate-approval-form">
-                <div class="form-group">
-                    <label for="gate-approval-note">Note (optional)</label>
-                    <textarea id="gate-approval-note" placeholder="Add a note about your approval..."></textarea>
-                </div>
-                <button type="submit" class="btn btn-primary">Approve</button>
-            </form>
-        </div>
-    `,document.getElementById("gate-approval-form").addEventListener("submit",c=>{Fp(c,e,t,n)}),R(),(d=document.querySelector(".modal"))==null||d.classList.add("modal-wide")}async function Fp(e,t,n,s){e.preventDefault();const i=document.getElementById("gate-approval-note").value;try{await b.completeTicketGateRitual(t,n,i||null),v(`GATE ritual "${s}" approved!`,"success"),A(),xn()}catch(a){v(`Failed to complete gate ritual: ${a.message}`,"error")}}function Up(e,t,n,s,i,a,o,r){Hp(e,t,n,s,i,a,o,r)}function zp(e,t,n,s,i,a,o,r,d){var c;document.getElementById("modal-title").textContent=`Approve: ${n}`,document.getElementById("modal-content").innerHTML=`
-        <div class="gate-approval-modal">
-            <div class="gate-approval-issue">
-                <div class="gate-approval-issue-header">
-                    <span class="gate-approval-issue-id">${g(i)}</span>
-                    <span class="gate-approval-issue-title">${g(a)}</span>
-                </div>
-                <a href="/issue/${encodeURIComponent(i)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${u(t)}">View full ticket details &rarr;</a>
-            </div>
-            <div class="gate-approval-ritual">
-                <div class="gate-approval-prompt">${g(s)}</div>
-                ${o?`<div class="gate-approval-requested">Attested by <strong>${g(o)}</strong>${r?` ${Ki(r)}`:""}</div>`:""}
-                ${d?`<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${Be(d)}</div>`:""}
-            </div>
-            <form id="review-approval-form">
-                <button type="submit" class="btn btn-primary">Approve Attestation</button>
-            </form>
-        </div>
-    `,document.getElementById("review-approval-form").addEventListener("submit",l=>{Gp(l,e,t,n)}),R(),(c=document.querySelector(".modal"))==null||c.classList.add("modal-wide")}async function Gp(e,t,n,s){e.preventDefault();try{await b.approveTicketRitual(t,n),v(`Review ritual "${s}" approved!`,"success"),A(),xn()}catch(i){v(`Failed to approve review ritual: ${i.message}`,"error")}}function Wp(e,t,n,s,i,a,o,r,d){zp(e,t,n,s,i,a,o,r,d)}let Yi=[];async function xn(){if(!x())return;const e=document.getElementById("gate-approvals-list");if(e){e.innerHTML='<div class="loading">Loading pending approvals...</div>';try{const t=await Promise.all(U().map(async i=>{const[a,o]=await Promise.all([b.getPendingApprovals(i.id),b.getLimboStatus(i.id)]);return{project:i,approvals:a,limbo:o}})),n=[],s=[];for(const{project:i,approvals:a,limbo:o}of t)if(n.push(...a),o&&o.in_limbo){const r=(o.pending_rituals||[]).filter(d=>{var c;return(c=d.attestation)!=null&&c.approved_at?!1:d.approval_mode==="gate"||!!d.attestation});r.length>0&&s.push({project:i,rituals:r})}Zc(n),Yi=s,fr()}catch(t){e.innerHTML=`<div class="empty-state"><h3>Error loading approvals</h3><p>${g(t.message)}</p></div>`}}}function fr(){const e=document.getElementById("gate-approvals-list");if(!e)return;const t=Yc(),n=Yi.length>0,s=!qc();if(t.length===0&&!n){s?e.innerHTML=`
-                <div class="empty-state approvals-explainer">
-                    <h3>Welcome to Approvals</h3>
-                    <p>This is where you'll review and approve ritual attestations from your team.</p>
-                    <div class="explainer-details">
-                        <p><strong>What are rituals?</strong> Rituals are configurable checks that run when sprints close, tickets are claimed, or tickets are closed. They ensure your team follows processes like running tests, updating docs, or getting code reviewed.</p>
-                        <p><strong>How approvals work:</strong></p>
-                        <ul>
-                            <li><strong>Gate</strong> rituals require a human to complete them directly — agents cannot attest.</li>
-                            <li><strong>Review</strong> rituals are attested by agents but need human approval before they count.</li>
-                            <li><strong>Auto</strong> rituals are cleared immediately by agents (they won't appear here).</li>
-                        </ul>
-                        <p>To set up rituals, go to a project's settings and configure them under the ritual tabs.</p>
-                    </div>
-                    <button class="btn btn-secondary" data-action="dismiss-approvals-explainer">Got it!</button>
-                </div>
-            `:e.innerHTML=`
-                <div class="empty-state">
-                    <h3>No pending approvals</h3>
-                    <p>All rituals have been completed. Nice work!</p>
-                </div>
-            `;return}let i="";n&&(i+=`
-            <div class="gate-section">
-                <h3 class="gate-section-title">Sprint Rituals</h3>
-                <p class="gate-section-desc">Sprint is in limbo — complete these rituals to activate the next sprint</p>
-                <div class="gate-list">
-                    ${Yi.map(({project:l,rituals:f})=>`
-                        <div class="gate-issue-card">
-                            <div class="gate-issue-header">
-                                <span class="gate-issue-id">${g(l.name)}</span>
-                                <span class="badge badge-in_progress">in limbo</span>
-                            </div>
-                            <div class="gate-rituals">
-                                ${f.map(p=>{const h=p.attestation&&!p.attestation.approved_at,y=h?"⏳":"○",k=h?`<span class="gate-waiting-info">Attested by <strong>${g(p.attestation.attested_by_name||"Unknown")}</strong></span>`:p.approval_mode==="gate"?"":'<span class="text-muted">Awaiting agent attestation</span>',E=h?`<button class="btn btn-small btn-primary sprint-approve-btn"
-                                            data-ritual-id="${u(p.id)}"
-                                            data-project-id="${u(l.id)}">Approve</button>`:p.approval_mode==="gate"?`<button class="btn btn-small btn-primary sprint-complete-btn"
-                                                data-ritual-id="${u(p.id)}"
-                                                data-project-id="${u(l.id)}"
-                                                data-ritual-name="${u(p.name)}">Complete</button>`:"";return`
-                                        <div class="gate-ritual">
-                                            <div class="gate-ritual-info">
-                                                <span class="gate-ritual-name">${y} ${g(p.name)}
-                                                    <span class="badge badge-ritual-${u(p.approval_mode)}">${g(p.approval_mode)}</span>
-                                                </span>
-                                                <span class="gate-ritual-prompt">${g(p.prompt)}</span>
-                                                ${k}
-                                            </div>
-                                            ${E}
-                                        </div>
-                                    `}).join("")}
-                            </div>
-                        </div>
-                    `).join("")}
-                </div>
-            </div>
-        `);const a=l=>l.pending_approvals||[],o=l=>f=>{const p=a(f).filter(l);return p.length>0?{...f,_filteredApprovals:p}:null},r=t.map(o(l=>l.approval_mode==="gate"&&l.limbo_type==="claim")).filter(Boolean),d=t.map(o(l=>l.approval_mode==="gate"&&l.limbo_type==="close")).filter(Boolean),c=t.map(o(l=>l.approval_mode==="review")).filter(Boolean);r.length>0&&(i+=`
-            <div class="gate-section">
-                <h3 class="gate-section-title">Waiting to Claim</h3>
-                <p class="gate-section-desc">Someone tried to claim these tickets but is waiting for your approval</p>
-                <div class="gate-list">
-                    ${r.map(Zi).join("")}
-                </div>
-            </div>
-        `),d.length>0&&(i+=`
-            <div class="gate-section">
-                <h3 class="gate-section-title">Waiting to Close</h3>
-                <p class="gate-section-desc">Someone tried to close these tickets but is waiting for your approval</p>
-                <div class="gate-list">
-                    ${d.map(Zi).join("")}
-                </div>
-            </div>
-        `),c.length>0&&(i+=`
-            <div class="gate-section">
-                <h3 class="gate-section-title">Awaiting Review Approval</h3>
-                <p class="gate-section-desc">An agent attested these rituals and they need your approval</p>
-                <div class="gate-list">
-                    ${c.map(Zi).join("")}
-                </div>
-            </div>
-        `),e.innerHTML=i,e.querySelectorAll(".gate-approve-btn").forEach(l=>{l.addEventListener("click",()=>{const f=l.dataset;Up(f.ritualId,f.issueId,f.ritualName,f.ritualPrompt,f.issueIdentifier,f.issueTitle,f.requestedBy,f.requestedAt)})}),e.querySelectorAll(".review-approve-btn").forEach(l=>{l.addEventListener("click",()=>{const f=l.dataset;Wp(f.ritualId,f.issueId,f.ritualName,f.ritualPrompt,f.issueIdentifier,f.issueTitle,f.requestedBy,f.requestedAt,f.attestationNote)})}),e.querySelectorAll(".sprint-approve-btn").forEach(l=>{l.addEventListener("click",async()=>{l.disabled=!0;try{await b.approveAttestation(l.dataset.ritualId,l.dataset.projectId),v("Sprint ritual approved!","success"),await xn()}catch(f){l.disabled=!1,v(f.message,"error")}})}),e.querySelectorAll(".sprint-complete-btn").forEach(l=>{l.addEventListener("click",()=>{gr(l.dataset.ritualId,l.dataset.projectId,l.dataset.ritualName)})})}function Vp(){Oc(),fr()}function Zi(e){const n=(e._filteredApprovals||e.pending_approvals||[]).map(s=>{const i=s.approval_mode==="review",a=i?"Attested by":"Waiting",o=s.requested_by_name?`<span class="gate-waiting-info">${a}: <strong>${g(s.requested_by_name)}</strong>${s.requested_at?` (${Ki(s.requested_at)})`:""}</span>`:"",r=i&&s.attestation_note?`<div class="gate-attestation-note">${Be(s.attestation_note)}</div>`:"",d=i?"review-approve-btn":"gate-approve-btn",c=i?"Approve":"Complete",l=i?'<span class="badge badge-review">review</span>':'<span class="badge badge-gate">gate</span>';return`
-            <div class="gate-ritual">
-                <div class="gate-ritual-info">
-                    <span class="gate-ritual-name">${g(s.ritual_name)} ${l}</span>
-                    <span class="gate-ritual-prompt">${g(s.ritual_prompt)}</span>
-                    ${o}
-                    ${r}
-                </div>
-                <button class="btn btn-small btn-primary ${d}"
-                    data-ritual-id="${u(s.ritual_id)}"
-                    data-issue-id="${u(e.issue_id)}"
-                    data-ritual-name="${u(s.ritual_name)}"
-                    data-ritual-prompt="${u(s.ritual_prompt)}"
-                    data-issue-identifier="${u(e.identifier)}"
-                    data-issue-title="${u(e.title)}"
-                    data-requested-by="${u(s.requested_by_name||"")}"
-                    data-requested-at="${u(s.requested_at||"")}"
-                    data-attestation-note="${u(s.attestation_note||"")}">${c}</button>
-            </div>
-        `}).join("");return`
-        <div class="gate-issue-card">
-            <div class="gate-issue-header">
-                <a href="/issue/${encodeURIComponent(e.identifier)}" data-action="navigate-issue" data-issue-id="${u(e.issue_id)}" class="gate-issue-link">
-                    <span class="gate-issue-id">${g(e.identifier)}</span>
-                    <span class="gate-issue-title">${g(e.title)}</span>
-                </a>
-                <span class="badge badge-${e.status}">${e.status.replace("_"," ")}</span>
-            </div>
-            <div class="gate-issue-project">${g(e.project_name)}</div>
-            <div class="gate-rituals">
-                ${n}
-            </div>
-        </div>
-    `}Y({"view-issue-from-modal":(e,t)=>{e.preventDefault(),A(),F(t.issueId)},"dismiss-approvals-explainer":()=>{Vp()}});const _s={estimate:["gte","lte","eq","isnull"],priority:["eq","in","isnull"],issue_type:["eq","in","isnull"],status:["eq","in","isnull"],labels:["contains","isnull"]},Is={eq:"equals",in:"in (comma-separated)",gte:">=",lte:"<=",contains:"contains",isnull:"is empty"};let hr=0;function vr(e){hr=0;let t="";if(e&&typeof e=="object")for(const[n,s]of Object.entries(e)){const[i,a]=n.split("__");t+=br(i,a,s)}return`
-        <div class="form-group">
-            <label>Conditions (optional)</label>
-            <div id="condition-rows">
-                ${t}
-            </div>
-            <button type="button" class="btn btn-secondary btn-small" data-action="add-condition-row">+ Add Condition</button>
-            <p class="form-help">Filter which tickets this ritual applies to.</p>
-            <p id="condition-error" class="form-error" style="display: none; color: #e53e3e;"></p>
-        </div>
-    `}function br(e="",t="",n=""){const s=hr++,i=Object.keys(_s).map(c=>`<option value="${c}" ${c===e?"selected":""}>${c}</option>`).join(""),o=(e?_s[e]:_s.estimate).map(c=>`<option value="${c}" ${c===t?"selected":""}>${Is[c]}</option>`).join(""),r=n===!0?"":Array.isArray(n)?n.join(","):n??"",d=t==="isnull";return`
-        <div class="condition-row" id="condition-row-${s}">
-            <select class="condition-field" data-action="update-operator-options" data-row-id="${s}">
-                <option value="">Select field...</option>
-                ${i}
-            </select>
-            <select class="condition-operator" id="condition-operator-${s}" data-action="toggle-value-input" data-row-id="${s}">
-                ${o}
-            </select>
-            <input type="text" class="condition-value" id="condition-value-${s}" value="${u(String(r))}" placeholder="Value"${d?' style="display: none;"':""}>
-            <button type="button" class="btn btn-secondary btn-small" data-action="remove-condition-row" data-row-id="${s}">&times;</button>
-        </div>
-    `}function Kp(){const e=document.getElementById("condition-rows");e&&e.insertAdjacentHTML("beforeend",br()),xs()}function Yp(e){const t=document.getElementById(`condition-row-${e}`);t&&t.remove(),xs()}function Zp(e){const t=document.getElementById(`condition-row-${e}`);if(!t)return;const n=t.querySelector(".condition-field"),s=t.querySelector(".condition-operator"),i=n.value;if(!i)return;const a=_s[i]||[];s.innerHTML=a.map(o=>`<option value="${o}">${Is[o]}</option>`).join(""),yr(e),xs()}function yr(e){const t=document.getElementById(`condition-operator-${e}`),n=document.getElementById(`condition-value-${e}`);t&&n&&(n.style.display=t.value==="isnull"?"none":"")}function Tn(e){const t=document.getElementById("condition-error");t&&(t.textContent=e,t.style.display="block")}function xs(){const e=document.getElementById("condition-error");e&&(e.style.display="none")}function wr(){var s,i,a;const e=document.querySelectorAll(".condition-row"),t={},n=new Set;for(const o of e){const r=(s=o.querySelector(".condition-field"))==null?void 0:s.value,d=(i=o.querySelector(".condition-operator"))==null?void 0:i.value,c=o.querySelector(".condition-value");let l=(a=c==null?void 0:c.value)==null?void 0:a.trim();if(!r&&!d)continue;if(!r)throw Tn("Please select a field for all condition rows, or remove empty rows."),new Error("Incomplete condition row: missing field");if(!d)throw Tn("Please select an operator for all condition rows."),new Error("Incomplete condition row: missing operator");const f=`${r}__${d}`;if(n.has(f))throw Tn(`Duplicate condition: ${r} ${Is[d]}. Each field+operator combination can only be used once.`),new Error(`Duplicate condition key: ${f}`);if(n.add(f),d==="isnull")t[f]=!0;else if(d==="in"||d==="contains")t[f]=l?l.split(",").map(p=>p.trim()).filter(p=>p):[];else if(d==="gte"||d==="lte"){if(!l)throw Tn(`Please enter a numeric value for ${r} ${Is[d]}.`),new Error(`Missing numeric value for ${f}`);const p=parseInt(l,10);if(isNaN(p))throw Tn(`Invalid number "${l}" for ${r}. Please enter a valid integer.`),new Error(`Invalid numeric value for ${f}: ${l}`);t[f]=p}else t[f]=l}return xs(),Object.keys(t).length>0?t:null}Y({"add-condition-row":()=>{Kp()},"remove-condition-row":(e,t)=>{Yp(Number(t.rowId))},"update-operator-options":(e,t)=>{Zp(Number(t.rowId))},"toggle-value-input":(e,t)=>{yr(Number(t.rowId))}});let V=[],Xi=null;const Ts={fibonacci:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:3,label:"3 points"},{value:5,label:"5 points"},{value:8,label:"8 points"},{value:13,label:"13 points"},{value:21,label:"21 points"}],linear:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:3,label:"3 points"},{value:4,label:"4 points"},{value:5,label:"5 points"},{value:6,label:"6 points"},{value:7,label:"7 points"},{value:8,label:"8 points"},{value:9,label:"9 points"},{value:10,label:"10 points"}],powers_of_2:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:4,label:"4 points"},{value:8,label:"8 points"},{value:16,label:"16 points"},{value:32,label:"32 points"},{value:64,label:"64 points"}],tshirt:[{value:null,label:"No estimate"},{value:1,label:"XS"},{value:2,label:"S"},{value:3,label:"M"},{value:5,label:"L"},{value:8,label:"XL"}]};function kr(e){Xi=e}function U(){return V}function Sn(e){const t=V.find(s=>s.id===e),n=(t==null?void 0:t.estimate_scale)||"fibonacci";return Ts[n]||Ts.fibonacci}function Ss(e,t){if(!e)return"No estimate";const s=Sn(t).find(i=>i.value===e);return s?s.label:`${e} points`}function Xp(e){const t=V.find(o=>o.id===e),n=(t==null?void 0:t.estimate_scale)||"fibonacci",s=(Ts[n]||Ts.fibonacci).filter(o=>o.value!==null);if(n==="tshirt")return`This project uses t-shirt estimates (${s.map(r=>`${r.label}=${r.value}pt`).join(", ")}). Budget is in points.`;const i=s.map(o=>o.value).join(", ");return`${{fibonacci:"Fibonacci",linear:"Linear",powers_of_2:"Powers of 2"}[n]||n} scale: ${i}`}async function $e(){if(x())try{V=await b.getProjects(x().id),Qp()}catch(e){v(e.message,"error")}}function Qp(){const e=document.getElementById("project-filter"),t=document.getElementById("sprint-project-filter"),n=document.getElementById("board-project-filter"),s=document.getElementById("doc-project-filter"),i=document.getElementById("dashboard-project-filter"),a=e==null?void 0:e.value,o=t==null?void 0:t.value,r=n==null?void 0:n.value,d=s==null?void 0:s.value,c=i==null?void 0:i.value,l='<option value="">All Projects</option>'+V.map(h=>`<option value="${h.id}">${g(h.name)}</option>`).join(""),f='<option value="">Select Project</option>'+V.map(h=>`<option value="${h.id}">${g(h.name)}</option>`).join(""),p=Ln();if(e){e.innerHTML=l;let h=a;if(!h||!V.some(y=>y.id===h))if(p&&V.some(y=>y.id===p))h=p;else{const k=new URLSearchParams(window.location.search).get("project");k&&V.some(E=>E.id===k)?h=k:V.length>0&&(h=V[0].id)}h&&(e.value=h,oo(h))}if(t){t.innerHTML=f;const h=o||p;h&&V.some(y=>y.id===h)&&(t.value=h)}if(n){n.innerHTML=f;const h=r||p;h&&V.some(y=>y.id===h)&&(n.value=h)}if(s){s.innerHTML=l;const h=d||p;h&&V.some(y=>y.id===h)&&(s.value=h)}if(i){i.innerHTML=l;const h=c||p;h&&V.some(y=>y.id===h)&&(i.value=h)}}function Ln(){return Tc()}function Ft(e){if(!e)return;oo(e),["project-filter","board-project-filter","sprint-project-filter"].forEach(n=>{const s=document.getElementById(n);s&&(s.value=e)})}function Cn(){const e=document.getElementById("projects-list");if(V.length===0){e.innerHTML=`
-            <div class="empty-state">
-                <h3>No projects yet</h3>
-                <p>Create your first project to get started</p>
-            </div>
-        `;return}e.innerHTML=V.map(t=>`
-        <div class="grid-item" data-action="view-project" data-project-id="${u(t.id)}">
-            <div class="grid-item-header">
-                <div class="grid-item-icon" style="background: ${W(t.color)}20; color: ${W(t.color)}">
-                    ${g(t.icon||t.key.charAt(0))}
-                </div>
-                <div class="grid-item-title">${g(t.name)}</div>
-                <button class="grid-item-edit" data-action="view-project-settings" data-project-id="${u(t.id)}" title="Project settings">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                </button>
-            </div>
-            <div class="grid-item-description">${g(t.description||"No description")}</div>
-            <div class="grid-item-footer">
-                <span>${t.key}</span>
-                <span>•</span>
-                <span>${t.issue_count} issues</span>
-            </div>
-        </div>
-    `).join("")}function Jp(e){Ft(e),C("issues")}function $r(){document.getElementById("modal-title").textContent="Create Project",document.getElementById("modal-content").innerHTML=`
-        <form data-action="create-project">
-            <div class="form-group">
-                <label for="project-name">Name</label>
-                <input type="text" id="project-name" required>
-            </div>
-            <div class="form-group">
-                <label for="project-key">Key (2-10 uppercase letters/numbers)</label>
-                <input type="text" id="project-key" pattern="[A-Z0-9]{2,10}" required
-                    style="text-transform: uppercase">
-            </div>
-            <div class="form-group">
-                <label for="project-description">Description</label>
-                <textarea id="project-description"></textarea>
-            </div>
-            <div class="form-group">
-                <label for="project-color">Color</label>
-                <input type="color" id="project-color" value="#6366f1">
-            </div>
-            <div class="form-group">
-                <label for="project-estimate-scale">Estimate Scale</label>
-                <select id="project-estimate-scale">
-                    <option value="fibonacci">Fibonacci (1, 2, 3, 5, 8, 13, 21)</option>
-                    <option value="linear">Linear (1-10)</option>
-                    <option value="powers_of_2">Powers of 2 (1, 2, 4, 8, 16, 32, 64)</option>
-                    <option value="tshirt">T-Shirt (XS, S, M, L, XL)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="project-human-rituals-required">
-                    Require humans to complete rituals
-                </label>
-                <small class="form-hint">When unchecked, humans can close tickets without completing rituals</small>
-            </div>
-            <button type="submit" class="btn btn-primary">Create Project</button>
-        </form>
-    `,R()}async function em(e){e.preventDefault();const t={name:document.getElementById("project-name").value,key:document.getElementById("project-key").value.toUpperCase(),description:document.getElementById("project-description").value,color:document.getElementById("project-color").value,estimate_scale:document.getElementById("project-estimate-scale").value,human_rituals_required:document.getElementById("project-human-rituals-required").checked};try{await b.createProject(x().id,t),await $e(),Cn(),A(),v("Project created!","success")}catch(n){v(`Failed to create project: ${n.message}`,"error")}return!1}async function tm(e,t){e.preventDefault();const n={name:document.getElementById("project-name").value,description:document.getElementById("project-description").value,color:document.getElementById("project-color").value,estimate_scale:document.getElementById("project-estimate-scale").value,human_rituals_required:document.getElementById("project-human-rituals-required").checked};try{await b.updateProject(t,n),await $e(),Cn(),A(),v("Project updated!","success")}catch(s){v(`Failed to update project: ${s.message}`,"error")}return!1}async function nm(e){const t=V.find(n=>n.id===e);if(t&&confirm(`Are you sure you want to delete "${t.name}"? This will delete all issues in this project.`))try{await b.deleteProject(e),await $e(),Cn(),A(),v("Project deleted","success")}catch(n){v(`Failed to delete project: ${n.message}`,"error")}}let be=null;async function Er(e){be=e,V.length===0&&await $e();const t=V.find(n=>n.id===e);if(!t){v("Project not found","error"),C("projects");return}document.getElementById("project-settings-title").textContent=`${t.name} Settings`,document.getElementById("ps-name").value=t.name||"",document.getElementById("ps-key").value=t.key||"",document.getElementById("ps-description").value=t.description||"",document.getElementById("ps-color").value=t.color||"#6366f1",document.getElementById("ps-estimate-scale").value=t.estimate_scale||"fibonacci",document.getElementById("ps-default-sprint-budget").value=t.default_sprint_budget||"",document.getElementById("ps-unestimated-handling").value=t.unestimated_handling||"default_one_point",document.getElementById("ps-human-rituals-required").checked=t.human_rituals_required===!0,document.getElementById("ps-require-estimate-on-claim").checked=t.require_estimate_on_claim===!0,document.querySelectorAll(".view").forEach(n=>n.classList.add("hidden")),document.getElementById("project-settings-view").classList.remove("hidden"),_r("general"),window.history.pushState({},"",`/projects/${encodeURIComponent(e)}/settings`)}function _r(e){["general","rules","sprint-rituals","close-rituals","claim-rituals"].includes(e)||(e="general"),document.querySelectorAll(".settings-tab").forEach(s=>{s.classList.toggle("active",s.dataset.tab===e)}),document.querySelectorAll(".settings-tab-content").forEach(s=>{s.classList.add("hidden")});const n=document.getElementById(`project-settings-tab-${e}`);n&&n.classList.remove("hidden"),e.endsWith("-rituals")&&(!it||it.length===0)&&Bn()}function sm(){be=null,it=[]}function im(e){be=e}function am(){return it}async function om(){if(!be)return;const e=document.getElementById("ps-name").value.trim();if(!e){v("Project name is required","error");return}const t={name:e,description:document.getElementById("ps-description").value,color:document.getElementById("ps-color").value};try{await b.updateProject(be,t),await $e(),v("Settings saved","success");const n=V.find(s=>s.id===be);n&&(document.getElementById("project-settings-title").textContent=`${n.name} Settings`)}catch(n){v(n.message,"error")}}async function rm(){if(!be)return;const e=document.getElementById("ps-default-sprint-budget").value,t=e?parseInt(e):null,n={estimate_scale:document.getElementById("ps-estimate-scale").value,default_sprint_budget:t,unestimated_handling:document.getElementById("ps-unestimated-handling").value,human_rituals_required:document.getElementById("ps-human-rituals-required").checked,require_estimate_on_claim:document.getElementById("ps-require-estimate-on-claim").checked};try{await b.updateProject(be,n),await $e(),v("Settings saved","success")}catch(s){v(`Failed to save settings: ${s.message}`,"error")}}let it=[];async function Bn(){if(be)try{it=await b.getRituals(be),lm(),typeof Xi=="function"&&Xi()}catch(e){v(e.message,"error")}}function lm(){if(!document.getElementById("ps-sprint-rituals-list"))return;const e=it.filter(s=>!s.trigger||s.trigger==="every_sprint"),t=it.filter(s=>s.trigger==="ticket_close"),n=it.filter(s=>s.trigger==="ticket_claim");Ut("ps-sprint-rituals-list",e,"sprint"),Ut("ps-close-rituals-list",t,"close"),Ut("ps-claim-rituals-list",n,"claim")}function Ut(e,t,n){const s=document.getElementById(e);if(!s)return;if(t.length===0){const a={sprint:"sprint close",close:"ticket close",claim:"ticket claim"};s.innerHTML=`<p class="empty-state">No ${a[n]} rituals configured.</p>`;return}const i=a=>u(a||"auto");s.innerHTML=t.map(a=>{let o="";if(a.group_name){const r=a.weight!=null&&a.weight!==1?` w:${a.weight}`:a.percentage!=null?` ${a.percentage}%`:"";o=`<span class="badge badge-ritual-group">${g(a.group_name)}${r}</span>`}return`
-    <div class="ritual-item mode-${i(a.approval_mode)}">
-      <div class="ritual-item-info">
-        <div class="ritual-item-name">${g(a.name)}</div>
-        <div class="ritual-item-prompt-fade">
-          <div class="ritual-item-prompt markdown-body">${Be(a.prompt)}</div>
-        </div>
-        <div class="ritual-item-mode">
-          <span class="badge badge-ritual-${i(a.approval_mode)}">${g(a.approval_mode||"auto")}</span>
-          ${o}
-          ${!a.group_name&&a.approval_mode==="auto"?"Agent clears immediately":""}
-          ${!a.group_name&&a.approval_mode==="review"?"Requires human approval":""}
-          ${!a.group_name&&a.approval_mode==="gate"?"Human only":""}
-          ${a.note_required===!1?'<span class="badge badge-no-note">no note</span>':""}
-        </div>
-      </div>
-      <div class="ritual-item-actions">
-        <button class="btn btn-secondary btn-small" data-action="edit-project-ritual" data-ritual-id="${u(a.id)}">Edit</button>
-        <button class="btn btn-danger btn-small" data-action="delete-project-ritual" data-ritual-id="${u(a.id)}" data-ritual-name="${u(a.name)}">Delete</button>
-      </div>
-    </div>
-  `}).join("")}async function Ir(e){if(!be)return;let t=[];try{t=await b.getRitualGroups(be)}catch{}document.getElementById("modal-title").textContent="Create Ritual",document.getElementById("modal-content").innerHTML=`
-    <form data-action="create-project-ritual">
-      <div class="form-group">
-        <label for="ritual-name">Name</label>
-        <input type="text" id="ritual-name" placeholder="e.g., run-tests, update-docs" required>
-        <p class="form-help">Short identifier for the ritual.</p>
-      </div>
-      <div class="form-group">
-        <label for="ritual-prompt">Prompt</label>
-        <textarea id="ritual-prompt" placeholder="e.g., Did you run the test suite and verify all tests pass?" required></textarea>
-        <p class="form-help">What the agent should consider/do.</p>
-      </div>
-      <div class="form-group">
-        <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
-          <option value="every_sprint" ${e==="every_sprint"?"selected":""}>Every Sprint - Required when sprint closes</option>
-          <option value="ticket_close" ${e==="ticket_close"?"selected":""}>Ticket Close - Required when closing a ticket</option>
-          <option value="ticket_claim" ${e==="ticket_claim"?"selected":""}>Ticket Claim - Required when claiming a ticket</option>
-        </select>
-        <p class="form-help">When this ritual is required.</p>
-      </div>
-      <div class="form-group">
-        <label for="ritual-mode">Approval Mode</label>
-        <select id="ritual-mode">
-          <option value="auto">Auto - Agent clears immediately</option>
-          <option value="review">Review - Requires human approval</option>
-          <option value="gate">Gate - Human only (agent cannot attest)</option>
-        </select>
-        <p class="form-help">How attestations are approved.</p>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="ritual-note-required" checked>
-          Require note on attestation
-        </label>
-        <p class="form-help">When checked, agents must provide a note when attesting.</p>
-      </div>
-      <div class="form-group">
-        <label for="ritual-group">Group</label>
-        <select id="ritual-group" data-action="ritual-group-change">
-          <option value="">None (always required)</option>
-          ${t.map(n=>`<option value="${u(n.id)}" data-mode="${u(n.selection_mode)}">${g(n.name)} (${g(n.selection_mode)})</option>`).join("")}
-          <option value="__create__">+ Create Group...</option>
-        </select>
-        <p class="form-help">Group rituals for random/round-robin/percentage selection.</p>
-      </div>
-      <div id="ritual-group-create-inline" class="form-group hidden">
-        <div style="display: flex; gap: 8px; align-items: end;">
-          <div style="flex: 1;">
-            <label for="ritual-new-group-name">Group Name</label>
-            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
-          </div>
-          <div>
-            <label for="ritual-new-group-mode">Mode</label>
-            <select id="ritual-new-group-mode">
-              <option value="random_one">Random One</option>
-              <option value="round_robin">Round Robin</option>
-              <option value="percentage">Percentage</option>
-            </select>
-          </div>
-        </div>
-      </div>
-      <div id="ritual-weight-group" class="form-group hidden">
-        <label for="ritual-weight">Weight</label>
-        <input type="number" id="ritual-weight" value="1" min="0" step="0.1">
-        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
-      </div>
-      <div id="ritual-percentage-group" class="form-group hidden">
-        <label for="ritual-percentage">Percentage (%)</label>
-        <input type="number" id="ritual-percentage" value="" min="0" max="100" step="1" placeholder="e.g., 50">
-        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
-      </div>
-      <div id="ritual-conditions-section"${e==="every_sprint"?' style="display: none;"':""}>
-        ${vr(null)}
-      </div>
-      <button type="submit" class="btn btn-primary">Create Ritual</button>
-    </form>
-  `,R()}function cm(){var n;const e=(n=document.getElementById("ritual-trigger"))==null?void 0:n.value,t=document.getElementById("ritual-conditions-section");t&&(t.style.display=e==="every_sprint"?"none":"")}function dm(){const e=document.getElementById("ritual-group"),t=document.getElementById("ritual-group-create-inline"),n=document.getElementById("ritual-weight-group"),s=document.getElementById("ritual-percentage-group");if(e.value==="__create__")t.classList.remove("hidden"),n.classList.add("hidden"),s.classList.add("hidden");else if(t.classList.add("hidden"),e.value){const a=e.options[e.selectedIndex].dataset.mode;n.classList.toggle("hidden",a!=="random_one"),s.classList.toggle("hidden",a!=="percentage")}else n.classList.add("hidden"),s.classList.add("hidden")}async function xr(){const e=document.getElementById("ritual-group");if(e.value==="__create__"){const t=document.getElementById("ritual-new-group-name").value.trim();if(!t)throw v("Group name is required","error"),new Error("Group name required");const n=document.getElementById("ritual-new-group-mode").value;return(await b.createRitualGroup(be,{name:t,selection_mode:n})).id}return e.value||null}async function um(e){e.preventDefault();let t;try{t=wr()}catch{return!1}let n;try{n=await xr()}catch{return!1}const s={name:document.getElementById("ritual-name").value,prompt:document.getElementById("ritual-prompt").value,trigger:document.getElementById("ritual-trigger").value,approval_mode:document.getElementById("ritual-mode").value,note_required:document.getElementById("ritual-note-required").checked,conditions:t};if(n){s.group_id=n;const i=document.getElementById("ritual-weight"),a=document.getElementById("ritual-percentage");!document.getElementById("ritual-weight-group").classList.contains("hidden")&&i.value&&(s.weight=parseFloat(i.value)),!document.getElementById("ritual-percentage-group").classList.contains("hidden")&&a.value&&(s.percentage=parseFloat(a.value))}try{await b.createRitual(be,s),await Bn(),A(),v("Ritual created!","success")}catch(i){v(`Failed to create ritual: ${i.message}`,"error")}return!1}async function pm(e){const t=it.find(o=>o.id===e);if(!t)return;let n=[];try{n=await b.getRitualGroups(be)}catch{}const s=n.find(o=>o.id===t.group_id),i=s&&s.selection_mode==="random_one",a=s&&s.selection_mode==="percentage";document.getElementById("modal-title").textContent="Edit Ritual",document.getElementById("modal-content").innerHTML=`
-    <form data-action="update-project-ritual" data-ritual-id="${u(e)}">
-      <div class="form-group">
-        <label for="ritual-name">Name</label>
-        <input type="text" id="ritual-name" value="${u(t.name)}" required>
-      </div>
-      <div class="form-group">
-        <label for="ritual-prompt">Prompt</label>
-        <textarea id="ritual-prompt" required>${g(t.prompt)}</textarea>
-      </div>
-      <div class="form-group">
-        <label for="ritual-trigger">Trigger</label>
-        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
-          <option value="every_sprint" ${!t.trigger||t.trigger==="every_sprint"?"selected":""}>Every Sprint - Required when sprint closes</option>
-          <option value="ticket_close" ${t.trigger==="ticket_close"?"selected":""}>Ticket Close - Required when closing a ticket</option>
-          <option value="ticket_claim" ${t.trigger==="ticket_claim"?"selected":""}>Ticket Claim - Required when claiming a ticket</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="ritual-mode">Approval Mode</label>
-        <select id="ritual-mode">
-          <option value="auto" ${t.approval_mode==="auto"?"selected":""}>Auto - Agent clears immediately</option>
-          <option value="review" ${t.approval_mode==="review"?"selected":""}>Review - Requires human approval</option>
-          <option value="gate" ${t.approval_mode==="gate"?"selected":""}>Gate - Human only</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="ritual-note-required" ${t.note_required!==!1?"checked":""}>
-          Require note on attestation
-        </label>
-        <p class="form-help">When checked, agents must provide a note when attesting.</p>
-      </div>
-      <div class="form-group">
-        <label for="ritual-group">Group</label>
-        <select id="ritual-group" data-action="ritual-group-change">
-          <option value="">None (always required)</option>
-          ${n.map(o=>`<option value="${u(o.id)}" data-mode="${u(o.selection_mode)}" ${t.group_id===o.id?"selected":""}>${g(o.name)} (${g(o.selection_mode)})</option>`).join("")}
-          <option value="__create__">+ Create Group...</option>
-        </select>
-      </div>
-      <div id="ritual-group-create-inline" class="form-group hidden">
-        <div style="display: flex; gap: 8px; align-items: end;">
-          <div style="flex: 1;">
-            <label for="ritual-new-group-name">Group Name</label>
-            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
-          </div>
-          <div>
-            <label for="ritual-new-group-mode">Mode</label>
-            <select id="ritual-new-group-mode">
-              <option value="random_one">Random One</option>
-              <option value="round_robin">Round Robin</option>
-              <option value="percentage">Percentage</option>
-            </select>
-          </div>
-        </div>
-      </div>
-      <div id="ritual-weight-group" class="form-group ${i?"":"hidden"}">
-        <label for="ritual-weight">Weight</label>
-        <input type="number" id="ritual-weight" value="${t.weight||1}" min="0" step="0.1">
-        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
-      </div>
-      <div id="ritual-percentage-group" class="form-group ${a?"":"hidden"}">
-        <label for="ritual-percentage">Percentage (%)</label>
-        <input type="number" id="ritual-percentage" value="${t.percentage!=null?t.percentage:""}" min="0" max="100" step="1" placeholder="e.g., 50">
-        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
-      </div>
-      <div id="ritual-conditions-section"${!t.trigger||t.trigger==="every_sprint"?' style="display: none;"':""}>
-        ${vr(t.conditions)}
-      </div>
-      <button type="submit" class="btn btn-primary">Save Changes</button>
-    </form>
-  `,R()}async function mm(e,t){e.preventDefault();let n;try{n=wr()}catch{return!1}let s;try{s=await xr()}catch{return!1}const i={name:document.getElementById("ritual-name").value,prompt:document.getElementById("ritual-prompt").value,trigger:document.getElementById("ritual-trigger").value,approval_mode:document.getElementById("ritual-mode").value,note_required:document.getElementById("ritual-note-required").checked,conditions:n,group_id:s||""};if(s){const a=document.getElementById("ritual-weight"),o=document.getElementById("ritual-percentage");!document.getElementById("ritual-weight-group").classList.contains("hidden")&&a.value&&(i.weight=parseFloat(a.value)),!document.getElementById("ritual-percentage-group").classList.contains("hidden")&&o.value&&(i.percentage=parseFloat(o.value))}try{await b.updateRitual(t,i),await Bn(),A(),v("Ritual updated!","success")}catch(a){v(`Failed to update ritual: ${a.message}`,"error")}return!1}async function gm(e,t){if(confirm(`Delete ritual "${t}"? This cannot be undone.`))try{await b.deleteRitual(e),await Bn(),v("Ritual deleted","success")}catch(n){v(`Failed to delete ritual: ${n.message}`,"error")}}Y({"view-project":(e,t)=>{Jp(t.projectId)},"view-project-settings":(e,t)=>{e.stopPropagation(),Er(t.projectId)},"create-project":e=>{em(e)},"update-project":(e,t)=>{tm(e,t.projectId)},"confirm-delete-project":(e,t)=>{nm(t.projectId)},"edit-project-ritual":(e,t)=>{pm(t.ritualId)},"delete-project-ritual":(e,t)=>{gm(t.ritualId,t.ritualName)},"create-project-ritual":e=>{um(e)},"update-project-ritual":(e,t)=>{mm(e,t.ritualId)},"toggle-ritual-conditions":()=>{cm()},"ritual-group-change":()=>{dm()}});function Tr(e){return e?e.replace(/^#{1,6}\s+/gm,"").replace(/\*\*([^*]+)\*\*/g,"$1").replace(/\*([^*]+)\*/g,"$1").replace(/__([^_]+)__/g,"$1").replace(/_([^_]+)_/g,"$1").replace(/`([^`]+)`/g,"$1").replace(/\[([^\]]+)\]\([^)]+\)/g,"$1").replace(/^[-*+]\s+/gm,"").replace(/^\d+\.\s+/gm,"").replace(/^>\s+/gm,"").replace(/\n+/g," ").trim():""}let Qi=[],An=[],Sr=null,z=new Set,zt="list",Ct=!1,Ji=null;const ea=Pc();(ea==="list"||ea==="grid")&&(zt=ea);function Lr(e){if(e!=="list"&&e!=="grid")return;zt=e,e==="grid"&&Ct&&ta(),Nc(e);const t=document.getElementById("doc-view-list"),n=document.getElementById("doc-view-grid");t&&n&&(t.classList.toggle("active",e==="list"),n.classList.toggle("active",e==="grid"));const s=document.getElementById("doc-select-btn");s&&s.classList.toggle("hidden",e==="grid"),vt()}function Cr(){if(zt!=="list")return;Ct=!0,z.clear();const e=document.getElementById("doc-select-btn");e&&(e.textContent="Cancel",e.dataset.action="exit-selection-mode"),vt(),Gt()}function ta(){Ct=!1,z.clear();const e=document.getElementById("doc-select-btn");e&&(e.textContent="Select",e.dataset.action="enter-selection-mode"),vt(),Gt()}function fm(){Ji&&clearTimeout(Ji),Ji=setTimeout(()=>{vt()},300)}function hm(){const e=document.getElementById("doc-search");e&&(e.value=""),vt()}async function vm(){const e=document.getElementById("doc-project-filter");e&&(e.value=""),await na()}async function bm(){const e=document.getElementById("doc-search"),t=document.getElementById("doc-project-filter");e&&(e.value=""),t&&(t.value=""),await na()}function ym(){var i,a,o;const e=document.getElementById("doc-filter-chips");if(!e)return;const t=((i=document.getElementById("doc-search"))==null?void 0:i.value)||"",n=((a=document.getElementById("doc-project-filter"))==null?void 0:a.value)||"",s=[];if(t&&s.push(`<span class="filter-chip">Search: "${g(t)}" <button class="chip-clear" data-action="clear-doc-search">×</button></span>`),n){const r=document.getElementById("doc-project-filter"),d=((o=r==null?void 0:r.options[r.selectedIndex])==null?void 0:o.text)||"Project";s.push(`<span class="filter-chip">Project: ${g(d)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`)}if(s.length>0){let r=s.join(" ");s.length>1&&(r+=' <button class="btn btn-secondary btn-tiny" data-action="clear-all-doc-filters">Clear all</button>'),e.innerHTML=r,e.classList.remove("hidden")}else e.innerHTML="",e.classList.add("hidden")}function vt(){var n,s,i;const e=((s=(n=document.getElementById("doc-search"))==null?void 0:n.value)==null?void 0:s.toLowerCase())||"",t=((i=document.getElementById("doc-sort"))==null?void 0:i.value)||"updated_desc";ym(),An=Qi.filter(a=>{var o,r;if(e){const d=(o=a.title)==null?void 0:o.toLowerCase().includes(e),c=(r=a.content)==null?void 0:r.toLowerCase().includes(e);if(!d&&!c)return!1}return!0}),An.sort((a,o)=>{switch(t){case"title_asc":return(a.title||"").localeCompare(o.title||"");case"title_desc":return(o.title||"").localeCompare(a.title||"");case"updated_asc":return new Date(a.updated_at)-new Date(o.updated_at);case"updated_desc":default:return new Date(o.updated_at)-new Date(a.updated_at)}}),Em("",zt)}async function na(){var n,s;const e=Sr||((n=x())==null?void 0:n.id);if(!e)return;const t=((s=document.getElementById("doc-project-filter"))==null?void 0:s.value)||null;try{Qi=await b.getDocuments(e,t),vt()}catch(i){v(i.message,"error")}}async function jn(e,t=null){var s;if(e||(e=(s=x())==null?void 0:s.id),!e)return;Sr=e,mo(-1);const n=document.getElementById("documents-list");if(n&&(n.innerHTML=Array(4).fill(0).map(()=>`
+        `).join("")}catch{n.innerHTML='<p class="empty-state-small error">Error searching issues</p>'}}function Su(e,t,n){document.getElementById("selected-related-issue-id").value=e,document.getElementById("selected-issue-info").textContent=`${t}: ${n}`,document.getElementById("selected-issue-display").style.display="flex",document.getElementById("relation-search-results").style.display="none",document.getElementById("relation-issue-search").value=t,document.getElementById("add-relation-btn").disabled=!1}function Lu(){document.getElementById("selected-related-issue-id").value="",document.getElementById("selected-issue-display").style.display="none",document.getElementById("relation-search-results").style.display="block",document.getElementById("relation-issue-search").value="",document.getElementById("add-relation-btn").disabled=!0,document.getElementById("relation-issue-search").focus()}async function Cu(e,t){e.preventDefault();const n=document.getElementById("relation-type").value,s=document.getElementById("selected-related-issue-id").value;if(!s)return v("Please select an issue","error"),!1;try{n==="blocked_by"?await b.createRelation(s,t,"blocks"):await b.createRelation(t,s,n),A(),v("Relation added","success"),F(t)}catch(i){v(`Failed to add relation: ${i.message}`,"error")}return!1}async function Bu(e,t){try{await b.deleteRelation(e,t),v("Relation removed","success"),F(e)}catch(n){v(`Failed to remove relation: ${n.message}`,"error")}}Y({"show-detail-dropdown":(e,t,n)=>{Yd(e,t.dropdownType,t.issueId,n)},"edit-description":(e,t)=>{_u(t.issueId)},"toggle-section":(e,t)=>{ku(t.section)},"toggle-ticket-rituals":()=>{$u()},"save-comment":(e,t)=>{Eu(e,t.issueId)},"show-add-relation-modal":(e,t)=>{xu(t.issueId)},"remove-relation":(e,t)=>{e.stopPropagation(),Bu(t.issueId,t.relationId)},"show-create-sub-issue-modal":(e,t)=>{cu(t.issueId,t.projectId)},"handle-add-relation":(e,t)=>{Cu(e,t.issueId)},"search-issues-to-relate":(e,t,n)=>{Tu(n.value,t.issueId)},"select-issue-for-relation":(e,t)=>{Su(t.issueId,t.identifier,t.title)},"clear-selected-relation":()=>{Lu()},"set-description-editor-mode":(e,t)=>{Iu(t.mode)},"scroll-to-comments":e=>{var t;e.preventDefault(),(t=document.getElementById("comments-section"))==null||t.scrollIntoView({behavior:"smooth"})}});function Jo(e){return e?e.replace(/^#{1,6}\s+/gm,"").replace(/\*\*([^*]+)\*\*/g,"$1").replace(/\*([^*]+)\*/g,"$1").replace(/__([^_]+)__/g,"$1").replace(/_([^_]+)_/g,"$1").replace(/`([^`]+)`/g,"$1").replace(/\[([^\]]+)\]\([^)]+\)/g,"$1").replace(/^[-*+]\s+/gm,"").replace(/^\d+\.\s+/gm,"").replace(/^>\s+/gm,"").replace(/\n+/g," ").trim():""}let Li=[],$n=[],er=null,z=new Set,Ot="list",St=!1,Ci=null;const Bi=Pc();(Bi==="list"||Bi==="grid")&&(Ot=Bi);function tr(e){if(e!=="list"&&e!=="grid")return;Ot=e,e==="grid"&&St&&Ai(),Nc(e);const t=document.getElementById("doc-view-list"),n=document.getElementById("doc-view-grid");t&&n&&(t.classList.toggle("active",e==="list"),n.classList.toggle("active",e==="grid"));const s=document.getElementById("doc-select-btn");s&&s.classList.toggle("hidden",e==="grid"),ht()}function nr(){if(Ot!=="list")return;St=!0,z.clear();const e=document.getElementById("doc-select-btn");e&&(e.textContent="Cancel",e.dataset.action="exit-selection-mode"),ht(),Ht()}function Ai(){St=!1,z.clear();const e=document.getElementById("doc-select-btn");e&&(e.textContent="Select",e.dataset.action="enter-selection-mode"),ht(),Ht()}function Au(){Ci&&clearTimeout(Ci),Ci=setTimeout(()=>{ht()},300)}function ju(){const e=document.getElementById("doc-search");e&&(e.value=""),ht()}async function Mu(){const e=document.getElementById("doc-project-filter");e&&(e.value=""),await ji()}async function Du(){const e=document.getElementById("doc-search"),t=document.getElementById("doc-project-filter");e&&(e.value=""),t&&(t.value=""),await ji()}function Ru(){var i,a,o;const e=document.getElementById("doc-filter-chips");if(!e)return;const t=((i=document.getElementById("doc-search"))==null?void 0:i.value)||"",n=((a=document.getElementById("doc-project-filter"))==null?void 0:a.value)||"",s=[];if(t&&s.push(`<span class="filter-chip">Search: "${g(t)}" <button class="chip-clear" data-action="clear-doc-search">×</button></span>`),n){const r=document.getElementById("doc-project-filter"),d=((o=r==null?void 0:r.options[r.selectedIndex])==null?void 0:o.text)||"Project";s.push(`<span class="filter-chip">Project: ${g(d)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`)}if(s.length>0){let r=s.join(" ");s.length>1&&(r+=' <button class="btn btn-secondary btn-tiny" data-action="clear-all-doc-filters">Clear all</button>'),e.innerHTML=r,e.classList.remove("hidden")}else e.innerHTML="",e.classList.add("hidden")}function ht(){var n,s,i;const e=((s=(n=document.getElementById("doc-search"))==null?void 0:n.value)==null?void 0:s.toLowerCase())||"",t=((i=document.getElementById("doc-sort"))==null?void 0:i.value)||"updated_desc";Ru(),$n=Li.filter(a=>{var o,r;if(e){const d=(o=a.title)==null?void 0:o.toLowerCase().includes(e),c=(r=a.content)==null?void 0:r.toLowerCase().includes(e);if(!d&&!c)return!1}return!0}),$n.sort((a,o)=>{switch(t){case"title_asc":return(a.title||"").localeCompare(o.title||"");case"title_desc":return(o.title||"").localeCompare(a.title||"");case"updated_asc":return new Date(a.updated_at)-new Date(o.updated_at);case"updated_desc":default:return new Date(o.updated_at)-new Date(a.updated_at)}}),Ou("",Ot)}async function ji(){var n,s;const e=er||((n=x())==null?void 0:n.id);if(!e)return;const t=((s=document.getElementById("doc-project-filter"))==null?void 0:s.value)||null;try{Li=await b.getDocuments(e,t),ht()}catch(i){v(i.message,"error")}}async function En(e,t=null){var s;if(e||(e=(s=x())==null?void 0:s.id),!e)return;er=e,mo(-1);const n=document.getElementById("documents-list");if(n&&(n.innerHTML=Array(4).fill(0).map(()=>`
         <div class="skeleton-list-item">
             <div style="width: 24px"><div class="skeleton" style="width: 24px; height: 24px; border-radius: 4px;"></div></div>
             <div style="flex: 1">
@@ -2138,7 +1207,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 <div class="skeleton skeleton-meta" style="margin-top: 6px;"></div>
             </div>
         </div>
-    `).join("")),t===null){const i=document.getElementById("doc-project-filter");i!=null&&i.value&&(t=i.value)}try{Qi=await b.getDocuments(e,t);const i=document.getElementById("doc-view-list"),a=document.getElementById("doc-view-grid");i&&a&&(i.classList.toggle("active",zt==="list"),a.classList.toggle("active",zt==="grid")),vt()}catch(i){const a=document.getElementById("documents-list");a&&(a.innerHTML=""),v(i.message,"error")}}function wm(e){return!e||e.length===0?"":e.slice(0,2).map(t=>`<span class="issue-label" style="background: ${W(t.color)}20; color: ${W(t.color)}">${g(t.name)}</span>`).join(" ")+(e.length>2?` <span class="text-muted">+${e.length-2}</span>`:"")}function km(e){const t=e.labels&&e.labels.length>0?`<div class="grid-item-labels">${wm(e.labels)}</div>`:"";return`
+    `).join("")),t===null){const i=document.getElementById("doc-project-filter");i!=null&&i.value&&(t=i.value)}try{Li=await b.getDocuments(e,t);const i=document.getElementById("doc-view-list"),a=document.getElementById("doc-view-grid");i&&a&&(i.classList.toggle("active",Ot==="list"),a.classList.toggle("active",Ot==="grid")),ht()}catch(i){const a=document.getElementById("documents-list");a&&(a.innerHTML=""),v(i.message,"error")}}function Pu(e){return!e||e.length===0?"":e.slice(0,2).map(t=>`<span class="issue-label" style="background: ${W(t.color)}20; color: ${W(t.color)}">${g(t.name)}</span>`).join(" ")+(e.length>2?` <span class="text-muted">+${e.length-2}</span>`:"")}function Nu(e){const t=e.labels&&e.labels.length>0?`<div class="grid-item-labels">${Pu(e.labels)}</div>`:"";return`
     <div class="grid-item" data-doc-id="${u(e.id)}" data-action="view-document" data-document-id="${u(e.id)}">
       <div class="grid-item-header">
         <div class="grid-item-icon" style="background: var(--bg-tertiary)">
@@ -2147,15 +1216,15 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         <div class="grid-item-title">${g(e.title)}</div>
       </div>
       ${t}
-      <div class="grid-item-description">${e.content?g(Tr(e.content).substring(0,100))+"...":"No content"}</div>
+      <div class="grid-item-description">${e.content?g(Jo(e.content).substring(0,100))+"...":"No content"}</div>
       <div class="grid-item-footer">
         <span>${e.project_id?"":'<span class="badge badge-secondary" title="Team-wide document">Global</span> '}${e.sprint_id?'<span class="badge badge-info" title="Sprint document">Sprint</span> ':""}${e.author_name?`By ${g(e.author_name)} · `:""}Updated ${new Date(e.updated_at).toLocaleDateString()}</span>
       </div>
     </div>
-  `}function $m(e){const t=e.labels&&e.labels.length>0?e.labels.slice(0,2).map(r=>`<span class="issue-label" style="background: ${W(r.color)}20; color: ${W(r.color)}">${g(r.name)}</span>`).join(" ")+(e.labels.length>2?` <span class="text-muted">+${e.labels.length-2}</span>`:""):"",n=[];e.project_id||n.push('<span class="badge badge-secondary badge-small">Global</span>'),e.sprint_id&&n.push('<span class="badge badge-info badge-small">Sprint</span>');const s=e.content?Tr(e.content).substring(0,80):"No content",i=Ct?`<div class="document-list-checkbox" data-action="toggle-doc-selection" data-doc-id="${u(e.id)}">
+  `}function qu(e){const t=e.labels&&e.labels.length>0?e.labels.slice(0,2).map(r=>`<span class="issue-label" style="background: ${W(r.color)}20; color: ${W(r.color)}">${g(r.name)}</span>`).join(" ")+(e.labels.length>2?` <span class="text-muted">+${e.labels.length-2}</span>`:""):"",n=[];e.project_id||n.push('<span class="badge badge-secondary badge-small">Global</span>'),e.sprint_id&&n.push('<span class="badge badge-info badge-small">Sprint</span>');const s=e.content?Jo(e.content).substring(0,80):"No content",i=St?`<div class="document-list-checkbox" data-action="toggle-doc-selection" data-doc-id="${u(e.id)}">
          <input type="checkbox" id="doc-check-${e.id}" ${z.has(e.id)?"checked":""}>
        </div>`:"";return`
-    <div class="list-item document-list-item${Ct&&z.has(e.id)?" selected":""}" data-action="${Ct?"toggle-doc-selection":"view-document"}" data-document-id="${u(e.id)}" data-doc-id="${u(e.id)}">
+    <div class="list-item document-list-item${St&&z.has(e.id)?" selected":""}" data-action="${St?"toggle-doc-selection":"view-document"}" data-document-id="${u(e.id)}" data-doc-id="${u(e.id)}">
       ${i}
       <div class="document-list-icon">${g(e.icon)||"📄"}</div>
       <div class="document-list-main">
@@ -2171,12 +1240,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         <span class="text-muted">${new Date(e.updated_at).toLocaleDateString()}</span>
       </div>
     </div>
-  `}function Em(e="",t="list"){var c,l;const n=document.getElementById("documents-list");if(!n)return;z.clear(),Gt();const s=An;if(s.length===0){const f=(c=document.getElementById("doc-search"))==null?void 0:c.value,p=(l=document.getElementById("doc-project-filter"))==null?void 0:l.value,h=f||p;n.innerHTML=`
+  `}function Ou(e="",t="list"){var c,l;const n=document.getElementById("documents-list");if(!n)return;z.clear(),Ht();const s=$n;if(s.length===0){const f=(c=document.getElementById("doc-search"))==null?void 0:c.value,p=(l=document.getElementById("doc-project-filter"))==null?void 0:l.value,h=f||p;n.innerHTML=`
       <div class="empty-state">
         <h3>${h?"No documents match your filters":"No documents yet"}</h3>
         <p>${h?"Try different search terms or filters":"Create your first document to get started"}</p>
       </div>
-    `;return}const i=t==="grid"?km:$m,a=t==="grid"?"documents-grid":"documents-list-view";if(!e){n.innerHTML=`<div class="${a}">${s.map(i).join("")}</div>`;return}const o={},r=U();s.forEach(f=>{let p,h;if(e==="project")if(p=f.project_id||"__global__",p==="__global__")h="Global (Team-wide)";else{const y=r.find(k=>k.id===f.project_id);h=y?y.name:"Unknown Project"}else e==="sprint"&&(p=f.sprint_id||"__no_sprint__",h=f.sprint_id?"Sprint":"No Sprint");o[p]||(o[p]={label:h,docs:[]}),o[p].docs.push(f)});let d="";for(const[f,p]of Object.entries(o)){const h=t==="grid"?"doc-group-content grid":"doc-group-content";d+=`
+    `;return}const i=t==="grid"?Nu:qu,a=t==="grid"?"documents-grid":"documents-list-view";if(!e){n.innerHTML=`<div class="${a}">${s.map(i).join("")}</div>`;return}const o={},r=U();s.forEach(f=>{let p,h;if(e==="project")if(p=f.project_id||"__global__",p==="__global__")h="Global (Team-wide)";else{const y=r.find(k=>k.id===f.project_id);h=y?y.name:"Unknown Project"}else e==="sprint"&&(p=f.sprint_id||"__no_sprint__",h=f.sprint_id?"Sprint":"No Sprint");o[p]||(o[p]={label:h,docs:[]}),o[p].docs.push(f)});let d="";for(const[f,p]of Object.entries(o)){const h=t==="grid"?"doc-group-content grid":"doc-group-content";d+=`
       <div class="doc-group">
         <div class="doc-group-header">
           <span class="doc-group-title">${g(p.label)}</span>
@@ -2186,7 +1255,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
           ${p.docs.map(i).join("")}
         </div>
       </div>
-    `}n.innerHTML=d}function _m(e){z.has(e)?z.delete(e):z.add(e);const t=document.getElementById(`doc-check-${e}`);t&&(t.checked=z.has(e));const n=document.querySelector(`.grid-item[data-doc-id="${e}"]`);n&&n.classList.toggle("selected",z.has(e)),Gt()}function Im(){An.forEach(e=>z.add(e.id)),An.forEach(e=>{const t=document.getElementById(`doc-check-${e.id}`);t&&(t.checked=!0);const n=document.querySelector(`.grid-item[data-doc-id="${e.id}"]`);n&&n.classList.add("selected")}),Gt()}function Br(){z.forEach(e=>{const t=document.getElementById(`doc-check-${e}`);t&&(t.checked=!1);const n=document.querySelector(`.grid-item[data-doc-id="${e}"]`);n&&n.classList.remove("selected")}),z.clear(),Gt()}function Gt(){const e=document.getElementById("doc-bulk-actions");e&&(Ct?(e.classList.remove("hidden"),z.size>0?e.innerHTML=`
+    `}n.innerHTML=d}function Hu(e){z.has(e)?z.delete(e):z.add(e);const t=document.getElementById(`doc-check-${e}`);t&&(t.checked=z.has(e));const n=document.querySelector(`.grid-item[data-doc-id="${e}"]`);n&&n.classList.toggle("selected",z.has(e)),Ht()}function Fu(){$n.forEach(e=>z.add(e.id)),$n.forEach(e=>{const t=document.getElementById(`doc-check-${e.id}`);t&&(t.checked=!0);const n=document.querySelector(`.grid-item[data-doc-id="${e.id}"]`);n&&n.classList.add("selected")}),Ht()}function sr(){z.forEach(e=>{const t=document.getElementById(`doc-check-${e}`);t&&(t.checked=!1);const n=document.querySelector(`.grid-item[data-doc-id="${e}"]`);n&&n.classList.remove("selected")}),z.clear(),Ht()}function Ht(){const e=document.getElementById("doc-bulk-actions");e&&(St?(e.classList.remove("hidden"),z.size>0?e.innerHTML=`
         <span class="bulk-count">${z.size} selected</span>
         <button class="btn btn-secondary btn-small" data-action="show-bulk-move-modal">Move to Project</button>
         <button class="btn btn-danger btn-small" data-action="bulk-delete-documents">Delete</button>
@@ -2197,7 +1266,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         <span class="bulk-count">Select documents</span>
         <button class="btn btn-secondary btn-small" data-action="select-all-docs">Select All</button>
         <button class="btn btn-secondary btn-small" data-action="exit-selection-mode">Done</button>
-      `):(e.classList.add("hidden"),e.innerHTML=""))}async function xm(){if(z.size===0){v("No documents selected","error");return}const t=U().map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join("");document.getElementById("modal-title").textContent=`Move ${z.size} Document${z.size>1?"s":""}`,document.getElementById("modal-content").innerHTML=`
+      `):(e.classList.add("hidden"),e.innerHTML=""))}async function Uu(){if(z.size===0){v("No documents selected","error");return}const t=U().map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join("");document.getElementById("modal-title").textContent=`Move ${z.size} Document${z.size>1?"s":""}`,document.getElementById("modal-content").innerHTML=`
     <form data-action="handle-bulk-move">
       <div class="form-group">
         <label for="bulk-move-project">Move to Project</label>
@@ -2209,7 +1278,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
       <p class="text-muted">This will move ${z.size} selected document${z.size>1?"s":""} to the chosen project.</p>
       <button type="submit" class="btn btn-primary">Move Documents</button>
     </form>
-  `,R()}async function Tm(e){var o;e.preventDefault();const t=document.getElementById("bulk-move-project").value||null,n=Array.from(z);let s=0,i=0;for(const r of n)try{await b.updateDocument(r,{project_id:t}),s++}catch(d){console.error(`Failed to move document ${r}:`,d),i++}A(),Br(),i===0?v(`Moved ${s} document${s>1?"s":""}!`,"success"):v(`Moved ${s}, failed ${i}`,"warning");const a=(o=x())==null?void 0:o.id;return await jn(a),!1}async function Sm(){var a;if(z.size===0){v("No documents selected","error");return}const e=z.size;if(!confirm(`Are you sure you want to delete ${e} document${e>1?"s":""}? This cannot be undone.`))return;const t=Array.from(z);let n=0,s=0;for(const o of t)try{await b.deleteDocument(o),n++}catch(r){console.error(`Failed to delete document ${o}:`,r),s++}ta(),s===0?v(`Deleted ${n} document${n>1?"s":""}!`,"success"):v(`Deleted ${n}, failed ${s}`,"warning");const i=(a=x())==null?void 0:a.id;await jn(i)}async function Pe(e,t=!0){try{const n=await b.getDocument(e);t&&history.pushState({documentId:e},"",`/document/${e}`),document.querySelectorAll(".view").forEach(p=>p.classList.add("hidden"));const s=document.getElementById("document-detail-view");s.classList.remove("hidden");let i="";try{const p=await b.getDocumentIssues(n.id);p.length>0?i=`
+  `,R()}async function zu(e){var o;e.preventDefault();const t=document.getElementById("bulk-move-project").value||null,n=Array.from(z);let s=0,i=0;for(const r of n)try{await b.updateDocument(r,{project_id:t}),s++}catch(d){console.error(`Failed to move document ${r}:`,d),i++}A(),sr(),i===0?v(`Moved ${s} document${s>1?"s":""}!`,"success"):v(`Moved ${s}, failed ${i}`,"warning");const a=(o=x())==null?void 0:o.id;return await En(a),!1}async function Gu(){var a;if(z.size===0){v("No documents selected","error");return}const e=z.size;if(!confirm(`Are you sure you want to delete ${e} document${e>1?"s":""}? This cannot be undone.`))return;const t=Array.from(z);let n=0,s=0;for(const o of t)try{await b.deleteDocument(o),n++}catch(r){console.error(`Failed to delete document ${o}:`,r),s++}Ai(),s===0?v(`Deleted ${n} document${n>1?"s":""}!`,"success"):v(`Deleted ${n}, failed ${s}`,"warning");const i=(a=x())==null?void 0:a.id;await En(i)}async function Pe(e,t=!0){try{const n=await b.getDocument(e);t&&history.pushState({documentId:e},"",`/document/${e}`),document.querySelectorAll(".view").forEach(p=>p.classList.add("hidden"));const s=document.getElementById("document-detail-view");s.classList.remove("hidden");let i="";try{const p=await b.getDocumentIssues(n.id);p.length>0?i=`
           <div class="linked-issues-section">
             <h3>Linked Issues</h3>
             <div class="linked-items-list">${p.map(y=>`
@@ -2284,7 +1353,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
       ${c}
       ${i}
       ${a}
-    `}catch(n){v(n.message,"error")}}async function sa(e,t,n=null,s=!1){const i=document.getElementById(e);if(i){if(!t){i.innerHTML='<option value="">Select project first</option>',i.disabled=!0;return}try{const a=await b.getSprints(t);let o=n;if(s&&!n){const d=a.find(c=>c.status==="active");d&&(o=d.id)}const r=a.map(d=>`<option value="${d.id}" ${d.id===o?"selected":""}>${g(d.name)}</option>`).join("");i.innerHTML=`<option value="">None</option>${r}`,i.disabled=!1}catch{i.innerHTML='<option value="">Error loading sprints</option>',i.disabled=!0}}}async function Ar(){const e=U(),t=Ln()||"",n=e.map(s=>`<option value="${s.id}" ${s.id===t?"selected":""}>${g(s.name)}</option>`).join("");document.getElementById("modal-title").textContent="Create Document",document.getElementById("modal-content").innerHTML=`
+    `}catch(n){v(n.message,"error")}}async function Mi(e,t,n=null,s=!1){const i=document.getElementById(e);if(i){if(!t){i.innerHTML='<option value="">Select project first</option>',i.disabled=!0;return}try{const a=await b.getSprints(t);let o=n;if(s&&!n){const d=a.find(c=>c.status==="active");d&&(o=d.id)}const r=a.map(d=>`<option value="${d.id}" ${d.id===o?"selected":""}>${g(d.name)}</option>`).join("");i.innerHTML=`<option value="">None</option>${r}`,i.disabled=!1}catch{i.innerHTML='<option value="">Error loading sprints</option>',i.disabled=!0}}}async function ir(){const e=U(),t=Sn()||"",n=e.map(s=>`<option value="${s.id}" ${s.id===t?"selected":""}>${g(s.name)}</option>`).join("");document.getElementById("modal-title").textContent="Create Document",document.getElementById("modal-content").innerHTML=`
     <form data-action="create-document">
       <div class="form-group">
         <label for="doc-title">Title</label>
@@ -2313,7 +1382,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
       </div>
       <button type="submit" class="btn btn-primary">Create Document</button>
     </form>
-  `,R(),t&&await sa("doc-sprint",t,null,!0)}async function Lm(e){var a;e.preventDefault();const t=(a=x())==null?void 0:a.id;if(!t)return v("No team selected","error"),!1;const n=document.getElementById("doc-project").value||null,s=document.getElementById("doc-sprint").value||null,i={title:document.getElementById("doc-title").value,content:document.getElementById("doc-content").value,icon:document.getElementById("doc-icon").value||null,project_id:n,sprint_id:s};try{await b.createDocument(t,i),await jn(t),A(),v("Document created!","success")}catch(o){v(o.message,"error")}return!1}async function jr(e){try{const t=await b.getDocument(e),s=U().map(i=>`<option value="${i.id}" ${i.id===t.project_id?"selected":""}>${g(i.name)}</option>`).join("");document.getElementById("modal-title").textContent="Edit Document",document.getElementById("modal-content").innerHTML=`
+  `,R(),t&&await Mi("doc-sprint",t,null,!0)}async function Wu(e){var a;e.preventDefault();const t=(a=x())==null?void 0:a.id;if(!t)return v("No team selected","error"),!1;const n=document.getElementById("doc-project").value||null,s=document.getElementById("doc-sprint").value||null,i={title:document.getElementById("doc-title").value,content:document.getElementById("doc-content").value,icon:document.getElementById("doc-icon").value||null,project_id:n,sprint_id:s};try{await b.createDocument(t,i),await En(t),A(),v("Document created!","success")}catch(o){v(o.message,"error")}return!1}async function ar(e){try{const t=await b.getDocument(e),s=U().map(i=>`<option value="${i.id}" ${i.id===t.project_id?"selected":""}>${g(i.name)}</option>`).join("");document.getElementById("modal-title").textContent="Edit Document",document.getElementById("modal-content").innerHTML=`
       <form data-action="update-document" data-document-id="${u(e)}">
         <div class="form-group">
           <label for="edit-doc-title">Title</label>
@@ -2342,7 +1411,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         </div>
         <button type="submit" class="btn btn-primary">Update Document</button>
       </form>
-    `,R(),t.project_id&&await sa("edit-doc-sprint",t.project_id,t.sprint_id)}catch(t){v(t.message,"error")}}async function Cm(e,t){e.preventDefault();const n=document.getElementById("edit-doc-project").value||null,s=document.getElementById("edit-doc-sprint").value||null,i={title:document.getElementById("edit-doc-title").value,content:document.getElementById("edit-doc-content").value,icon:document.getElementById("edit-doc-icon").value||null,project_id:n,sprint_id:s};try{await b.updateDocument(t,i),A(),await Pe(t),v("Document updated!","success")}catch(a){v(a.message,"error")}return!1}async function Bm(e){var t;if(confirm("Are you sure you want to delete this document?"))try{await b.deleteDocument(e);const n=(t=x())==null?void 0:t.id;await jn(n),C("documents"),v("Document deleted!","success")}catch(n){v(n.message,"error")}}function Am(e,t){sa(e,t)}async function jm(e){document.getElementById("modal-title").textContent="Link Issue",document.getElementById("modal-content").innerHTML=`
+    `,R(),t.project_id&&await Mi("edit-doc-sprint",t.project_id,t.sprint_id)}catch(t){v(t.message,"error")}}async function Vu(e,t){e.preventDefault();const n=document.getElementById("edit-doc-project").value||null,s=document.getElementById("edit-doc-sprint").value||null,i={title:document.getElementById("edit-doc-title").value,content:document.getElementById("edit-doc-content").value,icon:document.getElementById("edit-doc-icon").value||null,project_id:n,sprint_id:s};try{await b.updateDocument(t,i),A(),await Pe(t),v("Document updated!","success")}catch(a){v(a.message,"error")}return!1}async function Ku(e){var t;if(confirm("Are you sure you want to delete this document?"))try{await b.deleteDocument(e);const n=(t=x())==null?void 0:t.id;await En(n),C("documents"),v("Document deleted!","success")}catch(n){v(n.message,"error")}}function Yu(e,t){Mi(e,t)}async function Zu(e){document.getElementById("modal-title").textContent="Link Issue",document.getElementById("modal-content").innerHTML=`
     <form>
       <div class="form-group">
         <label for="link-issue-search">Search Issues</label>
@@ -2352,12 +1421,12 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         <p class="empty-state-small">Enter a search term to find issues</p>
       </div>
     </form>
-  `,R()}async function Mm(e,t){var s;const n=document.getElementById("link-issue-results");if(!e||e.length<2){n.innerHTML='<p class="empty-state-small">Enter a search term to find issues</p>';return}try{const i=(s=x())==null?void 0:s.id,a=await b.searchIssues(i,e);if(a.length===0){n.innerHTML='<p class="empty-state-small">No issues found</p>';return}n.innerHTML=a.map(o=>`
+  `,R()}async function Xu(e,t){var s;const n=document.getElementById("link-issue-results");if(!e||e.length<2){n.innerHTML='<p class="empty-state-small">Enter a search term to find issues</p>';return}try{const i=(s=x())==null?void 0:s.id,a=await b.searchIssues(i,e);if(a.length===0){n.innerHTML='<p class="empty-state-small">No issues found</p>';return}n.innerHTML=a.map(o=>`
       <div class="link-result-item" data-action="link-to-issue" data-document-id="${u(t)}" data-issue-id="${u(o.id)}">
         <span class="link-result-id">${g(o.identifier)}</span>
         <span class="link-result-title">${g(o.title)}</span>
       </div>
-    `).join("")}catch{n.innerHTML='<p class="empty-state-small error">Error searching issues</p>'}}async function Dm(e,t){try{await b.linkDocumentToIssue(e,t),A(),v("Issue linked!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function Rm(e,t){if(confirm("Unlink this issue from the document?"))try{await b.unlinkDocumentFromIssue(e,t),v("Issue unlinked!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function Pm(e,t){e.preventDefault();const n=document.getElementById("new-doc-comment"),s=n.value.trim();if(!s)return v("Please enter a comment","error"),!1;try{await b.createDocumentComment(t,s),n.value="",v("Comment added!","success"),await Pe(t,!1)}catch(i){v(i.message,"error")}return!1}async function Nm(e){var n;const t=(n=x())==null?void 0:n.id;if(!t){v("No team selected","error");return}try{const s=await b.getLabels(t);if(s.length===0){document.getElementById("modal-title").textContent="Add Label",document.getElementById("modal-content").innerHTML=`
+    `).join("")}catch{n.innerHTML='<p class="empty-state-small error">Error searching issues</p>'}}async function Qu(e,t){try{await b.linkDocumentToIssue(e,t),A(),v("Issue linked!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function Ju(e,t){if(confirm("Unlink this issue from the document?"))try{await b.unlinkDocumentFromIssue(e,t),v("Issue unlinked!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function ep(e,t){e.preventDefault();const n=document.getElementById("new-doc-comment"),s=n.value.trim();if(!s)return v("Please enter a comment","error"),!1;try{await b.createDocumentComment(t,s),n.value="",v("Comment added!","success"),await Pe(t,!1)}catch(i){v(i.message,"error")}return!1}async function tp(e){var n;const t=(n=x())==null?void 0:n.id;if(!t){v("No team selected","error");return}try{const s=await b.getLabels(t);if(s.length===0){document.getElementById("modal-title").textContent="Add Label",document.getElementById("modal-content").innerHTML=`
         <p class="empty-state-small">No labels available. Create labels in Settings.</p>
       `,R();return}const i=s.map(a=>`
       <div class="label-select-item" data-action="add-label-to-doc" data-document-id="${u(e)}" data-label-id="${u(a.id)}" style="cursor: pointer; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
@@ -2366,7 +1435,1135 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
       </div>
     `).join("");document.getElementById("modal-title").textContent="Add Label",document.getElementById("modal-content").innerHTML=`
       <div class="label-select-list">${i}</div>
-    `,R()}catch(s){v(s.message,"error")}}async function qm(e,t){try{await b.addLabelToDocument(e,t),A(),v("Label added!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function Om(e,t){try{await b.removeLabelFromDocument(e,t),v("Label removed!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}Y({"view-document":(e,t)=>{e.preventDefault(),Pe(t.documentId)},"toggle-doc-selection":(e,t)=>{e.stopPropagation(),_m(t.docId)},"clear-doc-search":()=>{hm()},"clear-doc-project-filter":()=>{vm()},"clear-all-doc-filters":()=>{bm()},"show-bulk-move-modal":()=>{xm()},"bulk-delete-documents":()=>{Sm()},"select-all-docs":()=>{Im()},"clear-doc-selection":()=>{Br()},"exit-selection-mode":()=>{ta()},"enter-selection-mode":()=>{Cr()},"handle-bulk-move":e=>{Tm(e)},"unlink-document-issue":(e,t)=>{Rm(t.documentId,t.issueId)},"show-link-issue-modal":(e,t)=>{jm(t.documentId)},"add-document-comment":(e,t)=>{Pm(e,t.documentId)},"remove-label-from-doc":(e,t)=>{Om(t.documentId,t.labelId)},"show-add-label-to-doc-modal":(e,t)=>{Nm(t.documentId)},"show-edit-document-modal":(e,t)=>{jr(t.documentId)},"delete-document":(e,t)=>{Bm(t.documentId)},"create-document":e=>{Lm(e)},"update-doc-sprint-dropdown":(e,t,n)=>{Am(t.sprintSelect,n.value)},"update-document":(e,t)=>{Cm(e,t.documentId)},"search-issues-to-link":(e,t,n)=>{Mm(n.value,t.documentId)},"link-to-issue":(e,t)=>{Dm(t.documentId,t.issueId)},"add-label-to-doc":(e,t)=>{qm(t.documentId,t.labelId)}});async function Hm(){const e=document.getElementById("epics-project-filter");if(!e)return;await $e(),e.innerHTML='<option value="">All Projects</option>'+U().map(n=>`<option value="${u(n.id)}">${g(n.name)}</option>`).join("");const t=Dt()||Ln();t&&U().some(n=>n.id===t)&&(e.value=t),ia()}function Fm(){var t;const e=(t=document.getElementById("epics-project-filter"))==null?void 0:t.value;e&&(Ft(e),di(e)),ia()}async function ia(){var t,n;const e=document.getElementById("epics-list");if(e){e.innerHTML=Array(4).fill(0).map(()=>`
+    `,R()}catch(s){v(s.message,"error")}}async function np(e,t){try{await b.addLabelToDocument(e,t),A(),v("Label added!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}async function sp(e,t){try{await b.removeLabelFromDocument(e,t),v("Label removed!","success"),await Pe(e,!1)}catch(n){v(n.message,"error")}}Y({"view-document":(e,t)=>{e.preventDefault(),Pe(t.documentId)},"toggle-doc-selection":(e,t)=>{e.stopPropagation(),Hu(t.docId)},"clear-doc-search":()=>{ju()},"clear-doc-project-filter":()=>{Mu()},"clear-all-doc-filters":()=>{Du()},"show-bulk-move-modal":()=>{Uu()},"bulk-delete-documents":()=>{Gu()},"select-all-docs":()=>{Fu()},"clear-doc-selection":()=>{sr()},"exit-selection-mode":()=>{Ai()},"enter-selection-mode":()=>{nr()},"handle-bulk-move":e=>{zu(e)},"unlink-document-issue":(e,t)=>{Ju(t.documentId,t.issueId)},"show-link-issue-modal":(e,t)=>{Zu(t.documentId)},"add-document-comment":(e,t)=>{ep(e,t.documentId)},"remove-label-from-doc":(e,t)=>{sp(t.documentId,t.labelId)},"show-add-label-to-doc-modal":(e,t)=>{tp(t.documentId)},"show-edit-document-modal":(e,t)=>{ar(t.documentId)},"delete-document":(e,t)=>{Ku(t.documentId)},"create-document":e=>{Wu(e)},"update-doc-sprint-dropdown":(e,t,n)=>{Yu(t.sprintSelect,n.value)},"update-document":(e,t)=>{Vu(e,t.documentId)},"search-issues-to-link":(e,t,n)=>{Xu(n.value,t.documentId)},"link-to-issue":(e,t)=>{Qu(t.documentId,t.issueId)},"add-label-to-doc":(e,t)=>{np(t.documentId,t.labelId)}});let Ft=[],hs={},vs=new Set,nt=null,or=null,Di=[],_n=[],Ri=[];function rr(){return hs}function ip(){return nt}function lr(){const e=document.getElementById("sprint-project-filter");if(e){if(!e.value){const t=Gt();t&&U().some(n=>n.id===t)&&(e.value=t)}e.value?vt(e.value):document.getElementById("sprints-list").innerHTML=`
+            <div class="empty-state">
+                <h3>Select a project</h3>
+                <p>Choose a project to view its sprints</p>
+            </div>
+        `}}function ap(){const e=document.getElementById("sprint-project-filter").value;e&&(Ut(e),zi(e)),vt(e)}async function vt(e){const t=e||document.getElementById("sprint-project-filter").value;if(t){kp();try{await b.getCurrentSprint(t),Ft=await b.getSprints(t),op(),await bs()}catch(n){v(n.message,"error")}}}function op(){const e=document.getElementById("sprints-list");if(!e)return;const t=Ft.find(a=>a.status==="active"),n=Ft.find(a=>a.status==="planned"),s=Ft.filter(a=>a.status==="completed");let i="";if(t){const a=t.budget?`${t.points_spent||0} / ${t.budget} points`:"No budget set",o=t.budget&&(t.points_spent||0)>t.budget;i+=`
+            <div class="sprint-card sprint-now ${t.limbo?"sprint-limbo":""} ${o?"sprint-arrears":""}"
+                 data-action="view-sprint" data-sprint-id="${u(t.id)}" data-sprint-url="/sprint/${u(t.id)}" style="cursor: pointer;">
+                <div class="sprint-card-header">
+                    <div class="sprint-card-label">NOW</div>
+                    ${t.limbo?'<span class="badge badge-limbo">IN LIMBO</span>':""}
+                    ${o?'<span class="badge badge-arrears">IN ARREARS</span>':""}
+                </div>
+                <div class="sprint-card-title">${g(t.name)}</div>
+                <div class="sprint-card-budget ${o?"budget-arrears":""}">
+                    ${a}
+                </div>
+                <div class="sprint-card-actions" data-action="stop-propagation">
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${u(t.id)}" data-sprint-name="${u(t.name)}" data-budget="${t.budget||""}" data-project-id="${u(t.project_id)}">Edit Budget</button>
+                    ${t.limbo?`
+                        <button class="btn btn-primary btn-small" data-action="show-limbo-details-modal">View Rituals</button>
+                    `:`
+                        <button class="btn btn-primary btn-small" data-action="show-close-sprint-confirmation" data-sprint-id="${u(t.id)}">Close Sprint</button>
+                    `}
+                </div>
+            </div>
+        `,i+=rp(t)}if(n){const a=n.budget?`${n.budget} point budget`:"No budget set";i+=`
+            <div class="sprint-card sprint-next" data-action="view-sprint" data-sprint-id="${u(n.id)}" data-sprint-url="/sprint/${u(n.id)}" style="cursor: pointer;">
+                <div class="sprint-card-header">
+                    <div class="sprint-card-label">NEXT</div>
+                </div>
+                <div class="sprint-card-title">${g(n.name)}</div>
+                <div class="sprint-card-budget">${a}</div>
+                <div class="sprint-card-actions" data-action="stop-propagation">
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${u(n.id)}" data-sprint-name="${u(n.name)}" data-budget="${n.budget||""}" data-project-id="${u(n.project_id)}">Edit Budget</button>
+                </div>
+            </div>
+        `}s.length>0&&(i+=`
+            <details class="sprint-history">
+                <summary>Completed Sprints (${s.length})</summary>
+                <div class="sprint-history-list">
+                    ${s.map(a=>`
+                        <div class="sprint-history-item" data-action="view-sprint" data-sprint-id="${u(a.id)}" data-sprint-url="/sprint/${u(a.id)}" style="cursor: pointer;">
+                            <span class="sprint-history-name">${g(a.name)}</span>
+                            <span class="sprint-history-budget">${a.points_spent||0}${a.budget?` / ${a.budget}`:""} pts</span>
+                        </div>
+                    `).join("")}
+                </div>
+            </details>
+        `),e.innerHTML=i||`
+        <div class="empty-state">
+            <h3>No sprints yet</h3>
+            <p>Sprints are created automatically when you close the current one, or you can create one from the project settings.</p>
+        </div>
+    `}function rp(e){const t=e.start_date&&e.end_date,n=e.budget!==null&&e.budget!==void 0;if(!t||!n)return`
+            <div class="sprint-burndown-card">
+                <div class="sprint-burndown-header">
+                    <h4>Burndown</h4>
+                    <span class="text-muted">Set sprint dates and budget to see burndown</span>
+                </div>
+            </div>
+        `;const s=e.budget,i=e.points_spent||0,a=Math.max(s-i,0),o=new Date(e.start_date),r=new Date(e.end_date),l=((q,J,ie)=>Math.min(Math.max(q,J),ie))((new Date-o)/(r-o),0,1),f=360,p=120,h=16,y=h,k=f-h,E=h,T=p-h,j=q=>s===0?T:E+(1-q/s)*(T-E),N=j(s),B=j(0),H=y+(k-y)*l,Z=j(a);return`
+        <div class="sprint-burndown-card">
+            <div class="sprint-burndown-header">
+                <h4>Burndown</h4>
+                <div class="sprint-burndown-meta">
+                    <span>${ys(e.start_date)} → ${ys(e.end_date)}</span>
+                    <span>${a} of ${s} pts remaining</span>
+                </div>
+            </div>
+            <svg viewBox="0 0 ${f} ${p}" class="sprint-burndown-chart" role="img" aria-label="Sprint burndown chart">
+                <line x1="${y}" y1="${N}" x2="${k}" y2="${B}" class="burndown-ideal" />
+                <line x1="${y}" y1="${N}" x2="${H}" y2="${Z}" class="burndown-actual" />
+                <circle cx="${H}" cy="${Z}" r="4" class="burndown-actual-point" />
+            </svg>
+        </div>
+    `}async function Pi(e,t=!0){var n;try{const s=await b.getSprint(e);if(!s){v("Sprint not found","error"),C("sprints");return}or=s;const i=(n=x())==null?void 0:n.id,[a,o,r]=await Promise.all([b.getIssues({sprint_id:e,limit:500}),b.getSprintTransactions(e).catch(()=>[]),i?b.getDocuments(i,s.project_id,null,e).catch(()=>[]):[]]);Di=a,Ri=o,_n=r,t&&history.pushState({sprintId:e,view:"sprint"},"",`/sprint/${e}`),cp()}catch(s){console.error("Failed to load sprint:",s),v("Failed to load sprint","error"),C("sprints")}}async function lp(e){if(!e||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e)){v("Invalid sprint ID","error"),C("sprints",!1);return}try{await Pi(e,!1)}catch{C("sprints",!1)}}function cp(){const e=or,t=Di;document.querySelectorAll(".view").forEach(l=>l.classList.add("hidden"));let n=document.getElementById("sprint-detail-view");n||(n=document.createElement("div"),n.id="sprint-detail-view",n.className="view",document.querySelector(".main-content").appendChild(n)),n.classList.remove("hidden");const s=["backlog","todo","in_progress","in_review"],i=t.filter(l=>s.includes(l.status)),a=t.filter(l=>l.status==="done"),o=t.reduce((l,f)=>l+(f.estimate||0),0),r=a.reduce((l,f)=>l+(f.estimate||0),0);let d="";e.status==="active"?d='<span class="badge badge-status-active">Active</span>':e.status==="planned"?d='<span class="badge badge-status-planned">Planned</span>':e.status==="completed"&&(d='<span class="badge badge-status-completed">Completed</span>');const c=e.budget?`${e.points_spent||0} / ${e.budget} points`:`${e.points_spent||0} points spent`;n.innerHTML=`
+        <div class="sprint-detail-header">
+            <div class="sprint-detail-nav">
+                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="sprints">
+                    ← Back to Sprints
+                </button>
+            </div>
+            <div class="sprint-detail-title-row">
+                <h2>${g(e.name)}</h2>
+                ${d}
+                ${e.limbo?'<span class="badge badge-limbo">IN LIMBO</span>':""}
+            </div>
+            ${e.start_date&&e.end_date?`
+                <div class="sprint-detail-dates">
+                    ${ys(e.start_date)} → ${ys(e.end_date)}
+                </div>
+            `:""}
+        </div>
+
+        <div class="sprint-detail-stats">
+            <div class="stat-card">
+                <div class="stat-value">${i.length}</div>
+                <div class="stat-label">Open Issues</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">${a.length}</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">${c}</div>
+                <div class="stat-label">Budget</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">${r} / ${o}</div>
+                <div class="stat-label">Points Done</div>
+            </div>
+        </div>
+
+        <div class="sprint-detail-sections">
+            <div class="sprint-detail-section">
+                <h3>Open Issues (${i.length})</h3>
+                ${i.length===0?`
+                    <div class="empty-state-small">No open issues in this sprint</div>
+                `:`
+                    <div class="sprint-issues-list">
+                        ${i.map(l=>cr(l)).join("")}
+                    </div>
+                `}
+            </div>
+
+            <details class="sprint-detail-section" ${a.length>0?"open":""}>
+                <summary><h3>Completed Issues (${a.length})</h3></summary>
+                ${a.length===0?`
+                    <div class="empty-state-small">No completed issues yet</div>
+                `:`
+                    <div class="sprint-issues-list">
+                        ${a.map(l=>cr(l)).join("")}
+                    </div>
+                `}
+            </details>
+
+            <div class="sprint-detail-section sprint-budget-section">
+                <h3>Budget Ledger</h3>
+                ${up()}
+            </div>
+
+            ${_n.length>0?`
+            <div class="sprint-detail-section">
+                <h3>Documents (${_n.length})</h3>
+                <div class="sprint-issues-list">
+                    ${_n.map(l=>dp(l)).join("")}
+                </div>
+            </div>
+            `:""}
+        </div>
+    `}function cr(e){const t=["urgent","high","medium","low"],n=["backlog","todo","in_progress","in_review","done"],s=t.includes(e.priority)?e.priority:"",i=n.includes(e.status)?e.status:"backlog",a=s?`badge-priority-${s}`:"",o=`status-dot-${i}`;return`
+        <div class="sprint-issue-row" data-action="navigate-sprint-issue" data-issue-id="${u(e.id)}" data-issue-url="/issue/${encodeURIComponent(e.identifier)}">
+            <span class="status-dot ${o}"></span>
+            <span class="sprint-issue-identifier">${g(e.identifier)}</span>
+            <span class="sprint-issue-title">${g(e.title)}</span>
+            <span class="sprint-issue-meta">
+                ${s?`<span class="badge ${a}">${Ep(s)}</span>`:""}
+                ${e.estimate?`<span class="badge badge-estimate">${e.estimate}pt</span>`:""}
+            </span>
+        </div>
+    `}function dp(e){const t=g(e.icon)||"📄";return`
+        <div class="sprint-issue-row" data-action="navigate-sprint-document" data-document-id="${u(e.id)}" data-document-url="/document/${u(encodeURIComponent(e.id))}">
+            <span class="sprint-issue-identifier">${t}</span>
+            <span class="sprint-issue-title">${g(e.title||"Untitled")}</span>
+            <span class="sprint-issue-meta">
+                <span class="text-muted">${Ue(e.created_at)}</span>
+            </span>
+        </div>
+    `}function up(){const e=Ri;if(!e||e.length===0)return`
+            <div class="empty-state-small">
+                <p>No budget transactions yet. Points are recorded when issues are marked done.</p>
+            </div>
+        `;const t=e.reduce((n,s)=>n+s.points,0);return`
+        <div class="budget-ledger">
+            <div class="budget-ledger-header">
+                <span class="text-muted">${e.length} transaction${e.length===1?"":"s"}</span>
+                <span class="budget-ledger-total">${t} points total</span>
+            </div>
+            <div class="budget-ledger-list">
+                ${e.map(n=>`
+                    <div class="budget-ledger-item">
+                        <div class="ledger-item-info">
+                            <span class="ledger-item-identifier">${g(n.issue_identifier)}</span>
+                            <span class="ledger-item-title">${g(n.issue_title)}</span>
+                        </div>
+                        <div class="ledger-item-meta">
+                            <span class="ledger-item-points">-${n.points} pt</span>
+                            <span class="ledger-item-date">${pp(n.created_at)}</span>
+                        </div>
+                    </div>
+                `).join("")}
+            </div>
+        </div>
+    `}function pp(e){return e?new Date(e).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}function mp(e,t,n,s){const i=s?Vp(s):"";document.getElementById("modal-title").textContent=`Edit Sprint: ${t}`,document.getElementById("modal-content").innerHTML=`
+        <form data-action="handle-update-budget" data-sprint-id="${u(e)}" data-project-id="${u(s)}">
+            <div class="form-group">
+                <label for="sprint-budget">Point Budget</label>
+                <input type="number" id="sprint-budget" min="1" value="${n||""}" placeholder="Leave empty for unlimited">
+                <small class="form-hint">Set a point budget to track velocity. When exceeded, sprint enters arrears.</small>
+                ${i?`<small class="form-hint">${g(i)}</small>`:""}
+            </div>
+            <div class="form-group">
+                <label>Apply to:</label>
+                <div class="radio-group">
+                    <label class="radio-label">
+                        <input type="radio" name="budget-scope" value="this" checked>
+                        This sprint only
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="budget-scope" value="planned">
+                        This sprint + planned sprints
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="budget-scope" value="default">
+                        Also set as project default
+                    </label>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Budget</button>
+        </form>
+    `,R()}async function gp(e,t,n){var o;e.preventDefault();const s=document.getElementById("sprint-budget").value,i=s?parseInt(s):null,a=((o=document.querySelector('input[name="budget-scope"]:checked'))==null?void 0:o.value)||"this";try{if(await b.updateSprint(t,{budget:i}),a==="planned"||a==="default"){const d=Ft.filter(c=>c.status==="planned"&&c.id!==t);for(const c of d)await b.updateSprint(c.id,{budget:i})}a==="default"&&n&&await b.updateProject(n,{default_sprint_budget:i}),await vt(),A(),v(`Budget updated${a==="planned"?" (and planned sprints)":a==="default"?" (and set as project default)":""}!`,"success")}catch(r){v(`Failed to update budget: ${r.message}`,"error")}return!1}async function fp(e){const t=Ft.find(d=>d.id===e);if(!t)return;document.getElementById("modal-title").textContent="Close Sprint",document.getElementById("modal-content").innerHTML=`
+        <div style="text-align: center; padding: 12px 0;">
+            <p style="color: var(--text-secondary); margin-bottom: 16px;">Loading sprint details...</p>
+        </div>
+    `,R();const n=["backlog","todo","in_progress","in_review"];let s=0,i=!1,a=!1;try{const[d,c]=await Promise.all([b.getIssues({sprint_id:e,limit:500}),b.getRituals(t.project_id)]);s=d.filter(l=>n.includes(l.status)).length,i=c.some(l=>l.is_active&&l.trigger==="every_sprint")}catch(d){console.error("Failed to load sprint details:",d),a=!0}const o=t.points_spent||0,r=t.budget!==null&&t.budget!==void 0?`<strong>${o}</strong> / <strong>${t.budget}</strong> points spent`:`<strong>${o}</strong> points spent (no budget)`;document.getElementById("modal-content").innerHTML=`
+        <div class="close-sprint-confirmation">
+            <div class="info-box" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+                <p style="margin-bottom: 8px; font-size: 14px;"><strong>${g(t.name)}</strong></p>
+                <p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);">${r}</p>
+                ${a?'<p style="margin-bottom: 4px; font-size: 13px; color: var(--warning-color, #f59e0b);">Could not load issue details</p>':s>0?`<p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);"><strong>${s}</strong> incomplete issue${s===1?"":"s"} will migrate to next sprint</p>`:'<p style="margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);">No incomplete issues</p>'}
+                ${i?'<p style="margin-top: 8px; font-size: 13px; color: var(--accent-color);">Sprint will enter <strong>limbo</strong> until rituals are attested</p>':""}
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn btn-secondary" data-action="close-modal">Cancel</button>
+                <button class="btn btn-primary" data-action="confirm-close-sprint" data-sprint-id="${u(e)}">Close Sprint</button>
+            </div>
+        </div>
+    `}async function hp(e){try{const t=await b.closeSprint(e);await vt(),t.limbo?bp(t):v("Sprint completed!","success")}catch(t){v(`Failed to complete sprint: ${t.message}`,"error")}}async function bs(){var t;const e=(t=document.getElementById("sprint-project-filter"))==null?void 0:t.value;if(e)try{nt=await b.getLimboStatus(e),vp()}catch(n){console.error("Failed to load limbo status:",n)}}function vp(){const e=document.getElementById("limbo-banner");if(e&&e.remove(),!nt||!nt.in_limbo)return;const t=document.createElement("div");t.id="limbo-banner",t.className="limbo-banner",t.innerHTML=`
+        <div class="limbo-banner-content">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span><strong>Sprint in Limbo</strong> - ${nt.pending_rituals.length} ritual(s) pending</span>
+            <button class="btn btn-small" data-action="show-limbo-details-modal">View Details</button>
+        </div>
+    `;const n=document.querySelector(".main-content");n&&n.insertBefore(t,n.firstChild)}function bp(e){const t=document.getElementById("sprint-project-filter").value;document.getElementById("modal-title").textContent="Sprint In Limbo",document.getElementById("modal-content").innerHTML=`
+        <div class="limbo-modal">
+            <div class="limbo-alert">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <div>
+                    <strong>Sprint "${g(e.name)}" is now in limbo.</strong>
+                    <p>Complete all pending rituals to activate the next sprint.</p>
+                </div>
+            </div>
+            <div id="limbo-rituals-list" class="limbo-rituals">
+                <p class="loading">Loading rituals...</p>
+            </div>
+            <button type="button" class="btn btn-primary" data-action="dismiss-limbo-modal">Got it</button>
+        </div>
+    `,R(),yp(t)}async function yp(e){try{const t=await b.getLimboStatus(e),n=document.getElementById("limbo-rituals-list");if(!n)return;if(t.pending_rituals.length===0){n.innerHTML="<p>No pending rituals.</p>";return}n.innerHTML=t.pending_rituals.map(s=>`
+            <div class="limbo-ritual-item">
+                <div class="ritual-status">
+                    ${s.attestation?s.attestation.approved_at?'<span class="ritual-done">✓</span>':'<span class="ritual-pending">⏳</span>':'<span class="ritual-todo">○</span>'}
+                </div>
+                <div class="ritual-info">
+                    <div class="ritual-name">${g(s.name)} <span class="ritual-mode">(${g(s.approval_mode)})</span></div>
+                    <div class="ritual-prompt markdown-body">${Be(s.prompt)}</div>
+                    ${qi(s.attestation)}
+                </div>
+            </div>
+        `).join("")}catch(t){console.error("Failed to load limbo rituals:",t)}}function Ni(){var t,n,s,i;if(!nt)return;const e=((t=document.getElementById("sprint-project-filter"))==null?void 0:t.value)||((n=document.getElementById("ritual-project-filter"))==null?void 0:n.value);document.getElementById("modal-title").textContent="Limbo Status",(s=document.querySelector(".modal"))==null||s.classList.add("modal-wide"),document.getElementById("modal-content").innerHTML=`
+        <div class="limbo-details">
+            <p>Complete all pending rituals to exit limbo and activate the next sprint.</p>
+            <div class="limbo-rituals-detail">
+                ${nt.pending_rituals.map(a=>`
+                    <div class="limbo-ritual-detail-item">
+                        <div class="ritual-header">
+                            <span class="ritual-status-icon">
+                                ${a.attestation?a.attestation.approved_at?"✓":"⏳":"○"}
+                            </span>
+                            <strong>${g(a.name)}</strong>
+                            <span class="badge badge-ritual-${u(a.approval_mode)}">${g(a.approval_mode)}</span>
+                        </div>
+                        <div class="ritual-prompt markdown-body">${Be(a.prompt)}</div>
+                        ${qi(a.attestation)}
+                        ${wp(a,e)}
+                    </div>
+                `).join("")}
+            </div>
+            ${((i=nt.completed_rituals)==null?void 0:i.length)>0?`
+                <h4>Completed</h4>
+                <div class="completed-rituals">
+                    ${nt.completed_rituals.map(a=>`
+                        <div class="completed-ritual">
+                            <div class="completed-ritual-header">✓ ${g(a.name)}</div>
+                            ${qi(a.attestation)}
+                        </div>
+                    `).join("")}
+                </div>
+            `:""}
+        </div>
+    `,R()}function qi(e){return!e||!e.note?"":`
+        <div class="ritual-attestation-note">
+            <div class="attestation-note-header">
+                <span class="attestation-by">${g(e.attested_by_name||"Unknown")}</span>
+                ${e.attested_at?`<span class="attestation-time">${g(Ue(e.attested_at))}</span>`:""}
+            </div>
+            <div class="attestation-note-content markdown-body">${Be(e.note)}</div>
+        </div>
+    `}function wp(e,t){return e.attestation&&e.attestation.approved_at?'<div class="ritual-actions"><span class="text-success">Completed</span></div>':e.attestation&&!e.attestation.approved_at?`
+            <div class="ritual-actions">
+                <span class="text-warning">Pending approval</span>
+                <button class="btn btn-small btn-primary" data-action="approve-ritual" data-ritual-id="${u(e.id)}" data-project-id="${u(t)}">Approve</button>
+            </div>
+        `:e.approval_mode==="gate"?`
+            <div class="ritual-actions">
+                <button class="btn btn-small btn-primary" data-action="complete-gate-ritual" data-ritual-id="${u(e.id)}" data-project-id="${u(t)}" data-ritual-name="${u(e.name)}">Complete</button>
+            </div>
+        `:'<div class="ritual-actions"><span class="text-muted">Awaiting agent attestation</span></div>'}async function dr(e){for(const t of e)if(!vs.has(t))try{(await b.getSprints(t)).forEach(s=>{hs[s.id]=s}),vs.add(t)}catch(n){console.error("Failed to load sprints for project",t,n)}}function kp(){hs={},vs=new Set,Di=[],Ri=[],_n=[]}function $p(e,t){t.forEach(n=>{hs[n.id]=n}),vs.add(e)}Y({"view-sprint":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.sprintUrl,"_blank");return}Pi(t.sprintId)},"stop-propagation":e=>{e.stopPropagation()},"show-edit-budget-modal":(e,t)=>{e.stopPropagation();const n=t.budget?parseFloat(t.budget):null;mp(t.sprintId,t.sprintName,n,t.projectId)},"show-limbo-details-modal":e=>{e.stopPropagation(),Ni()},"show-close-sprint-confirmation":(e,t)=>{e.stopPropagation(),fp(t.sprintId)},"handle-update-budget":(e,t)=>{gp(e,t.sprintId,t.projectId)},"close-modal":()=>{A()},"confirm-close-sprint":(e,t,n)=>{n.disabled=!0,A(),hp(t.sprintId)},"dismiss-limbo-modal":()=>{A(),bs()},"approve-ritual":(e,t)=>{Sp(t.ritualId,t.projectId)},"complete-gate-ritual":(e,t)=>{pr(t.ritualId,t.projectId,t.ritualName)},"navigate-sprint-issue":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.issueUrl,"_blank");return}F(t.issueId)},"navigate-sprint-document":(e,t)=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1){window.open(t.documentUrl,"_blank");return}Pe(t.documentId)}});function ys(e){return e?new Date(e).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}function Ep(e){return{urgent:"Urgent",high:"High",medium:"Medium",low:"Low"}[e]||e}async function _p(){const e=document.getElementById("ritual-project-filter");e&&(await $e(),e.innerHTML='<option value="">Select Project</option>'+U().map(t=>`<option value="${u(t.id)}">${g(t.name)}</option>`).join(""))}async function Ip(){const e=document.getElementById("rituals-project-filter");if(!e)return;yr(xp),await $e(),e.innerHTML='<option value="">Select a project</option>'+U().map(n=>`<option value="${u(n.id)}">${g(n.name)}</option>`).join("");const t=Gt()||Sn();t&&U().some(n=>n.id===t)?(e.value=t,ur()):document.getElementById("rituals-content").innerHTML='<div class="empty-state">Select a project to view and manage rituals.</div>'}async function ur(){const e=document.getElementById("rituals-project-filter").value,t=document.getElementById("rituals-content");if(!e){document.getElementById("rituals-tabs").classList.add("hidden"),t.innerHTML='<div class="empty-state">Select a project to view and manage rituals.</div>';return}em(e),t.innerHTML='<div class="loading">Loading rituals...</div>';try{await Cn()}catch(n){t.innerHTML=`<div class="empty-state">Error loading rituals: ${g(n.message)}</div>`}}function xp(){const e=document.getElementById("rituals-content"),t=tm(),n=t.filter(a=>!a.trigger||a.trigger==="every_sprint"),s=t.filter(a=>a.trigger==="ticket_close"),i=t.filter(a=>a.trigger==="ticket_claim");document.getElementById("rituals-tabs").classList.remove("hidden"),e.innerHTML=`
+        <div id="rituals-tab-sprint" class="settings-tab-content">
+            <div class="settings-section-header">
+                <p class="settings-description">Required when closing a sprint</p>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="every_sprint">+ Create Ritual</button>
+            </div>
+            <div id="rv-sprint-rituals-list" class="rituals-list"></div>
+        </div>
+        <div id="rituals-tab-close" class="settings-tab-content hidden">
+            <div class="settings-section-header">
+                <p class="settings-description">Required when closing a ticket</p>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_close">+ Create Ritual</button>
+            </div>
+            <div id="rv-close-rituals-list" class="rituals-list"></div>
+        </div>
+        <div id="rituals-tab-claim" class="settings-tab-content hidden">
+            <div class="settings-section-header">
+                <p class="settings-description">Required when claiming a ticket (moving to in_progress)</p>
+                <button class="btn btn-primary" data-action="show-create-ritual-modal" data-trigger="ticket_claim">+ Create Ritual</button>
+            </div>
+            <div id="rv-claim-rituals-list" class="rituals-list"></div>
+        </div>
+    `,zt("rv-sprint-rituals-list",n,"sprint"),zt("rv-close-rituals-list",s,"close"),zt("rv-claim-rituals-list",i,"claim")}function Tp(e){const t=document.getElementById("rituals-tabs");t.querySelectorAll(".settings-tab").forEach(n=>n.classList.remove("active")),t.querySelector(`[data-tab="${e}"]`).classList.add("active"),document.querySelectorAll("#rituals-content > .settings-tab-content").forEach(n=>n.classList.add("hidden")),document.getElementById(`rituals-tab-${e}`).classList.remove("hidden")}async function Sp(e,t){try{await b.approveAttestation(e,t),v("Ritual approved!","success"),await bs(),Ni()}catch(n){v(n.message,"error")}}async function pr(e,t,n){document.getElementById("modal-title").textContent=`Complete: ${n}`,document.getElementById("modal-content").innerHTML=`
+        <form id="complete-gate-ritual-form">
+            <div class="form-group">
+                <label for="gate-note">Note (optional)</label>
+                <textarea id="gate-note" placeholder="Describe what was done..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Complete Ritual</button>
+        </form>
+    `,document.getElementById("complete-gate-ritual-form").addEventListener("submit",s=>{Lp(s,e,t)}),R()}async function Lp(e,t,n){e.preventDefault();const s=document.getElementById("gate-note").value;try{await b.completeGateRitual(t,n,s||null),v("Ritual completed!","success"),await bs();const i=ip();i&&!i.in_limbo?(A(),v("Limbo cleared! Next sprint is now active.","success")):Ni()}catch(i){v(i.message,"error")}return!1}function Cp(e,t){return e.attestation&&e.attestation.approved_at?'<span class="text-success">Completed</span>':e.attestation&&!e.attestation.approved_at?`
+            <span class="text-warning">Awaiting approval</span>
+            <button class="btn btn-small btn-primary" data-action="approve-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}">Approve</button>
+        `:e.approval_mode==="gate"?`<button class="btn btn-small btn-primary" data-action="complete-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}" data-ritual-name="${u(e.name)}">Complete</button>`:e.note_required?`<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual-modal" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}" data-ritual-name="${u(e.name)}" data-ritual-prompt="${u(e.prompt||"")}">Attest</button>`:`<button class="btn btn-small btn-secondary" data-action="attest-ticket-ritual" data-ritual-id="${u(e.id)}" data-issue-id="${u(t)}">Attest</button>`}function Bp(e,t,n,s){document.getElementById("modal-title").textContent=`Attest: ${n}`,document.getElementById("modal-content").innerHTML=`
+        <form id="attest-ticket-ritual-form">
+            ${s?`<p class="ritual-prompt-hint">${g(s)}</p>`:""}
+            <div class="form-group">
+                <label for="attest-ritual-note">Note (required)</label>
+                <textarea id="attest-ritual-note" placeholder="Describe what was done..." required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Attest</button>
+        </form>
+    `,document.getElementById("attest-ticket-ritual-form").addEventListener("submit",i=>{Ap(i,e,t)}),R()}async function Ap(e,t,n){e.preventDefault();const s=document.getElementById("attest-ritual-note").value.trim();if(!s)return v("A note is required for this attestation.","error"),!1;try{await b.attestTicketRitual(t,n,s),v("Ritual attested!","success"),A(),await fs(n)}catch(i){v(i.message,"error")}return!1}async function jp(e,t){try{await b.attestTicketRitual(e,t),v("Ritual attested!","success"),await fs(t)}catch(n){v(n.message,"error")}}async function Mp(e,t){try{await b.approveTicketRitual(e,t),v("Ritual approved!","success"),await fs(t)}catch(n){v(n.message,"error")}}function Dp(e,t,n){document.getElementById("modal-title").textContent=`Complete: ${n}`,document.getElementById("modal-content").innerHTML=`
+        <form id="complete-ticket-ritual-form">
+            <div class="form-group">
+                <label for="ticket-ritual-note">Note (optional)</label>
+                <textarea id="ticket-ritual-note" placeholder="Describe what was done..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Complete Ritual</button>
+        </form>
+    `,document.getElementById("complete-ticket-ritual-form").addEventListener("submit",s=>{Rp(s,e,t)}),R()}async function Rp(e,t,n){e.preventDefault();const s=document.getElementById("ticket-ritual-note").value;try{await b.completeTicketGateRitual(t,n,s||null),v("Ritual completed!","success"),A(),await fs(n)}catch(i){v(i.message,"error")}return!1}Y({"show-create-ritual-modal":(e,t)=>{Er(t.trigger)},"approve-ticket-ritual":(e,t)=>{Mp(t.ritualId,t.issueId)},"complete-ticket-ritual":(e,t)=>{Dp(t.ritualId,t.issueId,t.ritualName)},"attest-ticket-ritual-modal":(e,t)=>{Bp(t.ritualId,t.issueId,t.ritualName,t.ritualPrompt)},"attest-ticket-ritual":(e,t)=>{jp(t.ritualId,t.issueId)}});function Be(e){if(!e)return"";try{M.setOptions({breaks:!0,gfm:!0});const n=M.parse(e).replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,s=>s.replace(/</g,"&lt;").replace(/>/g,"&gt;"));return ao.sanitize(n,{FORCE_BODY:!0})}catch(t){return console.error("Markdown parsing error:",t),e.replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>")}}function Oi(e){if(!e)return"";const t=new Date(e);if(isNaN(t.getTime()))return"";const s=new Date-t;if(s<0)return"just now";const i=Math.floor(s/1e3),a=Math.floor(i/60),o=Math.floor(a/60),r=Math.floor(o/24);return i<60?"just now":a<60?`${a}m ago`:o<24?`${o}h ago`:r===1?"yesterday":r<7?`${r}d ago`:t.toLocaleDateString()}function Pp(e,t,n,s,i,a,o,r){var d;document.getElementById("modal-title").textContent=`Approve: ${n}`,document.getElementById("modal-content").innerHTML=`
+        <div class="gate-approval-modal">
+            <div class="gate-approval-issue">
+                <div class="gate-approval-issue-header">
+                    <span class="gate-approval-issue-id">${g(i)}</span>
+                    <span class="gate-approval-issue-title">${g(a)}</span>
+                </div>
+                <a href="/issue/${encodeURIComponent(i)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${u(t)}">View full ticket details &rarr;</a>
+            </div>
+            <div class="gate-approval-ritual">
+                <div class="gate-approval-prompt">${g(s)}</div>
+                ${o?`<div class="gate-approval-requested">Requested by <strong>${g(o)}</strong>${r?` ${Oi(r)}`:""}</div>`:""}
+            </div>
+            <form id="gate-approval-form">
+                <div class="form-group">
+                    <label for="gate-approval-note">Note (optional)</label>
+                    <textarea id="gate-approval-note" placeholder="Add a note about your approval..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Approve</button>
+            </form>
+        </div>
+    `,document.getElementById("gate-approval-form").addEventListener("submit",c=>{Np(c,e,t,n)}),R(),(d=document.querySelector(".modal"))==null||d.classList.add("modal-wide")}async function Np(e,t,n,s){e.preventDefault();const i=document.getElementById("gate-approval-note").value;try{await b.completeTicketGateRitual(t,n,i||null),v(`GATE ritual "${s}" approved!`,"success"),A(),In()}catch(a){v(`Failed to complete gate ritual: ${a.message}`,"error")}}function qp(e,t,n,s,i,a,o,r){Pp(e,t,n,s,i,a,o,r)}function Op(e,t,n,s,i,a,o,r,d){var c;document.getElementById("modal-title").textContent=`Approve: ${n}`,document.getElementById("modal-content").innerHTML=`
+        <div class="gate-approval-modal">
+            <div class="gate-approval-issue">
+                <div class="gate-approval-issue-header">
+                    <span class="gate-approval-issue-id">${g(i)}</span>
+                    <span class="gate-approval-issue-title">${g(a)}</span>
+                </div>
+                <a href="/issue/${encodeURIComponent(i)}" class="gate-approval-view-link" data-action="view-issue-from-modal" data-issue-id="${u(t)}">View full ticket details &rarr;</a>
+            </div>
+            <div class="gate-approval-ritual">
+                <div class="gate-approval-prompt">${g(s)}</div>
+                ${o?`<div class="gate-approval-requested">Attested by <strong>${g(o)}</strong>${r?` ${Oi(r)}`:""}</div>`:""}
+                ${d?`<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${Be(d)}</div>`:""}
+            </div>
+            <form id="review-approval-form">
+                <button type="submit" class="btn btn-primary">Approve Attestation</button>
+            </form>
+        </div>
+    `,document.getElementById("review-approval-form").addEventListener("submit",l=>{Hp(l,e,t,n)}),R(),(c=document.querySelector(".modal"))==null||c.classList.add("modal-wide")}async function Hp(e,t,n,s){e.preventDefault();try{await b.approveTicketRitual(t,n),v(`Review ritual "${s}" approved!`,"success"),A(),In()}catch(i){v(`Failed to approve review ritual: ${i.message}`,"error")}}function Fp(e,t,n,s,i,a,o,r,d){Op(e,t,n,s,i,a,o,r,d)}let Hi=[];async function In(){if(!x())return;const e=document.getElementById("gate-approvals-list");if(e){e.innerHTML='<div class="loading">Loading pending approvals...</div>';try{const t=await Promise.all(U().map(async i=>{const[a,o]=await Promise.all([b.getPendingApprovals(i.id),b.getLimboStatus(i.id)]);return{project:i,approvals:a,limbo:o}})),n=[],s=[];for(const{project:i,approvals:a,limbo:o}of t)if(n.push(...a),o&&o.in_limbo){const r=(o.pending_rituals||[]).filter(d=>{var c;return(c=d.attestation)!=null&&c.approved_at?!1:d.approval_mode==="gate"||!!d.attestation});r.length>0&&s.push({project:i,rituals:r})}Zc(n),Hi=s,mr()}catch(t){e.innerHTML=`<div class="empty-state"><h3>Error loading approvals</h3><p>${g(t.message)}</p></div>`}}}function mr(){const e=document.getElementById("gate-approvals-list");if(!e)return;const t=Yc(),n=Hi.length>0,s=!qc();if(t.length===0&&!n){s?e.innerHTML=`
+                <div class="empty-state approvals-explainer">
+                    <h3>Welcome to Approvals</h3>
+                    <p>This is where you'll review and approve ritual attestations from your team.</p>
+                    <div class="explainer-details">
+                        <p><strong>What are rituals?</strong> Rituals are configurable checks that run when sprints close, tickets are claimed, or tickets are closed. They ensure your team follows processes like running tests, updating docs, or getting code reviewed.</p>
+                        <p><strong>How approvals work:</strong></p>
+                        <ul>
+                            <li><strong>Gate</strong> rituals require a human to complete them directly — agents cannot attest.</li>
+                            <li><strong>Review</strong> rituals are attested by agents but need human approval before they count.</li>
+                            <li><strong>Auto</strong> rituals are cleared immediately by agents (they won't appear here).</li>
+                        </ul>
+                        <p>To set up rituals, go to a project's settings and configure them under the ritual tabs.</p>
+                    </div>
+                    <button class="btn btn-secondary" data-action="dismiss-approvals-explainer">Got it!</button>
+                </div>
+            `:e.innerHTML=`
+                <div class="empty-state">
+                    <h3>No pending approvals</h3>
+                    <p>All rituals have been completed. Nice work!</p>
+                </div>
+            `;return}let i="";n&&(i+=`
+            <div class="gate-section">
+                <h3 class="gate-section-title">Sprint Rituals</h3>
+                <p class="gate-section-desc">Sprint is in limbo — complete these rituals to activate the next sprint</p>
+                <div class="gate-list">
+                    ${Hi.map(({project:l,rituals:f})=>`
+                        <div class="gate-issue-card">
+                            <div class="gate-issue-header">
+                                <span class="gate-issue-id">${g(l.name)}</span>
+                                <span class="badge badge-in_progress">in limbo</span>
+                            </div>
+                            <div class="gate-rituals">
+                                ${f.map(p=>{const h=p.attestation&&!p.attestation.approved_at,y=h?"⏳":"○",k=h?`<span class="gate-waiting-info">Attested by <strong>${g(p.attestation.attested_by_name||"Unknown")}</strong></span>`:p.approval_mode==="gate"?"":'<span class="text-muted">Awaiting agent attestation</span>',E=h?`<button class="btn btn-small btn-primary sprint-approve-btn"
+                                            data-ritual-id="${u(p.id)}"
+                                            data-project-id="${u(l.id)}">Approve</button>`:p.approval_mode==="gate"?`<button class="btn btn-small btn-primary sprint-complete-btn"
+                                                data-ritual-id="${u(p.id)}"
+                                                data-project-id="${u(l.id)}"
+                                                data-ritual-name="${u(p.name)}">Complete</button>`:"";return`
+                                        <div class="gate-ritual">
+                                            <div class="gate-ritual-info">
+                                                <span class="gate-ritual-name">${y} ${g(p.name)}
+                                                    <span class="badge badge-ritual-${u(p.approval_mode)}">${g(p.approval_mode)}</span>
+                                                </span>
+                                                <span class="gate-ritual-prompt">${g(p.prompt)}</span>
+                                                ${k}
+                                            </div>
+                                            ${E}
+                                        </div>
+                                    `}).join("")}
+                            </div>
+                        </div>
+                    `).join("")}
+                </div>
+            </div>
+        `);const a=l=>l.pending_approvals||[],o=l=>f=>{const p=a(f).filter(l);return p.length>0?{...f,_filteredApprovals:p}:null},r=t.map(o(l=>l.approval_mode==="gate"&&l.limbo_type==="claim")).filter(Boolean),d=t.map(o(l=>l.approval_mode==="gate"&&l.limbo_type==="close")).filter(Boolean),c=t.map(o(l=>l.approval_mode==="review")).filter(Boolean);r.length>0&&(i+=`
+            <div class="gate-section">
+                <h3 class="gate-section-title">Waiting to Claim</h3>
+                <p class="gate-section-desc">Someone tried to claim these tickets but is waiting for your approval</p>
+                <div class="gate-list">
+                    ${r.map(Fi).join("")}
+                </div>
+            </div>
+        `),d.length>0&&(i+=`
+            <div class="gate-section">
+                <h3 class="gate-section-title">Waiting to Close</h3>
+                <p class="gate-section-desc">Someone tried to close these tickets but is waiting for your approval</p>
+                <div class="gate-list">
+                    ${d.map(Fi).join("")}
+                </div>
+            </div>
+        `),c.length>0&&(i+=`
+            <div class="gate-section">
+                <h3 class="gate-section-title">Awaiting Review Approval</h3>
+                <p class="gate-section-desc">An agent attested these rituals and they need your approval</p>
+                <div class="gate-list">
+                    ${c.map(Fi).join("")}
+                </div>
+            </div>
+        `),e.innerHTML=i,e.querySelectorAll(".gate-approve-btn").forEach(l=>{l.addEventListener("click",()=>{const f=l.dataset;qp(f.ritualId,f.issueId,f.ritualName,f.ritualPrompt,f.issueIdentifier,f.issueTitle,f.requestedBy,f.requestedAt)})}),e.querySelectorAll(".review-approve-btn").forEach(l=>{l.addEventListener("click",()=>{const f=l.dataset;Fp(f.ritualId,f.issueId,f.ritualName,f.ritualPrompt,f.issueIdentifier,f.issueTitle,f.requestedBy,f.requestedAt,f.attestationNote)})}),e.querySelectorAll(".sprint-approve-btn").forEach(l=>{l.addEventListener("click",async()=>{l.disabled=!0;try{await b.approveAttestation(l.dataset.ritualId,l.dataset.projectId),v("Sprint ritual approved!","success"),await In()}catch(f){l.disabled=!1,v(f.message,"error")}})}),e.querySelectorAll(".sprint-complete-btn").forEach(l=>{l.addEventListener("click",()=>{pr(l.dataset.ritualId,l.dataset.projectId,l.dataset.ritualName)})})}function Up(){Oc(),mr()}function Fi(e){const n=(e._filteredApprovals||e.pending_approvals||[]).map(s=>{const i=s.approval_mode==="review",a=i?"Attested by":"Waiting",o=s.requested_by_name?`<span class="gate-waiting-info">${a}: <strong>${g(s.requested_by_name)}</strong>${s.requested_at?` (${Oi(s.requested_at)})`:""}</span>`:"",r=i&&s.attestation_note?`<div class="gate-attestation-note">${Be(s.attestation_note)}</div>`:"",d=i?"review-approve-btn":"gate-approve-btn",c=i?"Approve":"Complete",l=i?'<span class="badge badge-review">review</span>':'<span class="badge badge-gate">gate</span>';return`
+            <div class="gate-ritual">
+                <div class="gate-ritual-info">
+                    <span class="gate-ritual-name">${g(s.ritual_name)} ${l}</span>
+                    <span class="gate-ritual-prompt">${g(s.ritual_prompt)}</span>
+                    ${o}
+                    ${r}
+                </div>
+                <button class="btn btn-small btn-primary ${d}"
+                    data-ritual-id="${u(s.ritual_id)}"
+                    data-issue-id="${u(e.issue_id)}"
+                    data-ritual-name="${u(s.ritual_name)}"
+                    data-ritual-prompt="${u(s.ritual_prompt)}"
+                    data-issue-identifier="${u(e.identifier)}"
+                    data-issue-title="${u(e.title)}"
+                    data-requested-by="${u(s.requested_by_name||"")}"
+                    data-requested-at="${u(s.requested_at||"")}"
+                    data-attestation-note="${u(s.attestation_note||"")}">${c}</button>
+            </div>
+        `}).join("");return`
+        <div class="gate-issue-card">
+            <div class="gate-issue-header">
+                <a href="/issue/${encodeURIComponent(e.identifier)}" data-action="navigate-issue" data-issue-id="${u(e.issue_id)}" class="gate-issue-link">
+                    <span class="gate-issue-id">${g(e.identifier)}</span>
+                    <span class="gate-issue-title">${g(e.title)}</span>
+                </a>
+                <span class="badge badge-${e.status}">${e.status.replace("_"," ")}</span>
+            </div>
+            <div class="gate-issue-project">${g(e.project_name)}</div>
+            <div class="gate-rituals">
+                ${n}
+            </div>
+        </div>
+    `}Y({"view-issue-from-modal":(e,t)=>{e.preventDefault(),A(),F(t.issueId)},"dismiss-approvals-explainer":()=>{Up()}});const ws={estimate:["gte","lte","eq","isnull"],priority:["eq","in","isnull"],issue_type:["eq","in","isnull"],status:["eq","in","isnull"],labels:["contains","isnull"]},ks={eq:"equals",in:"in (comma-separated)",gte:">=",lte:"<=",contains:"contains",isnull:"is empty"};let gr=0;function fr(e){gr=0;let t="";if(e&&typeof e=="object")for(const[n,s]of Object.entries(e)){const[i,a]=n.split("__");t+=hr(i,a,s)}return`
+        <div class="form-group">
+            <label>Conditions (optional)</label>
+            <div id="condition-rows">
+                ${t}
+            </div>
+            <button type="button" class="btn btn-secondary btn-small" data-action="add-condition-row">+ Add Condition</button>
+            <p class="form-help">Filter which tickets this ritual applies to.</p>
+            <p id="condition-error" class="form-error" style="display: none; color: #e53e3e;"></p>
+        </div>
+    `}function hr(e="",t="",n=""){const s=gr++,i=Object.keys(ws).map(c=>`<option value="${c}" ${c===e?"selected":""}>${c}</option>`).join(""),o=(e?ws[e]:ws.estimate).map(c=>`<option value="${c}" ${c===t?"selected":""}>${ks[c]}</option>`).join(""),r=n===!0?"":Array.isArray(n)?n.join(","):n??"",d=t==="isnull";return`
+        <div class="condition-row" id="condition-row-${s}">
+            <select class="condition-field" data-action="update-operator-options" data-row-id="${s}">
+                <option value="">Select field...</option>
+                ${i}
+            </select>
+            <select class="condition-operator" id="condition-operator-${s}" data-action="toggle-value-input" data-row-id="${s}">
+                ${o}
+            </select>
+            <input type="text" class="condition-value" id="condition-value-${s}" value="${u(String(r))}" placeholder="Value"${d?' style="display: none;"':""}>
+            <button type="button" class="btn btn-secondary btn-small" data-action="remove-condition-row" data-row-id="${s}">&times;</button>
+        </div>
+    `}function zp(){const e=document.getElementById("condition-rows");e&&e.insertAdjacentHTML("beforeend",hr()),$s()}function Gp(e){const t=document.getElementById(`condition-row-${e}`);t&&t.remove(),$s()}function Wp(e){const t=document.getElementById(`condition-row-${e}`);if(!t)return;const n=t.querySelector(".condition-field"),s=t.querySelector(".condition-operator"),i=n.value;if(!i)return;const a=ws[i]||[];s.innerHTML=a.map(o=>`<option value="${o}">${ks[o]}</option>`).join(""),vr(e),$s()}function vr(e){const t=document.getElementById(`condition-operator-${e}`),n=document.getElementById(`condition-value-${e}`);t&&n&&(n.style.display=t.value==="isnull"?"none":"")}function xn(e){const t=document.getElementById("condition-error");t&&(t.textContent=e,t.style.display="block")}function $s(){const e=document.getElementById("condition-error");e&&(e.style.display="none")}function br(){var s,i,a;const e=document.querySelectorAll(".condition-row"),t={},n=new Set;for(const o of e){const r=(s=o.querySelector(".condition-field"))==null?void 0:s.value,d=(i=o.querySelector(".condition-operator"))==null?void 0:i.value,c=o.querySelector(".condition-value");let l=(a=c==null?void 0:c.value)==null?void 0:a.trim();if(!r&&!d)continue;if(!r)throw xn("Please select a field for all condition rows, or remove empty rows."),new Error("Incomplete condition row: missing field");if(!d)throw xn("Please select an operator for all condition rows."),new Error("Incomplete condition row: missing operator");const f=`${r}__${d}`;if(n.has(f))throw xn(`Duplicate condition: ${r} ${ks[d]}. Each field+operator combination can only be used once.`),new Error(`Duplicate condition key: ${f}`);if(n.add(f),d==="isnull")t[f]=!0;else if(d==="in"||d==="contains")t[f]=l?l.split(",").map(p=>p.trim()).filter(p=>p):[];else if(d==="gte"||d==="lte"){if(!l)throw xn(`Please enter a numeric value for ${r} ${ks[d]}.`),new Error(`Missing numeric value for ${f}`);const p=parseInt(l,10);if(isNaN(p))throw xn(`Invalid number "${l}" for ${r}. Please enter a valid integer.`),new Error(`Invalid numeric value for ${f}: ${l}`);t[f]=p}else t[f]=l}return $s(),Object.keys(t).length>0?t:null}Y({"add-condition-row":()=>{zp()},"remove-condition-row":(e,t)=>{Gp(Number(t.rowId))},"update-operator-options":(e,t)=>{Wp(Number(t.rowId))},"toggle-value-input":(e,t)=>{vr(Number(t.rowId))}});let V=[],Ui=null;const Es={fibonacci:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:3,label:"3 points"},{value:5,label:"5 points"},{value:8,label:"8 points"},{value:13,label:"13 points"},{value:21,label:"21 points"}],linear:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:3,label:"3 points"},{value:4,label:"4 points"},{value:5,label:"5 points"},{value:6,label:"6 points"},{value:7,label:"7 points"},{value:8,label:"8 points"},{value:9,label:"9 points"},{value:10,label:"10 points"}],powers_of_2:[{value:null,label:"No estimate"},{value:1,label:"1 point"},{value:2,label:"2 points"},{value:4,label:"4 points"},{value:8,label:"8 points"},{value:16,label:"16 points"},{value:32,label:"32 points"},{value:64,label:"64 points"}],tshirt:[{value:null,label:"No estimate"},{value:1,label:"XS"},{value:2,label:"S"},{value:3,label:"M"},{value:5,label:"L"},{value:8,label:"XL"}]};function yr(e){Ui=e}function U(){return V}function Tn(e){const t=V.find(s=>s.id===e),n=(t==null?void 0:t.estimate_scale)||"fibonacci";return Es[n]||Es.fibonacci}function _s(e,t){if(!e)return"No estimate";const s=Tn(t).find(i=>i.value===e);return s?s.label:`${e} points`}function Vp(e){const t=V.find(o=>o.id===e),n=(t==null?void 0:t.estimate_scale)||"fibonacci",s=(Es[n]||Es.fibonacci).filter(o=>o.value!==null);if(n==="tshirt")return`This project uses t-shirt estimates (${s.map(r=>`${r.label}=${r.value}pt`).join(", ")}). Budget is in points.`;const i=s.map(o=>o.value).join(", ");return`${{fibonacci:"Fibonacci",linear:"Linear",powers_of_2:"Powers of 2"}[n]||n} scale: ${i}`}async function $e(){if(x())try{V=await b.getProjects(x().id),Kp()}catch(e){v(e.message,"error")}}function Kp(){const e=document.getElementById("project-filter"),t=document.getElementById("sprint-project-filter"),n=document.getElementById("board-project-filter"),s=document.getElementById("doc-project-filter"),i=document.getElementById("dashboard-project-filter"),a=e==null?void 0:e.value,o=t==null?void 0:t.value,r=n==null?void 0:n.value,d=s==null?void 0:s.value,c=i==null?void 0:i.value,l='<option value="">All Projects</option>'+V.map(h=>`<option value="${h.id}">${g(h.name)}</option>`).join(""),f='<option value="">Select Project</option>'+V.map(h=>`<option value="${h.id}">${g(h.name)}</option>`).join(""),p=Sn();if(e){e.innerHTML=l;let h=a;if(!h||!V.some(y=>y.id===h))if(p&&V.some(y=>y.id===p))h=p;else{const k=new URLSearchParams(window.location.search).get("project");k&&V.some(E=>E.id===k)?h=k:V.length>0&&(h=V[0].id)}h&&(e.value=h,oo(h))}if(t){t.innerHTML=f;const h=o||p;h&&V.some(y=>y.id===h)&&(t.value=h)}if(n){n.innerHTML=f;const h=r||p;h&&V.some(y=>y.id===h)&&(n.value=h)}if(s){s.innerHTML=l;const h=d||p;h&&V.some(y=>y.id===h)&&(s.value=h)}if(i){i.innerHTML=l;const h=c||p;h&&V.some(y=>y.id===h)&&(i.value=h)}}function Sn(){return Tc()}function Ut(e){if(!e)return;oo(e),["project-filter","board-project-filter","sprint-project-filter"].forEach(n=>{const s=document.getElementById(n);s&&(s.value=e)})}function Ln(){const e=document.getElementById("projects-list");if(V.length===0){e.innerHTML=`
+            <div class="empty-state">
+                <h3>No projects yet</h3>
+                <p>Create your first project to get started</p>
+            </div>
+        `;return}e.innerHTML=V.map(t=>`
+        <div class="grid-item" data-action="view-project" data-project-id="${u(t.id)}">
+            <div class="grid-item-header">
+                <div class="grid-item-icon" style="background: ${W(t.color)}20; color: ${W(t.color)}">
+                    ${g(t.icon||t.key.charAt(0))}
+                </div>
+                <div class="grid-item-title">${g(t.name)}</div>
+                <button class="grid-item-edit" data-action="view-project-settings" data-project-id="${u(t.id)}" title="Project settings">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+            </div>
+            <div class="grid-item-description">${g(t.description||"No description")}</div>
+            <div class="grid-item-footer">
+                <span>${t.key}</span>
+                <span>•</span>
+                <span>${t.issue_count} issues</span>
+            </div>
+        </div>
+    `).join("")}function Yp(e){Ut(e),C("issues")}function wr(){document.getElementById("modal-title").textContent="Create Project",document.getElementById("modal-content").innerHTML=`
+        <form data-action="create-project">
+            <div class="form-group">
+                <label for="project-name">Name</label>
+                <input type="text" id="project-name" required>
+            </div>
+            <div class="form-group">
+                <label for="project-key">Key (2-10 uppercase letters/numbers)</label>
+                <input type="text" id="project-key" pattern="[A-Z0-9]{2,10}" required
+                    style="text-transform: uppercase">
+            </div>
+            <div class="form-group">
+                <label for="project-description">Description</label>
+                <textarea id="project-description"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="project-color">Color</label>
+                <input type="color" id="project-color" value="#6366f1">
+            </div>
+            <div class="form-group">
+                <label for="project-estimate-scale">Estimate Scale</label>
+                <select id="project-estimate-scale">
+                    <option value="fibonacci">Fibonacci (1, 2, 3, 5, 8, 13, 21)</option>
+                    <option value="linear">Linear (1-10)</option>
+                    <option value="powers_of_2">Powers of 2 (1, 2, 4, 8, 16, 32, 64)</option>
+                    <option value="tshirt">T-Shirt (XS, S, M, L, XL)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="project-human-rituals-required">
+                    Require humans to complete rituals
+                </label>
+                <small class="form-hint">When unchecked, humans can close tickets without completing rituals</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Project</button>
+        </form>
+    `,R()}async function Zp(e){e.preventDefault();const t={name:document.getElementById("project-name").value,key:document.getElementById("project-key").value.toUpperCase(),description:document.getElementById("project-description").value,color:document.getElementById("project-color").value,estimate_scale:document.getElementById("project-estimate-scale").value,human_rituals_required:document.getElementById("project-human-rituals-required").checked};try{await b.createProject(x().id,t),await $e(),Ln(),A(),v("Project created!","success")}catch(n){v(`Failed to create project: ${n.message}`,"error")}return!1}async function Xp(e,t){e.preventDefault();const n={name:document.getElementById("project-name").value,description:document.getElementById("project-description").value,color:document.getElementById("project-color").value,estimate_scale:document.getElementById("project-estimate-scale").value,human_rituals_required:document.getElementById("project-human-rituals-required").checked};try{await b.updateProject(t,n),await $e(),Ln(),A(),v("Project updated!","success")}catch(s){v(`Failed to update project: ${s.message}`,"error")}return!1}async function Qp(e){const t=V.find(n=>n.id===e);if(t&&confirm(`Are you sure you want to delete "${t.name}"? This will delete all issues in this project.`))try{await b.deleteProject(e),await $e(),Ln(),A(),v("Project deleted","success")}catch(n){v(`Failed to delete project: ${n.message}`,"error")}}let be=null;async function kr(e){be=e,V.length===0&&await $e();const t=V.find(n=>n.id===e);if(!t){v("Project not found","error"),C("projects");return}document.getElementById("project-settings-title").textContent=`${t.name} Settings`,document.getElementById("ps-name").value=t.name||"",document.getElementById("ps-key").value=t.key||"",document.getElementById("ps-description").value=t.description||"",document.getElementById("ps-color").value=t.color||"#6366f1",document.getElementById("ps-estimate-scale").value=t.estimate_scale||"fibonacci",document.getElementById("ps-default-sprint-budget").value=t.default_sprint_budget||"",document.getElementById("ps-unestimated-handling").value=t.unestimated_handling||"default_one_point",document.getElementById("ps-human-rituals-required").checked=t.human_rituals_required===!0,document.getElementById("ps-require-estimate-on-claim").checked=t.require_estimate_on_claim===!0,document.querySelectorAll(".view").forEach(n=>n.classList.add("hidden")),document.getElementById("project-settings-view").classList.remove("hidden"),$r("general"),window.history.pushState({},"",`/projects/${encodeURIComponent(e)}/settings`)}function $r(e){["general","rules","sprint-rituals","close-rituals","claim-rituals"].includes(e)||(e="general"),document.querySelectorAll(".settings-tab").forEach(s=>{s.classList.toggle("active",s.dataset.tab===e)}),document.querySelectorAll(".settings-tab-content").forEach(s=>{s.classList.add("hidden")});const n=document.getElementById(`project-settings-tab-${e}`);n&&n.classList.remove("hidden"),e.endsWith("-rituals")&&(!st||st.length===0)&&Cn()}function Jp(){be=null,st=[]}function em(e){be=e}function tm(){return st}async function nm(){if(!be)return;const e=document.getElementById("ps-name").value.trim();if(!e){v("Project name is required","error");return}const t={name:e,description:document.getElementById("ps-description").value,color:document.getElementById("ps-color").value};try{await b.updateProject(be,t),await $e(),v("Settings saved","success");const n=V.find(s=>s.id===be);n&&(document.getElementById("project-settings-title").textContent=`${n.name} Settings`)}catch(n){v(n.message,"error")}}async function sm(){if(!be)return;const e=document.getElementById("ps-default-sprint-budget").value,t=e?parseInt(e):null,n={estimate_scale:document.getElementById("ps-estimate-scale").value,default_sprint_budget:t,unestimated_handling:document.getElementById("ps-unestimated-handling").value,human_rituals_required:document.getElementById("ps-human-rituals-required").checked,require_estimate_on_claim:document.getElementById("ps-require-estimate-on-claim").checked};try{await b.updateProject(be,n),await $e(),v("Settings saved","success")}catch(s){v(`Failed to save settings: ${s.message}`,"error")}}let st=[];async function Cn(){if(be)try{st=await b.getRituals(be),im(),typeof Ui=="function"&&Ui()}catch(e){v(e.message,"error")}}function im(){if(!document.getElementById("ps-sprint-rituals-list"))return;const e=st.filter(s=>!s.trigger||s.trigger==="every_sprint"),t=st.filter(s=>s.trigger==="ticket_close"),n=st.filter(s=>s.trigger==="ticket_claim");zt("ps-sprint-rituals-list",e,"sprint"),zt("ps-close-rituals-list",t,"close"),zt("ps-claim-rituals-list",n,"claim")}function zt(e,t,n){const s=document.getElementById(e);if(!s)return;if(t.length===0){const a={sprint:"sprint close",close:"ticket close",claim:"ticket claim"};s.innerHTML=`<p class="empty-state">No ${a[n]} rituals configured.</p>`;return}const i=a=>u(a||"auto");s.innerHTML=t.map(a=>{let o="";if(a.group_name){const r=a.weight!=null&&a.weight!==1?` w:${a.weight}`:a.percentage!=null?` ${a.percentage}%`:"";o=`<span class="badge badge-ritual-group">${g(a.group_name)}${r}</span>`}return`
+    <div class="ritual-item mode-${i(a.approval_mode)}">
+      <div class="ritual-item-info">
+        <div class="ritual-item-name">${g(a.name)}</div>
+        <div class="ritual-item-prompt-fade">
+          <div class="ritual-item-prompt markdown-body">${Be(a.prompt)}</div>
+        </div>
+        <div class="ritual-item-mode">
+          <span class="badge badge-ritual-${i(a.approval_mode)}">${g(a.approval_mode||"auto")}</span>
+          ${o}
+          ${!a.group_name&&a.approval_mode==="auto"?"Agent clears immediately":""}
+          ${!a.group_name&&a.approval_mode==="review"?"Requires human approval":""}
+          ${!a.group_name&&a.approval_mode==="gate"?"Human only":""}
+          ${a.note_required===!1?'<span class="badge badge-no-note">no note</span>':""}
+        </div>
+      </div>
+      <div class="ritual-item-actions">
+        <button class="btn btn-secondary btn-small" data-action="edit-project-ritual" data-ritual-id="${u(a.id)}">Edit</button>
+        <button class="btn btn-danger btn-small" data-action="delete-project-ritual" data-ritual-id="${u(a.id)}" data-ritual-name="${u(a.name)}">Delete</button>
+      </div>
+    </div>
+  `}).join("")}async function Er(e){if(!be)return;let t=[];try{t=await b.getRitualGroups(be)}catch{}document.getElementById("modal-title").textContent="Create Ritual",document.getElementById("modal-content").innerHTML=`
+    <form data-action="create-project-ritual">
+      <div class="form-group">
+        <label for="ritual-name">Name</label>
+        <input type="text" id="ritual-name" placeholder="e.g., run-tests, update-docs" required>
+        <p class="form-help">Short identifier for the ritual.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-prompt">Prompt</label>
+        <textarea id="ritual-prompt" placeholder="e.g., Did you run the test suite and verify all tests pass?" required></textarea>
+        <p class="form-help">What the agent should consider/do.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-trigger">Trigger</label>
+        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
+          <option value="every_sprint" ${e==="every_sprint"?"selected":""}>Every Sprint - Required when sprint closes</option>
+          <option value="ticket_close" ${e==="ticket_close"?"selected":""}>Ticket Close - Required when closing a ticket</option>
+          <option value="ticket_claim" ${e==="ticket_claim"?"selected":""}>Ticket Claim - Required when claiming a ticket</option>
+        </select>
+        <p class="form-help">When this ritual is required.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-mode">Approval Mode</label>
+        <select id="ritual-mode">
+          <option value="auto">Auto - Agent clears immediately</option>
+          <option value="review">Review - Requires human approval</option>
+          <option value="gate">Gate - Human only (agent cannot attest)</option>
+        </select>
+        <p class="form-help">How attestations are approved.</p>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="ritual-note-required" checked>
+          Require note on attestation
+        </label>
+        <p class="form-help">When checked, agents must provide a note when attesting.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-group">Group</label>
+        <select id="ritual-group" data-action="ritual-group-change">
+          <option value="">None (always required)</option>
+          ${t.map(n=>`<option value="${u(n.id)}" data-mode="${u(n.selection_mode)}">${g(n.name)} (${g(n.selection_mode)})</option>`).join("")}
+          <option value="__create__">+ Create Group...</option>
+        </select>
+        <p class="form-help">Group rituals for random/round-robin/percentage selection.</p>
+      </div>
+      <div id="ritual-group-create-inline" class="form-group hidden">
+        <div style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex: 1;">
+            <label for="ritual-new-group-name">Group Name</label>
+            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
+          </div>
+          <div>
+            <label for="ritual-new-group-mode">Mode</label>
+            <select id="ritual-new-group-mode">
+              <option value="random_one">Random One</option>
+              <option value="round_robin">Round Robin</option>
+              <option value="percentage">Percentage</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="ritual-weight-group" class="form-group hidden">
+        <label for="ritual-weight">Weight</label>
+        <input type="number" id="ritual-weight" value="1" min="0" step="0.1">
+        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
+      </div>
+      <div id="ritual-percentage-group" class="form-group hidden">
+        <label for="ritual-percentage">Percentage (%)</label>
+        <input type="number" id="ritual-percentage" value="" min="0" max="100" step="1" placeholder="e.g., 50">
+        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
+      </div>
+      <div id="ritual-conditions-section"${e==="every_sprint"?' style="display: none;"':""}>
+        ${fr(null)}
+      </div>
+      <button type="submit" class="btn btn-primary">Create Ritual</button>
+    </form>
+  `,R()}function am(){var n;const e=(n=document.getElementById("ritual-trigger"))==null?void 0:n.value,t=document.getElementById("ritual-conditions-section");t&&(t.style.display=e==="every_sprint"?"none":"")}function om(){const e=document.getElementById("ritual-group"),t=document.getElementById("ritual-group-create-inline"),n=document.getElementById("ritual-weight-group"),s=document.getElementById("ritual-percentage-group");if(e.value==="__create__")t.classList.remove("hidden"),n.classList.add("hidden"),s.classList.add("hidden");else if(t.classList.add("hidden"),e.value){const a=e.options[e.selectedIndex].dataset.mode;n.classList.toggle("hidden",a!=="random_one"),s.classList.toggle("hidden",a!=="percentage")}else n.classList.add("hidden"),s.classList.add("hidden")}async function _r(){const e=document.getElementById("ritual-group");if(e.value==="__create__"){const t=document.getElementById("ritual-new-group-name").value.trim();if(!t)throw v("Group name is required","error"),new Error("Group name required");const n=document.getElementById("ritual-new-group-mode").value;return(await b.createRitualGroup(be,{name:t,selection_mode:n})).id}return e.value||null}async function rm(e){e.preventDefault();let t;try{t=br()}catch{return!1}let n;try{n=await _r()}catch{return!1}const s={name:document.getElementById("ritual-name").value,prompt:document.getElementById("ritual-prompt").value,trigger:document.getElementById("ritual-trigger").value,approval_mode:document.getElementById("ritual-mode").value,note_required:document.getElementById("ritual-note-required").checked,conditions:t};if(n){s.group_id=n;const i=document.getElementById("ritual-weight"),a=document.getElementById("ritual-percentage");!document.getElementById("ritual-weight-group").classList.contains("hidden")&&i.value&&(s.weight=parseFloat(i.value)),!document.getElementById("ritual-percentage-group").classList.contains("hidden")&&a.value&&(s.percentage=parseFloat(a.value))}try{await b.createRitual(be,s),await Cn(),A(),v("Ritual created!","success")}catch(i){v(`Failed to create ritual: ${i.message}`,"error")}return!1}async function lm(e){const t=st.find(o=>o.id===e);if(!t)return;let n=[];try{n=await b.getRitualGroups(be)}catch{}const s=n.find(o=>o.id===t.group_id),i=s&&s.selection_mode==="random_one",a=s&&s.selection_mode==="percentage";document.getElementById("modal-title").textContent="Edit Ritual",document.getElementById("modal-content").innerHTML=`
+    <form data-action="update-project-ritual" data-ritual-id="${u(e)}">
+      <div class="form-group">
+        <label for="ritual-name">Name</label>
+        <input type="text" id="ritual-name" value="${u(t.name)}" required>
+      </div>
+      <div class="form-group">
+        <label for="ritual-prompt">Prompt</label>
+        <textarea id="ritual-prompt" required>${g(t.prompt)}</textarea>
+      </div>
+      <div class="form-group">
+        <label for="ritual-trigger">Trigger</label>
+        <select id="ritual-trigger" data-action="toggle-ritual-conditions">
+          <option value="every_sprint" ${!t.trigger||t.trigger==="every_sprint"?"selected":""}>Every Sprint - Required when sprint closes</option>
+          <option value="ticket_close" ${t.trigger==="ticket_close"?"selected":""}>Ticket Close - Required when closing a ticket</option>
+          <option value="ticket_claim" ${t.trigger==="ticket_claim"?"selected":""}>Ticket Claim - Required when claiming a ticket</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="ritual-mode">Approval Mode</label>
+        <select id="ritual-mode">
+          <option value="auto" ${t.approval_mode==="auto"?"selected":""}>Auto - Agent clears immediately</option>
+          <option value="review" ${t.approval_mode==="review"?"selected":""}>Review - Requires human approval</option>
+          <option value="gate" ${t.approval_mode==="gate"?"selected":""}>Gate - Human only</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="ritual-note-required" ${t.note_required!==!1?"checked":""}>
+          Require note on attestation
+        </label>
+        <p class="form-help">When checked, agents must provide a note when attesting.</p>
+      </div>
+      <div class="form-group">
+        <label for="ritual-group">Group</label>
+        <select id="ritual-group" data-action="ritual-group-change">
+          <option value="">None (always required)</option>
+          ${n.map(o=>`<option value="${u(o.id)}" data-mode="${u(o.selection_mode)}" ${t.group_id===o.id?"selected":""}>${g(o.name)} (${g(o.selection_mode)})</option>`).join("")}
+          <option value="__create__">+ Create Group...</option>
+        </select>
+      </div>
+      <div id="ritual-group-create-inline" class="form-group hidden">
+        <div style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex: 1;">
+            <label for="ritual-new-group-name">Group Name</label>
+            <input type="text" id="ritual-new-group-name" placeholder="e.g., review-checks">
+          </div>
+          <div>
+            <label for="ritual-new-group-mode">Mode</label>
+            <select id="ritual-new-group-mode">
+              <option value="random_one">Random One</option>
+              <option value="round_robin">Round Robin</option>
+              <option value="percentage">Percentage</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="ritual-weight-group" class="form-group ${i?"":"hidden"}">
+        <label for="ritual-weight">Weight</label>
+        <input type="number" id="ritual-weight" value="${t.weight||1}" min="0" step="0.1">
+        <p class="form-help">Relative weight for random selection (higher = more likely).</p>
+      </div>
+      <div id="ritual-percentage-group" class="form-group ${a?"":"hidden"}">
+        <label for="ritual-percentage">Percentage (%)</label>
+        <input type="number" id="ritual-percentage" value="${t.percentage!=null?t.percentage:""}" min="0" max="100" step="1" placeholder="e.g., 50">
+        <p class="form-help">Independent chance this ritual is required each time (0-100).</p>
+      </div>
+      <div id="ritual-conditions-section"${!t.trigger||t.trigger==="every_sprint"?' style="display: none;"':""}>
+        ${fr(t.conditions)}
+      </div>
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+    </form>
+  `,R()}async function cm(e,t){e.preventDefault();let n;try{n=br()}catch{return!1}let s;try{s=await _r()}catch{return!1}const i={name:document.getElementById("ritual-name").value,prompt:document.getElementById("ritual-prompt").value,trigger:document.getElementById("ritual-trigger").value,approval_mode:document.getElementById("ritual-mode").value,note_required:document.getElementById("ritual-note-required").checked,conditions:n,group_id:s||""};if(s){const a=document.getElementById("ritual-weight"),o=document.getElementById("ritual-percentage");!document.getElementById("ritual-weight-group").classList.contains("hidden")&&a.value&&(i.weight=parseFloat(a.value)),!document.getElementById("ritual-percentage-group").classList.contains("hidden")&&o.value&&(i.percentage=parseFloat(o.value))}try{await b.updateRitual(t,i),await Cn(),A(),v("Ritual updated!","success")}catch(a){v(`Failed to update ritual: ${a.message}`,"error")}return!1}async function dm(e,t){if(confirm(`Delete ritual "${t}"? This cannot be undone.`))try{await b.deleteRitual(e),await Cn(),v("Ritual deleted","success")}catch(n){v(`Failed to delete ritual: ${n.message}`,"error")}}Y({"view-project":(e,t)=>{Yp(t.projectId)},"view-project-settings":(e,t)=>{e.stopPropagation(),kr(t.projectId)},"create-project":e=>{Zp(e)},"update-project":(e,t)=>{Xp(e,t.projectId)},"confirm-delete-project":(e,t)=>{Qp(t.projectId)},"edit-project-ritual":(e,t)=>{lm(t.ritualId)},"delete-project-ritual":(e,t)=>{dm(t.ritualId,t.ritualName)},"create-project-ritual":e=>{rm(e)},"update-project-ritual":(e,t)=>{cm(e,t.ritualId)},"toggle-ritual-conditions":()=>{am()},"ritual-group-change":()=>{om()}});function Gt(){const t=new URLSearchParams(window.location.search).get("project");return t||Sn()}function zi(e){const t=new URLSearchParams(window.location.search);e?t.set("project",e):t.delete("project");const n=t.toString(),s=n?`${window.location.pathname}?${n}`:window.location.pathname;history.replaceState(history.state,"",s)}const Gi={},Is=new Map;let Wi=null,Vi=null,Ki=null,Yi=null,Zi=null,Xi=null,Ir=!1;function um(e){Object.assign(Gi,e)}function pm({beforeNavigate:e,detailRoute:t,detailPopstate:n,restoreProject:s,issueNavigate:i,epicNavigate:a}={}){e&&(Wi=e),t&&(Vi=t),n&&(Ki=n),s&&(Yi=s),i&&(Zi=i),a&&(Xi=a)}function mm(){return Object.keys(Gi)}function C(e,t=!0){if(t&&Is.set(window.location.href,window.scrollY),Gc(e),t){let i;const a=Gt(),o=["issues","board","sprints"];e==="my-issues"?i="/":e==="issues"&&window.location.search?i=`/issues${window.location.search}`:o.includes(e)&&a?i=`/${e}?project=${a}`:i=`/${e}`,history.pushState({view:e},"",i)}document.querySelectorAll(".nav-item").forEach(i=>{i.classList.toggle("active",i.dataset.view===e)}),Wi&&Wi();const n=()=>{document.querySelectorAll(".view").forEach(a=>a.classList.add("hidden"));const i=document.getElementById(`${e}-view`);i&&i.classList.remove("hidden")};document.startViewTransition?document.startViewTransition(n):n();const s=Gi[e];s&&s(),t&&window.scrollTo(0,0)}function xr(){var s;const t=window.location.pathname.split("/").filter(Boolean);Yi&&Yi();let n="my-issues";if(t.length===0||t[0]==="")C("my-issues",!1);else{if(Vi&&Vi(t))return;n=t[0],mm().includes(n)?C(n,!1):(n="my-issues",C("my-issues",!1))}(s=history.state)!=null&&s.view||history.replaceState({view:n},"",window.location.href)}function Tr(e){Is.set(window.location.href,window.scrollY),history.pushState({view:"issue",identifier:e},"",`/issue/${e}`),Zi&&Zi(e)}function gm(e){Is.set(window.location.href,window.scrollY),history.pushState({view:"epic",identifier:e},"",`/epic/${e}`),Xi&&Xi(e)}function Sr(){const e=Is.get(window.location.href);e!==void 0&&requestAnimationFrame(()=>{window.scrollTo(0,e)})}function fm(){Ir||(Ir=!0,window.addEventListener("popstate",e=>{var t;if(e.state&&Ki&&Ki(e.state)){Sr();return}(t=e.state)!=null&&t.view?C(e.state.view,!1):xr(),Sr()}))}let Bn=[];function xs(){return Bn}function hm(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function vm(e){const t=e==null?void 0:e.avatar_url,n=u((e==null?void 0:e.name)||"Agent");return t?hm(t)?`
+        <div class="agent-avatar agent-avatar-purple">
+          <img class="avatar-img" src="${u(t)}" alt="${n}">
+        </div>
+      `:`<div class="agent-avatar agent-avatar-purple avatar-emoji">${g(t)}</div>`:`
+    <div class="agent-avatar agent-avatar-purple">
+      <span class="agent-emoji">🤖</span>
+      <span class="agent-initial">${n.charAt(0).toUpperCase()}</span>
+    </div>
+  `}async function bm(e){var t;if(e||(e=(t=x())==null?void 0:t.id),!!e)try{Bn=await b.getTeamAgents(e),as(Ct,xs),rs()}catch(n){console.error("Failed to load team agents:",n)}}async function Qi(e){var t;if(e||(e=(t=x())==null?void 0:t.id),!!e)try{Bn=await b.getTeamAgents(e),as(Ct,xs),rs(),ym()}catch(n){v(n.message,"error")}}function ym(){const e=document.getElementById("agents-list");if(e){if(Bn.length===0){e.innerHTML='<p class="empty-state">No agents yet. Create an agent to enable CLI automation with its own identity.</p>';return}e.innerHTML=Bn.map(t=>{const n=g(t.name),s=g(t.parent_user_name||"Unknown");return`
+      <div class="agent-item">
+        ${vm(t)}
+        <div class="agent-info">
+          <div class="agent-name">${n}</div>
+          <div class="agent-meta">
+            <span class="agent-scope">${t.agent_project_id?"Project-scoped":"Team-wide"}</span>
+            <span class="agent-date">Created by ${s} ${ri(t.created_at)}</span>
+          </div>
+        </div>
+        <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${u(t.id)}" data-agent-name="${u(t.name||"Agent")}">Delete</button>
+      </div>
+    `}).join("")}}function wm(){const e=U();document.getElementById("modal-title").textContent="Create Agent",document.getElementById("modal-content").innerHTML=`
+    <form data-action="create-agent">
+      <div class="form-group">
+        <label for="agent-name">Agent Name</label>
+        <input type="text" id="agent-name" placeholder="e.g., claude-bot, ci-agent" required>
+        <p class="form-help">A display name for this agent (shown in activity feeds).</p>
+      </div>
+      <div class="form-group">
+        <label for="agent-avatar">Avatar (emoji)</label>
+        <input type="text" id="agent-avatar" placeholder="🤖" maxlength="2">
+        <p class="form-help">Optional emoji avatar (shown in issue lists and activity).</p>
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="agent-project-scoped">
+          Project-scoped (can only access selected project)
+        </label>
+      </div>
+      <div class="form-group" id="agent-project-select" style="display: none;">
+        <label for="agent-project">Project</label>
+        <select id="agent-project">
+          ${e.map(n=>`<option value="${n.id}">${g(n.name)}</option>`).join("")}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Create Agent</button>
+    </form>
+  `;const t=document.getElementById("agent-project-scoped");t&&t.addEventListener("change",function(){document.getElementById("agent-project-select").style.display=this.checked?"block":"none"}),R()}async function km(e){var o,r,d;e.preventDefault();const t=(o=x())==null?void 0:o.id;if(!t)return v("No team selected","error"),!1;const n=document.getElementById("agent-name").value.trim(),s=((r=document.getElementById("agent-avatar"))==null?void 0:r.value.trim())||null,i=document.getElementById("agent-project-scoped").checked,a=(d=document.getElementById("agent-project"))==null?void 0:d.value;try{let c;i&&a?c=await b.createProjectAgent(a,n,s):c=await b.createTeamAgent(t,n,s),A();const l=g(c.api_key);document.getElementById("modal-title").textContent="Agent Created",document.getElementById("modal-content").innerHTML=`
+      <div class="api-key-created">
+        <p class="warning-text">Copy the agent's API key now. You won't be able to see it again!</p>
+        <div class="api-key-display">
+          <code id="new-agent-key">${l}</code>
+          <button type="button" class="btn btn-secondary" data-action="copy-agent-key">Copy</button>
+        </div>
+        <div class="api-key-instructions">
+          <p>Configure the CLI to use this agent:</p>
+          <code>chaotic auth set-key ${l}</code>
+        </div>
+        <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
+      </div>
+    `,R()}catch(c){v(`Failed to create agent: ${c.message}`,"error")}return!1}function $m(){const e=document.getElementById("new-agent-key").textContent;navigator.clipboard.writeText(e).then(()=>{v("Agent API key copied to clipboard","success")}).catch(()=>{v("Failed to copy","error")})}async function Em(e,t){if(confirm(`Delete agent "${t}"? This will revoke all its API keys and cannot be undone.`))try{await b.deleteAgent(e),v("Agent deleted","success"),Qi()}catch(n){v(`Failed to delete agent: ${n.message}`,"error")}}Y({"create-agent":e=>{km(e)},"copy-agent-key":()=>{$m()},"dismiss-agent-modal":()=>{A(),Qi()},"delete-agent":(e,t)=>{Em(t.agentId,t.agentName)}});let An=0,jn=null;const Lt=new Map;function it(e,t){return Lt.has(e)||Lt.set(e,new Set),Lt.get(e).add(t),()=>{var n;return(n=Lt.get(e))==null?void 0:n.delete(t)}}function _m(e){const t=Math.min(1e3*Math.pow(2,e),3e4),n=t*.25*(Math.random()*2-1);return Math.max(500,Math.round(t+n))}function Lr(e){jn&&(clearTimeout(jn),jn=null);const t=Jc();t&&(t.close(),go(null));const n=b.getToken();if(!n)return;const i=`${window.location.protocol==="https:"?"wss:":"ws:"}//${window.location.host}/ws?token=${encodeURIComponent(n)}&team_id=${encodeURIComponent(e)}`;try{const a=new WebSocket(i);go(a),a.onopen=()=>{console.log("WebSocket connected"),An>0&&v("Live updates reconnected","success"),An=0},a.onmessage=o=>{let r;try{r=JSON.parse(o.data)}catch(d){console.error("WebSocket: malformed message",d);return}Im(r)},a.onclose=()=>{console.log("WebSocket disconnected"),An++,An===1&&v("Live updates disconnected. Reconnecting...","warning");const o=_m(An-1);jn=setTimeout(()=>{jn=null,x()&&x().id===e&&Lr(e)},o)},a.onerror=o=>{console.error("WebSocket error:",o)}}catch(a){console.error("Failed to connect WebSocket:",a)}}function Im(e){const{type:t,entity:n,data:s}=e;if(!t||!n){console.warn("WebSocket: ignoring message with missing type/entity",e);return}const i={type:t,entity:n},a=Lt.get(`${n}:${t}`);if(a)for(const d of a)try{d(s,i)}catch(c){console.error(`WebSocket handler error (${n}:${t}):`,c)}const o=Lt.get(n);if(o)for(const d of o)try{d(s,i)}catch(c){console.error(`WebSocket handler error (${n}):`,c)}const r=Lt.get("*");if(r)for(const d of r)try{d(s,i)}catch(c){console.error("WebSocket handler error (*):",c)}}let Ts=[],Ss=[],Ji=[],ea=[];function xm(){return Ts}function Ct(){return Ss}async function ta(){try{Ts=await b.getMyTeams(),Tm()}catch(e){v(e.message,"error")}}function Tm(){const e=document.getElementById("team-list");Ts.length===0?e.innerHTML='<div class="dropdown-item" style="color: var(--text-secondary)">No teams yet</div>':e.innerHTML=Ts.map(t=>`
+            <button class="dropdown-item" data-action="select-team" data-team-json="${u(JSON.stringify(t))}">${g(t.name)}</button>
+        `).join("")}async function na(e,t=!1){li(e),document.getElementById("current-team-name").textContent=e.name;const n=document.getElementById("mobile-team-name");n&&(n.textContent=e.name);const s=document.getElementById("team-description-text");s&&(s.textContent=e.description||"No description"),document.getElementById("team-dropdown").classList.add("hidden"),Lr(e.id),await Promise.all([$e(),Om(),Lm(),bm()]),t?xr():C(L())}function Cr(){document.getElementById("team-dropdown").classList.toggle("hidden")}function Sm(){document.getElementById("user-dropdown").classList.toggle("hidden")}async function Lm(){if(x())try{Ss=await b.getTeamMembers(x().id),as(Ct,xs),rs()}catch(e){console.error("Failed to load team members:",e)}}async function Br(){if(x())try{Ss=await b.getTeamMembers(x().id),as(Ct,xs),rs(),Cm()}catch(e){v(e.message,"error")}}function Cm(){const e=document.getElementById("team-members-list");e.innerHTML=Ss.map(t=>`
+        <div class="list-item member-item">
+            <div class="member-info">
+                <div class="avatar">${(t.user_name||"U").charAt(0).toUpperCase()}</div>
+                <div class="member-details">
+                    <span class="member-name">${g(t.user_name||"Unknown")}</span>
+                    <span class="member-email">${g(t.user_email||"")}</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span class="member-role">${t.role}</span>
+                ${t.user_id!==fn().id&&t.role!=="owner"?`
+                    <button class="btn btn-danger btn-small" data-action="remove-member" data-user-id="${u(t.user_id)}">Remove</button>
+                `:""}
+            </div>
+        </div>
+    `).join("")}async function sa(){if(x())try{Ji=await b.getTeamInvitations(x().id),Bm()}catch{document.getElementById("team-invitations-list").innerHTML=""}}function Bm(){const e=document.getElementById("team-invitations-list");if(Ji.length===0){e.innerHTML='<div class="empty-state" style="padding: 1rem"><p>No pending invitations</p></div>';return}e.innerHTML=Ji.map(t=>`
+        <div class="list-item">
+            <div class="list-item-content">
+                <div class="list-item-title">${g(t.email)}</div>
+                <div class="list-item-meta">
+                    <span class="member-role">${g(t.role)}</span>
+                    <span>Expires: ${new Date(t.expires_at).toLocaleDateString()}</span>
+                </div>
+            </div>
+            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${u(t.id)}">Cancel</button>
+        </div>
+    `).join("")}async function Am(){if(x())try{ea=await b.getTeamAgents(x().id),jm()}catch(e){v(e.message,"error")}}function jm(){const e=document.getElementById("team-agents-list");if(e){if(ea.length===0){e.innerHTML='<div class="empty-state" style="padding: 1rem"><p>No agents yet. <a href="#" data-action="navigate-to" data-view="settings">Create an agent</a> to enable CLI automation with its own identity.</p></div>';return}e.innerHTML=ea.map(t=>{const n=g(t.name),s=g(t.parent_user_name||"Unknown"),i=t.avatar_url||"🤖";return`
+        <div class="list-item member-item">
+            <div class="member-info">
+                <div class="avatar agent-avatar" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">${g(i)}</div>
+                <div class="member-details">
+                    <span class="member-name">${n}</span>
+                    <span class="member-email">Created by ${s} • ${t.agent_project_id?"Project-scoped":"Team-wide"}</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span class="member-role" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">Agent</span>
+            </div>
+        </div>
+      `}).join("")}}function Ar(){document.getElementById("modal-title").textContent="Invite Team Member",document.getElementById("modal-content").innerHTML=`
+        <form data-action="invite-member">
+            <div class="form-group">
+                <label for="invite-email">Email</label>
+                <input type="email" id="invite-email" required>
+            </div>
+            <div class="form-group">
+                <label for="invite-role">Role</label>
+                <select id="invite-role">
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Send Invitation</button>
+        </form>
+    `,R()}async function Mm(e){e.preventDefault();const t=document.getElementById("invite-email").value,n=document.getElementById("invite-role").value;try{await b.createInvitation(x().id,t,n),await sa(),A(),v("Invitation sent!","success")}catch(s){v(`Failed to send invitation: ${s.message}`,"error")}return!1}async function Dm(e){if(confirm("Are you sure you want to remove this member?"))try{await b.removeMember(x().id,e),await Br(),v("Member removed!","success")}catch(t){v(`Failed to remove member: ${t.message}`,"error")}}async function Rm(e){try{await b.deleteInvitation(x().id,e),await sa(),v("Invitation canceled!","success")}catch(t){v(`Failed to cancel invitation: ${t.message}`,"error")}}function jr(){Cr(),document.getElementById("modal-title").textContent="Create Team",document.getElementById("modal-content").innerHTML=`
+        <form data-action="create-team">
+            <div class="form-group">
+                <label for="team-name">Team Name</label>
+                <input type="text" id="team-name" required>
+            </div>
+            <div class="form-group">
+                <label for="team-key">Team Key (2-10 uppercase letters/numbers)</label>
+                <input type="text" id="team-key" pattern="[A-Z0-9]{2,10}" required
+                    style="text-transform: uppercase">
+            </div>
+            <div class="form-group">
+                <label for="team-description">Description</label>
+                <textarea id="team-description"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Team</button>
+        </form>
+    `,R()}function Pm(){x()&&(document.getElementById("modal-title").textContent="Edit Team",document.getElementById("modal-content").innerHTML=`
+        <form data-action="update-team">
+            <div class="form-group">
+                <label for="team-name">Team Name</label>
+                <input type="text" id="team-name" value="${u(x().name)}" required>
+            </div>
+            <div class="form-group">
+                <label for="team-key">Team Key</label>
+                <input type="text" id="team-key" value="${u(x().key)}" disabled class="input-disabled">
+                <small class="form-hint">Team key cannot be changed</small>
+            </div>
+            <div class="form-group">
+                <label for="team-description">Description</label>
+                <textarea id="team-description">${g(x().description||"")}</textarea>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    `,R())}async function Nm(e){e.preventDefault();const t={name:document.getElementById("team-name").value,key:document.getElementById("team-key").value.toUpperCase(),description:document.getElementById("team-description").value};try{const n=await b.createTeam(t);await ta(),await na(n),A(),v("Team created!","success")}catch(n){v(`Failed to create team: ${n.message}`,"error")}return!1}async function qm(e){if(e.preventDefault(),!x())return!1;const t={name:document.getElementById("team-name").value,description:document.getElementById("team-description").value};try{const n=await b.updateTeam(x().id,t);li(n),document.getElementById("current-team-name").textContent=n.name;const s=document.getElementById("team-description-text");s&&(s.textContent=n.description||"No description"),await ta(),A(),v("Team updated!","success")}catch(n){v(`Failed to update team: ${n.message}`,"error")}return!1}async function Om(){if(x())try{const e=await b.getLabels(x().id);ss(e)}catch(e){console.error("Failed to load labels:",e)}}document.addEventListener("click",e=>{if(!e.target.closest(".team-selector")&&!e.target.closest("#team-dropdown")){const t=document.getElementById("team-dropdown");t&&t.classList.add("hidden")}if(!e.target.closest(".user-menu")&&!e.target.closest("#user-dropdown")){const t=document.getElementById("user-dropdown");t&&t.classList.add("hidden")}}),Y({"select-team":(e,t)=>{na(JSON.parse(t.teamJson))},"remove-member":(e,t)=>{Dm(t.userId)},"delete-invitation":(e,t)=>{Rm(t.invitationId)},"invite-member":e=>{Mm(e)},"create-team":e=>{Nm(e)},"update-team":e=>{qm(e)}});let Ve=null,at=0,Wt=null,Vt=null,Mn=null,ia=!1;function Hm(){return Sc()}function Mr(){Lc()}function Dr(e){const t=e.trim().toUpperCase().split(/\s+/).filter(Boolean);return t.length===0?"":t.length===1?t[0].substring(0,4):t.slice(0,4).map(n=>n[0]).join("")}function Fm(){Ve||(Ve=document.createElement("div"),Ve.id="onboarding-overlay",Ve.className="onboarding-overlay",document.getElementById("app").appendChild(Ve))}function Dn(){if(!Ve)return;const e=ia?Pr():Rr(),t=e[at],n=e.map((s,i)=>`<span class="onboarding-dot${i===at?" active":""}${i<at?" completed":""}"></span>`).join("");Ve.innerHTML=`
+        <div class="onboarding-container">
+            <div class="onboarding-progress">${n}</div>
+            <div class="onboarding-step">
+                ${t.html}
+            </div>
+        </div>
+    `,t.onMount&&t.onMount()}function Rr(){return[{html:`
+                <h2>Welcome to Chaotic!</h2>
+                <p class="onboarding-subtitle">A lightweight issue tracker built for teams that ship from the command line.</p>
+                <p class="onboarding-description">Let's set up your workspace. This takes about 30 seconds.</p>
+                <div class="onboarding-actions">
+                    <button class="btn btn-primary" data-action="onboarding-next">Get Started</button>
+                </div>
+                <div class="onboarding-skip">
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
+                </div>
+            `},{html:`
+                <h2>Create Your Team</h2>
+                <p class="onboarding-subtitle">Teams organize your people and projects.</p>
+                <form id="onboarding-team-form" data-action="onboarding-create-team">
+                    <div class="form-group">
+                        <label for="onboarding-team-name">Team Name</label>
+                        <input type="text" id="onboarding-team-name" class="form-input" placeholder="e.g. Engineering" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="onboarding-team-key">Team Key <span class="form-hint">(2-10 chars, used in issue IDs)</span></label>
+                        <input type="text" id="onboarding-team-key" class="form-input" pattern="[A-Za-z0-9]{2,10}" style="text-transform: uppercase" placeholder="e.g. ENG" required>
+                    </div>
+                    <div id="onboarding-team-error" class="onboarding-error hidden"></div>
+                    <div class="onboarding-actions">
+                        <button type="submit" class="btn btn-primary" id="onboarding-team-submit">Create Team</button>
+                    </div>
+                </form>
+                <div class="onboarding-skip">
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
+                </div>
+            `,onMount(){const e=document.getElementById("onboarding-team-name"),t=document.getElementById("onboarding-team-key");e.addEventListener("input",()=>{t.dataset.manual||(t.value=Dr(e.value))}),t.addEventListener("input",()=>{t.dataset.manual="true"}),e.focus()}},{html:`
+                <h2>Create Your First Project</h2>
+                <p class="onboarding-subtitle">Projects group related issues. One per repo or component.</p>
+                <form id="onboarding-project-form" data-action="onboarding-create-project">
+                    <div class="form-group">
+                        <label for="onboarding-project-name">Project Name</label>
+                        <input type="text" id="onboarding-project-name" class="form-input" placeholder="e.g. Backend API" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="onboarding-project-key">Project Key <span class="form-hint">(2-10 chars)</span></label>
+                        <input type="text" id="onboarding-project-key" class="form-input" pattern="[A-Za-z0-9]{2,10}" style="text-transform: uppercase" placeholder="e.g. API" required>
+                    </div>
+                    <div id="onboarding-project-error" class="onboarding-error hidden"></div>
+                    <div class="onboarding-actions">
+                        <button type="submit" class="btn btn-primary" id="onboarding-project-submit">Create Project</button>
+                    </div>
+                </form>
+                <div class="onboarding-skip">
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
+                </div>
+            `,onMount(){const e=document.getElementById("onboarding-project-name"),t=document.getElementById("onboarding-project-key");e.addEventListener("input",()=>{t.dataset.manual||(t.value=Dr(e.value))}),t.addEventListener("input",()=>{t.dataset.manual="true"}),e.focus()}},{html:`
+                <h2>Create Your First Issue</h2>
+                <p class="onboarding-subtitle">What's the first thing your team needs to work on?</p>
+                <form id="onboarding-issue-form" data-action="onboarding-create-issue">
+                    <div class="form-group">
+                        <label for="onboarding-issue-title">Issue Title</label>
+                        <input type="text" id="onboarding-issue-title" class="form-input" placeholder="e.g. Set up CI pipeline" required>
+                    </div>
+                    <div id="onboarding-issue-error" class="onboarding-error hidden"></div>
+                    <div class="onboarding-actions">
+                        <button type="submit" class="btn btn-primary" id="onboarding-issue-submit">Create Issue</button>
+                    </div>
+                </form>
+                <div class="onboarding-skip">
+                    <a href="#" data-action="onboarding-skip">Skip setup</a>
+                </div>
+            `,onMount(){document.getElementById("onboarding-issue-title").focus()}},{html:`
+                <h2>You're all set!</h2>
+                <div class="onboarding-summary">
+                    <div class="onboarding-summary-item">
+                        <span class="onboarding-check">&#10003;</span>
+                        <span>Team: <strong id="onboarding-done-team"></strong></span>
+                    </div>
+                    <div class="onboarding-summary-item">
+                        <span class="onboarding-check">&#10003;</span>
+                        <span>Project: <strong id="onboarding-done-project"></strong></span>
+                    </div>
+                    <div class="onboarding-summary-item">
+                        <span class="onboarding-check">&#10003;</span>
+                        <span>Issue: <strong id="onboarding-done-issue"></strong></span>
+                    </div>
+                </div>
+                <div class="onboarding-tips">
+                    <h3>Quick reference</h3>
+                    <div class="onboarding-tip"><kbd>C</kbd> Create a new issue</div>
+                    <div class="onboarding-tip"><kbd>/</kbd> Search issues</div>
+                    <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
+                </div>
+                <div class="onboarding-actions">
+                    <button class="btn btn-primary" data-action="onboarding-finish">Go to Dashboard</button>
+                </div>
+            `,onMount(){const e=document.getElementById("onboarding-done-team"),t=document.getElementById("onboarding-done-project"),n=document.getElementById("onboarding-done-issue");e&&Wt&&(e.textContent=`${Wt.name} (${Wt.key})`),t&&Vt&&(t.textContent=`${Vt.name} (${Vt.key})`),n&&Mn&&(n.textContent=`${Mn.identifier} - ${Mn.title}`)}}]}function Pr(){const e='<div class="onboarding-skip"><a href="#" data-action="onboarding-finish">Close tour</a></div>';return[{html:`
+                <h2>Welcome Back!</h2>
+                <p class="onboarding-subtitle">Here's a quick tour of Chaotic.</p>
+                <div class="onboarding-tips">
+                    <h3>Your Dashboard</h3>
+                    <p class="onboarding-description">The dashboard shows your assigned issues and recent activity across all projects.</p>
+                </div>
+                <div class="onboarding-actions">
+                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
+                </div>
+                ${e}
+            `},{html:`
+                <h2>Keyboard Shortcuts</h2>
+                <p class="onboarding-subtitle">Work faster with shortcuts.</p>
+                <div class="onboarding-tips">
+                    <div class="onboarding-tip"><kbd>C</kbd> Create a new issue</div>
+                    <div class="onboarding-tip"><kbd>/</kbd> Search issues</div>
+                    <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
+                    <div class="onboarding-tip"><kbd>B</kbd> Switch to board view</div>
+                    <div class="onboarding-tip"><kbd>D</kbd> Go to dashboard</div>
+                </div>
+                <div class="onboarding-actions">
+                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
+                </div>
+                ${e}
+            `},{html:`
+                <h2>CLI Integration</h2>
+                <p class="onboarding-subtitle">Manage issues from your terminal.</p>
+                <div class="onboarding-tips">
+                    <div class="onboarding-tip"><code>chaotic issue list</code> List issues</div>
+                    <div class="onboarding-tip"><code>chaotic issue create "Title"</code> Create an issue</div>
+                    <div class="onboarding-tip"><code>chaotic issue update ID --status done</code> Close an issue</div>
+                    <div class="onboarding-tip"><code>chaotic status</code> Show current context</div>
+                </div>
+                <div class="onboarding-actions">
+                    <button class="btn btn-primary" data-action="onboarding-finish">Got it!</button>
+                </div>
+                ${e}
+            `}]}function aa(e,t){const n=document.getElementById(e);n&&(n.textContent=t,n.classList.remove("hidden"))}function oa(e){const t=document.getElementById(e);t&&(t.textContent="",t.classList.add("hidden"))}function Kt(e,t){const n=document.getElementById(e);n&&(n.disabled=t,t?(n.dataset.originalText=n.textContent,n.textContent="Creating..."):n.dataset.originalText&&(n.textContent=n.dataset.originalText))}function Um(){const e=ia?Pr():Rr();at<e.length-1&&(at++,Dn())}function zm(){Mr(),qr(),Rn()}function Gm(){Mr(),qr(),Rn()}async function Wm(e){e.preventDefault(),oa("onboarding-team-error"),Kt("onboarding-team-submit",!0);const t=document.getElementById("onboarding-team-name").value.trim(),n=document.getElementById("onboarding-team-key").value.toUpperCase().trim();try{Wt=await b.createTeam({name:t,key:n}),at++,Dn()}catch(s){aa("onboarding-team-error",s.message||"Failed to create team"),Kt("onboarding-team-submit",!1)}}async function Vm(e){e.preventDefault(),oa("onboarding-project-error"),Kt("onboarding-project-submit",!0);const t=document.getElementById("onboarding-project-name").value.trim(),n=document.getElementById("onboarding-project-key").value.toUpperCase().trim();try{Vt=await b.createProject(Wt.id,{name:t,key:n}),at++,Dn()}catch(s){aa("onboarding-project-error",s.message||"Failed to create project"),Kt("onboarding-project-submit",!1)}}async function Km(e){e.preventDefault(),oa("onboarding-issue-error"),Kt("onboarding-issue-submit",!0);const t=document.getElementById("onboarding-issue-title").value.trim();try{Mn=await b.createIssue(Vt.id,{title:t}),at++,Dn()}catch(n){aa("onboarding-issue-error",n.message||"Failed to create issue"),Kt("onboarding-issue-submit",!1)}}function Nr(e=!1){ia=e,at=0,Wt=null,Vt=null,Mn=null,Fm(),Dn()}function qr(){Ve&&(Ve.remove(),Ve=null)}function Or(){Cc(),Nr(!0)}Y({"onboarding-next":e=>{e.preventDefault(),Um()},"onboarding-skip":e=>{e.preventDefault(),zm()},"onboarding-finish":e=>{e.preventDefault(),Gm()},"onboarding-create-team":e=>{Wm(e)},"onboarding-create-project":e=>{Vm(e)},"onboarding-create-issue":e=>{Km(e)}});async function Rn(){Ym(),tg(),await ta();const e=xm();if(e.length===0&&!Hm()){Nr();return}e.length>0&&await na(e[0],!0)}let Yt=null,Pn=null,Ne=null,qe=null;function Nn(){Yt||(Yt=document.getElementById("auth-screen"),Pn=document.getElementById("main-screen"),Ne=document.getElementById("login-form"),qe=document.getElementById("signup-form"))}function ra(){Nn(),Yt&&Yt.classList.remove("hidden"),Pn&&Pn.classList.add("hidden")}function Ym(){Nn(),Yt&&Yt.classList.add("hidden"),Pn&&Pn.classList.remove("hidden")}function Zm(){Nn(),Ne&&Ne.classList.remove("hidden"),qe&&qe.classList.add("hidden")}function Xm(){Nn(),Ne&&Ne.classList.add("hidden"),qe&&qe.classList.remove("hidden")}async function Qm(e){e.preventDefault();const t=document.getElementById("login-email").value,n=document.getElementById("login-password").value;try{await b.login(t,n),ns(await b.getMe()),await Rn(),v("Welcome back!","success")}catch(s){v(`Login failed: ${s.message}`,"error")}return!1}async function Jm(e){e.preventDefault();const t=document.getElementById("signup-name").value,n=document.getElementById("signup-email").value,s=document.getElementById("signup-password").value;try{await b.signup(t,n,s),await b.login(n,s),ns(await b.getMe()),await Rn(),v("Account created successfully!","success")}catch(i){v(`Signup failed: ${i.message}`,"error")}return!1}function Hr(){b.logout(),ns(null),li(null),ra(),v("Signed out","success")}function eg(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function tg(){const e=fn();if(!e)return;const t=document.getElementById("user-name");t&&(t.textContent=e.name);const n=document.getElementById("user-avatar");if(n){const s=e.avatar_url;s?eg(s)?(n.className="avatar-small",n.innerHTML=`<img class="avatar-img" src="${u(s)}" alt="${u(e.name)}">`):(n.className="avatar-small avatar-emoji",n.textContent=s):(n.className="avatar-small",n.textContent=e.name.charAt(0).toUpperCase())}}function ng(){Nn();const e=Ne==null?void 0:Ne.querySelector("form");e&&e.addEventListener("submit",i=>Qm(i));const t=qe==null?void 0:qe.querySelector("form");t&&t.addEventListener("submit",i=>Jm(i));const n=Ne==null?void 0:Ne.querySelector(".auth-switch a");n&&n.addEventListener("click",i=>{i.preventDefault(),Xm()});const s=qe==null?void 0:qe.querySelector(".auth-switch a");s&&s.addEventListener("click",i=>{i.preventDefault(),Zm()})}let la=[];async function ca(){try{la=await b.getApiKeys(),sg()}catch(e){v(e.message,"error")}}function sg(){const e=document.getElementById("api-keys-list");if(e){if(la.length===0){e.innerHTML='<p class="empty-state">No API keys yet. Create one to get started.</p>';return}e.innerHTML=la.map(t=>`
+        <div class="api-key-item ${t.is_active?"":"revoked"}">
+            <div class="api-key-info">
+                <div class="api-key-name">${g(t.name)}</div>
+                <div class="api-key-meta">
+                    <code class="api-key-prefix">${g(t.key_prefix)}...</code>
+                    <span class="api-key-date">Created ${ri(t.created_at)}</span>
+                    ${t.last_used_at?`<span class="api-key-date">Last used ${ri(t.last_used_at)}</span>`:""}
+                    ${t.is_active?"":'<span class="api-key-revoked">Revoked</span>'}
+                </div>
+            </div>
+            ${t.is_active?`
+                <button class="btn btn-danger-outline" data-action="revoke-api-key" data-key-id="${u(t.id)}" data-key-name="${u(t.name)}">Revoke</button>
+            `:""}
+        </div>
+    `).join("")}}function ig(){document.getElementById("modal-title").textContent="Create API Key",document.getElementById("modal-content").innerHTML=`
+        <form data-action="create-api-key">
+            <div class="form-group">
+                <label for="api-key-name">Key Name</label>
+                <input type="text" id="api-key-name" placeholder="e.g., CLI, CI/CD, Personal" required>
+                <p class="form-help">A descriptive name to identify this key.</p>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Key</button>
+        </form>
+    `,R()}async function ag(e){e.preventDefault();const t=document.getElementById("api-key-name").value.trim();try{const n=await b.createApiKey(t);A(),document.getElementById("modal-title").textContent="API Key Created",document.getElementById("modal-content").innerHTML=`
+            <div class="api-key-created">
+                <p class="warning-text">Copy your API key now. You won't be able to see it again!</p>
+                <div class="api-key-display">
+                    <code id="new-api-key">${n.key}</code>
+                    <button type="button" class="btn btn-secondary" data-action="copy-api-key">Copy</button>
+                </div>
+                <div class="api-key-instructions">
+                    <p>Use this key in the CLI:</p>
+                    <code>chaotic auth set-key ${n.key}</code>
+                </div>
+                <button type="button" class="btn btn-secondary" data-action="dismiss-api-key-modal">Done</button>
+            </div>
+        `,R()}catch(n){v(n.message,"error")}return!1}async function og(){const e=document.getElementById("new-api-key").textContent;try{await navigator.clipboard.writeText(e),v("API key copied to clipboard","success")}catch{v("Failed to copy","error")}}async function rg(e,t){if(confirm(`Revoke API key "${t}"? This cannot be undone.`))try{await b.revokeApiKey(e),v("API key revoked","success"),await ca()}catch(n){v(n.message,"error")}}Y({"create-api-key":e=>{ag(e)},"copy-api-key":()=>{og()},"dismiss-api-key-modal":()=>{A(),ca()},"revoke-api-key":(e,t)=>{rg(t.keyId,t.keyName)}});let Ls=!1,ot=0,bt=[],Cs=[];function lg(e){Cs=e,bt=[...e]}function da(){return Ls}function cg(){if(Ls)return;Ls=!0,ot=0,bt=[...Cs];const e=document.createElement("div");e.id="command-palette-overlay",e.className="command-palette-overlay",e.onclick=n=>{n.target===e&&Bs()},e.innerHTML=`
+        <div class="command-palette">
+            <div class="command-input-wrapper">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" class="command-input" placeholder="Type a command or search..." autofocus>
+            </div>
+            <div class="command-results" id="command-results"></div>
+        </div>
+    `,document.body.appendChild(e);const t=e.querySelector(".command-input");t.addEventListener("input",n=>dg(n.target.value)),t.addEventListener("keydown",pg),e.addEventListener("mouseover",n=>{const s=n.target.closest('[data-action="execute-command"]');s&&ug(Number(s.dataset.commandIndex))}),qn(),requestAnimationFrame(()=>t.focus())}function Bs(){Ls=!1;const e=document.getElementById("command-palette-overlay");e&&e.remove()}function dg(e){const t=e.toLowerCase().trim();t?bt=Cs.filter(n=>n.title.toLowerCase().includes(t)||n.subtitle.toLowerCase().includes(t)||n.category.toLowerCase().includes(t)):bt=[...Cs],ot=0,qn()}function qn(){const e=document.getElementById("command-results");if(!e)return;if(bt.length===0){e.innerHTML='<div class="command-empty">No commands found</div>';return}const t={};bt.forEach(a=>{t[a.category]||(t[a.category]=[]),t[a.category].push(a)});let n="",s=0;for(const[a,o]of Object.entries(t)){n+=`<div class="command-group">
+            <div class="command-group-title">${a}</div>`;for(const r of o)n+=`
+                <div class="command-item ${s===ot?"selected":""}"
+                     data-index="${s}"
+                     data-action="execute-command" data-command-index="${s}"
+>
+                    <div class="command-item-icon">${r.icon}</div>
+                    <div class="command-item-content">
+                        <div class="command-item-title">${r.title}</div>
+                        <div class="command-item-subtitle">${r.subtitle}</div>
+                    </div>
+                    ${r.shortcut?`<div class="command-item-shortcut"><kbd>${r.shortcut}</kbd></div>`:""}
+                </div>
+            `,s++;n+="</div>"}e.innerHTML=n;const i=e.querySelector(".command-item.selected");i&&i.scrollIntoView&&i.scrollIntoView({block:"nearest"})}function ug(e){ot=e,qn()}function Fr(e){const t=bt[e];t&&(Bs(),t.action())}function pg(e){switch(e.key){case"ArrowDown":e.preventDefault(),ot=Math.min(ot+1,bt.length-1),qn();break;case"ArrowUp":e.preventDefault(),ot=Math.max(ot-1,0),qn();break;case"Enter":e.preventDefault(),Fr(ot);break;case"Escape":e.preventDefault(),Bs();break}}Y({"execute-command":(e,t)=>{Fr(Number(t.commandIndex))}});async function mg(){const e=document.getElementById("epics-project-filter");if(!e)return;await $e(),e.innerHTML='<option value="">All Projects</option>'+U().map(n=>`<option value="${u(n.id)}">${g(n.name)}</option>`).join("");const t=Gt()||Sn();t&&U().some(n=>n.id===t)&&(e.value=t),ua()}function gg(){var t;const e=(t=document.getElementById("epics-project-filter"))==null?void 0:t.value;e&&(Ut(e),zi(e)),ua()}async function ua(){var t,n;const e=document.getElementById("epics-list");if(e){e.innerHTML=Array(4).fill(0).map(()=>`
         <div class="skeleton-list-item">
             <div style="flex: 1">
                 <div class="skeleton skeleton-title"></div>
@@ -2382,7 +2579,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <p>No epics found.</p>
                     <p class="empty-state-hint">Click "+ New Epic" above or use the CLI: <code>chaotic epic create "Epic title"</code></p>
                 </div>
-            `;return}const a=await Promise.all(i.map(async o=>{let r=[];try{r=await b.getSubIssues(o.id)}catch{}return{...o,subIssues:r}}));Um(a,e)}catch(s){e.innerHTML=`<div class="empty-state">Failed to load epics: ${g(s.message||String(s))}</div>`}}}function Um(e,t){const n=e.map(s=>{const i=s.subIssues?s.subIssues.length:0,a=s.subIssues?s.subIssues.filter(f=>f.status==="done"||f.status==="canceled").length:0,o=i>0?Math.round(a/i*100):0,r=i>0?`${a}/${i}`:"-",d=`status-${(s.status||"backlog").replace(/_/g,"-")}`,c=(s.status||"backlog").replace(/_/g," ").replace(/\b\w/g,f=>f.toUpperCase()),l=s.estimate!=null?`${s.estimate}pts`:"-";return`
+            `;return}const a=await Promise.all(i.map(async o=>{let r=[];try{r=await b.getSubIssues(o.id)}catch{}return{...o,subIssues:r}}));fg(a,e)}catch(s){e.innerHTML=`<div class="empty-state">Failed to load epics: ${g(s.message||String(s))}</div>`}}}function fg(e,t){const n=e.map(s=>{const i=s.subIssues?s.subIssues.length:0,a=s.subIssues?s.subIssues.filter(f=>f.status==="done"||f.status==="canceled").length:0,o=i>0?Math.round(a/i*100):0,r=i>0?`${a}/${i}`:"-",d=`status-${(s.status||"backlog").replace(/_/g,"-")}`,c=(s.status||"backlog").replace(/_/g," ").replace(/\b\w/g,f=>f.toUpperCase()),l=s.estimate!=null?`${s.estimate}pts`:"-";return`
             <tr class="epic-row" data-identifier="${u(s.identifier)}" style="cursor: pointer;">
                 <td class="epic-identifier">${g(s.identifier)}</td>
                 <td class="epic-title">${g(s.title)}</td>
@@ -2412,7 +2609,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 ${n}
             </tbody>
         </table>
-    `,t._epicClickHandler||(t._epicClickHandler=s=>{const i=s.target.closest(".epic-row");i&&i.dataset.identifier&&od(i.dataset.identifier)},t.addEventListener("click",t._epicClickHandler))}function zm(){var n;const e=(n=document.getElementById("epics-project-filter"))==null?void 0:n.value,t=U().map(s=>`
+    `,t._epicClickHandler||(t._epicClickHandler=s=>{const i=s.target.closest(".epic-row");i&&i.dataset.identifier&&gm(i.dataset.identifier)},t.addEventListener("click",t._epicClickHandler))}function hg(){var n;const e=(n=document.getElementById("epics-project-filter"))==null?void 0:n.value,t=U().map(s=>`
         <option value="${u(s.id)}" ${s.id===e?"selected":""}>${g(s.name)}</option>
     `).join("");document.getElementById("modal-title").textContent="Create Epic",document.getElementById("modal-content").innerHTML=`
         <form id="create-epic-form">
@@ -2433,7 +2630,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             </div>
             <button type="submit" class="btn btn-primary">Create Epic</button>
         </form>
-    `,R(),document.getElementById("create-epic-form").addEventListener("submit",Gm),document.getElementById("create-epic-title").focus()}async function Gm(e){e.preventDefault();const t=document.getElementById("create-epic-project").value,n=document.getElementById("create-epic-title").value.trim(),s=document.getElementById("create-epic-description").value.trim();if(!t){v("Please select a project","error");return}if(!n){v("Please enter a title","error");return}try{const i=await b.createIssue(t,{title:n,description:s||null,issue_type:"epic"});A(),v(`Created epic ${i.identifier}`,"success"),ia()}catch(i){v(`Failed to create epic: ${i.message}`,"error")}}async function Mr(e){try{let t;if(e.includes("-")?t=await b.getIssueByIdentifier(e):t=await b.getIssue(e),t){if(t.issue_type!=="epic"){F(t.id,!1);return}await Dr(t.id,!1)}else C("epics",!1)}catch{C("epics",!1)}}async function Dr(e,t=!0){try{const[n,s,i,a]=await Promise.all([b.getIssue(e),b.getSubIssues(e),b.getActivities(e),b.getComments(e)]);if(n.issue_type!=="epic"){F(e,t);return}t&&history.pushState({epicId:e,view:L()},"",`/epic/${n.identifier}`),document.querySelectorAll(".view").forEach(k=>k.classList.add("hidden"));const o=document.getElementById("epic-detail-view");o.classList.remove("hidden");const r=L()||"epics",d=U().find(k=>k.id===n.project_id),c=n.assignee_id?vn(n.assignee_id):null,l=c?Et(c):null,f=s.length,p=s.filter(k=>k.status==="done"||k.status==="canceled").length,h=f>0?Math.round(p/f*100):0;o.querySelector("#epic-detail-content").innerHTML=`
+    `,R(),document.getElementById("create-epic-form").addEventListener("submit",vg),document.getElementById("create-epic-title").focus()}async function vg(e){e.preventDefault();const t=document.getElementById("create-epic-project").value,n=document.getElementById("create-epic-title").value.trim(),s=document.getElementById("create-epic-description").value.trim();if(!t){v("Please select a project","error");return}if(!n){v("Please enter a title","error");return}try{const i=await b.createIssue(t,{title:n,description:s||null,issue_type:"epic"});A(),v(`Created epic ${i.identifier}`,"success"),ua()}catch(i){v(`Failed to create epic: ${i.message}`,"error")}}async function Ur(e){try{let t;if(e.includes("-")?t=await b.getIssueByIdentifier(e):t=await b.getIssue(e),t){if(t.issue_type!=="epic"){F(t.id,!1);return}await zr(t.id,!1)}else C("epics",!1)}catch{C("epics",!1)}}async function zr(e,t=!0){try{const[n,s,i,a]=await Promise.all([b.getIssue(e),b.getSubIssues(e),b.getActivities(e),b.getComments(e)]);if(n.issue_type!=="epic"){F(e,t);return}t&&history.pushState({epicId:e,view:L()},"",`/epic/${n.identifier}`),document.querySelectorAll(".view").forEach(k=>k.classList.add("hidden"));const o=document.getElementById("epic-detail-view");o.classList.remove("hidden");const r=L()||"epics",d=U().find(k=>k.id===n.project_id),c=n.assignee_id?vn(n.assignee_id):null,l=c?Et(c):null,f=s.length,p=s.filter(k=>k.status==="done"||k.status==="canceled").length,h=f>0?Math.round(p/f*100):0;o.querySelector("#epic-detail-content").innerHTML=`
             <div class="issue-detail-layout">
                 <div class="issue-detail-main">
                     <div class="issue-detail-nav">
@@ -2450,7 +2647,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     <div class="issue-detail-description">
                         <h3>Description</h3>
                         <div class="description-content markdown-body">
-                            ${bs(n.description)}
+                            ${gs(n.description)}
                         </div>
                     </div>
                     `:""}
@@ -2492,10 +2689,10 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                                 <div class="activity-empty">No activity yet</div>
                             `:i.map(k=>`
                                 <div class="activity-item">
-                                    <div class="activity-icon">${qi(k.activity_type)}</div>
+                                    <div class="activity-icon">${Ii(k.activity_type)}</div>
                                     <div class="activity-content">
-                                        <span class="activity-text">${Hi(k)}</span>
-                                        <span class="activity-actor">by ${g(Oi(k))}</span>
+                                        <span class="activity-text">${Ti(k)}</span>
+                                        <span class="activity-actor">by ${g(xi(k))}</span>
                                         <span class="activity-time">${Ue(k.created_at)}</span>
                                     </div>
                                 </div>
@@ -2554,7 +2751,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                         <div class="property-row">
                             <span class="property-label">Estimate</span>
                             <span class="property-value-static">
-                                ${Ss(n.estimate,n.project_id)}
+                                ${_s(n.estimate,n.project_id)}
                             </span>
                         </div>
 
@@ -2583,204 +2780,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                     </div>
                 </aside>
             </div>
-        `;const y=o.querySelector(".sub-issues-list");y&&y.addEventListener("click",k=>{const E=k.target.closest(".sub-issue-item");E&&E.dataset.issueId&&F(E.dataset.issueId)})}catch(n){v(`Failed to load epic: ${n.message}`,"error")}}function Wm(e){let t=!1,n=null;return function(i){if(i.metaKey||i.ctrlKey||i.altKey)return;if(i.target.tagName==="INPUT"||i.target.tagName==="TEXTAREA"||i.target.tagName==="SELECT"){i.key==="Escape"&&i.target.blur();return}const a=e.isModalOpen();if(i.key==="Escape"){i.preventDefault(),a?e.closeModal():document.body.classList.contains("sidebar-open")&&e.closeSidebar?e.closeSidebar():e.closeDropdowns();return}if(!a){if(i.key==="g"){t=!0,clearTimeout(n),n=setTimeout(()=>{t=!1},1e3);return}if(t){switch(t=!1,clearTimeout(n),i.key){case"i":e.navigateTo("issues");break;case"p":e.navigateTo("projects");break;case"s":e.navigateTo("sprints");break;case"d":e.navigateTo("documents");break;case"t":e.navigateTo("team");break}return}switch(i.key){case"c":i.preventDefault(),e.showCreateIssueModal();break;case"m":i.preventDefault(),e.navigateTo("my-issues");break;case"i":i.preventDefault(),e.navigateTo("issues");break;case"b":i.preventDefault(),e.navigateTo("board");break;case"p":i.preventDefault(),e.navigateTo("projects");break;case"?":i.preventDefault(),e.showKeyboardShortcutsHelp();break;case"/":i.preventDefault(),e.focusSearch();break}}}}function Vm(e){return function(n){var s;if(n.metaKey||n.ctrlKey){if(n.key==="Enter"){if(e.isModalOpen()){const i=e.getModalForm();if(i)n.preventDefault(),i.dispatchEvent(new Event("submit",{cancelable:!0}));else{const a=e.getModalPrimaryBtn();a&&!a.disabled&&(n.preventDefault(),a.click())}}else{const i=(s=document.activeElement)==null?void 0:s.closest("form");i&&(n.preventDefault(),i.dispatchEvent(new Event("submit",{bubbles:!0,cancelable:!0})))}return}n.key==="k"&&(n.preventDefault(),e.isCommandPaletteOpen()?e.closeCommandPalette():e.openCommandPalette())}}}function Ls(e,t,n="#issues-list .list-item"){const s=document.querySelectorAll(n);s.length!==0&&(e=Math.max(0,Math.min(s.length-1,e)),s.forEach(i=>i.classList.remove("keyboard-selected")),t(e),s[e].classList.add("keyboard-selected"),s[e].scrollIntoView({block:"nearest",behavior:"smooth"}))}function Km(e){return function(n){if(e.getCurrentView()!=="issues"||n.target.tagName==="INPUT"||n.target.tagName==="TEXTAREA"||n.target.tagName==="SELECT"||e.isModalOpen()||e.isCommandPaletteOpen())return;const s=document.querySelectorAll("#issues-list .list-item");if(s.length===0)return;const i=e.getSelectedIndex();switch(n.key){case"j":n.preventDefault(),Ls(i+1,e.setSelectedIndex);break;case"k":n.preventDefault(),Ls(i-1,e.setSelectedIndex);break;case"Enter":if(i>=0&&s[i]){n.preventDefault();const a=s[i].dataset.id;a&&!a.startsWith("temp-")&&e.viewIssue(a)}break;case"e":if(i>=0&&s[i]){n.preventDefault();const a=s[i].dataset.id;a&&!a.startsWith("temp-")&&e.showEditIssueModal(a)}break;case"Escape":i>=0&&(n.preventDefault(),s.forEach(a=>a.classList.remove("keyboard-selected")),e.setSelectedIndex(-1));break}}}function Ym(e){const t="#documents-list .list-item, #documents-list .grid-item";return function(s){if(e.getCurrentView()!=="documents"||s.target.tagName==="INPUT"||s.target.tagName==="TEXTAREA"||s.target.tagName==="SELECT"||e.isModalOpen()||e.isCommandPaletteOpen())return;const i=document.querySelectorAll(t);if(i.length===0)return;const a=e.getSelectedIndex();switch(s.key){case"j":s.preventDefault(),Ls(a+1,e.setSelectedIndex,t);break;case"k":s.preventDefault(),Ls(a-1,e.setSelectedIndex,t);break;case"Enter":if(a>=0&&i[a]){s.preventDefault();const o=i[a].dataset.documentId;o&&e.viewDocument(o)}break;case"e":if(a>=0&&i[a]){s.preventDefault();const o=i[a].dataset.documentId;o&&e.showEditDocumentModal&&e.showEditDocumentModal(o)}break;case"Escape":a>=0&&(s.preventDefault(),i.forEach(o=>o.classList.remove("keyboard-selected")),e.setSelectedIndex(-1));break}}}let Ve=null,at=0,Wt=null,Vt=null,Mn=null,aa=!1;function Zm(){return Sc()}function Rr(){Lc()}function Pr(e){const t=e.trim().toUpperCase().split(/\s+/).filter(Boolean);return t.length===0?"":t.length===1?t[0].substring(0,4):t.slice(0,4).map(n=>n[0]).join("")}function Xm(){Ve||(Ve=document.createElement("div"),Ve.id="onboarding-overlay",Ve.className="onboarding-overlay",document.getElementById("app").appendChild(Ve))}function Dn(){if(!Ve)return;const e=aa?qr():Nr(),t=e[at],n=e.map((s,i)=>`<span class="onboarding-dot${i===at?" active":""}${i<at?" completed":""}"></span>`).join("");Ve.innerHTML=`
-        <div class="onboarding-container">
-            <div class="onboarding-progress">${n}</div>
-            <div class="onboarding-step">
-                ${t.html}
-            </div>
-        </div>
-    `,t.onMount&&t.onMount()}function Nr(){return[{html:`
-                <h2>Welcome to Chaotic!</h2>
-                <p class="onboarding-subtitle">A lightweight issue tracker built for teams that ship from the command line.</p>
-                <p class="onboarding-description">Let's set up your workspace. This takes about 30 seconds.</p>
-                <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-next">Get Started</button>
-                </div>
-                <div class="onboarding-skip">
-                    <a href="#" data-action="onboarding-skip">Skip setup</a>
-                </div>
-            `},{html:`
-                <h2>Create Your Team</h2>
-                <p class="onboarding-subtitle">Teams organize your people and projects.</p>
-                <form id="onboarding-team-form" data-action="onboarding-create-team">
-                    <div class="form-group">
-                        <label for="onboarding-team-name">Team Name</label>
-                        <input type="text" id="onboarding-team-name" class="form-input" placeholder="e.g. Engineering" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="onboarding-team-key">Team Key <span class="form-hint">(2-10 chars, used in issue IDs)</span></label>
-                        <input type="text" id="onboarding-team-key" class="form-input" pattern="[A-Za-z0-9]{2,10}" style="text-transform: uppercase" placeholder="e.g. ENG" required>
-                    </div>
-                    <div id="onboarding-team-error" class="onboarding-error hidden"></div>
-                    <div class="onboarding-actions">
-                        <button type="submit" class="btn btn-primary" id="onboarding-team-submit">Create Team</button>
-                    </div>
-                </form>
-                <div class="onboarding-skip">
-                    <a href="#" data-action="onboarding-skip">Skip setup</a>
-                </div>
-            `,onMount(){const e=document.getElementById("onboarding-team-name"),t=document.getElementById("onboarding-team-key");e.addEventListener("input",()=>{t.dataset.manual||(t.value=Pr(e.value))}),t.addEventListener("input",()=>{t.dataset.manual="true"}),e.focus()}},{html:`
-                <h2>Create Your First Project</h2>
-                <p class="onboarding-subtitle">Projects group related issues. One per repo or component.</p>
-                <form id="onboarding-project-form" data-action="onboarding-create-project">
-                    <div class="form-group">
-                        <label for="onboarding-project-name">Project Name</label>
-                        <input type="text" id="onboarding-project-name" class="form-input" placeholder="e.g. Backend API" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="onboarding-project-key">Project Key <span class="form-hint">(2-10 chars)</span></label>
-                        <input type="text" id="onboarding-project-key" class="form-input" pattern="[A-Za-z0-9]{2,10}" style="text-transform: uppercase" placeholder="e.g. API" required>
-                    </div>
-                    <div id="onboarding-project-error" class="onboarding-error hidden"></div>
-                    <div class="onboarding-actions">
-                        <button type="submit" class="btn btn-primary" id="onboarding-project-submit">Create Project</button>
-                    </div>
-                </form>
-                <div class="onboarding-skip">
-                    <a href="#" data-action="onboarding-skip">Skip setup</a>
-                </div>
-            `,onMount(){const e=document.getElementById("onboarding-project-name"),t=document.getElementById("onboarding-project-key");e.addEventListener("input",()=>{t.dataset.manual||(t.value=Pr(e.value))}),t.addEventListener("input",()=>{t.dataset.manual="true"}),e.focus()}},{html:`
-                <h2>Create Your First Issue</h2>
-                <p class="onboarding-subtitle">What's the first thing your team needs to work on?</p>
-                <form id="onboarding-issue-form" data-action="onboarding-create-issue">
-                    <div class="form-group">
-                        <label for="onboarding-issue-title">Issue Title</label>
-                        <input type="text" id="onboarding-issue-title" class="form-input" placeholder="e.g. Set up CI pipeline" required>
-                    </div>
-                    <div id="onboarding-issue-error" class="onboarding-error hidden"></div>
-                    <div class="onboarding-actions">
-                        <button type="submit" class="btn btn-primary" id="onboarding-issue-submit">Create Issue</button>
-                    </div>
-                </form>
-                <div class="onboarding-skip">
-                    <a href="#" data-action="onboarding-skip">Skip setup</a>
-                </div>
-            `,onMount(){document.getElementById("onboarding-issue-title").focus()}},{html:`
-                <h2>You're all set!</h2>
-                <div class="onboarding-summary">
-                    <div class="onboarding-summary-item">
-                        <span class="onboarding-check">&#10003;</span>
-                        <span>Team: <strong id="onboarding-done-team"></strong></span>
-                    </div>
-                    <div class="onboarding-summary-item">
-                        <span class="onboarding-check">&#10003;</span>
-                        <span>Project: <strong id="onboarding-done-project"></strong></span>
-                    </div>
-                    <div class="onboarding-summary-item">
-                        <span class="onboarding-check">&#10003;</span>
-                        <span>Issue: <strong id="onboarding-done-issue"></strong></span>
-                    </div>
-                </div>
-                <div class="onboarding-tips">
-                    <h3>Quick reference</h3>
-                    <div class="onboarding-tip"><kbd>C</kbd> Create a new issue</div>
-                    <div class="onboarding-tip"><kbd>/</kbd> Search issues</div>
-                    <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
-                </div>
-                <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-finish">Go to Dashboard</button>
-                </div>
-            `,onMount(){const e=document.getElementById("onboarding-done-team"),t=document.getElementById("onboarding-done-project"),n=document.getElementById("onboarding-done-issue");e&&Wt&&(e.textContent=`${Wt.name} (${Wt.key})`),t&&Vt&&(t.textContent=`${Vt.name} (${Vt.key})`),n&&Mn&&(n.textContent=`${Mn.identifier} - ${Mn.title}`)}}]}function qr(){const e='<div class="onboarding-skip"><a href="#" data-action="onboarding-finish">Close tour</a></div>';return[{html:`
-                <h2>Welcome Back!</h2>
-                <p class="onboarding-subtitle">Here's a quick tour of Chaotic.</p>
-                <div class="onboarding-tips">
-                    <h3>Your Dashboard</h3>
-                    <p class="onboarding-description">The dashboard shows your assigned issues and recent activity across all projects.</p>
-                </div>
-                <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
-                </div>
-                ${e}
-            `},{html:`
-                <h2>Keyboard Shortcuts</h2>
-                <p class="onboarding-subtitle">Work faster with shortcuts.</p>
-                <div class="onboarding-tips">
-                    <div class="onboarding-tip"><kbd>C</kbd> Create a new issue</div>
-                    <div class="onboarding-tip"><kbd>/</kbd> Search issues</div>
-                    <div class="onboarding-tip"><kbd>Cmd+K</kbd> Command palette</div>
-                    <div class="onboarding-tip"><kbd>B</kbd> Switch to board view</div>
-                    <div class="onboarding-tip"><kbd>D</kbd> Go to dashboard</div>
-                </div>
-                <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-next">Next</button>
-                </div>
-                ${e}
-            `},{html:`
-                <h2>CLI Integration</h2>
-                <p class="onboarding-subtitle">Manage issues from your terminal.</p>
-                <div class="onboarding-tips">
-                    <div class="onboarding-tip"><code>chaotic issue list</code> List issues</div>
-                    <div class="onboarding-tip"><code>chaotic issue create "Title"</code> Create an issue</div>
-                    <div class="onboarding-tip"><code>chaotic issue update ID --status done</code> Close an issue</div>
-                    <div class="onboarding-tip"><code>chaotic status</code> Show current context</div>
-                </div>
-                <div class="onboarding-actions">
-                    <button class="btn btn-primary" data-action="onboarding-finish">Got it!</button>
-                </div>
-                ${e}
-            `}]}function oa(e,t){const n=document.getElementById(e);n&&(n.textContent=t,n.classList.remove("hidden"))}function ra(e){const t=document.getElementById(e);t&&(t.textContent="",t.classList.add("hidden"))}function Kt(e,t){const n=document.getElementById(e);n&&(n.disabled=t,t?(n.dataset.originalText=n.textContent,n.textContent="Creating..."):n.dataset.originalText&&(n.textContent=n.dataset.originalText))}function Qm(){const e=aa?qr():Nr();at<e.length-1&&(at++,Dn())}function Jm(){Rr(),Hr(),Nn()}function eg(){Rr(),Hr(),Nn()}async function tg(e){e.preventDefault(),ra("onboarding-team-error"),Kt("onboarding-team-submit",!0);const t=document.getElementById("onboarding-team-name").value.trim(),n=document.getElementById("onboarding-team-key").value.toUpperCase().trim();try{Wt=await b.createTeam({name:t,key:n}),at++,Dn()}catch(s){oa("onboarding-team-error",s.message||"Failed to create team"),Kt("onboarding-team-submit",!1)}}async function ng(e){e.preventDefault(),ra("onboarding-project-error"),Kt("onboarding-project-submit",!0);const t=document.getElementById("onboarding-project-name").value.trim(),n=document.getElementById("onboarding-project-key").value.toUpperCase().trim();try{Vt=await b.createProject(Wt.id,{name:t,key:n}),at++,Dn()}catch(s){oa("onboarding-project-error",s.message||"Failed to create project"),Kt("onboarding-project-submit",!1)}}async function sg(e){e.preventDefault(),ra("onboarding-issue-error"),Kt("onboarding-issue-submit",!0);const t=document.getElementById("onboarding-issue-title").value.trim();try{Mn=await b.createIssue(Vt.id,{title:t}),at++,Dn()}catch(n){oa("onboarding-issue-error",n.message||"Failed to create issue"),Kt("onboarding-issue-submit",!1)}}function Or(e=!1){aa=e,at=0,Wt=null,Vt=null,Mn=null,Xm(),Dn()}function Hr(){Ve&&(Ve.remove(),Ve=null)}function Fr(){Cc(),Or(!0)}Y({"onboarding-next":e=>{e.preventDefault(),Qm()},"onboarding-skip":e=>{e.preventDefault(),Jm()},"onboarding-finish":e=>{e.preventDefault(),eg()},"onboarding-create-team":e=>{tg(e)},"onboarding-create-project":e=>{ng(e)},"onboarding-create-issue":e=>{sg(e)}});let la=[];async function ca(){try{la=await b.getApiKeys(),ig()}catch(e){v(e.message,"error")}}function ig(){const e=document.getElementById("api-keys-list");if(e){if(la.length===0){e.innerHTML='<p class="empty-state">No API keys yet. Create one to get started.</p>';return}e.innerHTML=la.map(t=>`
-        <div class="api-key-item ${t.is_active?"":"revoked"}">
-            <div class="api-key-info">
-                <div class="api-key-name">${g(t.name)}</div>
-                <div class="api-key-meta">
-                    <code class="api-key-prefix">${g(t.key_prefix)}...</code>
-                    <span class="api-key-date">Created ${ri(t.created_at)}</span>
-                    ${t.last_used_at?`<span class="api-key-date">Last used ${ri(t.last_used_at)}</span>`:""}
-                    ${t.is_active?"":'<span class="api-key-revoked">Revoked</span>'}
-                </div>
-            </div>
-            ${t.is_active?`
-                <button class="btn btn-danger-outline" data-action="revoke-api-key" data-key-id="${u(t.id)}" data-key-name="${u(t.name)}">Revoke</button>
-            `:""}
-        </div>
-    `).join("")}}function ag(){document.getElementById("modal-title").textContent="Create API Key",document.getElementById("modal-content").innerHTML=`
-        <form data-action="create-api-key">
-            <div class="form-group">
-                <label for="api-key-name">Key Name</label>
-                <input type="text" id="api-key-name" placeholder="e.g., CLI, CI/CD, Personal" required>
-                <p class="form-help">A descriptive name to identify this key.</p>
-            </div>
-            <button type="submit" class="btn btn-primary">Create Key</button>
-        </form>
-    `,R()}async function og(e){e.preventDefault();const t=document.getElementById("api-key-name").value.trim();try{const n=await b.createApiKey(t);A(),document.getElementById("modal-title").textContent="API Key Created",document.getElementById("modal-content").innerHTML=`
-            <div class="api-key-created">
-                <p class="warning-text">Copy your API key now. You won't be able to see it again!</p>
-                <div class="api-key-display">
-                    <code id="new-api-key">${n.key}</code>
-                    <button type="button" class="btn btn-secondary" data-action="copy-api-key">Copy</button>
-                </div>
-                <div class="api-key-instructions">
-                    <p>Use this key in the CLI:</p>
-                    <code>chaotic auth set-key ${n.key}</code>
-                </div>
-                <button type="button" class="btn btn-secondary" data-action="dismiss-api-key-modal">Done</button>
-            </div>
-        `,R()}catch(n){v(n.message,"error")}return!1}async function rg(){const e=document.getElementById("new-api-key").textContent;try{await navigator.clipboard.writeText(e),v("API key copied to clipboard","success")}catch{v("Failed to copy","error")}}async function lg(e,t){if(confirm(`Revoke API key "${t}"? This cannot be undone.`))try{await b.revokeApiKey(e),v("API key revoked","success"),await ca()}catch(n){v(n.message,"error")}}Y({"create-api-key":e=>{og(e)},"copy-api-key":()=>{rg()},"dismiss-api-key-modal":()=>{A(),ca()},"revoke-api-key":(e,t)=>{lg(t.keyId,t.keyName)}});let Cs=!1,ot=0,bt=[],Bs=[];function cg(e){Bs=e,bt=[...e]}function da(){return Cs}function dg(){if(Cs)return;Cs=!0,ot=0,bt=[...Bs];const e=document.createElement("div");e.id="command-palette-overlay",e.className="command-palette-overlay",e.onclick=n=>{n.target===e&&As()},e.innerHTML=`
-        <div class="command-palette">
-            <div class="command-input-wrapper">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                </svg>
-                <input type="text" class="command-input" placeholder="Type a command or search..." autofocus>
-            </div>
-            <div class="command-results" id="command-results"></div>
-        </div>
-    `,document.body.appendChild(e);const t=e.querySelector(".command-input");t.addEventListener("input",n=>ug(n.target.value)),t.addEventListener("keydown",mg),e.addEventListener("mouseover",n=>{const s=n.target.closest('[data-action="execute-command"]');s&&pg(Number(s.dataset.commandIndex))}),Rn(),requestAnimationFrame(()=>t.focus())}function As(){Cs=!1;const e=document.getElementById("command-palette-overlay");e&&e.remove()}function ug(e){const t=e.toLowerCase().trim();t?bt=Bs.filter(n=>n.title.toLowerCase().includes(t)||n.subtitle.toLowerCase().includes(t)||n.category.toLowerCase().includes(t)):bt=[...Bs],ot=0,Rn()}function Rn(){const e=document.getElementById("command-results");if(!e)return;if(bt.length===0){e.innerHTML='<div class="command-empty">No commands found</div>';return}const t={};bt.forEach(a=>{t[a.category]||(t[a.category]=[]),t[a.category].push(a)});let n="",s=0;for(const[a,o]of Object.entries(t)){n+=`<div class="command-group">
-            <div class="command-group-title">${a}</div>`;for(const r of o)n+=`
-                <div class="command-item ${s===ot?"selected":""}"
-                     data-index="${s}"
-                     data-action="execute-command" data-command-index="${s}"
->
-                    <div class="command-item-icon">${r.icon}</div>
-                    <div class="command-item-content">
-                        <div class="command-item-title">${r.title}</div>
-                        <div class="command-item-subtitle">${r.subtitle}</div>
-                    </div>
-                    ${r.shortcut?`<div class="command-item-shortcut"><kbd>${r.shortcut}</kbd></div>`:""}
-                </div>
-            `,s++;n+="</div>"}e.innerHTML=n;const i=e.querySelector(".command-item.selected");i&&i.scrollIntoView&&i.scrollIntoView({block:"nearest"})}function pg(e){ot=e,Rn()}function Ur(e){const t=bt[e];t&&(As(),t.action())}function mg(e){switch(e.key){case"ArrowDown":e.preventDefault(),ot=Math.min(ot+1,bt.length-1),Rn();break;case"ArrowUp":e.preventDefault(),ot=Math.max(ot-1,0),Rn();break;case"Enter":e.preventDefault(),Ur(ot);break;case"Escape":e.preventDefault(),As();break}}Y({"execute-command":(e,t)=>{Ur(Number(t.commandIndex))}});const yt=new Map,zr=6e4,ua=100;let re=null,pa=null,ma=null,Pn=null,Gr=!1;const gg={backlog:"#6b7280",todo:"#9ca3af",in_progress:"#f59e0b",in_review:"#8b5cf6",done:"#22c55e",canceled:"#ef4444"},fg={urgent:"#ef4444",high:"#f59e0b",medium:"#3b82f6",low:"#9ca3af",no_priority:"#6b7280"},Wr={api:null};let ga={...Wr};function hg(e={}){ga={...Wr,...e},re||(re=document.createElement("div"),re.className="issue-tooltip",re.style.display="none",document.body.appendChild(re),re.addEventListener("mouseenter",()=>{clearTimeout(pa)}),re.addEventListener("mouseleave",()=>{fa()})),Gr||(document.addEventListener("mouseover",vg),document.addEventListener("mouseout",bg),Gr=!0)}function vg(e){const t=e.target.closest(".issue-link, .activity-issue-link");if(!t)return;const n=yg(t);if(n){if(n===Pn&&re.style.display!=="none"){clearTimeout(pa);return}clearTimeout(ma),ma=setTimeout(()=>{wg(t,n)},200)}}function bg(e){e.target.closest(".issue-link, .activity-issue-link")&&(clearTimeout(ma),pa=setTimeout(()=>{fa()},150))}function yg(e){const n=(e.getAttribute("href")||"").match(/\/issue\/([A-Z]{2,10}-\d+)/);if(n)return n[1];const i=e.textContent.trim().match(/^([A-Z]{2,10}-\d+)$/);return i?i[1]:null}async function wg(e,t){Pn=t;const n=e.getBoundingClientRect();re.style.left=`${n.left+window.scrollX}px`,re.style.top=`${n.bottom+window.scrollY+8}px`,re.innerHTML='<div class="issue-tooltip-loading">Loading...</div>',re.style.display="block";try{const s=await $g(t);if(Pn!==t)return;Eg(s)}catch{if(Pn!==t)return;re.innerHTML='<div class="issue-tooltip-error">Could not load issue</div>'}}function fa(){re&&(re.style.display="none"),Pn=null}function kg(){const e=Date.now();for(const[t,n]of yt.entries())e-n.timestamp>=zr&&yt.delete(t)}async function $g(e){yt.size>ua/2&&kg();const t=yt.get(e);if(t&&Date.now()-t.timestamp<zr)return t.issue;if(!ga.api)throw new Error("API not initialized");const n=await ga.api.getIssueByIdentifier(e);if(yt.size>=ua){const s=Array.from(yt.entries());s.sort((a,o)=>a[1].timestamp-o[1].timestamp);const i=s.slice(0,ua/2);for(const[a]of i)yt.delete(a)}return yt.set(e,{issue:n,timestamp:Date.now()}),n}function Eg(e){const t=gg[e.status]||"#6b7280",n=fg[e.priority]||"#6b7280",s=(e.issue_type||"task").replace(/_/g," "),i=e.estimate?`${e.estimate}pt`:"";re.innerHTML=`
+        `;const y=o.querySelector(".sub-issues-list");y&&y.addEventListener("click",k=>{const E=k.target.closest(".sub-issue-item");E&&E.dataset.issueId&&F(E.dataset.issueId)})}catch(n){v(`Failed to load epic: ${n.message}`,"error")}}function bg(e){let t=!1,n=null;return function(i){if(i.metaKey||i.ctrlKey||i.altKey)return;if(i.target.tagName==="INPUT"||i.target.tagName==="TEXTAREA"||i.target.tagName==="SELECT"){i.key==="Escape"&&i.target.blur();return}const a=e.isModalOpen();if(i.key==="Escape"){i.preventDefault(),a?e.closeModal():document.body.classList.contains("sidebar-open")&&e.closeSidebar?e.closeSidebar():e.closeDropdowns();return}if(!a){if(i.key==="g"){t=!0,clearTimeout(n),n=setTimeout(()=>{t=!1},1e3);return}if(t){switch(t=!1,clearTimeout(n),i.key){case"i":e.navigateTo("issues");break;case"p":e.navigateTo("projects");break;case"s":e.navigateTo("sprints");break;case"d":e.navigateTo("documents");break;case"t":e.navigateTo("team");break}return}switch(i.key){case"c":i.preventDefault(),e.showCreateIssueModal();break;case"m":i.preventDefault(),e.navigateTo("my-issues");break;case"i":i.preventDefault(),e.navigateTo("issues");break;case"b":i.preventDefault(),e.navigateTo("board");break;case"p":i.preventDefault(),e.navigateTo("projects");break;case"?":i.preventDefault(),e.showKeyboardShortcutsHelp();break;case"/":i.preventDefault(),e.focusSearch();break}}}}function yg(e){return function(n){var s;if(n.metaKey||n.ctrlKey){if(n.key==="Enter"){if(e.isModalOpen()){const i=e.getModalForm();if(i)n.preventDefault(),i.dispatchEvent(new Event("submit",{cancelable:!0}));else{const a=e.getModalPrimaryBtn();a&&!a.disabled&&(n.preventDefault(),a.click())}}else{const i=(s=document.activeElement)==null?void 0:s.closest("form");i&&(n.preventDefault(),i.dispatchEvent(new Event("submit",{bubbles:!0,cancelable:!0})))}return}n.key==="k"&&(n.preventDefault(),e.isCommandPaletteOpen()?e.closeCommandPalette():e.openCommandPalette())}}}function As(e,t,n="#issues-list .list-item"){const s=document.querySelectorAll(n);s.length!==0&&(e=Math.max(0,Math.min(s.length-1,e)),s.forEach(i=>i.classList.remove("keyboard-selected")),t(e),s[e].classList.add("keyboard-selected"),s[e].scrollIntoView({block:"nearest",behavior:"smooth"}))}function wg(e){return function(n){if(e.getCurrentView()!=="issues"||n.target.tagName==="INPUT"||n.target.tagName==="TEXTAREA"||n.target.tagName==="SELECT"||e.isModalOpen()||e.isCommandPaletteOpen())return;const s=document.querySelectorAll("#issues-list .list-item");if(s.length===0)return;const i=e.getSelectedIndex();switch(n.key){case"j":n.preventDefault(),As(i+1,e.setSelectedIndex);break;case"k":n.preventDefault(),As(i-1,e.setSelectedIndex);break;case"Enter":if(i>=0&&s[i]){n.preventDefault();const a=s[i].dataset.id;a&&!a.startsWith("temp-")&&e.viewIssue(a)}break;case"e":if(i>=0&&s[i]){n.preventDefault();const a=s[i].dataset.id;a&&!a.startsWith("temp-")&&e.showEditIssueModal(a)}break;case"Escape":i>=0&&(n.preventDefault(),s.forEach(a=>a.classList.remove("keyboard-selected")),e.setSelectedIndex(-1));break}}}function kg(e){const t="#documents-list .list-item, #documents-list .grid-item";return function(s){if(e.getCurrentView()!=="documents"||s.target.tagName==="INPUT"||s.target.tagName==="TEXTAREA"||s.target.tagName==="SELECT"||e.isModalOpen()||e.isCommandPaletteOpen())return;const i=document.querySelectorAll(t);if(i.length===0)return;const a=e.getSelectedIndex();switch(s.key){case"j":s.preventDefault(),As(a+1,e.setSelectedIndex,t);break;case"k":s.preventDefault(),As(a-1,e.setSelectedIndex,t);break;case"Enter":if(a>=0&&i[a]){s.preventDefault();const o=i[a].dataset.documentId;o&&e.viewDocument(o)}break;case"e":if(a>=0&&i[a]){s.preventDefault();const o=i[a].dataset.documentId;o&&e.showEditDocumentModal&&e.showEditDocumentModal(o)}break;case"Escape":a>=0&&(s.preventDefault(),i.forEach(o=>o.classList.remove("keyboard-selected")),e.setSelectedIndex(-1));break}}}const yt=new Map,Gr=6e4,pa=100;let re=null,ma=null,ga=null,On=null,Wr=!1;const $g={backlog:"#6b7280",todo:"#9ca3af",in_progress:"#f59e0b",in_review:"#8b5cf6",done:"#22c55e",canceled:"#ef4444"},Eg={urgent:"#ef4444",high:"#f59e0b",medium:"#3b82f6",low:"#9ca3af",no_priority:"#6b7280"},Vr={api:null};let fa={...Vr};function _g(e={}){fa={...Vr,...e},re||(re=document.createElement("div"),re.className="issue-tooltip",re.style.display="none",document.body.appendChild(re),re.addEventListener("mouseenter",()=>{clearTimeout(ma)}),re.addEventListener("mouseleave",()=>{ha()})),Wr||(document.addEventListener("mouseover",Ig),document.addEventListener("mouseout",xg),Wr=!0)}function Ig(e){const t=e.target.closest(".issue-link, .activity-issue-link");if(!t)return;const n=Tg(t);if(n){if(n===On&&re.style.display!=="none"){clearTimeout(ma);return}clearTimeout(ga),ga=setTimeout(()=>{Sg(t,n)},200)}}function xg(e){e.target.closest(".issue-link, .activity-issue-link")&&(clearTimeout(ga),ma=setTimeout(()=>{ha()},150))}function Tg(e){const n=(e.getAttribute("href")||"").match(/\/issue\/([A-Z]{2,10}-\d+)/);if(n)return n[1];const i=e.textContent.trim().match(/^([A-Z]{2,10}-\d+)$/);return i?i[1]:null}async function Sg(e,t){On=t;const n=e.getBoundingClientRect();re.style.left=`${n.left+window.scrollX}px`,re.style.top=`${n.bottom+window.scrollY+8}px`,re.innerHTML='<div class="issue-tooltip-loading">Loading...</div>',re.style.display="block";try{const s=await Cg(t);if(On!==t)return;Bg(s)}catch{if(On!==t)return;re.innerHTML='<div class="issue-tooltip-error">Could not load issue</div>'}}function ha(){re&&(re.style.display="none"),On=null}function Lg(){const e=Date.now();for(const[t,n]of yt.entries())e-n.timestamp>=Gr&&yt.delete(t)}async function Cg(e){yt.size>pa/2&&Lg();const t=yt.get(e);if(t&&Date.now()-t.timestamp<Gr)return t.issue;if(!fa.api)throw new Error("API not initialized");const n=await fa.api.getIssueByIdentifier(e);if(yt.size>=pa){const s=Array.from(yt.entries());s.sort((a,o)=>a[1].timestamp-o[1].timestamp);const i=s.slice(0,pa/2);for(const[a]of i)yt.delete(a)}return yt.set(e,{issue:n,timestamp:Date.now()}),n}function Bg(e){const t=$g[e.status]||"#6b7280",n=Eg[e.priority]||"#6b7280",s=(e.issue_type||"task").replace(/_/g," "),i=e.estimate?`${e.estimate}pt`:"";re.innerHTML=`
         <div class="issue-tooltip-header">
             <span class="issue-tooltip-id">${g(e.identifier)}</span>
             <span class="issue-tooltip-type">${g(s)}</span>
@@ -2788,10 +2788,10 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
         </div>
         <div class="issue-tooltip-title">${g(e.title)}</div>
         <div class="issue-tooltip-meta">
-            <span class="issue-tooltip-status" style="color: ${t}">${_g(e.status)}</span>
-            <span class="issue-tooltip-priority" style="color: ${n}">${Ig(e.priority)}</span>
+            <span class="issue-tooltip-status" style="color: ${t}">${Ag(e.status)}</span>
+            <span class="issue-tooltip-priority" style="color: ${n}">${jg(e.priority)}</span>
         </div>
-    `}function _g(e){return(e||"backlog").replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase())}function Ig(e){return(e||"no_priority").replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase())}function xg(){tt("issue:created",Tg),tt("issue:updated",Sg),tt("issue:deleted",Lg),tt("comment",Cg),tt("relation",Bg),tt("attestation",Ag),tt("activity",jg),tt("project",Mg),tt("sprint",Dg)}function Tg(e){var i,a,o;const t=ke(),n=t.findIndex(r=>r.id===e.id),s=t.findIndex(r=>r._isOptimistic&&r.title===e.title);if(!(n>=0))if(s>=0){const r=[...t];r[s]=e,ze(r),L()==="issues"&&nt()}else ze([e,...t]),L()==="issues"&&nt(),v(`New issue: ${e.identifier}`,"info");if(e.assignee_id===((i=fn())==null?void 0:i.id)){const r=mt(),d=r.findIndex(l=>l.id===e.id),c=r.findIndex(l=>l._isOptimistic&&l.title===e.title);if(d===-1&&c===-1)Pt([e,...r]),L()==="my-issues"&&$n();else if(c>=0){const l=[...r];l[c]=e,Pt(l),L()==="my-issues"&&$n()}}L()==="my-issues"&&Nt({showLoading:!1}),L()==="board"?pt():L()==="sprints"&&ht(),L()==="issue-detail"&&e.parent_id===((a=he())==null?void 0:a.id)&&F((o=he())==null?void 0:o.id,!1)}function Sg(e){const t=ke();t.some(s=>s.id===e.id)&&ze(t.map(s=>s.id===e.id?e:s));const n=mt();if(n.some(s=>s.id===e.id)&&Pt(n.map(s=>s.id===e.id?e:s)),L()==="issues")nt();else if(L()==="my-issues")$n(),Nt({showLoading:!1});else if(L()==="board")pt();else if(L()==="sprints")ht();else if(L()==="issue-detail"){const s=document.getElementById("issue-detail-content");s&&s.dataset.issueId===e.id&&F(e.id)}}function Lg(e){var t;ze(ke().filter(n=>n.id!==e.id)),Pt(mt().filter(n=>n.id!==e.id)),L()==="issues"?nt():L()==="my-issues"?($n(),Nt({showLoading:!1})):L()==="board"?pt():L()==="sprints"&&ht(),v(`Issue ${e.identifier} deleted`,"info"),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.id&&(v(`Issue ${e.identifier} was deleted`,"warning"),C("my-issues"))}function Cg(e){var t;L()==="my-issues"&&Nt({showLoading:!1}),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function Bg(e){var t;if(L()==="issue-detail"){const n=(t=he())==null?void 0:t.id;n&&(e.source_issue_id===n||e.target_issue_id===n)&&F(n,!1)}}function Ag(e){var t;L()==="gate-approvals"&&xn(),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function jg(e){var t;L()==="my-issues"&&Nt({showLoading:!1}),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function Mg(e,{type:t}){$e().then(()=>{L()==="projects"&&Cn()}).catch(n=>console.error("Failed to reload projects:",n)),t==="created"?v(`New project: ${e.name}`,"info"):t==="deleted"&&v(`Project ${e.name} deleted`,"info")}function Dg(){L()==="sprints"&&ht()}const Vr='a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';function Kr(){const e=document.body.classList.contains("sidebar-open"),t=document.getElementById("hamburger-btn");t&&t.setAttribute("aria-expanded",String(e));const n=document.querySelector(".sidebar");n&&(e?(n.setAttribute("role","dialog"),n.setAttribute("aria-modal","true")):(n.removeAttribute("role"),n.removeAttribute("aria-modal")));const s=document.querySelector(".main-content");s&&(e?s.setAttribute("inert",""):s.removeAttribute("inert"))}function Rg(){const e=document.body.classList.contains("sidebar-open");if(document.body.classList.toggle("sidebar-open"),Kr(),e){const t=document.getElementById("hamburger-btn");t&&t.focus()}else{const t=document.querySelector(".sidebar");if(t){const n=t.querySelector(Vr);n&&n.focus()}}}function js(){const e=document.body.classList.contains("sidebar-open");if(document.body.classList.remove("sidebar-open"),Kr(),e){const t=document.getElementById("hamburger-btn");t&&t.focus()}}document.addEventListener("keydown",e=>{if(!document.body.classList.contains("sidebar-open")||e.key!=="Tab")return;const t=document.querySelector(".sidebar");if(!t)return;const n=t.querySelectorAll(Vr);if(n.length===0)return;const s=n[0],i=n[n.length-1];if(!t.contains(document.activeElement)){e.preventDefault(),s.focus();return}e.shiftKey&&document.activeElement===s?(e.preventDefault(),i.focus()):!e.shiftKey&&document.activeElement===i&&(e.preventDefault(),s.focus())}),window.addEventListener("resize",()=>{window.innerWidth>768&&document.body.classList.contains("sidebar-open")&&js()});async function Pg(e){if(e.key!=="Enter")return;const t=e.target,n=t.value.trim();if(!n)return;const s=document.getElementById("project-filter").value;if(!s){v("Please select a project first","error");return}t.disabled=!0;const i=t.placeholder;t.placeholder="Creating...";const a="temp-"+Date.now(),o=U().find(c=>c.id===s),r={id:a,title:n,identifier:`${(o==null?void 0:o.key)||"NEW"}-?`,status:"backlog",priority:"no_priority",issue_type:"task",estimate:null,_isOptimistic:!0};ze([r,...ke()]),nt();const d=document.querySelector(`[data-id="${a}"]`);d&&d.classList.add("new");try{const c=await b.createIssue(s,{title:n,status:"backlog",priority:"no_priority"});t.value="";const l=ke(),f=l.findIndex(p=>p.id===a);f!==-1&&(l[f]=c,ze(l)),nt(),$e(),v("Issue created!","success")}catch(c){ze(ke().filter(l=>l.id!==a)),nt(),v(`Failed to create issue: ${c.message}`,"error")}finally{t.disabled=!1,t.placeholder=i,t.focus()}}id({beforeNavigate:()=>{sm(),kr(null),is(null),fo(null),js(),fa()},detailRoute:e=>e[0]==="epic"&&e[1]?(Mr(e[1]),!0):e[0]==="issue"&&e[1]?(Fi(e[1]),!0):e[0]==="document"&&e[1]?(Yg(e[1]),!0):e[0]==="sprint"&&e[1]?(pp(e[1]),!0):e[0]==="projects"&&e[1]&&e[2]==="settings"?(Er(e[1]),!0):!1,detailPopstate:e=>e.epicId?(Dr(e.epicId,!1),!0):e.issueId?(F(e.issueId,!1),!0):e.identifier?(Fi(e.identifier),!0):e.documentId?(Pe(e.documentId,!1),!0):e.sprintId?(Gi(e.sprintId,!1),!0):!1,restoreProject:()=>{const e=Dt();e&&U().some(t=>t.id===e)&&Ft(e)},issueNavigate:e=>Fi(e),epicNavigate:e=>Mr(e)}),sd({"my-issues":()=>{Mi(),Nt()},"gate-approvals":()=>{xn()},issues:()=>{Gd(),yu(),zd().then(()=>{const t=new URLSearchParams(window.location.search).getAll("label");if(t.length>0){const n=document.getElementById("label-filter-dropdown");n&&(n.querySelectorAll('input[type="checkbox"]').forEach(i=>{i.checked=t.includes(i.value)}),Co())}}),qo().then(()=>{const t=new URLSearchParams(window.location.search).get("sprint");if(t){const n=document.getElementById("sprint-filter");n&&(n.value=t)}Lt()})},epics:()=>{Hm()},board:()=>{xi()},projects:()=>{$e().then(Cn)},sprints:()=>{dr()},rituals:()=>{Lp()},documents:()=>{jn()},team:()=>{Eo(),xd(),_i()},settings:()=>{ca(),yi(),Sp()}});function Ng(){const e=document.getElementById("modal-overlay");if(e){e.addEventListener("click",()=>A());const n=e.querySelector(".modal");n&&n.addEventListener("click",s=>s.stopPropagation())}const t=document.querySelector(".modal-close");t&&t.addEventListener("click",()=>A())}function qg(){const e={showCreateIssueModal:En,showCreateEpicModal:zm,showCreateProjectModal:$r,showCreateDocumentModal:Ar,showCreateTeamModal:Io,showEditTeamModal:Bd,showInviteModal:_o,showCreateApiKeyModal:ag,showCreateAgentModal:gd,resetOnboarding:Fr,logout:Zr,navigateToProjects:()=>C("projects")};document.querySelectorAll("[data-action]").forEach(t=>{const n=e[t.dataset.action];n&&t.addEventListener("click",()=>n())})}function Og(){const e=document.getElementById("project-settings-view");if(!e)return;e.querySelectorAll(".settings-tab[data-tab]").forEach(i=>{i.addEventListener("click",()=>_r(i.dataset.tab))});const t=e.querySelector("#project-settings-tab-general .btn-primary");t&&t.addEventListener("click",()=>om());const n=e.querySelector("#project-settings-tab-rules .btn-primary");n&&n.addEventListener("click",()=>rm()),Object.entries({"project-settings-tab-sprint-rituals":"every_sprint","project-settings-tab-close-rituals":"ticket_close","project-settings-tab-claim-rituals":"ticket_claim"}).forEach(([i,a])=>{const o=e.querySelector(`#${i} .btn-primary`);o&&o.addEventListener("click",()=>Ir(a))})}function Hg(){const e=document.getElementById("doc-view-list");e&&e.addEventListener("click",()=>Lr("list"));const t=document.getElementById("doc-view-grid");t&&t.addEventListener("click",()=>Lr("grid"));const n=document.getElementById("doc-select-btn");n&&n.addEventListener("click",()=>Cr());const s=document.getElementById("doc-search");s&&s.addEventListener("input",()=>fm());const i=document.getElementById("doc-project-filter");i&&i.addEventListener("change",()=>na());const a=document.getElementById("doc-sort");a&&a.addEventListener("change",()=>vt())}function Fg(){const e=document.getElementById("dashboard-project-filter");e&&e.addEventListener("change",()=>Di());const t=document.getElementById("my-issues-status-filter");t&&t.addEventListener("change",()=>Di())}function Ug(){const e=document.getElementById("issue-search");e&&e.addEventListener("input",()=>wu());const t=document.getElementById("filter-menu-btn");t&&t.addEventListener("click",h=>Kd(h));const n=document.getElementById("display-menu-btn");n&&n.addEventListener("click",h=>Yd(h));const s=document.getElementById("project-filter");s&&s.addEventListener("change",()=>Oo()),document.querySelectorAll(".multi-select-btn").forEach(h=>{const y=h.parentElement;y!=null&&y.querySelector("#status-filter-dropdown")?h.addEventListener("click",()=>Ti("status-filter-dropdown")):y!=null&&y.querySelector("#priority-filter-dropdown")?h.addEventListener("click",()=>Ti("priority-filter-dropdown")):y!=null&&y.querySelector("#label-filter-dropdown")&&h.addEventListener("click",()=>Ti("label-filter-dropdown"))});const i=document.getElementById("status-filter-dropdown");if(i){i.querySelectorAll('input[type="checkbox"]').forEach(y=>{y.addEventListener("change",()=>ps())});const h=i.querySelector(".btn-small");h&&h.addEventListener("click",()=>Si())}const a=document.getElementById("priority-filter-dropdown");if(a){a.querySelectorAll('input[type="checkbox"]').forEach(y=>{y.addEventListener("change",()=>Li())});const h=a.querySelector(".btn-small");h&&h.addEventListener("click",()=>Ci())}const o=document.getElementById("label-filter-dropdown");if(o){const h=o.querySelector(".btn-small");h&&h.addEventListener("click",()=>ms())}const r=document.getElementById("issue-type-filter");r&&r.addEventListener("change",()=>De());const d=document.getElementById("assignee-filter");d&&d.addEventListener("change",()=>De());const c=document.getElementById("sprint-filter");c&&c.addEventListener("change",()=>De());const l=document.getElementById("sort-by-select");l&&l.addEventListener("change",()=>Lt());const f=document.getElementById("group-by-select");f&&f.addEventListener("change",()=>Ho());const p=document.querySelector(".quick-create-input");p&&p.addEventListener("keydown",h=>Pg(h))}function zg(){const e=document.getElementById("board-project-filter");e&&e.addEventListener("change",()=>Dd());const t=document.getElementById("epics-project-filter");t&&t.addEventListener("change",()=>Fm());const n=document.getElementById("sprint-project-filter");n&&n.addEventListener("change",()=>cp())}function Gg(){const e=document.getElementById("rituals-project-filter");e&&e.addEventListener("change",()=>mr());const t=document.getElementById("rituals-view");t&&t.querySelectorAll(".settings-tab[data-tab]").forEach(n=>{n.addEventListener("click",()=>Bp(n.dataset.tab))})}function Wg(){const e=document.querySelector(".team-selector");e&&e.addEventListener("click",()=>$o());const t=document.querySelector(".sidebar-create-btn");t&&t.addEventListener("click",()=>En()),document.querySelectorAll(".sidebar-nav .nav-item[data-view]").forEach(o=>{o.addEventListener("click",r=>{r.preventDefault(),C(o.dataset.view)})});const n=document.querySelector(".user-menu");n&&n.addEventListener("click",()=>$d());const s=document.querySelector(".sidebar-backdrop");s&&s.addEventListener("click",()=>js());const i=document.getElementById("hamburger-btn");i&&i.addEventListener("click",()=>Rg());const a=document.querySelector(".mobile-fab");a&&a.addEventListener("click",()=>En())}Y({"navigate-to":(e,t)=>{C(t.view)}}),document.addEventListener("DOMContentLoaded",async()=>{if(nd(),sf(),Wg(),Ng(),qg(),Fg(),Ug(),zg(),Gg(),Og(),Hg(),Vg(),Kg(),hg({api:b}),rd(),xg(),b.getToken())try{const e=await b.getMe();ns(e),await Nn()}catch{b.logout(),ha()}else ha()});function Vg(){const e=document.getElementById("theme-toggle");if(!e)return;const t=Ic()==="light";document.body.classList.toggle("theme-light",t),e.checked=t,e.addEventListener("change",()=>{const n=e.checked;document.body.classList.toggle("theme-light",n),xc(n?"light":"dark")})}function Kg(){document.addEventListener("click",e=>{const t=e.target.closest("a.issue-link");if(t){e.preventDefault();const n=t.getAttribute("href");if(n&&n.startsWith("#/issue/")){const s=n.replace("#/issue/","");yo(s)}}})}async function Nn(){Zg(),nf(),await $i();const e=wd();if(e.length===0&&!Zm()){Or();return}e.length>0&&await Ei(e[0],!0)}async function Yg(e){try{await Pe(e,!1)}catch{C("documents",!1)}}document.addEventListener("keydown",Wm({closeModal:A,closeSidebar:js,navigateTo:C,showCreateIssueModal:En,showKeyboardShortcutsHelp:Yr,isModalOpen:ts,focusSearch:()=>{C("issues"),setTimeout(()=>{var e;return(e=document.getElementById("issue-search"))==null?void 0:e.focus()},100)},closeDropdowns:()=>{document.getElementById("team-dropdown").classList.add("hidden"),document.getElementById("user-dropdown").classList.add("hidden")}}));function Yr(){document.getElementById("modal-title").textContent="Keyboard Shortcuts",document.getElementById("modal-content").innerHTML=`
+    `}function Ag(e){return(e||"backlog").replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase())}function jg(e){return(e||"no_priority").replace(/_/g," ").replace(/\b\w/g,t=>t.toUpperCase())}function Mg(){it("issue:created",Dg),it("issue:updated",Rg),it("issue:deleted",Pg),it("comment",Ng),it("relation",qg),it("attestation",Og),it("activity",Hg),it("project",Fg),it("sprint",Ug)}function Dg(e){var i,a,o;const t=ke(),n=t.findIndex(r=>r.id===e.id),s=t.findIndex(r=>r._isOptimistic&&r.title===e.title);if(!(n>=0))if(s>=0){const r=[...t];r[s]=e,ze(r),L()==="issues"&&tt()}else ze([e,...t]),L()==="issues"&&tt(),v(`New issue: ${e.identifier}`,"info");if(e.assignee_id===((i=fn())==null?void 0:i.id)){const r=mt(),d=r.findIndex(l=>l.id===e.id),c=r.findIndex(l=>l._isOptimistic&&l.title===e.title);if(d===-1&&c===-1)Rt([e,...r]),L()==="my-issues"&&yn();else if(c>=0){const l=[...r];l[c]=e,Rt(l),L()==="my-issues"&&yn()}}L()==="my-issues"&&Pt({showLoading:!1}),L()==="board"?pt():L()==="sprints"&&vt(),L()==="issue-detail"&&e.parent_id===((a=he())==null?void 0:a.id)&&F((o=he())==null?void 0:o.id,!1)}function Rg(e){const t=ke();t.some(s=>s.id===e.id)&&ze(t.map(s=>s.id===e.id?e:s));const n=mt();if(n.some(s=>s.id===e.id)&&Rt(n.map(s=>s.id===e.id?e:s)),L()==="issues")tt();else if(L()==="my-issues")yn(),Pt({showLoading:!1});else if(L()==="board")pt();else if(L()==="sprints")vt();else if(L()==="issue-detail"){const s=document.getElementById("issue-detail-content");s&&s.dataset.issueId===e.id&&F(e.id)}}function Pg(e){var t;ze(ke().filter(n=>n.id!==e.id)),Rt(mt().filter(n=>n.id!==e.id)),L()==="issues"?tt():L()==="my-issues"?(yn(),Pt({showLoading:!1})):L()==="board"?pt():L()==="sprints"&&vt(),v(`Issue ${e.identifier} deleted`,"info"),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.id&&(v(`Issue ${e.identifier} was deleted`,"warning"),C("my-issues"))}function Ng(e){var t;L()==="my-issues"&&Pt({showLoading:!1}),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function qg(e){var t;if(L()==="issue-detail"){const n=(t=he())==null?void 0:t.id;n&&(e.source_issue_id===n||e.target_issue_id===n)&&F(n,!1)}}function Og(e){var t;L()==="gate-approvals"&&In(),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function Hg(e){var t;L()==="my-issues"&&Pt({showLoading:!1}),L()==="issue-detail"&&((t=he())==null?void 0:t.id)===e.issue_id&&F(e.issue_id,!1)}function Fg(e,{type:t}){$e().then(()=>{L()==="projects"&&Ln()}).catch(n=>console.error("Failed to reload projects:",n)),t==="created"?v(`New project: ${e.name}`,"info"):t==="deleted"&&v(`Project ${e.name} deleted`,"info")}function Ug(){L()==="sprints"&&vt()}const Kr='a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';function Yr(){const e=document.body.classList.contains("sidebar-open"),t=document.getElementById("hamburger-btn");t&&t.setAttribute("aria-expanded",String(e));const n=document.querySelector(".sidebar");n&&(e?(n.setAttribute("role","dialog"),n.setAttribute("aria-modal","true")):(n.removeAttribute("role"),n.removeAttribute("aria-modal")));const s=document.querySelector(".main-content");s&&(e?s.setAttribute("inert",""):s.removeAttribute("inert"))}function zg(){const e=document.body.classList.contains("sidebar-open");if(document.body.classList.toggle("sidebar-open"),Yr(),e){const t=document.getElementById("hamburger-btn");t&&t.focus()}else{const t=document.querySelector(".sidebar");if(t){const n=t.querySelector(Kr);n&&n.focus()}}}function js(){const e=document.body.classList.contains("sidebar-open");if(document.body.classList.remove("sidebar-open"),Yr(),e){const t=document.getElementById("hamburger-btn");t&&t.focus()}}document.addEventListener("keydown",e=>{if(!document.body.classList.contains("sidebar-open")||e.key!=="Tab")return;const t=document.querySelector(".sidebar");if(!t)return;const n=t.querySelectorAll(Kr);if(n.length===0)return;const s=n[0],i=n[n.length-1];if(!t.contains(document.activeElement)){e.preventDefault(),s.focus();return}e.shiftKey&&document.activeElement===s?(e.preventDefault(),i.focus()):!e.shiftKey&&document.activeElement===i&&(e.preventDefault(),s.focus())}),window.addEventListener("resize",()=>{window.innerWidth>768&&document.body.classList.contains("sidebar-open")&&js()});async function Gg(e){if(e.key!=="Enter")return;const t=e.target,n=t.value.trim();if(!n)return;const s=document.getElementById("project-filter").value;if(!s){v("Please select a project first","error");return}t.disabled=!0;const i=t.placeholder;t.placeholder="Creating...";const a="temp-"+Date.now(),o=U().find(c=>c.id===s),r={id:a,title:n,identifier:`${(o==null?void 0:o.key)||"NEW"}-?`,status:"backlog",priority:"no_priority",issue_type:"task",estimate:null,_isOptimistic:!0};ze([r,...ke()]),tt();const d=document.querySelector(`[data-id="${a}"]`);d&&d.classList.add("new");try{const c=await b.createIssue(s,{title:n,status:"backlog",priority:"no_priority"});t.value="";const l=ke(),f=l.findIndex(p=>p.id===a);f!==-1&&(l[f]=c,ze(l)),tt(),$e(),v("Issue created!","success")}catch(c){ze(ke().filter(l=>l.id!==a)),tt(),v(`Failed to create issue: ${c.message}`,"error")}finally{t.disabled=!1,t.placeholder=i,t.focus()}}pm({beforeNavigate:()=>{Jp(),yr(null),is(null),fo(null),js(),ha()},detailRoute:e=>e[0]==="epic"&&e[1]?(Ur(e[1]),!0):e[0]==="issue"&&e[1]?(Si(e[1]),!0):e[0]==="document"&&e[1]?(sf(e[1]),!0):e[0]==="sprint"&&e[1]?(lp(e[1]),!0):e[0]==="projects"&&e[1]&&e[2]==="settings"?(kr(e[1]),!0):!1,detailPopstate:e=>e.epicId?(zr(e.epicId,!1),!0):e.issueId?(F(e.issueId,!1),!0):e.identifier?(Si(e.identifier),!0):e.documentId?(Pe(e.documentId,!1),!0):e.sprintId?(Pi(e.sprintId,!1),!0):!1,restoreProject:()=>{const e=Gt();e&&U().some(t=>t.id===e)&&Ut(e)},issueNavigate:e=>Si(e),epicNavigate:e=>Ur(e)}),um({"my-issues":()=>{wi(),Pt()},"gate-approvals":()=>{In()},issues:()=>{fd(),Ud(),gd().then(()=>{const t=new URLSearchParams(window.location.search).getAll("label");if(t.length>0){const n=document.getElementById("label-filter-dropdown");n&&(n.querySelectorAll('input[type="checkbox"]').forEach(i=>{i.checked=t.includes(i.value)}),ko())}}),Co().then(()=>{const t=new URLSearchParams(window.location.search).get("sprint");if(t){const n=document.getElementById("sprint-filter");n&&(n.value=t)}Tt()})},epics:()=>{mg()},board:()=>{pi()},projects:()=>{$e().then(Ln)},sprints:()=>{lr()},rituals:()=>{Ip()},documents:()=>{En()},team:()=>{Br(),Am(),sa()},settings:()=>{ca(),Qi(),_p()}});function Wg(){const e=document.getElementById("modal-overlay");if(e){e.addEventListener("click",()=>A());const n=e.querySelector(".modal");n&&n.addEventListener("click",s=>s.stopPropagation())}const t=document.querySelector(".modal-close");t&&t.addEventListener("click",()=>A())}function Vg(){const e={showCreateIssueModal:wn,showCreateEpicModal:hg,showCreateProjectModal:wr,showCreateDocumentModal:ir,showCreateTeamModal:jr,showEditTeamModal:Pm,showInviteModal:Ar,showCreateApiKeyModal:ig,showCreateAgentModal:wm,resetOnboarding:Or,logout:Hr,navigateToProjects:()=>C("projects")};document.querySelectorAll("[data-action]").forEach(t=>{const n=e[t.dataset.action];n&&t.addEventListener("click",()=>n())})}function Kg(){const e=document.getElementById("project-settings-view");if(!e)return;e.querySelectorAll(".settings-tab[data-tab]").forEach(i=>{i.addEventListener("click",()=>$r(i.dataset.tab))});const t=e.querySelector("#project-settings-tab-general .btn-primary");t&&t.addEventListener("click",()=>nm());const n=e.querySelector("#project-settings-tab-rules .btn-primary");n&&n.addEventListener("click",()=>sm()),Object.entries({"project-settings-tab-sprint-rituals":"every_sprint","project-settings-tab-close-rituals":"ticket_close","project-settings-tab-claim-rituals":"ticket_claim"}).forEach(([i,a])=>{const o=e.querySelector(`#${i} .btn-primary`);o&&o.addEventListener("click",()=>Er(a))})}function Yg(){const e=document.getElementById("doc-view-list");e&&e.addEventListener("click",()=>tr("list"));const t=document.getElementById("doc-view-grid");t&&t.addEventListener("click",()=>tr("grid"));const n=document.getElementById("doc-select-btn");n&&n.addEventListener("click",()=>nr());const s=document.getElementById("doc-search");s&&s.addEventListener("input",()=>Au());const i=document.getElementById("doc-project-filter");i&&i.addEventListener("change",()=>ji());const a=document.getElementById("doc-sort");a&&a.addEventListener("change",()=>ht())}function Zg(){const e=document.getElementById("dashboard-project-filter");e&&e.addEventListener("change",()=>ki());const t=document.getElementById("my-issues-status-filter");t&&t.addEventListener("change",()=>ki())}function Xg(){const e=document.getElementById("issue-search");e&&e.addEventListener("input",()=>zd());const t=document.getElementById("filter-menu-btn");t&&t.addEventListener("click",h=>bd(h));const n=document.getElementById("display-menu-btn");n&&n.addEventListener("click",h=>yd(h));const s=document.getElementById("project-filter");s&&s.addEventListener("change",()=>Bo()),document.querySelectorAll(".multi-select-btn").forEach(h=>{const y=h.parentElement;y!=null&&y.querySelector("#status-filter-dropdown")?h.addEventListener("click",()=>mi("status-filter-dropdown")):y!=null&&y.querySelector("#priority-filter-dropdown")?h.addEventListener("click",()=>mi("priority-filter-dropdown")):y!=null&&y.querySelector("#label-filter-dropdown")&&h.addEventListener("click",()=>mi("label-filter-dropdown"))});const i=document.getElementById("status-filter-dropdown");if(i){i.querySelectorAll('input[type="checkbox"]').forEach(y=>{y.addEventListener("change",()=>ls())});const h=i.querySelector(".btn-small");h&&h.addEventListener("click",()=>gi())}const a=document.getElementById("priority-filter-dropdown");if(a){a.querySelectorAll('input[type="checkbox"]').forEach(y=>{y.addEventListener("change",()=>fi())});const h=a.querySelector(".btn-small");h&&h.addEventListener("click",()=>hi())}const o=document.getElementById("label-filter-dropdown");if(o){const h=o.querySelector(".btn-small");h&&h.addEventListener("click",()=>cs())}const r=document.getElementById("issue-type-filter");r&&r.addEventListener("change",()=>De());const d=document.getElementById("assignee-filter");d&&d.addEventListener("change",()=>De());const c=document.getElementById("sprint-filter");c&&c.addEventListener("change",()=>De());const l=document.getElementById("sort-by-select");l&&l.addEventListener("change",()=>Tt());const f=document.getElementById("group-by-select");f&&f.addEventListener("change",()=>Ao());const p=document.querySelector(".quick-create-input");p&&p.addEventListener("keydown",h=>Gg(h))}function Qg(){const e=document.getElementById("board-project-filter");e&&e.addEventListener("change",()=>ad());const t=document.getElementById("epics-project-filter");t&&t.addEventListener("change",()=>gg());const n=document.getElementById("sprint-project-filter");n&&n.addEventListener("change",()=>ap())}function Jg(){const e=document.getElementById("rituals-project-filter");e&&e.addEventListener("change",()=>ur());const t=document.getElementById("rituals-view");t&&t.querySelectorAll(".settings-tab[data-tab]").forEach(n=>{n.addEventListener("click",()=>Tp(n.dataset.tab))})}function ef(){const e=document.querySelector(".team-selector");e&&e.addEventListener("click",()=>Cr());const t=document.querySelector(".sidebar-create-btn");t&&t.addEventListener("click",()=>wn()),document.querySelectorAll(".sidebar-nav .nav-item[data-view]").forEach(o=>{o.addEventListener("click",r=>{r.preventDefault(),C(o.dataset.view)})});const n=document.querySelector(".user-menu");n&&n.addEventListener("click",()=>Sm());const s=document.querySelector(".sidebar-backdrop");s&&s.addEventListener("click",()=>js());const i=document.getElementById("hamburger-btn");i&&i.addEventListener("click",()=>zg());const a=document.querySelector(".mobile-fab");a&&a.addEventListener("click",()=>wn())}Y({"navigate-to":(e,t)=>{C(t.view)}}),document.addEventListener("DOMContentLoaded",async()=>{if(nd(),ng(),ef(),Wg(),Vg(),Zg(),Xg(),Qg(),Jg(),Kg(),Yg(),tf(),nf(),_g({api:b}),fm(),Mg(),b.getToken())try{const e=await b.getMe();ns(e),await Rn()}catch{b.logout(),ra()}else ra()});function tf(){const e=document.getElementById("theme-toggle");if(!e)return;const t=Ic()==="light";document.body.classList.toggle("theme-light",t),e.checked=t,e.addEventListener("change",()=>{const n=e.checked;document.body.classList.toggle("theme-light",n),xc(n?"light":"dark")})}function nf(){document.addEventListener("click",e=>{const t=e.target.closest("a.issue-link");if(t){e.preventDefault();const n=t.getAttribute("href");if(n&&n.startsWith("#/issue/")){const s=n.replace("#/issue/","");Tr(s)}}})}async function sf(e){try{await Pe(e,!1)}catch{C("documents",!1)}}document.addEventListener("keydown",bg({closeModal:A,closeSidebar:js,navigateTo:C,showCreateIssueModal:wn,showKeyboardShortcutsHelp:Zr,isModalOpen:ts,focusSearch:()=>{C("issues"),setTimeout(()=>{var e;return(e=document.getElementById("issue-search"))==null?void 0:e.focus()},100)},closeDropdowns:()=>{document.getElementById("team-dropdown").classList.add("hidden"),document.getElementById("user-dropdown").classList.add("hidden")}}));function Zr(){document.getElementById("modal-title").textContent="Keyboard Shortcuts",document.getElementById("modal-content").innerHTML=`
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
             <div>
                 <h4 style="margin-bottom: 0.75rem; color: var(--text-secondary)">Navigation</h4>
@@ -2852,4 +2852,4 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
             </div>
         </div>
-    `,R()}cg([{id:"nav-my-issues",title:"Dashboard",subtitle:"View issues assigned to you",icon:"👤",shortcut:"M",action:()=>C("my-issues"),category:"Navigation"},{id:"nav-issues",title:"Issues",subtitle:"View all issues",icon:"📋",shortcut:"I",action:()=>C("issues"),category:"Navigation"},{id:"nav-board",title:"Board",subtitle:"View kanban board",icon:"📊",shortcut:"B",action:()=>C("board"),category:"Navigation"},{id:"nav-projects",title:"Go to Projects",subtitle:"View all projects",icon:"📁",shortcut:"P",action:()=>C("projects"),category:"Navigation"},{id:"nav-sprints",title:"Go to Sprints",subtitle:"View all sprints",icon:"🏃",shortcut:"G S",action:()=>C("sprints"),category:"Navigation"},{id:"nav-documents",title:"Go to Documents",subtitle:"View all documents",icon:"📄",shortcut:"G D",action:()=>C("documents"),category:"Navigation"},{id:"nav-team",title:"Go to Team",subtitle:"Manage team members",icon:"👥",shortcut:"G T",action:()=>C("team"),category:"Navigation"},{id:"create-issue",title:"Create Issue",subtitle:"Add a new issue",icon:"➕",shortcut:"C",action:()=>{C("issues"),setTimeout(En,100)},category:"Create"},{id:"create-project",title:"Create Project",subtitle:"Start a new project",icon:"📁",action:()=>{C("projects"),setTimeout($r,100)},category:"Create"},{id:"create-document",title:"Create Document",subtitle:"Write a new document",icon:"📝",action:()=>{C("documents"),setTimeout(Ar,100)},category:"Create"},{id:"create-team",title:"Create Team",subtitle:"Start a new team",icon:"👥",action:()=>Io(),category:"Create"},{id:"search-issues",title:"Search Issues",subtitle:"Find issues by title or ID",icon:"🔍",shortcut:"/",action:()=>{C("issues"),setTimeout(()=>{var e;return(e=document.getElementById("issue-search"))==null?void 0:e.focus()},100)},category:"Actions"},{id:"invite-member",title:"Invite Team Member",subtitle:"Send an invitation",icon:"✉️",action:()=>{C("team"),setTimeout(_o,100)},category:"Actions"},{id:"show-shortcuts",title:"Keyboard Shortcuts",subtitle:"View all shortcuts",icon:"⌨️",shortcut:"?",action:()=>Yr(),category:"Help"},{id:"show-me-around",title:"Show Me Around",subtitle:"Replay the onboarding tour",icon:"🎓",action:()=>Fr(),category:"Help"},{id:"logout",title:"Sign Out",subtitle:"Log out of your account",icon:"🚪",action:()=>Zr(),category:"Account"}]),document.addEventListener("keydown",Vm({isModalOpen:ts,getModalForm:()=>document.querySelector("#modal-content form"),getModalPrimaryBtn:()=>document.querySelector("#modal-content .btn-primary"),isCommandPaletteOpen:da,openCommandPalette:dg,closeCommandPalette:As})),document.addEventListener("keydown",Km({getCurrentView:L,getSelectedIndex:Vc,setSelectedIndex:po,viewIssue:F,showEditIssueModal:ir,isModalOpen:ts,isCommandPaletteOpen:da})),document.addEventListener("keydown",Ym({getCurrentView:L,getSelectedIndex:Kc,setSelectedIndex:mo,viewDocument:Pe,showEditDocumentModal:jr,isModalOpen:ts,isCommandPaletteOpen:da}));let Yt=null,qn=null,Ne=null,qe=null;function On(){Yt||(Yt=document.getElementById("auth-screen"),qn=document.getElementById("main-screen"),Ne=document.getElementById("login-form"),qe=document.getElementById("signup-form"))}function ha(){On(),Yt&&Yt.classList.remove("hidden"),qn&&qn.classList.add("hidden")}function Zg(){On(),Yt&&Yt.classList.add("hidden"),qn&&qn.classList.remove("hidden")}function Xg(){On(),Ne&&Ne.classList.remove("hidden"),qe&&qe.classList.add("hidden")}function Qg(){On(),Ne&&Ne.classList.add("hidden"),qe&&qe.classList.remove("hidden")}async function Jg(e){e.preventDefault();const t=document.getElementById("login-email").value,n=document.getElementById("login-password").value;try{await b.login(t,n),ns(await b.getMe()),await Nn(),v("Welcome back!","success")}catch(s){v(`Login failed: ${s.message}`,"error")}return!1}async function ef(e){e.preventDefault();const t=document.getElementById("signup-name").value,n=document.getElementById("signup-email").value,s=document.getElementById("signup-password").value;try{await b.signup(t,n,s),await b.login(n,s),ns(await b.getMe()),await Nn(),v("Account created successfully!","success")}catch(i){v(`Signup failed: ${i.message}`,"error")}return!1}function Zr(){b.logout(),ns(null),li(null),ha(),v("Signed out","success")}function tf(e){return typeof e=="string"&&(e.startsWith("http://")||e.startsWith("https://")||e.startsWith("data:"))}function nf(){const e=fn();if(!e)return;const t=document.getElementById("user-name");t&&(t.textContent=e.name);const n=document.getElementById("user-avatar");if(n){const s=e.avatar_url;s?tf(s)?(n.className="avatar-small",n.innerHTML=`<img class="avatar-img" src="${u(s)}" alt="${u(e.name)}">`):(n.className="avatar-small avatar-emoji",n.textContent=s):(n.className="avatar-small",n.textContent=e.name.charAt(0).toUpperCase())}}function sf(){On();const e=Ne==null?void 0:Ne.querySelector("form");e&&e.addEventListener("submit",i=>Jg(i));const t=qe==null?void 0:qe.querySelector("form");t&&t.addEventListener("submit",i=>ef(i));const n=Ne==null?void 0:Ne.querySelector(".auth-switch a");n&&n.addEventListener("click",i=>{i.preventDefault(),Qg()});const s=qe==null?void 0:qe.querySelector(".auth-switch a");s&&s.addEventListener("click",i=>{i.preventDefault(),Xg()})}window.marked=M,window.DOMPurify=ao,console.log("Chaotic frontend loaded via Vite")})();
+    `,R()}lg([{id:"nav-my-issues",title:"Dashboard",subtitle:"View issues assigned to you",icon:"👤",shortcut:"M",action:()=>C("my-issues"),category:"Navigation"},{id:"nav-issues",title:"Issues",subtitle:"View all issues",icon:"📋",shortcut:"I",action:()=>C("issues"),category:"Navigation"},{id:"nav-board",title:"Board",subtitle:"View kanban board",icon:"📊",shortcut:"B",action:()=>C("board"),category:"Navigation"},{id:"nav-projects",title:"Go to Projects",subtitle:"View all projects",icon:"📁",shortcut:"P",action:()=>C("projects"),category:"Navigation"},{id:"nav-sprints",title:"Go to Sprints",subtitle:"View all sprints",icon:"🏃",shortcut:"G S",action:()=>C("sprints"),category:"Navigation"},{id:"nav-documents",title:"Go to Documents",subtitle:"View all documents",icon:"📄",shortcut:"G D",action:()=>C("documents"),category:"Navigation"},{id:"nav-team",title:"Go to Team",subtitle:"Manage team members",icon:"👥",shortcut:"G T",action:()=>C("team"),category:"Navigation"},{id:"create-issue",title:"Create Issue",subtitle:"Add a new issue",icon:"➕",shortcut:"C",action:()=>{C("issues"),setTimeout(wn,100)},category:"Create"},{id:"create-project",title:"Create Project",subtitle:"Start a new project",icon:"📁",action:()=>{C("projects"),setTimeout(wr,100)},category:"Create"},{id:"create-document",title:"Create Document",subtitle:"Write a new document",icon:"📝",action:()=>{C("documents"),setTimeout(ir,100)},category:"Create"},{id:"create-team",title:"Create Team",subtitle:"Start a new team",icon:"👥",action:()=>jr(),category:"Create"},{id:"search-issues",title:"Search Issues",subtitle:"Find issues by title or ID",icon:"🔍",shortcut:"/",action:()=>{C("issues"),setTimeout(()=>{var e;return(e=document.getElementById("issue-search"))==null?void 0:e.focus()},100)},category:"Actions"},{id:"invite-member",title:"Invite Team Member",subtitle:"Send an invitation",icon:"✉️",action:()=>{C("team"),setTimeout(Ar,100)},category:"Actions"},{id:"show-shortcuts",title:"Keyboard Shortcuts",subtitle:"View all shortcuts",icon:"⌨️",shortcut:"?",action:()=>Zr(),category:"Help"},{id:"show-me-around",title:"Show Me Around",subtitle:"Replay the onboarding tour",icon:"🎓",action:()=>Or(),category:"Help"},{id:"logout",title:"Sign Out",subtitle:"Log out of your account",icon:"🚪",action:()=>Hr(),category:"Account"}]),document.addEventListener("keydown",yg({isModalOpen:ts,getModalForm:()=>document.querySelector("#modal-content form"),getModalPrimaryBtn:()=>document.querySelector("#modal-content .btn-primary"),isCommandPaletteOpen:da,openCommandPalette:cg,closeCommandPalette:Bs})),document.addEventListener("keydown",wg({getCurrentView:L,getSelectedIndex:Vc,setSelectedIndex:po,viewIssue:F,showEditIssueModal:Yo,isModalOpen:ts,isCommandPaletteOpen:da})),document.addEventListener("keydown",kg({getCurrentView:L,getSelectedIndex:Kc,setSelectedIndex:mo,viewDocument:Pe,showEditDocumentModal:ar,isModalOpen:ts,isCommandPaletteOpen:da})),window.marked=M,window.DOMPurify=ao,console.log("Chaotic frontend loaded via Vite")})();

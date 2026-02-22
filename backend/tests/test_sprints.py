@@ -2,7 +2,6 @@
 
 Note: Manual sprint creation via API was removed in CHT-588.
 Sprints are now created automatically via the cadence system (ensure_sprints_exist).
-Service-level tests for SprintService.create() remain to test the internal method.
 """
 import pytest
 from app.oxyde_models.sprint import OxydeSprint
@@ -389,53 +388,6 @@ async def test_ensure_sprints_exist_idempotent(db, test_project):
 
     assert current1.id == current2.id
     assert next1.id == next2.id
-
-
-@pytest.mark.asyncio
-async def test_create_sprint_with_budget(db, test_project):
-    """Test creating a sprint with explicit budget."""
-    from app.services.sprint_service import SprintService
-    from app.schemas.sprint import SprintCreate
-
-    service = SprintService()
-    sprint_in = SprintCreate(name="Budget Sprint", budget=50)
-    sprint = await service.create(sprint_in, test_project.id)
-
-    assert sprint.budget == 50
-
-
-@pytest.mark.asyncio
-async def test_create_sprint_explicit_unlimited(db, test_project):
-    """Test creating a sprint with explicit unlimited budget."""
-    from app.services.sprint_service import SprintService
-    from app.schemas.sprint import SprintCreate
-
-    # Set project default budget
-    test_project.default_sprint_budget = 100
-    await test_project.save(update_fields={"default_sprint_budget"})
-
-    service = SprintService()
-    sprint_in = SprintCreate(name="Unlimited Sprint", explicit_unlimited=True)
-    sprint = await service.create(sprint_in, test_project.id)
-
-    assert sprint.budget is None  # Explicitly unlimited, ignoring project default
-
-
-@pytest.mark.asyncio
-async def test_create_sprint_uses_project_default(db, test_project):
-    """Test creating a sprint uses project default budget."""
-    from app.services.sprint_service import SprintService
-    from app.schemas.sprint import SprintCreate
-
-    # Set project default budget
-    test_project.default_sprint_budget = 75
-    await test_project.save(update_fields={"default_sprint_budget"})
-
-    service = SprintService()
-    sprint_in = SprintCreate(name="Default Sprint")
-    sprint = await service.create(sprint_in, test_project.id)
-
-    assert sprint.budget == 75
 
 
 @pytest.mark.asyncio

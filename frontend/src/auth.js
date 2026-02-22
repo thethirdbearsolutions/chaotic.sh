@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { showToast } from './ui.js';
 import { escapeAttr } from './utils.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
-import { initApp } from './app.js';
+import { initApp } from './init.js';
 
 // DOM element references (cached on first use)
 let authScreen = null;
