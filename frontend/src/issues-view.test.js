@@ -354,10 +354,19 @@ describe('issues-view', () => {
         });
 
         it('renders sprint options from select element', () => {
+            document.getElementById('project-filter').value = 'proj-1';
             showFilterCategoryOptions('sprint');
             const container = document.getElementById('filter-menu-options');
             expect(container.innerHTML).toContain('All Sprints');
             expect(container.innerHTML).toContain('No Sprint');
+        });
+
+        it('shows empty message for sprint when no project selected (CHT-1084)', () => {
+            document.getElementById('project-filter').value = '';
+            showFilterCategoryOptions('sprint');
+            const container = document.getElementById('filter-menu-options');
+            expect(container.innerHTML).toContain('Select a project first');
+            expect(container.innerHTML).not.toContain('No Sprint');
         });
     });
 
@@ -941,12 +950,13 @@ describe('issues-view', () => {
     // ========================================
 
     describe('updateSprintFilter', () => {
-        it('includes base options without project', async () => {
+        it('shows only All Sprints without project (CHT-1084)', async () => {
             document.getElementById('project-filter').value = '';
             await updateSprintFilter();
             const sprintFilter = document.getElementById('sprint-filter');
             expect(sprintFilter.innerHTML).toContain('All Sprints');
-            expect(sprintFilter.innerHTML).toContain('No Sprint');
+            expect(sprintFilter.innerHTML).not.toContain('No Sprint');
+            expect(sprintFilter.value).toBe('');
         });
 
         it('loads sprints for selected project', async () => {
