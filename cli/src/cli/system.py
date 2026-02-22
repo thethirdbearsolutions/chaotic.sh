@@ -1145,7 +1145,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
 
     If migrations fail with "already exists", your database predates the
     migration system. Re-run with --fake-initial to mark the initial schema
-    as already applied, then apply new migrations normally.
+    as already applied, then apply new migrations normally:
+
+        chaotic system upgrade --fake-initial --yes
+
+    The --fake-initial flag can be used even when already on the latest
+    code version — it will skip the checkout but still run migrations.
     """
     if not is_server_installed():
         console.print("[red]Chaotic server is not installed.[/red]")
@@ -1196,17 +1201,10 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
             pass  # Non-critical, skip if git log fails
 
     # Check if already on target
-    if current_version == target_version:
+    already_current = current_version == target_version
+    if already_current and not fake_initial:
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
-
-    # Confirm upgrade
-    if not yes:
-        if not _confirm_action(f"\nUpgrade from {current_version} to {target_version}?"):
-            console.print("[yellow]Upgrade cancelled.[/yellow]")
-            raise SystemExit(0)
-
-    console.print()
 
     # Stop server FIRST (before backup to ensure consistent db state)
     was_running = is_service_running()
@@ -1218,32 +1216,43 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
 
-    # Backup database (now safe since server is stopped)
     backup_path = None
-    if not no_backup and DATABASE_PATH.exists():
-        console.print("Backing up database...")
-        backup_path = create_backup()
-        if backup_path:
-            console.print(f"  [dim]{backup_path}[/dim]")
-            cleanup_old_backups()
-        else:
-            console.print("  [dim]No database to backup[/dim]")
+    if already_current:
+        console.print("Already on latest code. Running migrations...")
+    else:
+        # Confirm upgrade
+        if not yes:
+            if not _confirm_action(f"\nUpgrade from {current_version} to {target_version}?"):
+                console.print("[yellow]Upgrade cancelled.[/yellow]")
+                if was_running:
+                    start_service()
+                raise SystemExit(0)
 
-    # Checkout new version (force to handle dirty state from uv sync etc.)
-    console.print(f"Checking out {target_version}...")
-    ok, err = checkout_version(target_version, force=True)
-    if not ok:
-        console.print(f"[red]Failed to checkout version.[/red]")
-        if err:
-            console.print(f"  [dim]{err}[/dim]")
-        # Rollback
-        if current_commit:
-            console.print("Rolling back...")
-            checkout_version(current_commit, force=True)
-        if was_running:
-            if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
-        raise SystemExit(1)
+        console.print()
+        if not no_backup and DATABASE_PATH.exists():
+            console.print("Backing up database...")
+            backup_path = create_backup()
+            if backup_path:
+                console.print(f"  [dim]{backup_path}[/dim]")
+                cleanup_old_backups()
+            else:
+                console.print("  [dim]No database to backup[/dim]")
+
+        # Checkout new version (force to handle dirty state from uv sync etc.)
+        console.print(f"Checking out {target_version}...")
+        ok, err = checkout_version(target_version, force=True)
+        if not ok:
+            console.print(f"[red]Failed to checkout version.[/red]")
+            if err:
+                console.print(f"  [dim]{err}[/dim]")
+            # Rollback
+            if current_commit:
+                console.print("Rolling back...")
+                checkout_version(current_commit, force=True)
+            if was_running:
+                if not start_service():
+                    console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+            raise SystemExit(1)
 
     # Sync dependencies and run database migrations
     console.print("Syncing dependencies and running migrations...")
