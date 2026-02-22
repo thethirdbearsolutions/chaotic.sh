@@ -820,6 +820,17 @@ describe('issues-view', () => {
             expect(updateBoardProjectFilter).toHaveBeenCalled();
             expect(updateSprintProjectFilter).toHaveBeenCalled();
         });
+
+        it('clears sprint filter when project changes (CHT-1084)', async () => {
+            // Set up a sprint filter value as if user had filtered by sprint
+            document.getElementById('sprint-filter').value = 'old-sprint-id';
+            document.getElementById('project-filter').value = 'proj-2';
+            getProjects.mockReturnValue([{ id: 'proj-2' }]);
+            api.getIssues.mockResolvedValue([]);
+            api.getSprints.mockResolvedValue([]);
+            await onProjectFilterChange();
+            expect(document.getElementById('sprint-filter').value).toBe('');
+        });
     });
 
     // ========================================

@@ -6266,6 +6266,7 @@ input[type="checkbox"] {
 .filter-menu-category.disabled {
     opacity: 0.5;
     cursor: default;
+    pointer-events: none;
 }
 
 .filter-options-empty {
