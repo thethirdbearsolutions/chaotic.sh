@@ -212,7 +212,7 @@ describe('viewDocument', () => {
     await viewDocument('doc-1');
     const content = document.getElementById('document-detail-content');
     // Check that the title is rendered as text, not as HTML elements
-    const titleEl = content.querySelector('.document-title');
+    const titleEl = content.querySelector('.issue-detail-title');
     expect(titleEl.textContent).toBe('<img onerror=alert(1)>');
     // Verify no img element was created
     expect(content.querySelector('img')).toBeNull();
