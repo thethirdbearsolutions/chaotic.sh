@@ -706,39 +706,6 @@ export async function viewDocument(documentId, pushHistory = true) {
     const detailView = document.getElementById('document-detail-view');
     detailView.classList.remove('hidden');
 
-    // renderMarkdown imported from gate-approvals module
-
-    // Fetch linked issues
-    let linkedIssuesHtml = '';
-    try {
-      const linkedIssues = await api.getDocumentIssues(doc.id);
-      if (linkedIssues.length > 0) {
-        const issueItems = linkedIssues.map(issue => `
-          <div class="linked-item">
-            <span class="linked-item-id">${escapeHtml(issue.identifier)}</span>
-            <span class="linked-item-title">${escapeHtml(issue.title)}</span>
-            <button class="btn btn-danger btn-tiny" data-action="unlink-document-issue" data-document-id="${escapeAttr(doc.id)}" data-issue-id="${escapeAttr(issue.id)}" title="Unlink">×</button>
-          </div>
-        `).join('');
-        linkedIssuesHtml = `
-          <div class="linked-issues-section">
-            <h3>Linked Issues</h3>
-            <div class="linked-items-list">${issueItems}</div>
-            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}">+ Link Issue</button>
-          </div>
-        `;
-      } else {
-        linkedIssuesHtml = `
-          <div class="linked-issues-section">
-            <h3>Linked Issues</h3>
-            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}">+ Link Issue</button>
-          </div>
-        `;
-      }
-    } catch {
-      // Silently ignore if API doesn't support this
-    }
-
     // Fetch comments
     let commentsHtml = '';
     try {
@@ -790,74 +757,171 @@ export async function viewDocument(documentId, pushHistory = true) {
       }
     }
 
-    // Build scope info (project/sprint badges)
-    let scopeInfo = '';
-    if (projectName) {
-      scopeInfo = `<span class="badge badge-primary">${escapeHtml(projectName)}</span>`;
-      if (sprintName) {
-        scopeInfo += ` <span class="badge badge-info">${escapeHtml(sprintName)}</span>`;
-      }
-    } else {
-      scopeInfo = '<span class="badge badge-secondary">Global</span>';
-    }
-
-    // Build labels section
-    let labelsHtml = '';
-    if (doc.labels && doc.labels.length > 0) {
-      const labelItems = doc.labels.map(label => `
-        <span class="label-badge" style="background-color: ${sanitizeColor(label.color)}; color: white;">
-          ${escapeHtml(label.name)}
-          <button class="btn-remove-label" data-action="remove-label-from-doc" data-document-id="${escapeAttr(doc.id)}" data-label-id="${escapeAttr(label.id)}" title="Remove label">×</button>
-        </span>
-      `).join(' ');
-      labelsHtml = `
-        <div class="document-labels-section">
-          <h3>Labels</h3>
-          <div class="document-labels">${labelItems}</div>
-          <button class="btn btn-secondary btn-small" data-action="show-add-label-to-doc-modal" data-document-id="${escapeAttr(doc.id)}">+ Add Label</button>
-        </div>
-      `;
-    } else {
-      labelsHtml = `
-        <div class="document-labels-section">
-          <h3>Labels</h3>
-          <button class="btn btn-secondary btn-small" data-action="show-add-label-to-doc-modal" data-document-id="${escapeAttr(doc.id)}">+ Add Label</button>
-        </div>
-      `;
-    }
-
     // Strip leading H1 from markdown if it matches the document title (avoid duplicate)
     let contentToRender = doc.content || '';
     const tokens = marked.lexer(contentToRender);
     if (doc.title && tokens.length > 0 && tokens[0].type === 'heading' && tokens[0].depth === 1
         && tokens[0].text.trim() === doc.title.trim()) {
-      // Remove the first token's raw text from the content
       contentToRender = contentToRender.slice(tokens[0].raw.length).trimStart();
     }
 
+    // Prev/next navigation (CHT-1095)
+    const docList = getDocuments();
+    const currentIndex = docList.findIndex(d => d.id === doc.id);
+    const prevDoc = currentIndex > 0 ? docList[currentIndex - 1] : null;
+    const nextDoc = currentIndex >= 0 && currentIndex < docList.length - 1 ? docList[currentIndex + 1] : null;
+    const inList = currentIndex >= 0;
+
+    // Build sidebar labels
+    const sidebarLabelsHtml = doc.labels && doc.labels.length > 0
+      ? doc.labels.map(label => `
+          <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">
+            ${escapeHtml(label.name)}
+            <button class="btn-remove-label" data-action="remove-label-from-doc" data-document-id="${escapeAttr(doc.id)}" data-label-id="${escapeAttr(label.id)}" title="Remove label">&times;</button>
+          </span>
+        `).join('')
+      : '<span class="text-muted">No Labels</span>';
+
+    // Build sidebar linked issues
+    let sidebarLinkedHtml = '<span class="text-muted">None</span>';
+    try {
+      const linkedIssues = await api.getDocumentIssues(doc.id);
+      if (linkedIssues.length > 0) {
+        sidebarLinkedHtml = linkedIssues.map(issue => `
+          <div class="linked-item">
+            <span class="linked-item-id">${escapeHtml(issue.identifier)}</span>
+            <span class="linked-item-title">${escapeHtml(issue.title)}</span>
+            <button class="btn btn-danger btn-tiny" data-action="unlink-document-issue" data-document-id="${escapeAttr(doc.id)}" data-issue-id="${escapeAttr(issue.id)}" title="Unlink">&times;</button>
+          </div>
+        `).join('');
+      }
+    } catch {
+      // Silently ignore
+    }
+
     detailView.querySelector('#document-detail-content').innerHTML = `
-      <div class="back-button" data-action="navigate-to" data-view="documents">
-        \u2190 Back to Documents
-      </div>
-      <div class="document-detail-header">
-        <div class="document-detail-header-top">
-          <div>
-            <h2 class="document-title">${escapeHtml(doc.title)}</h2>
-            <div class="document-meta">
-              ${scopeInfo}${doc.author_name ? ` \u00B7 By ${escapeHtml(doc.author_name)}` : ''} \u00B7 Last updated ${new Date(doc.updated_at).toLocaleString()}
+      <div class="issue-detail-layout">
+        <div class="issue-detail-main">
+          <div class="issue-detail-nav">
+            <button class="back-link" data-action="navigate-to" data-view="documents">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              Back
+            </button>
+            ${inList ? `
+            <div class="issue-nav-arrows">
+              <button class="issue-nav-btn" ${prevDoc ? `data-action="view-document" data-document-id="${escapeAttr(prevDoc.id)}"` : 'disabled'} title="Previous document">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <span class="issue-nav-counter">${currentIndex + 1} / ${docList.length}</span>
+              <button class="issue-nav-btn" ${nextDoc ? `data-action="view-document" data-document-id="${escapeAttr(nextDoc.id)}"` : 'disabled'} title="Next document">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            </div>
+            ` : ''}
+            <span class="issue-detail-breadcrumb">${projectName ? escapeHtml(projectName) + ' ›' : ''} ${escapeHtml(doc.title)}</span>
+          </div>
+
+          <h1 class="issue-detail-title">${doc.icon ? escapeHtml(doc.icon) + ' ' : ''}${escapeHtml(doc.title)}</h1>
+
+          <div class="document-content markdown-body">${contentToRender ? renderMarkdown(contentToRender) : '<p class="text-muted">No content</p>'}</div>
+
+          ${commentsHtml}
+        </div>
+
+        <aside class="issue-detail-sidebar">
+          <div class="sidebar-section">
+            <h4>Properties</h4>
+
+            <div class="property-row">
+              <span class="property-label">Project</span>
+              <span class="property-value-static">${projectName ? escapeHtml(projectName) : '<span class="text-muted">Global</span>'}</span>
+            </div>
+
+            ${sprintName ? `
+            <div class="property-row">
+              <span class="property-label">Sprint</span>
+              <span class="property-value-static">${escapeHtml(sprintName)}</span>
+            </div>
+            ` : ''}
+
+            <div class="property-row">
+              <span class="property-label">Labels</span>
+              <div class="property-value-static property-labels-btn">
+                ${sidebarLabelsHtml}
+                <button class="btn btn-secondary btn-tiny" data-action="show-add-label-to-doc-modal" data-document-id="${escapeAttr(doc.id)}" title="Add label">+</button>
+              </div>
+            </div>
+
+            <div class="property-row">
+              <span class="property-label">Author</span>
+              <span class="property-value-static">${escapeHtml(doc.author_name || 'Unknown')}</span>
+            </div>
+
+            <div class="property-row">
+              <span class="property-label">Created</span>
+              <span class="property-value-static">${new Date(doc.created_at).toLocaleDateString()}</span>
+            </div>
+
+            <div class="property-row">
+              <span class="property-label">Updated</span>
+              <span class="property-value-static">${new Date(doc.updated_at).toLocaleDateString()}</span>
             </div>
           </div>
-          <div class="document-actions">
-            <button class="btn btn-secondary btn-small" data-action="show-edit-document-modal" data-document-id="${escapeAttr(doc.id)}">Edit</button>
-            <button class="btn btn-danger btn-small" data-action="delete-document" data-document-id="${escapeAttr(doc.id)}">Delete</button>
+
+          <div class="sidebar-section">
+            <h4>Linked Issues</h4>
+            <div class="sidebar-linked-issues">
+              ${sidebarLinkedHtml}
+            </div>
+            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}" style="margin-top: 8px;">+ Link Issue</button>
           </div>
-        </div>
+
+          <div class="sidebar-section sidebar-actions">
+            <div class="sidebar-overflow-menu">
+              <button class="btn btn-secondary btn-sm sidebar-overflow-trigger" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              </button>
+              <div class="overflow-menu-dropdown hidden">
+                <button class="overflow-menu-item" data-action="show-edit-document-modal" data-document-id="${escapeAttr(doc.id)}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Edit document
+                </button>
+                <button class="overflow-menu-item overflow-menu-danger" data-action="delete-document" data-document-id="${escapeAttr(doc.id)}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  Delete document
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
-      <div class="document-content markdown-body">${contentToRender ? renderMarkdown(contentToRender) : 'No content'}</div>
-      ${labelsHtml}
-      ${linkedIssuesHtml}
-      ${commentsHtml}
     `;
+
+    // Set up overflow menu (matches issue-detail-view pattern)
+    const overflowTrigger = detailView.querySelector('.sidebar-overflow-trigger');
+    const overflowDropdown = detailView.querySelector('.overflow-menu-dropdown');
+    if (overflowTrigger && overflowDropdown) {
+      const closeOverflow = () => {
+        overflowDropdown.classList.add('hidden');
+        overflowTrigger.setAttribute('aria-expanded', 'false');
+      };
+      const toggleOverflow = () => {
+        const isHidden = overflowDropdown.classList.toggle('hidden');
+        overflowTrigger.setAttribute('aria-expanded', String(!isHidden));
+      };
+      overflowTrigger.addEventListener('click', toggleOverflow);
+      document.addEventListener('click', (e) => {
+        if (!overflowTrigger.contains(e.target) && !overflowDropdown.contains(e.target)) {
+          closeOverflow();
+        }
+      });
+      overflowDropdown.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeOverflow();
+          overflowTrigger.focus();
+        }
+      });
+    }
   } catch (e) {
     showToast(e.message, 'error');
   }
