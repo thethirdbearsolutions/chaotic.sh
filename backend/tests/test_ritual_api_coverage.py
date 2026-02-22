@@ -885,7 +885,7 @@ async def test_pending_ticket_rituals_issue_not_found(db, test_project):
     from app.services.ritual_service import RitualService
 
     service = RitualService()
-    result = await service.get_pending_ticket_rituals(test_project.id, "nonexistent-issue")
+    result = await service.get_pending_ticket_rituals(test_project.id, "00000000-0000-0000-0000-000000000003")
     assert result == []
 
 
@@ -926,7 +926,7 @@ async def test_pending_claim_rituals_issue_not_found(db, test_project):
     from app.services.ritual_service import RitualService
 
     service = RitualService()
-    result = await service.get_pending_claim_rituals(test_project.id, "nonexistent-issue")
+    result = await service.get_pending_claim_rituals(test_project.id, "00000000-0000-0000-0000-000000000003")
     assert result == []
 
 
@@ -984,7 +984,7 @@ async def test_apply_group_selection_deleted_group(db, test_project):
     )
     await execute_raw(
         "INSERT INTO rituals (id, project_id, name, prompt, \"trigger\", approval_mode, group_id, is_active, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [ritual_id, test_project.id, "orphan", "p", "EVERY_SPRINT", "AUTO", "deleted-group-id", True, 1.0, now, now],
+        [ritual_id, test_project.id, "orphan", "p", "EVERY_SPRINT", "AUTO", "00000000-0000-0000-0000-000000000002", True, 1.0, now, now],
     )
     await execute_raw(
         "PRAGMA foreign_keys = ON", []

@@ -250,7 +250,7 @@ async def test_batch_update_replace_labels_missing(
 
     with pytest.raises(ValueError, match="Labels not found"):
         await issue_service.batch_update(
-            [issue], update_data={}, label_ids=["nonexistent-label"]
+            [issue], update_data={}, label_ids=["00000000-0000-0000-0000-000000000006"]
         )
 
 
@@ -282,7 +282,7 @@ async def test_batch_update_add_label_wrong_team(
 async def test_cross_references_source_not_found(db, issue_service):
     """create_cross_references returns empty for nonexistent source (covers L1139)."""
     result = await issue_service.create_cross_references(
-        "nonexistent-id", "see PROJ-999"
+        "00000000-0000-0000-0000-000000000000", "see PROJ-999"
     )
     assert result == []
 

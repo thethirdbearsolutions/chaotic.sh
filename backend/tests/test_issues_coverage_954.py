@@ -210,7 +210,7 @@ class TestCreateIssueErrorBranches:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             mock_issue = await OxydeIssue.objects.create(
-                id="fake-id", project_id=test_project.id, identifier="PROJ-99",
+                id="00000000-0000-0000-0000-ffffffffffff", project_id=test_project.id, identifier="PROJ-99",
                 number=99, title="Test", status=IssueStatus.BACKLOG,
                 priority=IssuePriority.NO_PRIORITY, issue_type=IssueType.TASK,
                 creator_id=test_user.id, created_at=now, updated_at=now,
@@ -486,7 +486,7 @@ class TestListIssuesEdgeCases:
     ):
         """Delete relation with nonexistent issue → 404 (line 1273)."""
         response = await client.delete(
-            "/api/issues/nonexistent-id/relations/rel-id",
+            "/api/issues/00000000-0000-0000-0000-000000000000/relations/00000000-0000-0000-0000-0000000000e1",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -514,7 +514,7 @@ class TestAssigneeValidation:
         await execute_raw("PRAGMA foreign_keys = OFF", [])
         await execute_raw(
             "INSERT INTO users (id, email, hashed_password, name, is_active, is_superuser, is_agent, agent_team_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [agent_id, "wrong-agent@test.com", hashed, "Wrong Agent", True, False, True, "other-team-id", now, now],
+            [agent_id, "wrong-agent@test.com", hashed, "Wrong Agent", True, False, True, "00000000-0000-0000-0000-00000000000a", now, now],
         )
         await execute_raw("PRAGMA foreign_keys = ON", [])
 

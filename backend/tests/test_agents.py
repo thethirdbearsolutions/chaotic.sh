@@ -359,7 +359,7 @@ class TestAgentAPIEndpoints:
     async def test_get_agent_not_found(self, client, auth_headers):
         """GET /agents/{agent_id} should return 404 for non-existent agent."""
         response = await client.get(
-            "/api/agents/nonexistent-agent-id",
+            "/api/agents/00000000-0000-0000-0000-000000000001",
             headers=auth_headers,
         )
 
@@ -401,7 +401,7 @@ class TestAgentAPIEndpoints:
     async def test_update_agent_not_found(self, client, auth_headers):
         """PATCH /agents/{agent_id} should return 404 for non-existent agent."""
         response = await client.patch(
-            "/api/agents/nonexistent-agent-id",
+            "/api/agents/00000000-0000-0000-0000-000000000001",
             json={"name": "Updated"},
             headers=auth_headers,
         )
@@ -432,7 +432,7 @@ class TestAgentAPIEndpoints:
     async def test_delete_agent_not_found(self, client, auth_headers):
         """DELETE /agents/{agent_id} should return 404 for non-existent agent."""
         response = await client.delete(
-            "/api/agents/nonexistent-agent-id",
+            "/api/agents/00000000-0000-0000-0000-000000000001",
             headers=auth_headers,
         )
 
@@ -461,7 +461,7 @@ class TestAgentAPIEndpoints:
     async def test_create_team_agent_team_not_found(self, client, auth_headers):
         """POST /teams/{team_id}/agents should return 404 for non-existent team."""
         response = await client.post(
-            "/api/teams/nonexistent-team-id/agents",
+            "/api/teams/00000000-0000-0000-0000-00000000000a/agents",
             json={"name": "Bot"},
             headers=auth_headers,
         )
@@ -472,7 +472,7 @@ class TestAgentAPIEndpoints:
     async def test_create_project_agent_project_not_found(self, client, auth_headers):
         """POST /projects/{project_id}/agents should return 404 for non-existent project."""
         response = await client.post(
-            "/api/projects/nonexistent-project-id/agents",
+            "/api/projects/00000000-0000-0000-0000-000000000008/agents",
             json={"name": "Bot"},
             headers=auth_headers,
         )
@@ -493,7 +493,7 @@ class TestAgentAPIEndpoints:
     async def test_list_agents_team_not_found(self, client, auth_headers):
         """GET /teams/{team_id}/agents should return 404 for non-existent team."""
         response = await client.get(
-            "/api/teams/nonexistent-team-id/agents",
+            "/api/teams/00000000-0000-0000-0000-00000000000a/agents",
             headers=auth_headers,
         )
 

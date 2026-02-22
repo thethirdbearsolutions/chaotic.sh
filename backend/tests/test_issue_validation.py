@@ -58,7 +58,7 @@ class TestAssigneeValidation:
             headers=auth_headers,
             json={
                 "title": "Test issue",
-                "assignee_id": "nonexistent-user-id",
+                "assignee_id": "00000000-0000-0000-0000-00000000000c",
             },
         )
         assert response.status_code == 400
@@ -93,7 +93,7 @@ class TestSprintValidation:
             headers=auth_headers,
             json={
                 "title": "Test issue",
-                "sprint_id": "nonexistent-sprint-id",
+                "sprint_id": "00000000-0000-0000-0000-000000000009",
             },
         )
         assert response.status_code == 400
@@ -133,7 +133,7 @@ class TestParentValidation:
             headers=auth_headers,
             json={
                 "title": "Test issue",
-                "parent_id": "nonexistent-parent-id",
+                "parent_id": "00000000-0000-0000-0000-000000000007",
             },
         )
         assert response.status_code == 400

@@ -70,7 +70,7 @@ class TestSprintPathAccessControl:
     async def test_sprint_path_404_missing_sprint(self, client, auth_headers):
         """Non-existent sprint_id returns 404."""
         response = await client.get(
-            "/api/issues?sprint_id=nonexistent-id",
+            "/api/issues?sprint_id=00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -259,7 +259,7 @@ class TestProjectPathAccessControl:
     async def test_project_path_404_missing_project(self, client, auth_headers):
         """Non-existent project_id returns 404."""
         response = await client.get(
-            "/api/issues?project_id=nonexistent-id",
+            "/api/issues?project_id=00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -337,7 +337,7 @@ class TestLabelTeamValidation:
         response = await client.post(
             f"/api/issues?project_id={test_project.id}",
             headers=auth_headers,
-            json={"title": "Test", "label_ids": ["nonexistent-label-id"]},
+            json={"title": "Test", "label_ids": ["00000000-0000-0000-0000-000000000006"]},
         )
         assert response.status_code == 400
         assert "not found" in response.json()["detail"].lower()

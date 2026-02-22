@@ -124,7 +124,7 @@ class TestRitualGroupServiceValidation:
         ritual_in = RitualCreate(
             name="test-ritual",
             prompt="Test prompt",
-            group_id="nonexistent-group-id",
+            group_id="00000000-0000-0000-0000-000000000002",
         )
         with pytest.raises(ValueError, match="not found"):
             await service.create(ritual_in, test_project.id)
@@ -239,7 +239,7 @@ class TestRitualGroupServiceValidation:
         )
 
         service = RitualService()
-        update = RitualUpdate(group_id="nonexistent-id")
+        update = RitualUpdate(group_id="00000000-0000-0000-0000-000000000000")
         with pytest.raises(ValueError, match="not found"):
             await service.update(ritual, update)
 
@@ -1193,7 +1193,7 @@ class TestTicketCloseRituals:
 
         service = RitualService()
         with pytest.raises(ValueError, match="Issue .* not found"):
-            await service.attest_for_issue(ritual, "nonexistent-id", test_user.id)
+            await service.attest_for_issue(ritual, "00000000-0000-0000-0000-000000000000", test_user.id)
 
     async def test_complete_gate_ritual_for_issue_nonexistent_issue_fails(self, db, test_project, test_user):
         """Test that completing a GATE ritual for a nonexistent issue fails."""
@@ -1207,7 +1207,7 @@ class TestTicketCloseRituals:
 
         service = RitualService()
         with pytest.raises(ValueError, match="Issue .* not found"):
-            await service.complete_gate_ritual_for_issue(ritual, "nonexistent-id", test_user.id)
+            await service.complete_gate_ritual_for_issue(ritual, "00000000-0000-0000-0000-000000000000", test_user.id)
 
     async def test_attest_ticket_close_on_done_issue_fails(self, db, test_project, test_user):
         """Test that TICKET_CLOSE attestation fails for already-done issues."""
@@ -3222,7 +3222,7 @@ class TestRitualAPIEndpoints:
     async def test_create_ritual_api_project_not_found(self, client, auth_headers):
         """Test creating ritual for non-existent project."""
         response = await client.post(
-            "/api/rituals?project_id=nonexistent-id",
+            "/api/rituals?project_id=00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
             json={
                 "name": "test-ritual",
@@ -3271,7 +3271,7 @@ class TestRitualAPIEndpoints:
     async def test_list_rituals_api_project_not_found(self, client, auth_headers):
         """Test listing rituals for non-existent project."""
         response = await client.get(
-            "/api/rituals?project_id=nonexistent-id",
+            "/api/rituals?project_id=00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -3300,7 +3300,7 @@ class TestRitualAPIEndpoints:
     async def test_get_ritual_api_not_found(self, client, auth_headers, test_project):
         """Test getting a non-existent ritual."""
         response = await client.get(
-            "/api/rituals/nonexistent-id",
+            "/api/rituals/00000000-0000-0000-0000-000000000000",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -5218,7 +5218,7 @@ class TestGetIssuesWithPendingApprovals:
     async def test_empty_for_nonexistent_project(self, db):
         """Returns empty list for nonexistent project ID."""
         service = RitualService()
-        result = await service.get_issues_with_pending_approvals("nonexistent-id")
+        result = await service.get_issues_with_pending_approvals("00000000-0000-0000-0000-000000000000")
         assert result == []
 
     async def test_returns_gate_ritual_from_limbo(self, db, test_project, test_issue, test_user):

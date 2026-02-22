@@ -90,7 +90,7 @@ async def test_get_label_not_member(client, auth_headers2, test_label):
 async def test_get_label_not_found(client, auth_headers):
     """Test getting a label that doesn't exist."""
     response = await client.get(
-        "/api/labels/nonexistent-label-id",
+        "/api/labels/00000000-0000-0000-0000-000000000006",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -128,7 +128,7 @@ async def test_update_label(client, auth_headers, test_label):
 async def test_update_label_not_found(client, auth_headers):
     """Test updating a label that doesn't exist."""
     response = await client.patch(
-        "/api/labels/nonexistent-label-id",
+        "/api/labels/00000000-0000-0000-0000-000000000006",
         headers=auth_headers,
         json={"name": "Updated Name"},
     )
@@ -151,7 +151,7 @@ async def test_update_label_not_member(client, auth_headers2, test_label):
 async def test_delete_label_not_found(client, auth_headers):
     """Test deleting a label that doesn't exist."""
     response = await client.delete(
-        "/api/labels/nonexistent-label-id",
+        "/api/labels/00000000-0000-0000-0000-000000000006",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -396,7 +396,7 @@ async def test_agent_delete_no_info_disclosure(client, agent_and_headers):
     """Test that agents get 403 for delete even if label doesn't exist (no info leak)."""
     _, headers = agent_and_headers
     response = await client.delete(
-        "/api/labels/nonexistent-id",
+        "/api/labels/00000000-0000-0000-0000-000000000000",
         headers=headers,
     )
     # Should get 403, not 404 — agent check happens before existence check
@@ -448,7 +448,7 @@ async def test_batch_update_nonexistent_label(client, auth_headers, test_project
         headers=auth_headers,
         json={
             "issue_ids": [issue.id],
-            "add_label_ids": ["nonexistent-label-id"],
+            "add_label_ids": ["00000000-0000-0000-0000-000000000006"],
         },
     )
     assert response.status_code == 400

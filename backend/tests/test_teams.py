@@ -277,7 +277,7 @@ async def test_remove_member_as_admin(client, auth_headers, test_team, test_user
 @pytest.mark.asyncio
 async def test_get_team_not_found(client, auth_headers):
     """Test getting team that doesn't exist."""
-    response = await client.get("/api/teams/nonexistent-id", headers=auth_headers)
+    response = await client.get("/api/teams/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -285,7 +285,7 @@ async def test_get_team_not_found(client, auth_headers):
 async def test_update_team_not_found(client, auth_headers):
     """Test updating team that doesn't exist."""
     response = await client.patch(
-        "/api/teams/nonexistent-id",
+        "/api/teams/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
         json={"name": "Updated"},
     )
@@ -308,7 +308,7 @@ async def test_delete_team_not_owner(client, auth_headers2, test_team, db, test_
 @pytest.mark.asyncio
 async def test_delete_team_not_found(client, auth_headers):
     """Test deleting team that doesn't exist."""
-    response = await client.delete("/api/teams/nonexistent-id", headers=auth_headers)
+    response = await client.delete("/api/teams/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -359,7 +359,7 @@ async def test_update_member_role_not_admin(client, auth_headers2, test_team, te
 async def test_update_member_role_member_not_found(client, auth_headers, test_team):
     """Test updating role of member that doesn't exist."""
     response = await client.patch(
-        f"/api/teams/{test_team.id}/members/nonexistent-id?role=admin",
+        f"/api/teams/{test_team.id}/members/00000000-0000-0000-0000-000000000000?role=admin",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -379,7 +379,7 @@ async def test_update_owner_role_fails(client, auth_headers, test_team, test_use
 async def test_remove_member_not_found(client, auth_headers, test_team):
     """Test removing member that doesn't exist."""
     response = await client.delete(
-        f"/api/teams/{test_team.id}/members/nonexistent-id",
+        f"/api/teams/{test_team.id}/members/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -433,7 +433,7 @@ async def test_remove_self_as_member(client, auth_headers2, test_team, db, test_
 async def test_create_invitation_team_not_found(client, auth_headers):
     """Test creating invitation for team that doesn't exist."""
     response = await client.post(
-        "/api/teams/nonexistent-id/invitations",
+        "/api/teams/00000000-0000-0000-0000-000000000000/invitations",
         headers=auth_headers,
         json={"email": "test@example.com", "role": "member"},
     )
@@ -489,7 +489,7 @@ async def test_list_invitations_not_admin(client, auth_headers2, test_team, db, 
 async def test_accept_invitation_not_found(client, auth_headers):
     """Test accepting invitation that doesn't exist."""
     response = await client.post(
-        "/api/teams/invitations/nonexistent-token/accept",
+        "/api/teams/invitations/00000000-0000-0000-0000-00000000000b/accept",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -604,7 +604,7 @@ async def test_delete_invitation_not_admin(client, auth_headers2, test_team, db,
 async def test_delete_invitation_not_found(client, auth_headers, test_team):
     """Test deleting invitation that doesn't exist."""
     response = await client.delete(
-        f"/api/teams/{test_team.id}/invitations/nonexistent-id",
+        f"/api/teams/{test_team.id}/invitations/00000000-0000-0000-0000-000000000000",
         headers=auth_headers,
     )
     assert response.status_code == 404

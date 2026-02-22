@@ -184,14 +184,14 @@ class TestNotFoundEdgeCases:
 
     async def test_get_sprint_not_found(self, client, auth_headers):
         response = await client.get(
-            "/api/sprints/nonexistent-sprint-id",
+            "/api/sprints/00000000-0000-0000-0000-000000000009",
             headers=auth_headers,
         )
         assert response.status_code == 404
 
     async def test_update_sprint_not_found(self, client, auth_headers):
         response = await client.patch(
-            "/api/sprints/nonexistent-sprint-id",
+            "/api/sprints/00000000-0000-0000-0000-000000000009",
             headers=auth_headers,
             json={"name": "Ghost Sprint"},
         )
@@ -200,7 +200,7 @@ class TestNotFoundEdgeCases:
     async def test_get_label_not_found(self, client, auth_headers):
         """GET /labels/{id} for nonexistent label."""
         response = await client.get(
-            "/api/labels/nonexistent-label-id",
+            "/api/labels/00000000-0000-0000-0000-000000000006",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -208,7 +208,7 @@ class TestNotFoundEdgeCases:
     async def test_get_team_not_found(self, client, auth_headers):
         """GET /teams/{id} for nonexistent team."""
         response = await client.get(
-            "/api/teams/nonexistent-team-id",
+            "/api/teams/00000000-0000-0000-0000-00000000000a",
             headers=auth_headers,
         )
         assert response.status_code == 404

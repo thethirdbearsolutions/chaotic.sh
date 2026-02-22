@@ -76,7 +76,7 @@ class TestDocumentCRUD:
             json={
                 "title": "Doc",
                 "content": "Content",
-                "sprint_id": "nonexistent",
+                "sprint_id": "00000000-0000-0000-0000-000000000009",
             },
         )
         assert response.status_code == 400
@@ -301,7 +301,7 @@ class TestDocumentCRUD:
         response = await client.patch(
             f"/api/documents/{test_document.id}",
             headers=auth_headers,
-            json={"sprint_id": "nonexistent"},
+            json={"sprint_id": "00000000-0000-0000-0000-000000000009"},
         )
         assert response.status_code == 400
         assert "Sprint not found" in response.json()["detail"]
@@ -685,7 +685,7 @@ class TestDocumentComments:
     async def test_update_comment_document_not_found(self, client, auth_headers):
         """Test updating comment on non-existent document."""
         response = await client.patch(
-            "/api/documents/nonexistent/comments/some-id",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
             json={"content": "Updated"},
         )
@@ -740,7 +740,7 @@ class TestDocumentComments:
     async def test_delete_comment_document_not_found(self, client, auth_headers):
         """Test deleting comment on non-existent document."""
         response = await client.delete(
-            "/api/documents/nonexistent/comments/some-id",
+            "/api/documents/00000000-0000-0000-0000-000000000004/comments/00000000-0000-0000-0000-00000000cc01",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -984,7 +984,7 @@ async def test_document_service_link_issue_not_found(db):
 
     service = DocumentService()
     with pytest.raises(ValueError, match="Document or issue not found"):
-        await service.link_issue("nonexistent-doc", "nonexistent-issue")
+        await service.link_issue("00000000-0000-0000-0000-000000000004", "00000000-0000-0000-0000-000000000003")
 
 
 @pytest.mark.asyncio
