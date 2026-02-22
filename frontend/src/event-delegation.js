@@ -62,7 +62,7 @@ export function initEventDelegation() {
     if (initialized) return;
     initialized = true;
 
-    for (const type of ['click', 'change', 'input', 'keydown', 'mouseover', 'dragstart', 'dragend', 'dragover', 'dragleave', 'drop']) {
+    for (const type of ['click', 'change', 'input', 'keydown', 'dragstart', 'dragend', 'dragover', 'dragleave', 'drop']) {
         document.addEventListener(type, handleEvent);
     }
 

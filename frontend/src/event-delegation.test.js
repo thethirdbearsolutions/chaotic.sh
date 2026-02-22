@@ -154,8 +154,8 @@ describe('event-delegation', () => {
         });
     });
 
-    describe('mouseover dispatch', () => {
-        it('dispatches mouseover events to action handler', () => {
+    describe('mouseover is NOT globally delegated', () => {
+        it('does not dispatch mouseover events (handled locally by components)', () => {
             const handler = vi.fn();
             registerActions({ 'hover-item': handler });
 
@@ -163,8 +163,7 @@ describe('event-delegation', () => {
             const item = document.querySelector('[data-action="hover-item"]');
             item.dispatchEvent(new Event('mouseover', { bubbles: true }));
 
-            expect(handler).toHaveBeenCalledTimes(1);
-            expect(handler.mock.calls[0][1].index).toBe('3');
+            expect(handler).not.toHaveBeenCalled();
         });
     });
 

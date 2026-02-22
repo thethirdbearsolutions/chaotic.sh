@@ -79,6 +79,12 @@ export function open() {
     input.addEventListener('input', (e) => filter(e.target.value));
     input.addEventListener('keydown', handleKeydown);
 
+    // Mouseover for hover-to-select (local listener, not global delegation)
+    overlay.addEventListener('mouseover', (e) => {
+        const item = e.target.closest('[data-action="execute-command"]');
+        if (item) selectCommand(Number(item.dataset.commandIndex));
+    });
+
     render();
 
     // Focus input after animation
@@ -221,11 +227,7 @@ export function handleKeydown(e) {
 
 // Register delegated event handlers
 registerActions({
-    'execute-command': (event, data) => {
-        if (event.type === 'mouseover') {
-            selectCommand(Number(data.commandIndex));
-            return;
-        }
+    'execute-command': (_event, data) => {
         executeCommand(Number(data.commandIndex));
     },
 });
