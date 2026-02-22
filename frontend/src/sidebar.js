@@ -9,8 +9,19 @@
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function updateSidebarAria() {
+    const isOpen = document.body.classList.contains('sidebar-open');
     const btn = document.getElementById('hamburger-btn');
-    if (btn) btn.setAttribute('aria-expanded', String(document.body.classList.contains('sidebar-open')));
+    if (btn) btn.setAttribute('aria-expanded', String(isOpen));
+
+    // Prevent screen readers from accessing background content when sidebar is open (CHT-899)
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        if (isOpen) {
+            mainContent.setAttribute('inert', '');
+        } else {
+            mainContent.removeAttribute('inert');
+        }
+    }
 }
 
 export function toggleSidebar() {
