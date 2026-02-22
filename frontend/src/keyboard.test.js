@@ -659,6 +659,25 @@ describe('List Navigation Handler', () => {
         });
     });
 
+    describe('Escape to deselect', () => {
+        it('clears selection when item is selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            // Add keyboard-selected class to simulate selection
+            document.querySelectorAll('.list-item')[1].classList.add('keyboard-selected');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
+            expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        });
+
+        it('does nothing when no item selected', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Escape'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
     describe('unrecognized keys', () => {
         it('does not act on other keys', () => {
             handler(makeEvent('x'));
