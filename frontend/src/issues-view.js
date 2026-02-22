@@ -259,13 +259,22 @@ export function syncFiltersToUrl() {
 export function loadFiltersFromUrl() {
     let params = new URLSearchParams(window.location.search);
 
-    // Fall back to saved filters if URL has no filter params (CHT-1042)
-    if (params.toString() === '') {
+    // Fall back to saved filters if URL has no issue-specific filter params (CHT-1042, CHT-1085)
+    // The URL may have a project param from cross-view navigation but no actual filters
+    const FILTER_KEYS = ['status', 'priority', 'label', 'assignee', 'sprint', 'issue_type', 'groupBy'];
+    const hasFilterParams = FILTER_KEYS.some(k => params.has(k));
+    if (!hasFilterParams) {
         const saved = getIssueFilters(getCurrentTeam()?.id);
         if (saved) {
-            params = new URLSearchParams(saved);
+            // Merge: URL project takes precedence, restore filters from localStorage
+            const savedParams = new URLSearchParams(saved);
+            const project = params.get('project');
+            params = savedParams;
+            if (project) {
+                params.set('project', project);
+            }
             // Update URL to reflect restored filters
-            const newUrl = `/issues?${saved}`;
+            const newUrl = `/issues?${params.toString()}`;
             history.replaceState({ view: 'issues' }, '', newUrl);
         }
     }
