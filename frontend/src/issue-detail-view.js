@@ -891,7 +891,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
 
-                        <div class="property-row" onclick="showDetailDropdown(event, 'sprint', '${deps.escapeJsString(issue.id)}')">
+                        <div class="property-row" data-field="sprint" onclick="showDetailDropdown(event, 'sprint', '${deps.escapeJsString(issue.id)}')">
                             <span class="property-label">Sprint</span>
                             <button class="property-value">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -983,6 +983,7 @@ export async function viewIssue(issueId, pushHistory = true) {
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
             if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+            if (document.querySelector('.description-inline-editor')) return;
             if (e.key === 'ArrowLeft' && detailNavPrevId) {
                 e.preventDefault();
                 viewIssue(detailNavPrevId);
@@ -1038,6 +1039,8 @@ export async function editDescription(issueId) {
     const issue = window.currentDetailIssue || await deps.api.getIssue(issueId);
     const section = document.querySelector('.issue-detail-description');
     if (!section) return;
+    // Prevent double-click from creating duplicate editors
+    if (section.querySelector('.description-inline-editor')) return;
 
     // Hide the section header (Edit button) while editing
     const header = section.querySelector('.section-header');

@@ -6804,8 +6804,11 @@ input[type="checkbox"] {
 
 /* Document labels section in detail view */
 /* Document detail bottom sections — constrain to content width */
-.document-labels-section,
-.comments-section {
+.document-labels-section {
+    max-width: 65ch;
+}
+
+.linked-issues-section {
     max-width: 65ch;
 }
 
@@ -6819,6 +6822,10 @@ input[type="checkbox"] {
     margin-top: 1.5rem;
     padding-top: 1rem;
     border-top: 1px solid var(--border-color);
+}
+
+#document-detail-content .comments-section {
+    max-width: 65ch;
 }
 
 .comments-section h3 {
