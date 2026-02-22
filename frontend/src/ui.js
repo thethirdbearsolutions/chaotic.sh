@@ -43,7 +43,8 @@ export function showToast(message, type = 'success') {
   container.appendChild(toast);
 
   setTimeout(() => {
-    toast.remove();
+    toast.classList.add('toast-exit');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
   }, 3000);
 }
 

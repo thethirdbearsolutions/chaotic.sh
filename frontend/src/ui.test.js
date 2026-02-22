@@ -79,9 +79,13 @@ describe('showToast', () => {
 
   it('removes toast after 3 seconds', () => {
     showToast('Temporary');
-    expect(document.querySelector('.toast')).not.toBeNull();
+    const toast = document.querySelector('.toast');
+    expect(toast).not.toBeNull();
 
     vi.advanceTimersByTime(3000);
+    // Toast gets exit animation class, then removes on animationend
+    expect(toast.classList.contains('toast-exit')).toBe(true);
+    toast.dispatchEvent(new Event('animationend'));
     expect(document.querySelector('.toast')).toBeNull();
   });
 });
