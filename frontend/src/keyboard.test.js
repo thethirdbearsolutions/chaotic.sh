@@ -3,6 +3,7 @@ import {
     createKeyboardHandler,
     createModifierKeyHandler,
     createListNavigationHandler,
+    createDocListNavigationHandler,
     updateKeyboardSelection,
 } from './keyboard.js';
 
@@ -684,6 +685,138 @@ describe('List Navigation Handler', () => {
             expect(actions.viewIssue).not.toHaveBeenCalled();
             expect(actions.showEditIssueModal).not.toHaveBeenCalled();
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// Document List Navigation Handler (j/k/Enter/e for documents) - CHT-1096
+// ============================================================================
+
+describe('Document List Navigation Handler', () => {
+    let actions;
+    let handler;
+
+    beforeEach(() => {
+        actions = {
+            getCurrentView: vi.fn().mockReturnValue('documents'),
+            getSelectedIndex: vi.fn().mockReturnValue(0),
+            setSelectedIndex: vi.fn(),
+            viewDocument: vi.fn(),
+            showEditDocumentModal: vi.fn(),
+            isModalOpen: vi.fn().mockReturnValue(false),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+        };
+        handler = createDocListNavigationHandler(actions);
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="documents-list">
+                <div class="list-item" data-document-id="doc-1">Doc 1</div>
+                <div class="list-item" data-document-id="doc-2">Doc 2</div>
+                <div class="list-item" data-document-id="doc-3">Doc 3</div>
+            </div>
+        `;
+    });
+
+    describe('guard conditions', () => {
+        it('ignores when not in documents view', () => {
+            actions.getCurrentView.mockReturnValue('issues');
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on INPUT', () => {
+            handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when command palette is open', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when no list items', () => {
+            document.body.innerHTML = '<div id="documents-list"></div>';
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('j/k navigation', () => {
+        it('j moves selection down', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('k moves selection up', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('k');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+    });
+
+    describe('Enter to view document', () => {
+        it('opens document when selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.viewDocument).toHaveBeenCalledWith('doc-2');
+        });
+
+        it('does nothing when no item selected (index -1)', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Enter'));
+            expect(actions.viewDocument).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('e to edit document', () => {
+        it('opens edit modal when selected', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('e');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.showEditDocumentModal).toHaveBeenCalledWith('doc-1');
+        });
+    });
+
+    describe('Escape to deselect', () => {
+        it('clears selection when item is selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            document.querySelectorAll('.list-item')[1].classList.add('keyboard-selected');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
+            expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        });
+    });
+
+    describe('works with grid items too', () => {
+        it('navigates grid-item elements', () => {
+            document.body.innerHTML = `
+                <div id="documents-list">
+                    <div class="grid-item" data-document-id="doc-a">A</div>
+                    <div class="grid-item" data-document-id="doc-b">B</div>
+                </div>
+            `;
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(actions.viewDocument).toHaveBeenCalledWith('doc-a');
         });
     });
 });

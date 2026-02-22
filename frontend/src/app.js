@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, logout, initAuth } from './auth.js';
-import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
+import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
 import { showEditIssueModal } from './issue-edit.js';
@@ -33,7 +33,7 @@ import {
 import { loadGateApprovals } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
 import {
     getTeams,
     loadTeams,
@@ -89,6 +89,8 @@ import {
     getCurrentView,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
+    getSelectedDocIndex,
+    setSelectedDocIndex,
     setCurrentUser,
     setCurrentDetailIssue,
     setCurrentDetailSprints,
@@ -724,6 +726,17 @@ document.addEventListener('keydown', createListNavigationHandler({
     setSelectedIndex: setSelectedIssueIndex,
     viewIssue,
     showEditIssueModal,
+    isModalOpen,
+    isCommandPaletteOpen,
+}));
+
+// j/k/Enter/e list navigation for documents
+document.addEventListener('keydown', createDocListNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedDocIndex,
+    setSelectedIndex: setSelectedDocIndex,
+    viewDocument,
+    showEditDocumentModal,
     isModalOpen,
     isCommandPaletteOpen,
 }));

@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
-import { getCurrentTeam } from './state.js';
+import { getCurrentTeam, setSelectedDocIndex } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -283,6 +283,7 @@ export async function loadDocuments(teamId, projectId = null) {
   if (!teamId) return;
 
   currentTeamId = teamId;
+  setSelectedDocIndex(-1);
 
   // Show loading skeleton (CHT-1047)
   const listEl = document.getElementById('documents-list');
@@ -331,9 +332,9 @@ export async function loadDocuments(teamId, projectId = null) {
  */
 function renderLabelBadges(labels) {
   if (!labels || labels.length === 0) return '';
-  return labels.map(label =>
-    `<span class="badge" style="background-color: ${sanitizeColor(label.color)}; color: white;">${escapeHtml(label.name)}</span>`
-  ).join(' ');
+  return labels.slice(0, 2).map(label =>
+    `<span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`
+  ).join(' ') + (labels.length > 2 ? ` <span class="text-muted">+${labels.length - 2}</span>` : '');
 }
 
 /**
@@ -365,9 +366,9 @@ function renderDocumentCard(doc) {
  */
 function renderDocumentListItem(doc) {
   const labelsHtml = doc.labels && doc.labels.length > 0
-    ? doc.labels.slice(0, 3).map(label =>
-        `<span class="badge badge-small" style="background-color: ${sanitizeColor(label.color)}; color: white;">${escapeHtml(label.name)}</span>`
-      ).join(' ') + (doc.labels.length > 3 ? ` <span class="text-muted">+${doc.labels.length - 3}</span>` : '')
+    ? doc.labels.slice(0, 2).map(label =>
+        `<span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>`
+      ).join(' ') + (doc.labels.length > 2 ? ` <span class="text-muted">+${doc.labels.length - 2}</span>` : '')
     : '';
 
   const scopeBadges = [];
@@ -761,8 +762,8 @@ export async function viewDocument(documentId, pushHistory = true) {
         <div class="comments-section">
           <h3>Comments</h3>
           <div class="comments-list">${commentsListHtml}</div>
-          <form class="comment-form" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
-            <textarea id="new-doc-comment" placeholder="Write a comment..." rows="3"></textarea>
+          <form class="comment-form comment-form-sticky" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
+            <textarea id="new-doc-comment" placeholder="Write a comment..." rows="1"></textarea>
             <button type="submit" class="btn btn-primary">Comment</button>
           </form>
         </div>
