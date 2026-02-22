@@ -1,29 +1,62 @@
 /**
- * WebSocket module - Real-time updates (CHT-785)
+ * WebSocket module - Real-time updates (CHT-785, CHT-1038, CHT-1039)
  *
  * Extracted from app.js to decouple WebSocket connection management
  * and message handling from the main application module.
+ *
+ * CHT-1038: Exponential backoff with jitter, JSON.parse safety
+ * CHT-1039: Pub/sub event registry replacing monolithic handler
  */
 
 /* global api -- provided via window by main.js entry point */
 
-import { getIssues, setIssues, getCurrentUser, getCurrentView, getWebsocket, setWebsocket } from './state.js';
-import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
-import { renderIssues } from './issue-list.js';
-import { renderBoard } from './board.js';
-import { loadSprints } from './sprints.js';
-import { loadProjects, renderProjects } from './projects.js';
-import { viewIssue } from './issue-detail-view.js';
-import { navigateTo } from './router.js';
+import { getWebsocket, setWebsocket } from './state.js';
 import { showToast } from './ui.js';
 
 let wsFailCount = 0;
+let reconnectTimer = null;
+
+// Pub/sub event registry: Map<string, Set<Function>>
+// Keys are "entity" or "entity:type" (e.g., "issue", "issue:created")
+const subscribers = new Map();
+
+/**
+ * Subscribe to WebSocket events.
+ * @param {string} pattern - Event pattern: "entity" (all types) or "entity:type" (specific type)
+ * @param {Function} handler - Called with (data, { type, entity }) on matching events
+ * @returns {Function} Unsubscribe function
+ */
+export function subscribe(pattern, handler) {
+    if (!subscribers.has(pattern)) {
+        subscribers.set(pattern, new Set());
+    }
+    subscribers.get(pattern).add(handler);
+    return () => subscribers.get(pattern)?.delete(handler);
+}
+
+/**
+ * Calculate reconnection delay with exponential backoff and jitter (CHT-1038).
+ * @param {number} failCount - Number of consecutive failures
+ * @returns {number} Delay in milliseconds
+ */
+export function getReconnectDelay(failCount) {
+    const base = Math.min(1000 * Math.pow(2, failCount), 30000);
+    // Add ±25% jitter to prevent thundering herd
+    const jitter = base * 0.25 * (Math.random() * 2 - 1);
+    return Math.max(500, Math.round(base + jitter));
+}
 
 /**
  * Connect to the WebSocket for real-time updates.
- * Handles reconnection with fixed-interval retry on disconnect.
+ * Handles reconnection with exponential backoff on disconnect (CHT-1038).
  */
 export function connectWebSocket(teamId) {
+    // Clear any pending reconnect timer
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
     // Close existing connection
     const existing = getWebsocket();
     if (existing) {
@@ -50,23 +83,31 @@ export function connectWebSocket(teamId) {
         };
 
         ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            handleWebSocketMessage(message);
+            // CHT-1038: Safe JSON parsing
+            let message;
+            try {
+                message = JSON.parse(event.data);
+            } catch (e) {
+                console.error('WebSocket: malformed message', e);
+                return;
+            }
+            dispatch(message);
         };
 
         ws.onclose = () => {
             console.log('WebSocket disconnected');
             wsFailCount++;
-            // Show toast on first disconnect and periodically after
             if (wsFailCount === 1) {
                 showToast('Live updates disconnected. Reconnecting...', 'warning');
             }
-            // Attempt reconnect after 5 seconds
-            setTimeout(() => {
+            // CHT-1038: Exponential backoff with jitter
+            const delay = getReconnectDelay(wsFailCount - 1);
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
                 if (window.currentTeam && window.currentTeam.id === teamId) {
                     connectWebSocket(teamId);
                 }
-            }, 5000);
+            }, delay);
         };
 
         ws.onerror = (error) => {
@@ -78,179 +119,50 @@ export function connectWebSocket(teamId) {
 }
 
 /**
- * Handle an incoming WebSocket message.
- * Dispatches updates to the appropriate view based on entity type.
+ * Dispatch a WebSocket message to subscribers (CHT-1039).
+ * Notifies both specific ("entity:type") and wildcard ("entity") subscribers.
  */
-export function handleWebSocketMessage(message) {
+export function dispatch(message) {
     const { type, entity, data } = message;
+    if (!type || !entity) {
+        console.warn('WebSocket: ignoring message with missing type/entity', message);
+        return;
+    }
+    const context = { type, entity };
 
-    if (entity === 'issue') {
-        if (type === 'created') {
-            // Check for duplicates - by real ID OR by optimistic temp ID with matching title
-            const currentIssues = getIssues();
-            const existingIndex = currentIssues.findIndex(i => i.id === data.id);
-            const optimisticIndex = currentIssues.findIndex(i => i._isOptimistic && i.title === data.title);
+    // Notify specific subscribers (e.g., "issue:created")
+    const specific = subscribers.get(`${entity}:${type}`);
+    if (specific) {
+        for (const handler of specific) {
+            try {
+                handler(data, context);
+            } catch (e) {
+                console.error(`WebSocket handler error (${entity}:${type}):`, e);
+            }
+        }
+    }
 
-            if (existingIndex >= 0) {
-                // Already have this exact issue, skip
-            } else if (optimisticIndex >= 0) {
-                // Replace optimistic issue with real one from WebSocket
-                const updated = [...currentIssues];
-                updated[optimisticIndex] = data;
-                setIssues(updated);
-                if (getCurrentView() === 'issues') {
-                    renderIssues();
-                }
-                // Don't show toast - user already knows they created it
-            } else {
-                // New issue from another user/session
-                setIssues([data, ...currentIssues]);
-                if (getCurrentView() === 'issues') {
-                    renderIssues();
-                }
-                showToast(`New issue: ${data.identifier}`, 'info');
+    // Notify wildcard subscribers (e.g., "issue")
+    const wildcard = subscribers.get(entity);
+    if (wildcard) {
+        for (const handler of wildcard) {
+            try {
+                handler(data, context);
+            } catch (e) {
+                console.error(`WebSocket handler error (${entity}):`, e);
             }
+        }
+    }
 
-            // Check myIssues separately (managed by dashboard.js)
-            if (data.assignee_id === getCurrentUser()?.id) {
-                const myIssuesArr = getMyIssues();
-                const myExistingIndex = myIssuesArr.findIndex(i => i.id === data.id);
-                const myOptimisticIndex = myIssuesArr.findIndex(i => i._isOptimistic && i.title === data.title);
-                if (myExistingIndex === -1 && myOptimisticIndex === -1) {
-                    setMyIssues([data, ...myIssuesArr]);
-                    if (getCurrentView() === 'my-issues') {
-                        renderMyIssues();
-                    }
-                } else if (myOptimisticIndex >= 0) {
-                    const updatedMyIssues = [...myIssuesArr];
-                    updatedMyIssues[myOptimisticIndex] = data;
-                    setMyIssues(updatedMyIssues);
-                    if (getCurrentView() === 'my-issues') {
-                        renderMyIssues();
-                    }
-                }
+    // Notify global subscribers ("*")
+    const global = subscribers.get('*');
+    if (global) {
+        for (const handler of global) {
+            try {
+                handler(data, context);
+            } catch (e) {
+                console.error('WebSocket handler error (*):', e);
             }
-
-            if (getCurrentView() === 'my-issues') {
-                loadDashboardActivity({ showLoading: false });
-            }
-
-            // Re-render board/sprints when issues are created (CHT-237)
-            if (getCurrentView() === 'board') {
-                renderBoard();
-            } else if (getCurrentView() === 'sprints') {
-                loadSprints();
-            }
-
-            // Refresh issue detail if a child issue was created (CHT-71)
-            if (getCurrentView() === 'issue-detail' && data.parent_id === window.currentDetailIssue?.id) {
-                viewIssue(window.currentDetailIssue.id, false);
-            }
-        } else if (type === 'updated') {
-            // Update in local arrays — use map for clean immutable updates (CHT-797)
-            const currentIssues = getIssues();
-            if (currentIssues.some(i => i.id === data.id)) {
-                setIssues(currentIssues.map(i => i.id === data.id ? data : i));
-            }
-            const currentMyIssues = getMyIssues();
-            if (currentMyIssues.some(i => i.id === data.id)) {
-                setMyIssues(currentMyIssues.map(i => i.id === data.id ? data : i));
-            }
-            // Re-render if on issues view
-            if (getCurrentView() === 'issues') {
-                renderIssues();
-            } else if (getCurrentView() === 'my-issues') {
-                renderMyIssues();
-                loadDashboardActivity({ showLoading: false });
-            } else if (getCurrentView() === 'board') {
-                // Re-render board when issues change (CHT-237)
-                renderBoard();
-            } else if (getCurrentView() === 'sprints') {
-                // Re-render sprints when issues change (CHT-237)
-                // Sprints display issue counts, so issue changes affect them
-                loadSprints();
-            } else if (getCurrentView() === 'issue-detail') {
-                // Refresh detail view if viewing this issue
-                const detailContent = document.getElementById('issue-detail-content');
-                if (detailContent && detailContent.dataset.issueId === data.id) {
-                    viewIssue(data.id);
-                }
-            }
-        } else if (type === 'deleted') {
-            // Remove from local arrays
-            setIssues(getIssues().filter(i => i.id !== data.id));
-            setMyIssues(getMyIssues().filter(i => i.id !== data.id));
-            // Re-render
-            if (getCurrentView() === 'issues') {
-                renderIssues();
-            } else if (getCurrentView() === 'my-issues') {
-                renderMyIssues();
-                loadDashboardActivity({ showLoading: false });
-            } else if (getCurrentView() === 'board') {
-                // Re-render board when issues change (CHT-237)
-                renderBoard();
-            } else if (getCurrentView() === 'sprints') {
-                // Re-render sprints when issues change (CHT-237)
-                loadSprints();
-            }
-            showToast(`Issue ${data.identifier} deleted`, 'info');
-        }
-        // If viewing issue detail and the deleted issue is the current one, navigate away
-        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.id) {
-            showToast(`Issue ${data.identifier} was deleted`, 'warning');
-            navigateTo('my-issues');
-        }
-    } else if (entity === 'comment') {
-        if (getCurrentView() === 'my-issues') {
-            loadDashboardActivity({ showLoading: false });
-        }
-        // Refresh issue detail if viewing the commented issue (CHT-71)
-        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
-            viewIssue(data.issue_id, false);
-        }
-    } else if (entity === 'relation') {
-        // Refresh issue detail if viewing an issue involved in the relation change (CHT-71)
-        if (getCurrentView() === 'issue-detail') {
-            const currentIssueId = window.currentDetailIssue?.id;
-            if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
-                viewIssue(currentIssueId, false);
-            }
-        }
-    } else if (entity === 'attestation') {
-        // Attestation completed/approved (CHT-881) - refresh gate approvals
-        if (getCurrentView() === 'gate-approvals' && typeof window.loadGateApprovals === 'function') {
-            window.loadGateApprovals();
-        }
-        // Also refresh issue detail if viewing the affected issue
-        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
-            viewIssue(data.issue_id, false);
-        }
-    } else if (entity === 'activity') {
-        // Activity event (CHT-359) - reload dashboard activity
-        // TODO: In the future, prepend data directly instead of refetching
-        if (getCurrentView() === 'my-issues') {
-            loadDashboardActivity({ showLoading: false });
-        }
-        // Also refresh issue detail if viewing an affected issue
-        if (getCurrentView() === 'issue-detail' && window.currentDetailIssue?.id === data.issue_id) {
-            viewIssue(data.issue_id, false);
-        }
-    } else if (entity === 'project') {
-        // Project event (CHT-876) - refresh project list and filters
-        loadProjects().then(() => {
-            if (getCurrentView() === 'projects') {
-                renderProjects();
-            }
-        });
-        if (type === 'created') {
-            showToast(`New project: ${data.name}`, 'info');
-        } else if (type === 'deleted') {
-            showToast(`Project ${data.name} deleted`, 'info');
-        }
-    } else if (entity === 'sprint') {
-        // Sprint event (CHT-877) - refresh sprints view
-        if (getCurrentView() === 'sprints') {
-            loadSprints();
         }
     }
 }
@@ -260,6 +172,11 @@ export function handleWebSocketMessage(message) {
  */
 export function resetWsState() {
     wsFailCount = 0;
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    subscribers.clear();
     const existing = getWebsocket();
     if (existing) {
         existing.close();

@@ -232,6 +232,7 @@ import {
     initRouter,
 } from './router.js';
 import { connectWebSocket } from './ws.js';
+import { registerWsHandlers } from './ws-handlers.js';
 
 window.currentTeam = null;
 let labels = [];
@@ -457,6 +458,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initIssueLinkHandler();
     initIssueTooltip({ api });
     initRouter();
+    registerWsHandlers();
     if (api.getToken()) {
         try {
             const user = await api.getMe();
