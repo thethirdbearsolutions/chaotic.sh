@@ -26,7 +26,7 @@ let ticketRitualsCollapsed = true;
 let currentTicketRituals = null;
 let detailNavPrevId = null;
 let detailNavNextId = null;
-let detailKeyHandler = null;
+let detailAbortController = null;
 
 /**
  * Get ticketRitualsCollapsed state
@@ -635,8 +635,8 @@ export async function viewIssue(issueId, pushHistory = true) {
         const inList = currentIndex >= 0;
 
         detailView.querySelector('#issue-detail-content').innerHTML = `
-            <div class="issue-detail-layout">
-                <div class="issue-detail-main">
+            <div class="detail-layout">
+                <div class="detail-main">
                     <div class="issue-detail-nav">
                         <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -837,7 +837,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     </form>
                 </div>
 
-                <aside class="issue-detail-sidebar">
+                <aside class="detail-sidebar">
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
@@ -945,6 +945,11 @@ export async function viewIssue(issueId, pushHistory = true) {
             </div>
         `;
 
+        // Clean up previous detail view listeners (CHT-1102)
+        if (detailAbortController) detailAbortController.abort();
+        detailAbortController = new AbortController();
+        const { signal: detailSignal } = detailAbortController;
+
         // Set up overflow menu (click-outside, Escape, action handlers)
         const overflowTrigger = document.querySelector('.sidebar-overflow-trigger');
         const overflowDropdown = document.querySelector('.overflow-menu-dropdown');
@@ -957,20 +962,20 @@ export async function viewIssue(issueId, pushHistory = true) {
                 const isHidden = overflowDropdown.classList.toggle('hidden');
                 overflowTrigger.setAttribute('aria-expanded', String(!isHidden));
             };
-            overflowTrigger.addEventListener('click', toggleOverflow);
+            overflowTrigger.addEventListener('click', toggleOverflow, { signal: detailSignal });
             // Click outside to close
             document.addEventListener('click', (e) => {
                 if (!overflowTrigger.contains(e.target) && !overflowDropdown.contains(e.target)) {
                     closeOverflow();
                 }
-            });
+            }, { signal: detailSignal });
             // Escape to close
             overflowDropdown.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     closeOverflow();
                     overflowTrigger.focus();
                 }
-            });
+            }, { signal: detailSignal });
             // Action handlers
             overflowDropdown.querySelectorAll('.overflow-menu-item').forEach(item => {
                 item.addEventListener('click', () => {
@@ -981,7 +986,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     } else if (item.dataset.action === 'delete') {
                         deleteIssue(issueId);
                     }
-                });
+                }, { signal: detailSignal });
             });
         }
 
@@ -1012,10 +1017,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         // Set up prev/next keyboard navigation
         detailNavPrevId = prevIssue ? prevIssue.id : null;
         detailNavNextId = nextIssue ? nextIssue.id : null;
-        if (detailKeyHandler) {
-            document.removeEventListener('keydown', detailKeyHandler);
-        }
-        detailKeyHandler = (e) => {
+        const detailKeyHandler = (e) => {
             if (e.metaKey || e.ctrlKey || e.altKey) return;
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
@@ -1040,7 +1042,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                 }
             }
         };
-        document.addEventListener('keydown', detailKeyHandler);
+        document.addEventListener('keydown', detailKeyHandler, { signal: detailSignal });
     } catch (e) {
         showToast(`Failed to load issue: ${e.message}`, 'error');
     }

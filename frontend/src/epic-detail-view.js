@@ -86,8 +86,8 @@ export async function viewEpic(epicId, pushHistory = true) {
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
         detailView.querySelector('#epic-detail-content').innerHTML = `
-            <div class="issue-detail-layout">
-                <div class="issue-detail-main">
+            <div class="detail-layout">
+                <div class="detail-main">
                     <div class="issue-detail-nav">
                         <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -179,7 +179,7 @@ export async function viewEpic(epicId, pushHistory = true) {
                     ` : ''}
                 </div>
 
-                <aside class="issue-detail-sidebar">
+                <aside class="detail-sidebar">
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
