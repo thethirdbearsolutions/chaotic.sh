@@ -828,7 +828,7 @@ export async function viewDocument(documentId, pushHistory = true) {
     // Strip leading H1 from markdown if it matches the document title (avoid duplicate)
     let contentToRender = doc.content || '';
     const tokens = marked.lexer(contentToRender);
-    if (tokens.length > 0 && tokens[0].type === 'heading' && tokens[0].depth === 1
+    if (doc.title && tokens.length > 0 && tokens[0].type === 'heading' && tokens[0].depth === 1
         && tokens[0].text.trim() === doc.title.trim()) {
       // Remove the first token's raw text from the content
       contentToRender = contentToRender.slice(tokens[0].raw.length).trimStart();

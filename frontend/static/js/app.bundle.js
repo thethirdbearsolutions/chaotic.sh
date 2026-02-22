@@ -2262,7 +2262,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
           <h3>Labels</h3>
           <button class="btn btn-secondary btn-small" data-action="show-add-label-to-doc-modal" data-document-id="${u(n.id)}">+ Add Label</button>
         </div>
-      `;let l=n.content||"";const f=M.lexer(l);f.length>0&&f[0].type==="heading"&&f[0].depth===1&&f[0].text.trim()===n.title.trim()&&(l=l.slice(f[0].raw.length).trimStart()),s.querySelector("#document-detail-content").innerHTML=`
+      `;let l=n.content||"";const f=M.lexer(l);n.title&&f.length>0&&f[0].type==="heading"&&f[0].depth===1&&f[0].text.trim()===n.title.trim()&&(l=l.slice(f[0].raw.length).trimStart()),s.querySelector("#document-detail-content").innerHTML=`
       <div class="back-button" data-action="navigate-to" data-view="documents">
         ← Back to Documents
       </div>
