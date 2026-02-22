@@ -8,7 +8,8 @@ import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentD
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast } from './ui.js';
 import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
-import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeJsString, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeJsString, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { registerActions } from './event-delegation.js';
 import { formatEstimate, getEstimateOptions } from './projects.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, getAssigneeById } from './assignees.js';
 import { updateSprintCacheForProject } from './sprints.js';
@@ -44,12 +45,13 @@ export function setCreateIssueLabelIds(ids) {
  * @param {Event} event - Click event
  * @param {string} type - Dropdown type (status, priority, type, assignee, estimate, labels, sprint)
  * @param {string} issueId - Issue ID being edited
+ * @param {Element} [anchorEl] - Element to anchor dropdown to (defaults to event.currentTarget)
  */
-export async function showInlineDropdown(event, type, issueId) {
+export async function showInlineDropdown(event, type, issueId, anchorEl) {
     event.preventDefault();
     closeAllDropdowns();
 
-    const btn = event.currentTarget;
+    const btn = anchorEl || event.currentTarget;
     const rect = btn.getBoundingClientRect();
 
     const dropdown = document.createElement('div');
@@ -59,7 +61,7 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change status...</div>
             ${STATUS_OPTIONS.map((status, i) => `
-                <button class="dropdown-option" data-value="${status}" onclick="updateIssueField('${escapeJsString(issueId)}', 'status', '${status}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="status" data-value="${status}">
                     ${getStatusIcon(status)}
                     <span>${formatStatus(status)}</span>
                     <span class="dropdown-shortcut">${i + 1}</span>
@@ -70,7 +72,7 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change priority...</div>
             ${PRIORITY_OPTIONS.map((priority, i) => `
-                <button class="dropdown-option" data-value="${priority}" onclick="updateIssueField('${escapeJsString(issueId)}', 'priority', '${priority}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="priority" data-value="${priority}">
                     ${getPriorityIcon(priority)}
                     <span>${formatPriority(priority)}</span>
                     <span class="dropdown-shortcut">${i}</span>
@@ -81,7 +83,7 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Change type...</div>
             ${ISSUE_TYPE_OPTIONS.map(issueType => `
-                <button class="dropdown-option" data-value="${issueType}" onclick="updateIssueField('${escapeJsString(issueId)}', 'issue_type', '${issueType}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="issue_type" data-value="${issueType}">
                     <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
                 </button>
             `).join('')}
@@ -90,7 +92,7 @@ export async function showInlineDropdown(event, type, issueId) {
         const assigneeOptions = getAssigneeOptionList();
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to...</div>
-            <button class="dropdown-option" onclick="updateIssueField('${escapeJsString(issueId)}', 'assignee_id', null)">
+            <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="assignee_id" data-value="__null__">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
                 <span>Unassigned</span>
                 <span class="dropdown-shortcut">0</span>
@@ -99,7 +101,7 @@ export async function showInlineDropdown(event, type, issueId) {
                 <div class="dropdown-empty">No team members or agents found</div>
             ` : assigneeOptions.map(({ assignee, indent }, i) => {
                 return `
-                <button class="dropdown-option" onclick="updateIssueField('${escapeJsString(issueId)}', 'assignee_id', '${escapeJsString(assignee.id)}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="assignee_id" data-value="${escapeAttr(assignee.id)}">
                     ${renderAvatar(assignee, 'avatar-small')}
                     <span>${formatAssigneeOptionLabel(assignee, indent)}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i + 1}</span>` : ''}
@@ -114,7 +116,7 @@ export async function showInlineDropdown(event, type, issueId) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Set estimate...</div>
             ${estimateOptions.map((est, i) => `
-                <button class="dropdown-option" onclick="updateIssueField('${escapeJsString(issueId)}', 'estimate', ${est.value})">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="estimate" data-value="${est.value}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                     <span>${est.label}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i}</span>` : ''}
@@ -207,13 +209,13 @@ export async function showInlineDropdown(event, type, issueId) {
         const available = sprintList.filter(s => s.status !== 'completed' || s.id === issue?.sprint_id);
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to sprint...</div>
-            <button class="dropdown-option" onclick="updateIssueField('${escapeJsString(issueId)}', 'sprint_id', null)">
+            <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="sprint_id" data-value="__null__">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                 <span>No Sprint</span>
                 <span class="dropdown-shortcut">0</span>
             </button>
             ${available.map((sprint, i) => `
-                <button class="dropdown-option" onclick="updateIssueField('${escapeJsString(issueId)}', 'sprint_id', '${escapeJsString(sprint.id)}')">
+                <button class="dropdown-option" data-action="update-issue-field" data-issue-id="${escapeAttr(issueId)}" data-field="sprint_id" data-value="${escapeAttr(sprint.id)}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                     <span>${escapeHtml(sprint.name)}${sprint.status === 'active' ? ' (Active)' : ''}</span>
                     ${i < 9 ? `<span class="dropdown-shortcut">${i + 1}</span>` : ''}
@@ -432,13 +434,13 @@ export function renderLabelDropdownContent(dropdown, issueId, teamLabels, curren
         <div class="dropdown-header">Toggle labels...</div>
         <div class="label-create-row">
             <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleLabelCreateKey(event, '${escapeJsString(issueId)}')">
-            <button class="btn btn-small" onclick="createLabelFromDropdown('${escapeJsString(issueId)}')">Add</button>
+            <button class="btn btn-small" data-action="create-label-from-dropdown" data-issue-id="${escapeAttr(issueId)}">Add</button>
         </div>
         ${teamLabels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
         ${teamLabels.map(label => {
             const checked = currentLabelIds.has(label.id);
             return `
-                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-label-id="${label.id}" onclick="event.stopPropagation(); toggleIssueLabel('${escapeJsString(issueId)}', '${escapeJsString(label.id)}', this)">
+                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-action="toggle-issue-label" data-issue-id="${escapeAttr(issueId)}" data-label-id="${escapeAttr(label.id)}">
                     <span class="label-check">${checked ? '✓' : ''}</span>
                     <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>
                 </button>
@@ -520,13 +522,13 @@ export function renderCreateIssueLabelDropdown(dropdown) {
         <div class="dropdown-header">Labels</div>
         <div class="label-create-row">
             <input type="text" class="label-create-input" placeholder="New label..." onkeydown="handleCreateIssueLabelKey(event)">
-            <button class="btn btn-small" onclick="createLabelForCreateIssue()">Add</button>
+            <button class="btn btn-small" data-action="create-label-for-create-issue">Add</button>
         </div>
         ${labels.length === 0 ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>' : ''}
         ${labels.map(label => {
             const checked = createIssueLabelIds.includes(label.id);
             return `
-                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" onclick="event.stopPropagation(); toggleCreateIssueLabelSelection('${escapeJsString(label.id)}')">
+                <button class="dropdown-option label-toggle ${checked ? 'selected' : ''}" data-action="toggle-create-issue-label" data-label-id="${escapeAttr(label.id)}">
                     <span class="label-check">${checked ? '✓' : ''}</span>
                     <span class="issue-label" style="background: ${sanitizeColor(label.color)}20; color: ${sanitizeColor(label.color)}">${escapeHtml(label.name)}</span>
                 </button>
@@ -757,3 +759,29 @@ export function updateDetailViewField(field, updatedIssue) {
     valueButton.classList.add('updated');
     setTimeout(() => valueButton.classList.remove('updated'), 500);
 }
+
+// Register delegated event handlers (CHT-1062)
+registerActions({
+    'update-issue-field': (event, data) => {
+        const value = data.value === '__null__' ? null : data.value;
+        const field = data.field;
+        // estimate field needs numeric conversion
+        if (field === 'estimate') {
+            updateIssueField(data.issueId, field, value === 'null' ? null : Number(value));
+        } else {
+            updateIssueField(data.issueId, field, value);
+        }
+    },
+    'toggle-issue-label': (event, data, target) => {
+        toggleIssueLabel(data.issueId, data.labelId, target);
+    },
+    'create-label-from-dropdown': (event, data) => {
+        createLabelFromDropdown(data.issueId);
+    },
+    'toggle-create-issue-label': (event, data) => {
+        toggleCreateIssueLabelSelection(data.labelId);
+    },
+    'create-label-for-create-issue': () => {
+        createLabelForCreateIssue();
+    },
+});
