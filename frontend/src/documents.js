@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
-import { getCurrentTeam } from './state.js';
+import { getCurrentTeam, setSelectedDocIndex } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -283,6 +283,7 @@ export async function loadDocuments(teamId, projectId = null) {
   if (!teamId) return;
 
   currentTeamId = teamId;
+  setSelectedDocIndex(-1);
 
   // Show loading skeleton (CHT-1047)
   const listEl = document.getElementById('documents-list');
