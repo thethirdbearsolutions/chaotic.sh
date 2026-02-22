@@ -405,6 +405,18 @@ describe('issues-view', () => {
                 '/issues'
             );
         });
+
+        it('saves filters to localStorage (CHT-1042)', () => {
+            document.getElementById('project-filter').value = 'proj-1';
+            syncFiltersToUrl();
+            expect(localStorage.getItem('chaotic_issues_filters')).toContain('project=proj-1');
+        });
+
+        it('clears localStorage when no filters (CHT-1042)', () => {
+            localStorage.setItem('chaotic_issues_filters', 'project=proj-1');
+            syncFiltersToUrl();
+            expect(localStorage.getItem('chaotic_issues_filters')).toBeNull();
+        });
     });
 
     // ========================================
@@ -438,6 +450,25 @@ describe('issues-view', () => {
             loadFiltersFromUrl();
 
             expect(document.getElementById('project-filter').value).toBe('proj-1');
+        });
+
+        it('falls back to localStorage when URL has no params (CHT-1042)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '', pathname: '/issues', href: 'http://localhost/issues' },
+                writable: true,
+                configurable: true,
+            });
+            localStorage.setItem('chaotic_issues_filters', 'project=proj-1');
+
+            loadFiltersFromUrl();
+
+            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(replaceStateSpy).toHaveBeenCalledWith(
+                { view: 'issues' },
+                '',
+                '/issues?project=proj-1'
+            );
+            localStorage.removeItem('chaotic_issues_filters');
         });
     });
 

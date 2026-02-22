@@ -248,10 +248,28 @@ export function syncFiltersToUrl() {
     const queryString = params.toString();
     const newUrl = queryString ? `/issues?${queryString}` : '/issues';
     history.replaceState({ view: 'issues' }, '', newUrl);
+
+    // Also persist to localStorage for cross-session recall (CHT-1042)
+    if (queryString) {
+        localStorage.setItem('chaotic_issues_filters', queryString);
+    } else {
+        localStorage.removeItem('chaotic_issues_filters');
+    }
 }
 
 export function loadFiltersFromUrl() {
-    const params = new URLSearchParams(window.location.search);
+    let params = new URLSearchParams(window.location.search);
+
+    // Fall back to localStorage if URL has no filter params (CHT-1042)
+    if (params.toString() === '') {
+        const saved = localStorage.getItem('chaotic_issues_filters');
+        if (saved) {
+            params = new URLSearchParams(saved);
+            // Update URL to reflect restored filters
+            const newUrl = `/issues?${saved}`;
+            history.replaceState({ view: 'issues' }, '', newUrl);
+        }
+    }
 
     // Apply status filters
     const statuses = params.getAll('status');
