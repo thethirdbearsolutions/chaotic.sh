@@ -366,10 +366,13 @@ function initActionButtons() {
         showCreateEpicModal,
         showCreateProjectModal,
         showCreateDocumentModal,
+        showCreateTeamModal,
         showEditTeamModal,
         showInviteModal,
         showCreateApiKeyModal,
         showCreateAgentModal,
+        resetOnboarding,
+        logout,
         navigateToProjects: () => navigateTo('projects'),
     };
 
@@ -563,13 +566,6 @@ function initSidebarNav() {
     const teamSelector = document.querySelector('.team-selector');
     if (teamSelector) teamSelector.addEventListener('click', () => toggleTeamDropdown());
 
-    // Create team button in dropdown
-    const teamDropdown = document.getElementById('team-dropdown');
-    if (teamDropdown) {
-        const createTeamBtn = teamDropdown.querySelector('.dropdown-item');
-        if (createTeamBtn) createTeamBtn.addEventListener('click', () => showCreateTeamModal());
-    }
-
     // Sidebar create issue button
     const createBtn = document.querySelector('.sidebar-create-btn');
     if (createBtn) createBtn.addEventListener('click', () => showCreateIssueModal());
@@ -585,19 +581,6 @@ function initSidebarNav() {
     // User menu dropdown
     const userMenu = document.querySelector('.user-menu');
     if (userMenu) userMenu.addEventListener('click', () => toggleUserDropdown());
-
-    // User dropdown items
-    const userDropdown = document.getElementById('user-dropdown');
-    if (userDropdown) {
-        const items = userDropdown.querySelectorAll('.dropdown-item');
-        items.forEach(item => {
-            if (item.textContent.trim() === 'Show Me Around') {
-                item.addEventListener('click', () => resetOnboarding());
-            } else if (item.textContent.trim() === 'Sign Out') {
-                item.addEventListener('click', () => logout());
-            }
-        });
-    }
 
     // Sidebar backdrop (close on click)
     const backdrop = document.querySelector('.sidebar-backdrop');
