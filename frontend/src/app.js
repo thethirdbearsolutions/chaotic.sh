@@ -3,13 +3,12 @@
  */
 
 /* global api -- provided via window by main.js entry point */
-import { showModal, closeModal, isModalOpen, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
+import { showModal, closeModal, isModalOpen, showToast } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
 import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
-import { buildAssignees, getAssigneeById, formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, updateAssigneeFilter } from './assignees.js';
+import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import {
-    setDependencies as setIssueCreationDependencies,
     showCreateIssueModal,
     toggleCreateIssueOptions,
     applyIssueTemplate,
@@ -22,12 +21,11 @@ import {
     handleCreateIssueAndNew,
 } from './issue-creation.js';
 import {
-    setDependencies as setIssueEditDependencies,
     showEditIssueModal,
     handleUpdateIssue,
     deleteIssue,
 } from './issue-edit.js';
-import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 import {
     toggleMultiSelect,
     updateStatusFilter,
@@ -63,18 +61,15 @@ import {
     updateFilterCountBadge,
     initFilterBar,
     updateSprintFilter,
-    updateSprintBudgetBar,
     loadIssues,
     debounceSearch,
     filterIssues,
     onProjectFilterChange,
     updateGroupBy,
-    getGroupByValue,
 } from './issues-view.js';
 import { loadGateApprovals, dismissApprovalsExplainer, renderMarkdown } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
 import {
-    setDependencies as setEpicDetailViewDependencies,
     viewEpicByPath,
     viewEpic,
 } from './epic-detail-view.js';
@@ -100,15 +95,12 @@ import {
     viewProjectSettings,
     clearProjectSettingsState,
     showCreateProjectModal,
-    getEstimateOptions,
-    formatEstimate,
     setGlobalProjectSelection,
     toggleRitualConditions,
 } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
 import {
-    getSprintCache,
     updateSprintProjectFilter,
     onSprintProjectChange,
     loadSprints,
@@ -120,7 +112,6 @@ import {
     completeSprint,
     loadLimboStatus,
     showLimboDetailsModal,
-    updateSprintCacheForProject,
 } from './sprints.js';
 import {
     updateRitualProjectFilter,
@@ -129,7 +120,6 @@ import {
     switchRitualsTab,
     approveRitual,
     completeGateRitual,
-    renderTicketRitualActions,
     showAttestTicketRitualModal,
     attestTicketRitual,
     approveTicketRitual,
@@ -148,15 +138,11 @@ import {
     isOpen as isCommandPaletteOpen,
 } from './command-palette.js';
 import {
-    setDependencies as setDashboardDependencies,
-    getMyIssues,
-    setMyIssues,
     loadMyIssues,
     loadDashboardActivity,
     filterMyIssues,
 } from './dashboard.js';
 import {
-    setDependencies as setBoardDependencies,
     updateBoardProjectFilter,
     onBoardProjectChange,
     loadBoard,
@@ -170,15 +156,10 @@ import {
     handleCardDrop,
 } from './board.js';
 import {
-    setDependencies as setIssueListDependencies,
     renderIssues,
-    renderIssueRow,
     toggleGroup,
-    getPriorityIcon,
-    getStatusIcon,
 } from './issue-list.js';
 import {
-    setDependencies as setInlineDropdownDependencies,
     showInlineDropdown,
     showDetailDropdown,
     updateIssueField,
@@ -190,10 +171,6 @@ import {
     handleCreateIssueLabelKey,
 } from './inline-dropdown.js';
 import {
-    setDependencies as setIssueDetailViewDependencies,
-    getActivityIcon,
-    formatActivityActor,
-    formatActivityText,
     toggleSection,
     toggleTicketRituals,
     viewIssueByPath,
@@ -214,7 +191,6 @@ import {
     setSelectedIssueIndex,
     getIssues,
     setIssues,
-    getCurrentUser,
     setCurrentUser,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
@@ -228,6 +204,7 @@ import {
 } from './router.js';
 import { connectWebSocket } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
+import { initAllDependencies } from './dependencies.js';
 
 window.currentTeam = null;
 let labels = [];
@@ -737,214 +714,17 @@ setCommandPaletteCommands([
 ]);
 
 // ============================================
-// DASHBOARD (logic in dashboard.js)
+// MODULE DEPENDENCY INITIALIZATION (CHT-1043)
 // ============================================
 
-// Initialize dashboard module with required dependencies
-setDashboardDependencies({
-    getCurrentUser,
+initAllDependencies({
+    getLabels: () => labels,
+    setLabels: (newLabels) => { labels = newLabels; },
     getCurrentTeam: () => window.currentTeam,
-    renderIssueRow,
-    formatActivityText,
-    formatActivityActor,
-    getActivityIcon,
-    navigateToIssueByIdentifier,
-    viewDocument,
-});
-
-// ============================================
-// BOARD (logic in board.js)
-// ============================================
-
-// Initialize board module with required dependencies
-setBoardDependencies({
-    api,
-    showToast,
-    getProjects,
-    getProjectFromUrl,
-    setGlobalProjectSelection,
-    updateUrlWithProject,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-    formatPriority,
-});
-
-// ============================================
-// ISSUE LIST (logic in issue-list.js)
-// ============================================
-
-// Initialize issue-list module with required dependencies
-setIssueListDependencies({
-    getIssues,
-    getAssigneeById,
-    formatAssigneeName,
-    formatEstimate,
-    getSprintCache,
-    formatStatus,
-    formatPriority,
-    formatIssueType,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-    sanitizeColor,
-    renderAvatar,
-    getAssigneeOptionList,
-    getGroupByValue,
-});
-
-// ============================================
-// INLINE DROPDOWN (logic in inline-dropdown.js)
-// ============================================
-
-// Initialize inline-dropdown module with required dependencies
-setInlineDropdownDependencies({
-    api,
-    getIssues,
-    setIssues,
-    getMyIssues,
-    setMyIssues,
     getCurrentDetailIssue: () => window.currentDetailIssue,
     setCurrentDetailIssue: (issue) => { window.currentDetailIssue = issue; },
-    getLabels: () => labels,
-    setLabels: (newLabels) => { labels = newLabels; },
-    getCurrentTeam: () => window.currentTeam,
     getCurrentDetailSprints: () => window.currentDetailSprints,
-    closeAllDropdowns,
-    registerDropdownClickOutside,
-    setDropdownKeyHandler,
-    showToast,
-    getStatusIcon,
-    getPriorityIcon,
-    formatStatus,
-    formatPriority,
-    formatIssueType,
-    formatEstimate,
-    formatAssigneeName,
-    formatAssigneeOptionLabel,
-    getAssigneeOptionList,
-    getAssigneeById,
-    getEstimateOptions,
-    renderAvatar,
-    renderIssueRow,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-    sanitizeColor,
-    updateSprintCacheForProject,
-    updateSprintBudgetBar,
-});
-
-// ============================================
-// ISSUE CREATION (logic in issue-creation.js)
-// ============================================
-
-setIssueCreationDependencies({
-    api,
-    getProjects,
-    getEstimateOptions,
-    getCurrentView,
-    showModal,
-    closeModal,
-    showToast,
-    viewIssue,
-    loadIssues,
-    loadMyIssues,
-    closeAllDropdowns,
-    registerDropdownClickOutside,
-    getLabels: () => labels,
-    setLabels: (newLabels) => { labels = newLabels; },
-    getCurrentTeam: () => window.currentTeam,
-    getStatusIcon,
-    getPriorityIcon,
-    formatStatus,
-    formatPriority,
-    formatIssueType,
-    formatAssigneeName,
-    formatAssigneeOptionLabel,
-    getAssigneeOptionList,
-    renderAvatar,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-});
-
-// ============================================
-// ISSUE EDIT (logic in issue-edit.js)
-// ============================================
-
-setIssueEditDependencies({
-    api,
-    showModal,
-    closeModal,
-    showToast,
-    viewIssue,
-    navigateTo,
-    loadIssues,
-    loadProjects,
-    getEstimateOptions,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-});
-
-// ============================================
-// ISSUE DETAIL VIEW (logic in issue-detail-view.js)
-// ============================================
-
-// Initialize issue-detail-view module with required dependencies
-setIssueDetailViewDependencies({
-    api,
-    getCurrentView,
-    showToast,
-    showModal,
-    closeModal,
-    navigateTo,
-    getProjects,
-    getMembers,
-    getAssigneeById,
-    formatAssigneeName,
-    formatStatus,
-    formatPriority,
-    formatIssueType,
-    formatEstimate,
-    formatTimeAgo,
-    getStatusIcon,
-    getPriorityIcon,
-    renderMarkdown,
-    renderAvatar,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-    sanitizeColor,
-    showDetailDropdown,
     setupMentionAutocomplete,
-    renderTicketRitualActions,
-    getIssues,
-});
-
-// ============================================
-// EPIC DETAIL VIEW (logic in epic-detail-view.js)
-// ============================================
-
-setEpicDetailViewDependencies({
-    api,
-    getCurrentView,
-    showToast,
-    navigateTo,
-    getProjects,
-    getAssigneeById,
-    formatAssigneeName,
-    formatStatus,
-    formatPriority,
-    formatEstimate,
-    formatTimeAgo,
-    getStatusIcon,
-    getPriorityIcon,
-    escapeHtml,
-    escapeAttr,
-    escapeJsString,
-    sanitizeColor,
 });
 
 // ============================================
