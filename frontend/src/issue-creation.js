@@ -5,6 +5,7 @@
  */
 
 import { getCreateIssueLabelIds, setCreateIssueLabelIds, updateCreateIssueLabelsLabel, renderCreateIssueLabelDropdown } from './inline-dropdown.js';
+import { getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft } from './storage.js';
 
 let deps = {};
 
@@ -159,20 +160,15 @@ export function showCreateIssueModal(preselectedProjectId = null) {
     // Restore draft title/description if available (CHT-1041)
     const titleInput = document.getElementById('create-issue-title');
     const descInput = document.getElementById('create-issue-description');
-    const savedTitle = localStorage.getItem('chaotic_create_issue_title');
-    const savedDesc = localStorage.getItem('chaotic_create_issue_description');
-    if (savedTitle) titleInput.value = savedTitle;
-    if (savedDesc) descInput.value = savedDesc;
+    const draft = getCreateIssueDraft();
+    if (draft.title) titleInput.value = draft.title;
+    if (draft.description) descInput.value = draft.description;
     // Save drafts on input
     titleInput.addEventListener('input', () => {
-        const val = titleInput.value;
-        if (val) localStorage.setItem('chaotic_create_issue_title', val);
-        else localStorage.removeItem('chaotic_create_issue_title');
+        setCreateIssueDraft(titleInput.value, descInput.value);
     });
     descInput.addEventListener('input', () => {
-        const val = descInput.value;
-        if (val) localStorage.setItem('chaotic_create_issue_description', val);
-        else localStorage.removeItem('chaotic_create_issue_description');
+        setCreateIssueDraft(titleInput.value, descInput.value);
     });
 
     titleInput.focus();
@@ -522,8 +518,7 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
         });
 
         showToast(`Created ${issue.identifier}`, 'success');
-        localStorage.removeItem('chaotic_create_issue_title');
-        localStorage.removeItem('chaotic_create_issue_description');
+        clearCreateIssueDraft();
 
         if (getCurrentView() === 'issues') {
             loadIssues();

@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -36,14 +37,10 @@ let currentViewMode = 'list';  // 'list' or 'grid'
 let isSelectionMode = false;  // Selection mode for bulk operations
 let searchDebounceTimer = null;  // Debounce timer for search
 
-// Initialize view mode from localStorage
-try {
-  const savedViewMode = localStorage.getItem('chaotic_doc_view_mode');
-  if (savedViewMode === 'list' || savedViewMode === 'grid') {
-    currentViewMode = savedViewMode;
-  }
-} catch {
-  // localStorage not available
+// Initialize view mode from storage
+const savedViewMode = getDocViewMode();
+if (savedViewMode === 'list' || savedViewMode === 'grid') {
+  currentViewMode = savedViewMode;
 }
 
 /**
@@ -60,11 +57,7 @@ export function setDocViewMode(mode) {
   }
 
   // Persist preference
-  try {
-    localStorage.setItem('chaotic_doc_view_mode', mode);
-  } catch {
-    // localStorage not available
-  }
+  persistDocViewMode(mode);
 
   // Update toggle button states
   const listBtn = document.getElementById('doc-view-list');

@@ -5,6 +5,8 @@
 
 /* global api */
 
+import { isOnboardingComplete, setOnboardingComplete, clearOnboarding } from './storage.js';
+
 let onboardingOverlay = null;
 let currentStep = 0;
 let createdTeam = null;
@@ -13,19 +15,11 @@ let createdIssue = null;
 let tourMode = false;
 
 export function hasCompletedOnboarding() {
-    try {
-        return localStorage.getItem('chaotic_onboarding_complete') === 'true';
-    } catch {
-        return false;
-    }
+    return isOnboardingComplete();
 }
 
 export function markOnboardingComplete() {
-    try {
-        localStorage.setItem('chaotic_onboarding_complete', 'true');
-    } catch {
-        // Private browsing or quota exceeded — onboarding may re-show next time
-    }
+    setOnboardingComplete();
 }
 
 function suggestKey(name) {
@@ -394,7 +388,7 @@ export function hideOnboarding() {
 }
 
 export function resetOnboarding() {
-    try { localStorage.removeItem('chaotic_onboarding_complete'); } catch { /* ignore */ }
+    clearOnboarding();
     showOnboarding(true);
 }
 
