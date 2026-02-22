@@ -26,6 +26,7 @@ import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
+import { OPEN_STATUSES } from './constants.js';
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -583,7 +584,6 @@ function renderProjectOptions(container) {
     container.innerHTML = html;
 }
 
-const OPEN_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review'];
 const CLOSED_STATUSES = ['done', 'canceled'];
 
 function renderStatusOptions(container) {
@@ -1192,25 +1192,9 @@ export function updateFilterCountBadge() {
 export function initFilterBar() {
     updateFilterChips();
     updateFilterCountBadge();
-
-    // Prevent clicks inside filter dropdowns from bubbling to document
-    // (which would trigger closeFilterMenuOnOutsideClick)
-    const filterDropdown = document.getElementById('filter-menu-dropdown');
-    const displayDropdown = document.getElementById('display-menu-dropdown');
-
-    if (filterDropdown && !filterDropdown._clickHandlerAdded) {
-        filterDropdown.addEventListener('click', (e) => {
-            e.stopPropagation();
-        });
-        filterDropdown._clickHandlerAdded = true;
-    }
-
-    if (displayDropdown && !displayDropdown._clickHandlerAdded) {
-        displayDropdown.addEventListener('click', (e) => {
-            e.stopPropagation();
-        });
-        displayDropdown._clickHandlerAdded = true;
-    }
+    // Note: closeFilterMenuOnOutsideClick uses .closest() to detect inside
+    // clicks, so no stopPropagation needed. Removing it fixed event delegation
+    // for data-action handlers inside filter dropdowns (CHT-1086).
 }
 
 // ========================================

@@ -14,10 +14,11 @@ import { formatEstimate, getEstimateOptions } from './projects.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, getAssigneeById } from './assignees.js';
 import { updateSprintCacheForProject } from './sprints.js';
 import { updateSprintBudgetBar } from './issues-view.js';
+import { STATUS_ORDER, PRIORITY_OPTIONS } from './constants.js';
 
-// Dropdown options
-export const STATUS_OPTIONS = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
-export const PRIORITY_OPTIONS = ['no_priority', 'urgent', 'high', 'medium', 'low'];
+// Dropdown options — re-export from constants for backward compatibility
+export const STATUS_OPTIONS = STATUS_ORDER;
+export { PRIORITY_OPTIONS };
 export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
 
 // Module state

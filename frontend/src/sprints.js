@@ -13,6 +13,7 @@ import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
+import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { approveRitual, completeGateRitual } from './rituals-view.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -318,8 +319,7 @@ function renderSprintDetail() {
     view.classList.remove('hidden');
 
     // Separate issues by status
-    const openStatuses = ['backlog', 'todo', 'in_progress', 'in_review'];
-    const openIssues = issues.filter(i => openStatuses.includes(i.status));
+    const openIssues = issues.filter(i => OPEN_STATUSES.includes(i.status));
     const closedIssues = issues.filter(i => i.status === 'done');
 
     // Calculate stats
@@ -422,9 +422,8 @@ function renderSprintDetail() {
 function renderSprintIssueRow(issue) {
     // Sanitize values for use in class names (only allow known values)
     const validPriorities = ['urgent', 'high', 'medium', 'low'];
-    const validStatuses = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
     const safePriority = validPriorities.includes(issue.priority) ? issue.priority : '';
-    const safeStatus = validStatuses.includes(issue.status) ? issue.status : 'backlog';
+    const safeStatus = BOARD_STATUSES.includes(issue.status) ? issue.status : 'backlog';
 
     const priorityClass = safePriority ? `badge-priority-${safePriority}` : '';
     const statusClass = `status-dot-${safeStatus}`;
@@ -585,7 +584,7 @@ export async function showCloseSprintConfirmation(sprintId) {
     `;
     showModal();
 
-    const incompleteStatuses = ['backlog', 'todo', 'in_progress', 'in_review'];
+    const incompleteStatuses = OPEN_STATUSES;
     let incompleteCount = 0;
     let hasRituals = false;
     let loadFailed = false;

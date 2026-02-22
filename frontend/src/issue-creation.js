@@ -17,6 +17,7 @@ import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { formatStatus, formatPriority, formatIssueType, renderAvatar, escapeHtml, escapeAttr } from './utils.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
 import { registerActions } from './event-delegation.js';
+import { BOARD_STATUSES, PRIORITY_OPTIONS } from './constants.js';
 
 const ISSUE_TEMPLATES = [
     {
@@ -317,7 +318,7 @@ export async function toggleCreateIssueDropdown(type, event, anchorEl) {
         const currentStatus = document.getElementById('create-issue-status').value;
         dropdown.innerHTML = `
             <div class="dropdown-header">Status</div>
-            ${['backlog', 'todo', 'in_progress', 'in_review', 'done'].map(status => `
+            ${BOARD_STATUSES.map(status => `
                 <button class="dropdown-option ${status === currentStatus ? 'selected' : ''}" data-action="set-create-field" data-field="status" data-value="${status}" data-label="${escapeAttr(formatStatus(status))}">
                     ${getStatusIcon(status)}
                     <span>${formatStatus(status)}</span>
@@ -328,7 +329,7 @@ export async function toggleCreateIssueDropdown(type, event, anchorEl) {
         const currentPriority = document.getElementById('create-issue-priority').value;
         dropdown.innerHTML = `
             <div class="dropdown-header">Priority</div>
-            ${['no_priority', 'urgent', 'high', 'medium', 'low'].map(priority => `
+            ${PRIORITY_OPTIONS.map(priority => `
                 <button class="dropdown-option ${priority === currentPriority ? 'selected' : ''}" data-action="set-create-field" data-field="priority" data-value="${priority}" data-label="${escapeAttr(formatPriority(priority))}">
                     ${getPriorityIcon(priority)}
                     <span>${formatPriority(priority)}</span>
