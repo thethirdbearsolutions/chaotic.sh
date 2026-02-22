@@ -5,10 +5,13 @@
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { escapeHtml, escapeJsString, formatTimeAgo } from './utils.js';
+import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
 import { getCurrentUser, getCurrentTeam } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
+import { navigateToIssueByIdentifier } from './router.js';
+import { viewDocument } from './documents.js';
+import { registerActions } from './event-delegation.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
@@ -128,10 +131,10 @@ export function renderDashboardActivity() {
         // Determine the target link based on activity type
         let targetLink = '';
         if (activity.issue_identifier) {
-            targetLink = ` on <a href="#" class="activity-issue-link" onclick="navigateToIssueByIdentifier('${escapeJsString(activity.issue_identifier)}'); return false;"><strong>${escapeHtml(activity.issue_identifier)}</strong></a>`;
+            targetLink = ` on <a href="#" class="activity-issue-link" data-action="navigate-to-issue-by-identifier" data-identifier="${escapeAttr(activity.issue_identifier)}"><strong>${escapeHtml(activity.issue_identifier)}</strong></a>`;
         } else if (activity.document_id && activity.document_title) {
             const docIcon = activity.document_icon || '📄';
-            targetLink = ` <a href="#" class="activity-doc-link" onclick="viewDocument('${escapeJsString(activity.document_id)}'); return false;"><strong>${docIcon} ${escapeHtml(activity.document_title)}</strong></a>`;
+            targetLink = ` <a href="#" class="activity-doc-link" data-action="view-document" data-document-id="${escapeAttr(activity.document_id)}"><strong>${docIcon} ${escapeHtml(activity.document_title)}</strong></a>`;
         } else if (activity.document_title) {
             // Deleted document - no link, just show title
             const docIcon = activity.document_icon || '📄';
@@ -197,5 +200,18 @@ export function renderMyIssues() {
     list.innerHTML = myIssues.map(issue => renderIssueRow(issue)).join('');
 }
 
-// Window exports for onclick handlers
-window.filterMyIssues = filterMyIssues;
+// ========================================
+// Event Delegation Actions
+// ========================================
+
+registerActions({
+    'filter-my-issues': () => filterMyIssues(),
+    'navigate-to-issue-by-identifier': (event, dataset) => {
+        event.preventDefault();
+        navigateToIssueByIdentifier(dataset.identifier);
+    },
+    'view-document': (event, dataset) => {
+        event.preventDefault();
+        viewDocument(dataset.documentId);
+    },
+});

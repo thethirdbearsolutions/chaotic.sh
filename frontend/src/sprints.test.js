@@ -36,9 +36,12 @@ vi.mock('./url-helpers.js', () => ({
     updateUrlWithProject: vi.fn(),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 vi.mock('./utils.js', () => ({
     formatTimeAgo: vi.fn(s => s || ''),
-    escapeJsString: vi.fn(s => s || ''),
     escapeHtml: vi.fn(s => s || ''),
     escapeAttr: vi.fn(s => s || ''),
 }));

@@ -20,8 +20,12 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
-    escapeJsString: vi.fn((text) => text ? String(text).replace(/'/g, "\\'") : ''),
+    escapeAttr: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
     formatTimeAgo: vi.fn(() => '2h ago'),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
 }));
 
 vi.mock('./state.js', () => ({

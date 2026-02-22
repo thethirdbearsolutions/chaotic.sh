@@ -49,6 +49,11 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
+// Mock event-delegation.js
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 // Mock api.js
 vi.mock('./api.js', () => ({
     api: {
