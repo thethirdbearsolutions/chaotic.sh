@@ -380,7 +380,10 @@ async def link_document_to_issue(
             detail="Not authorized for this issue",
         )
 
-    await document_service.link_issue(document_id, issue_id)
+    try:
+        await document_service.link_issue(document_id, issue_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return {"message": "Document linked to issue"}
 
 

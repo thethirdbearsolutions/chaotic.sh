@@ -11,6 +11,7 @@ import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
+import { marked } from 'marked';
 import { navigateTo } from './router.js';
 
 /**
@@ -826,9 +827,11 @@ export async function viewDocument(documentId, pushHistory = true) {
 
     // Strip leading H1 from markdown if it matches the document title (avoid duplicate)
     let contentToRender = doc.content || '';
-    const h1Match = contentToRender.match(/^\s*#\s+(.+?)(\n|$)/);
-    if (h1Match && h1Match[1].trim() === doc.title.trim()) {
-      contentToRender = contentToRender.replace(/^\s*#\s+[^\n]*\n?/, '').trimStart();
+    const tokens = marked.lexer(contentToRender);
+    if (doc.title && tokens.length > 0 && tokens[0].type === 'heading' && tokens[0].depth === 1
+        && tokens[0].text.trim() === doc.title.trim()) {
+      // Remove the first token's raw text from the content
+      contentToRender = contentToRender.slice(tokens[0].raw.length).trimStart();
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `
