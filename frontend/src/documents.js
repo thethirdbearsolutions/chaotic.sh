@@ -285,6 +285,20 @@ export async function loadDocuments(teamId, projectId = null) {
 
   currentTeamId = teamId;
 
+  // Show loading skeleton (CHT-1047)
+  const listEl = document.getElementById('documents-list');
+  if (listEl) {
+    listEl.innerHTML = Array(4).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="width: 24px"><div class="skeleton" style="width: 24px; height: 24px; border-radius: 4px;"></div></div>
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+                <div class="skeleton skeleton-meta" style="margin-top: 6px;"></div>
+            </div>
+        </div>
+    `).join('');
+  }
+
   // Use project from dropdown if not explicitly specified
   if (projectId === null) {
     const docProjectFilter = document.getElementById('doc-project-filter');

@@ -46,7 +46,19 @@ export async function loadEpics() {
     const listEl = document.getElementById('epics-list');
     if (!listEl) return;
 
-    listEl.innerHTML = '<div class="loading">Loading epics...</div>';
+    // Show loading skeleton (CHT-1047)
+    listEl.innerHTML = Array(4).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <div class="skeleton skeleton-badge"></div>
+                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
+                    <div class="skeleton skeleton-badge"></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 
     try {
         if (!window.currentTeam?.id) {
