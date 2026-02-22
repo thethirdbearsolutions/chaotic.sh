@@ -610,6 +610,17 @@ describe('issue-detail-view', () => {
 
             expect(mockDeps.showToast).toHaveBeenCalledWith('Failed to add comment: forbidden', 'error');
         });
+
+        it('clears comment draft on successful submit (CHT-1041)', async () => {
+            mockApi.createComment.mockResolvedValue({});
+            mockApi.getIssue.mockResolvedValue({ id: 'i1', title: 'Test', project_id: 'p1', status: 'todo', priority: 'medium' });
+            localStorage.setItem('chaotic_comment_draft_i1', 'draft text');
+            document.getElementById('new-comment').value = 'Hello';
+
+            await handleAddComment({ preventDefault: vi.fn() }, 'i1');
+
+            expect(localStorage.getItem('chaotic_comment_draft_i1')).toBeNull();
+        });
     });
 
     describe('editDescription', () => {
@@ -640,6 +651,26 @@ describe('issue-detail-view', () => {
 
             expect(mockApi.getIssue).toHaveBeenCalledWith('i1');
             expect(document.getElementById('edit-description').value).toBe('API desc');
+        });
+
+        it('restores description draft from localStorage (CHT-1041)', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            localStorage.setItem('chaotic_description_draft_i1', 'Draft content');
+
+            await editDescription('i1');
+
+            expect(document.getElementById('edit-description').value).toBe('Draft content');
+            localStorage.removeItem('chaotic_description_draft_i1');
+        });
+
+        it('clears description draft on cancel (CHT-1041)', async () => {
+            window.currentDetailIssue = { id: 'i1', description: 'Original' };
+            localStorage.setItem('chaotic_description_draft_i1', 'Draft');
+
+            await editDescription('i1');
+            document.getElementById('cancel-description-edit').click();
+
+            expect(localStorage.getItem('chaotic_description_draft_i1')).toBeNull();
         });
     });
 

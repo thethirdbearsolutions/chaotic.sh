@@ -155,7 +155,27 @@ export function showCreateIssueModal(preselectedProjectId = null) {
     `;
     showModal();
     updateCreateIssueLabelsLabel();
-    document.getElementById('create-issue-title').focus();
+
+    // Restore draft title/description if available (CHT-1041)
+    const titleInput = document.getElementById('create-issue-title');
+    const descInput = document.getElementById('create-issue-description');
+    const savedTitle = localStorage.getItem('chaotic_create_issue_title');
+    const savedDesc = localStorage.getItem('chaotic_create_issue_description');
+    if (savedTitle) titleInput.value = savedTitle;
+    if (savedDesc) descInput.value = savedDesc;
+    // Save drafts on input
+    titleInput.addEventListener('input', () => {
+        const val = titleInput.value;
+        if (val) localStorage.setItem('chaotic_create_issue_title', val);
+        else localStorage.removeItem('chaotic_create_issue_title');
+    });
+    descInput.addEventListener('input', () => {
+        const val = descInput.value;
+        if (val) localStorage.setItem('chaotic_create_issue_description', val);
+        else localStorage.removeItem('chaotic_create_issue_description');
+    });
+
+    titleInput.focus();
 }
 
 export function toggleCreateIssueOptions() {
@@ -502,6 +522,8 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
         });
 
         showToast(`Created ${issue.identifier}`, 'success');
+        localStorage.removeItem('chaotic_create_issue_title');
+        localStorage.removeItem('chaotic_create_issue_description');
 
         if (getCurrentView() === 'issues') {
             loadIssues();

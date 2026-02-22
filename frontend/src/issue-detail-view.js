@@ -1010,9 +1010,24 @@ export async function viewIssue(issueId, pushHistory = true) {
         renderTicketRituals(issue.id);
         deps.setupMentionAutocomplete();
 
-        // Cmd/Ctrl+Enter to submit comment
+        // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');
         if (commentTextarea) {
+            // Restore draft comment if available
+            const draftKey = `chaotic_comment_draft_${issue.id}`;
+            const savedDraft = localStorage.getItem(draftKey);
+            if (savedDraft) {
+                commentTextarea.value = savedDraft;
+            }
+            // Save draft on input
+            commentTextarea.addEventListener('input', () => {
+                const val = commentTextarea.value;
+                if (val) {
+                    localStorage.setItem(draftKey, val);
+                } else {
+                    localStorage.removeItem(draftKey);
+                }
+            });
             commentTextarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -1072,6 +1087,7 @@ export async function handleAddComment(event, issueId) {
 
     try {
         await deps.api.createComment(issueId, content);
+        localStorage.removeItem(`chaotic_comment_draft_${issueId}`);
         await viewIssue(issueId);
         deps.showToast('Comment added!', 'success');
     } catch (e) {
@@ -1116,7 +1132,20 @@ export async function editDescription(issueId) {
     contentDiv.removeAttribute('onclick');
 
     const textarea = document.getElementById('edit-description');
+    // Restore description draft if available (CHT-1041)
+    const descDraftKey = `chaotic_description_draft_${issueId}`;
+    const savedDescDraft = localStorage.getItem(descDraftKey);
+    if (savedDescDraft) {
+        textarea.value = savedDescDraft;
+    }
     textarea.addEventListener('input', () => {
+        // Save description draft
+        const val = textarea.value;
+        if (val !== (issue.description || '')) {
+            localStorage.setItem(descDraftKey, val);
+        } else {
+            localStorage.removeItem(descDraftKey);
+        }
         const preview = document.getElementById('edit-description-preview');
         if (preview && preview.style.display !== 'none') {
             updateDescriptionPreview();
@@ -1135,8 +1164,9 @@ export async function editDescription(issueId) {
     });
     textarea.focus();
 
-    // Cancel — restore original content
+    // Cancel — restore original content and clear draft
     document.getElementById('cancel-description-edit').addEventListener('click', () => {
+        localStorage.removeItem(descDraftKey);
         if (header) header.style.display = '';
         contentDiv.className = `description-content markdown-body ${!issue.description ? 'empty' : ''}`;
         if (!issue.description) {
@@ -1153,6 +1183,7 @@ export async function editDescription(issueId) {
         if (description === undefined) return;
         try {
             await deps.api.updateIssue(issueId, { description });
+            localStorage.removeItem(descDraftKey);
             deps.showToast('Description updated', 'success');
             viewIssue(issueId, false);
         } catch (e) {
