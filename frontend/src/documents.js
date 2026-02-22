@@ -814,23 +814,32 @@ export async function viewDocument(documentId, pushHistory = true) {
       `;
     }
 
+    // Strip leading H1 from markdown if it matches the document title (avoid duplicate)
+    let contentToRender = doc.content || '';
+    const h1Match = contentToRender.match(/^#\s+(.+?)(\n|$)/);
+    if (h1Match && h1Match[1].trim() === doc.title.trim()) {
+      contentToRender = contentToRender.replace(/^#\s+.+?\n?/, '').trimStart();
+    }
+
     detailView.querySelector('#document-detail-content').innerHTML = `
       <div class="back-button" onclick="navigateTo('documents')">
         ← Back to Documents
       </div>
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem;">
-        <div>
-          <h2 class="document-title">${escapeHtml(doc.title)}</h2>
-          <div class="document-meta">
-            ${scopeInfo}${doc.author_name ? ` · By ${escapeHtml(doc.author_name)}` : ''} · Last updated ${new Date(doc.updated_at).toLocaleString()}
+      <div class="document-detail-header">
+        <div class="document-detail-header-top">
+          <div>
+            <h2 class="document-title">${escapeHtml(doc.title)}</h2>
+            <div class="document-meta">
+              ${scopeInfo}${doc.author_name ? ` · By ${escapeHtml(doc.author_name)}` : ''} · Last updated ${new Date(doc.updated_at).toLocaleString()}
+            </div>
+          </div>
+          <div class="document-actions">
+            <button class="btn btn-secondary btn-small" onclick="showEditDocumentModal('${escapeJsString(doc.id)}')">Edit</button>
+            <button class="btn btn-danger btn-small" onclick="deleteDocument('${escapeJsString(doc.id)}')">Delete</button>
           </div>
         </div>
-        <div class="list-item-actions">
-          <button class="btn btn-secondary btn-small" onclick="showEditDocumentModal('${escapeJsString(doc.id)}')">Edit</button>
-          <button class="btn btn-danger btn-small" onclick="deleteDocument('${escapeJsString(doc.id)}')">Delete</button>
-        </div>
       </div>
-      <div class="document-content markdown-body">${doc.content ? renderMarkdown(doc.content) : 'No content'}</div>
+      <div class="document-content markdown-body">${contentToRender ? renderMarkdown(contentToRender) : 'No content'}</div>
       ${labelsHtml}
       ${linkedIssuesHtml}
       ${commentsHtml}

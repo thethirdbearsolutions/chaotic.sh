@@ -207,20 +207,20 @@ export function updateProjectFilters() {
 
   if (docProjectFilter) {
     docProjectFilter.innerHTML = options;
-    // Preserve current selection if valid
-    if (currentDocProjectSelection && projects.some((p) => p.id === currentDocProjectSelection)) {
-      docProjectFilter.value = currentDocProjectSelection;
+    // Preserve current selection, fall back to saved project
+    const docSelection = currentDocProjectSelection || savedProjectId;
+    if (docSelection && projects.some((p) => p.id === docSelection)) {
+      docProjectFilter.value = docSelection;
     }
-    // Default to "All Projects" (empty value) for docs
   }
 
   if (dashboardProjectFilter) {
     dashboardProjectFilter.innerHTML = options;
-    // Preserve current selection if valid (CHT-853)
-    if (currentDashboardProjectSelection && projects.some((p) => p.id === currentDashboardProjectSelection)) {
-      dashboardProjectFilter.value = currentDashboardProjectSelection;
+    // Preserve current selection, fall back to saved project (CHT-853)
+    const dashSelection = currentDashboardProjectSelection || savedProjectId;
+    if (dashSelection && projects.some((p) => p.id === dashSelection)) {
+      dashboardProjectFilter.value = dashSelection;
     }
-    // Default to "All Projects" (empty value) for dashboard
   }
 }
 
