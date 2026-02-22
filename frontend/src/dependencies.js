@@ -23,6 +23,7 @@ import {
 import {
     loadIssues,
     getGroupByValue,
+    updateSprintBudgetBar,
 } from './issues-view.js';
 import {
     setDependencies as setDashboardDependencies,
@@ -61,7 +62,7 @@ import {
 } from './epic-detail-view.js';
 import { navigateTo, navigateToIssueByIdentifier } from './router.js';
 import { getSprintCache, updateSprintCacheForProject } from './sprints.js';
-import { updateSprintBudgetBar } from './issues-view.js';
+
 import { viewDocument } from './documents.js';
 
 /**
