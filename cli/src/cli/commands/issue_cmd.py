@@ -34,7 +34,7 @@ class IssueTypeChoice(click.ParamType):
 
     name = "issue_type"
 
-    def get_metavar(self, param):
+    def get_metavar(self, param, **kwargs):
         return "[" + "|".join(ISSUE_TYPES) + "]"
 
     def convert(self, value, param, ctx):
@@ -220,12 +220,13 @@ def register(cli):
 
     @issue.command("search")
     @click.argument("query")
+    @click.option("--status", type=click.Choice(["backlog", "in_progress", "done", "cancelled"], case_sensitive=False), help="Filter by status")
     @click.option("--all", "-a", "search_all", is_flag=True, help="Search all projects (ignore current project context)")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of results (default: 50)")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def issue_search(query, search_all, limit):
+    def issue_search(query, status, search_all, limit):
         """Search issues.
 
         Searches issue titles, descriptions, and identifiers.
@@ -235,7 +236,7 @@ def register(cli):
         m = _main()
         project_id = None if search_all else m.get_current_project()
 
-        issues = _client().search_issues(m.get_current_team(), query, project_id, limit=limit)
+        issues = _client().search_issues(m.get_current_team(), query, project_id, limit=limit, status=status)
         if m.is_json_output():
             m.output_json(issues or [])
             return

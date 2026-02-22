@@ -807,6 +807,7 @@ class IssueService:
         skip: int = 0,
         limit: int = 50,
         project_id: str | None = None,
+        status: str | None = None,
     ) -> list[OxydeIssue]:
         """Search issues by title, description, or identifier."""
         pattern = f"%{query}%"
@@ -819,6 +820,10 @@ class IssueService:
         if project_id:
             conditions.append("i.project_id = ?")
             params.append(project_id)
+
+        if status:
+            conditions.append("i.status = ?")
+            params.append(status.upper())
 
         where_clause = " AND ".join(conditions)
         rows = await execute_raw(

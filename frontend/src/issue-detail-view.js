@@ -1039,6 +1039,7 @@ export async function viewIssue(issueId, pushHistory = true) {
             document.removeEventListener('keydown', detailKeyHandler);
         }
         detailKeyHandler = (e) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
             if (document.querySelector('.modal-overlay:not(.hidden)')) return;

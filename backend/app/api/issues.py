@@ -387,6 +387,7 @@ async def search_issues(
     q: str = Query(..., min_length=1, max_length=200),
     current_user: CurrentUser = None,
     project_id: str | None = None,
+    issue_status: str | None = None,
     skip: int = 0,
     limit: int = 50,
 ):
@@ -414,7 +415,7 @@ async def search_issues(
                 detail="Project not found in this team",
             )
 
-    issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id)
+    issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status)
     return [issue_to_response(issue) for issue in issues]
 
 

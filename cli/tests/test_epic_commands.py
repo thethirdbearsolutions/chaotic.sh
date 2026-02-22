@@ -185,8 +185,8 @@ class TestEpicCreate:
 class TestEpicList:
     """Tests for epic list command."""
 
-    def test_list_with_progress(self, cli_runner):
-        """epic list displays epics with progress."""
+    def test_list_with_estimate(self, cli_runner):
+        """epic list displays epics with estimate."""
         from cli.main import cli, client
 
         client.get_issues = MagicMock(return_value=[
@@ -196,17 +196,15 @@ class TestEpicList:
                 "title": "Auth",
                 "status": "in_progress",
                 "priority": "high",
+                "estimate": 13,
             },
-        ])
-        client.get_sub_issues = MagicMock(return_value=[
-            {"status": "done"}, {"status": "in_progress"}, {"status": "canceled"},
         ])
 
         result = cli_runner.invoke(cli, ['epic', 'list'])
 
         assert result.exit_code == 0
         assert 'CHT-50' in result.output
-        assert '2/3 done' in result.output
+        assert '13' in result.output
 
     def test_list_empty(self, cli_runner):
         """epic list with no epics shows message."""

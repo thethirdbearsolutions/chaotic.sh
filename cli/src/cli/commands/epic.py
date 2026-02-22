@@ -123,26 +123,15 @@ def register(cli):
         table.add_column("Title")
         table.add_column("Status")
         table.add_column("Priority")
-        table.add_column("Progress")
+        table.add_column("Estimate")
 
         for ep in epics:
-            # Fetch sub-issues for progress
-            try:
-                sub_issues = _client().get_sub_issues(ep['id'])
-                if sub_issues:
-                    done_count = sum(1 for s in sub_issues if s.get('status') in ('done', 'canceled'))
-                    progress = f"{done_count}/{len(sub_issues)} done"
-                else:
-                    progress = "-"
-            except m.APIError:
-                progress = "-"
-
             table.add_row(
                 ep["identifier"],
                 ep["title"][:50] + ("..." if len(ep["title"]) > 50 else ""),
                 ep["status"].replace("_", " ").title(),
                 ep["priority"].replace("_", " ").title(),
-                progress,
+                str(ep.get("estimate") or "-"),
             )
 
         console.print(table)
