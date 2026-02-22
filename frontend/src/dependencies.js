@@ -64,6 +64,7 @@ import { navigateTo, navigateToIssueByIdentifier } from './router.js';
 import { getSprintCache, updateSprintCacheForProject } from './sprints.js';
 
 import { viewDocument } from './documents.js';
+import { setupMentionAutocomplete } from './mention-autocomplete.js';
 
 /**
  * Initialize all module dependencies.
@@ -75,7 +76,6 @@ import { viewDocument } from './documents.js';
  * @param {Function} localState.getCurrentDetailIssue - () => window.currentDetailIssue
  * @param {Function} localState.setCurrentDetailIssue - (issue) => void
  * @param {Function} localState.getCurrentDetailSprints - () => window.currentDetailSprints
- * @param {Function} localState.setupMentionAutocomplete - () => void
  */
 export function initAllDependencies(localState) {
     const {
@@ -85,7 +85,6 @@ export function initAllDependencies(localState) {
         getCurrentDetailIssue,
         setCurrentDetailIssue,
         getCurrentDetailSprints,
-        setupMentionAutocomplete,
     } = localState;
 
     // Dashboard
