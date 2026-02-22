@@ -195,11 +195,8 @@ import {
     getSelectedIssueIndex,
     setSelectedIssueIndex,
     setCurrentUser,
-    getLabels,
     setLabels,
-    getCurrentDetailIssue,
     setCurrentDetailIssue,
-    getCurrentDetailSprints,
     setCurrentDetailSprints,
 } from './state.js';
 import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
@@ -213,7 +210,6 @@ import {
 } from './router.js';
 import { connectWebSocket } from './ws.js';
 import { registerWsHandlers } from './ws-handlers.js';
-import { initAllDependencies } from './dependencies.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
 import { getTheme, setTheme } from './storage.js';
@@ -836,19 +832,6 @@ setCommandPaletteCommands([
     { id: 'show-me-around', title: 'Show Me Around', subtitle: 'Replay the onboarding tour', icon: '🎓', action: () => resetOnboarding(), category: 'Help' },
     { id: 'logout', title: 'Sign Out', subtitle: 'Log out of your account', icon: '🚪', action: () => logout(), category: 'Account' },
 ]);
-
-// ============================================
-// MODULE DEPENDENCY INITIALIZATION (CHT-1043)
-// ============================================
-
-initAllDependencies({
-    getLabels,
-    setLabels,
-    getCurrentTeam,
-    getCurrentDetailIssue,
-    setCurrentDetailIssue,
-    getCurrentDetailSprints,
-});
 
 // ============================================
 // IMPROVED MODAL UX

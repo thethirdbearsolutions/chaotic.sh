@@ -6,12 +6,16 @@
 
 import { getCreateIssueLabelIds, setCreateIssueLabelIds, updateCreateIssueLabelsLabel, renderCreateIssueLabelDropdown } from './inline-dropdown.js';
 import { getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft } from './storage.js';
-
-let deps = {};
-
-export function setDependencies(d) {
-    deps = d;
-}
+import { api } from './api.js';
+import { getProjects, getEstimateOptions } from './projects.js';
+import { getCurrentView, getLabels, setLabels, getCurrentTeam } from './state.js';
+import { showModal, closeModal, showToast, closeAllDropdowns, registerDropdownClickOutside } from './ui.js';
+import { viewIssue } from './issue-detail-view.js';
+import { loadIssues } from './issues-view.js';
+import { loadMyIssues } from './dashboard.js';
+import { getStatusIcon, getPriorityIcon } from './issue-list.js';
+import { formatStatus, formatPriority, formatIssueType, renderAvatar, escapeHtml, escapeJsString } from './utils.js';
+import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
 
 const ISSUE_TEMPLATES = [
     {
@@ -70,7 +74,6 @@ const ISSUE_TEMPLATES = [
 ];
 
 export function showCreateIssueModal(preselectedProjectId = null) {
-    const { getProjects, escapeHtml, getStatusIcon, getPriorityIcon, showModal } = deps;
     const projectId = preselectedProjectId || document.getElementById('project-filter')?.value;
     setCreateIssueLabelIds([]);
 
@@ -197,7 +200,6 @@ export function applyIssueTemplate(templateId) {
 }
 
 export function showCreateSubIssueModal(parentId, projectId) {
-    const { getProjects, escapeHtml, escapeJsString, getStatusIcon, getPriorityIcon, showModal } = deps;
     const project = getProjects().find(p => p.id === projectId);
     setCreateIssueLabelIds([]);
 
@@ -262,7 +264,6 @@ export function showCreateSubIssueModal(parentId, projectId) {
 }
 
 export async function handleCreateSubIssue(parentId, projectId) {
-    const { api, showToast, closeModal, viewIssue } = deps;
     const title = document.getElementById('create-issue-title').value.trim();
     const description = document.getElementById('create-issue-description').value.trim();
     const status = document.getElementById('create-issue-status').value;
@@ -299,13 +300,6 @@ export async function handleCreateSubIssue(parentId, projectId) {
 }
 
 export async function toggleCreateIssueDropdown(type, event) {
-    const {
-        api, closeAllDropdowns, registerDropdownClickOutside, getLabels,
-        formatStatus, formatPriority, formatIssueType, getStatusIcon, getPriorityIcon,
-        formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList,
-        getEstimateOptions, renderAvatar, escapeHtml, escapeJsString,
-        getCurrentTeam, setLabels,
-    } = deps;
     closeAllDropdowns();
 
     const btn = event.currentTarget;
@@ -453,7 +447,6 @@ export function updateCreateIssueProject() {
 }
 
 export function setCreateIssueField(field, value, label) {
-    const { getStatusIcon, getPriorityIcon, formatIssueType, closeAllDropdowns, escapeHtml } = deps;
     document.getElementById(`create-issue-${field}`).value = value;
     document.getElementById(`create-issue-${field}-label`).textContent = label;
 
@@ -475,7 +468,6 @@ export function setCreateIssueField(field, value, label) {
 }
 
 async function submitCreateIssue({ keepOpen = false } = {}) {
-    const { api, showToast, closeModal, viewIssue, getCurrentView, loadIssues, loadMyIssues } = deps;
     const projectId = document.getElementById('create-issue-project').value;
     const title = document.getElementById('create-issue-title').value.trim();
     const description = document.getElementById('create-issue-description').value.trim();

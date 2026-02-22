@@ -2,11 +2,89 @@
  * Tests for inline-dropdown.js module (CHT-667)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Mock all dependencies before importing the module under test
+vi.mock('./api.js', () => ({
+    api: {
+        updateIssue: vi.fn(),
+        getLabels: vi.fn().mockResolvedValue([]),
+        createLabel: vi.fn(),
+        getSprints: vi.fn().mockResolvedValue([]),
+    },
+}));
+
+vi.mock('./state.js', () => ({
+    getIssues: vi.fn(() => []),
+    setIssues: vi.fn(),
+    getLabels: vi.fn(() => []),
+    setLabels: vi.fn(),
+    getCurrentTeam: vi.fn(() => ({ id: 'team-1' })),
+    getCurrentDetailIssue: vi.fn(() => null),
+    setCurrentDetailIssue: vi.fn(),
+    getCurrentDetailSprints: vi.fn(() => []),
+}));
+
+vi.mock('./dashboard.js', () => ({
+    getMyIssues: vi.fn(() => []),
+    setMyIssues: vi.fn(),
+}));
+
+vi.mock('./ui.js', () => ({
+    closeAllDropdowns: vi.fn(),
+    registerDropdownClickOutside: vi.fn(),
+    setDropdownKeyHandler: vi.fn(),
+    showToast: vi.fn(),
+}));
+
+vi.mock('./issue-list.js', () => ({
+    getStatusIcon: vi.fn(() => '<svg></svg>'),
+    getPriorityIcon: vi.fn(() => '<svg></svg>'),
+    renderIssueRow: vi.fn(() => '<div class="issue-row"></div>'),
+}));
+
+vi.mock('./utils.js', () => ({
+    formatStatus: vi.fn((s) => s),
+    formatPriority: vi.fn((p) => p),
+    formatIssueType: vi.fn((t) => t || 'task'),
+    escapeHtml: vi.fn((text) => text || ''),
+    escapeAttr: vi.fn((text) => text || ''),
+    escapeJsString: vi.fn((text) => text || ''),
+    sanitizeColor: vi.fn((c) => c || '#888'),
+    renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
+}));
+
+vi.mock('./projects.js', () => ({
+    formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
+    getEstimateOptions: vi.fn(() => [{ value: null, label: 'None' }, { value: 1, label: '1' }]),
+}));
+
+vi.mock('./assignees.js', () => ({
+    formatAssigneeName: vi.fn((a) => a?.name || ''),
+    formatAssigneeOptionLabel: vi.fn((a) => a?.name || ''),
+    getAssigneeOptionList: vi.fn(() => []),
+    getAssigneeById: vi.fn(() => null),
+}));
+
+vi.mock('./sprints.js', () => ({
+    updateSprintCacheForProject: vi.fn(),
+}));
+
+vi.mock('./issues-view.js', () => ({
+    updateSprintBudgetBar: vi.fn(),
+}));
+
+// Import mocked modules to get references to mock functions
+import { api } from './api.js';
+import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue } from './state.js';
+import { getMyIssues, setMyIssues } from './dashboard.js';
+import { closeAllDropdowns, showToast } from './ui.js';
+import { getAssigneeOptionList } from './assignees.js';
+import { getEstimateOptions } from './projects.js';
+
 import {
     STATUS_OPTIONS,
     PRIORITY_OPTIONS,
     ISSUE_TYPE_OPTIONS,
-    setDependencies,
     showInlineDropdown,
     showDetailDropdown,
     updateIssueField,
@@ -20,59 +98,27 @@ import {
 } from './inline-dropdown.js';
 
 describe('inline-dropdown', () => {
-    let mockApi;
-    let mockDeps;
-
     beforeEach(() => {
         // Reset label ids
         setCreateIssueLabelIds([]);
 
-        // Mock API
-        mockApi = {
-            updateIssue: vi.fn(),
-            getLabels: vi.fn().mockResolvedValue([]),
-            createLabel: vi.fn(),
-            getSprints: vi.fn().mockResolvedValue([]),
-        };
+        // Reset all mocks
+        vi.clearAllMocks();
 
-        // Mock dependencies
-        mockDeps = {
-            api: mockApi,
-            getIssues: vi.fn(() => []),
-            setIssues: vi.fn(),
-            getMyIssues: vi.fn(() => []),
-            setMyIssues: vi.fn(),
-            getCurrentDetailIssue: vi.fn(() => null),
-            setCurrentDetailIssue: vi.fn(),
-            getLabels: vi.fn(() => []),
-            setLabels: vi.fn(),
-            getCurrentTeam: vi.fn(() => ({ id: 'team-1' })),
-            getCurrentDetailSprints: vi.fn(() => []),
-            closeAllDropdowns: vi.fn(),
-            registerDropdownClickOutside: vi.fn(),
-            setDropdownKeyHandler: vi.fn(),
-            showToast: vi.fn(),
-            getStatusIcon: vi.fn(() => '<svg></svg>'),
-            getPriorityIcon: vi.fn(() => '<svg></svg>'),
-            formatStatus: vi.fn((s) => s),
-            formatPriority: vi.fn((p) => p),
-            formatIssueType: vi.fn((t) => t || 'task'),
-            formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
-            formatAssigneeName: vi.fn((a) => a?.name || ''),
-            formatAssigneeOptionLabel: vi.fn((a) => a?.name || ''),
-            getAssigneeOptionList: vi.fn(() => []),
-            getAssigneeById: vi.fn(() => null),
-            getEstimateOptions: vi.fn(() => [{ value: null, label: 'None' }, { value: 1, label: '1' }]),
-            renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
-            renderIssueRow: vi.fn(() => '<div class="issue-row"></div>'),
-            escapeHtml: vi.fn((text) => text || ''),
-            escapeAttr: vi.fn((text) => text || ''),
-            sanitizeColor: vi.fn((c) => c || '#888'),
-            updateSprintCacheForProject: vi.fn(),
-            updateSprintBudgetBar: vi.fn(),
-        };
+        // Restore default return values after clearAllMocks
+        api.updateIssue.mockReset();
+        api.getLabels.mockResolvedValue([]);
+        api.createLabel.mockReset();
+        api.getSprints.mockResolvedValue([]);
 
-        setDependencies(mockDeps);
+        getIssues.mockReturnValue([]);
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        getCurrentDetailIssue.mockReturnValue(null);
+
+        getMyIssues.mockReturnValue([]);
+
+        getEstimateOptions.mockReturnValue([{ value: null, label: 'None' }, { value: 1, label: '1' }]);
+        getAssigneeOptionList.mockReturnValue([]);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -128,7 +174,7 @@ describe('inline-dropdown', () => {
 
             await showInlineDropdown(mockEvent, 'status', 'issue-1');
 
-            expect(mockDeps.closeAllDropdowns).toHaveBeenCalled();
+            expect(closeAllDropdowns).toHaveBeenCalled();
         });
 
         it('renders status options for status type', async () => {
@@ -177,7 +223,7 @@ describe('inline-dropdown', () => {
         });
 
         it('renders assignee options including unassigned', async () => {
-            mockDeps.getAssigneeOptionList.mockReturnValue([
+            getAssigneeOptionList.mockReturnValue([
                 { assignee: { id: 'user-1', name: 'John' }, indent: false },
             ]);
 
@@ -196,7 +242,7 @@ describe('inline-dropdown', () => {
         });
 
         it('renders estimate options', async () => {
-            mockDeps.getEstimateOptions.mockReturnValue([
+            getEstimateOptions.mockReturnValue([
                 { value: null, label: 'None' },
                 { value: 1, label: '1' },
                 { value: 2, label: '2' },
@@ -234,55 +280,55 @@ describe('inline-dropdown', () => {
 
     describe('updateIssueField', () => {
         it('calls API to update issue', async () => {
-            mockApi.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
-            mockDeps.getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
         });
 
         it('updates local issues state on success', async () => {
             const updatedIssue = { id: 'issue-1', status: 'done' };
-            mockApi.updateIssue.mockResolvedValue(updatedIssue);
+            api.updateIssue.mockResolvedValue(updatedIssue);
             const issues = [{ id: 'issue-1', status: 'todo' }];
-            mockDeps.getIssues.mockReturnValue(issues);
+            getIssues.mockReturnValue(issues);
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(mockDeps.setIssues).toHaveBeenCalled();
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Issue updated', 'success');
+            expect(setIssues).toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith('Issue updated', 'success');
         });
 
         it('shows error toast on API failure', async () => {
-            mockApi.updateIssue.mockRejectedValue(new Error('Update failed'));
-            mockDeps.getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            api.updateIssue.mockRejectedValue(new Error('Update failed'));
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(mockDeps.showToast).toHaveBeenCalledWith('Update failed', 'error');
+            expect(showToast).toHaveBeenCalledWith('Update failed', 'error');
         });
 
         it('updates myIssues state if issue exists there', async () => {
             const updatedIssue = { id: 'issue-1', status: 'done' };
-            mockApi.updateIssue.mockResolvedValue(updatedIssue);
-            mockDeps.getIssues.mockReturnValue([]);
-            mockDeps.getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            api.updateIssue.mockResolvedValue(updatedIssue);
+            getIssues.mockReturnValue([]);
+            getMyIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(mockDeps.setMyIssues).toHaveBeenCalled();
+            expect(setMyIssues).toHaveBeenCalled();
         });
 
         it('updates currentDetailIssue if viewing that issue', async () => {
             const updatedIssue = { id: 'issue-1', status: 'done' };
-            mockApi.updateIssue.mockResolvedValue(updatedIssue);
-            mockDeps.getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
-            mockDeps.getCurrentDetailIssue.mockReturnValue({ id: 'issue-1', status: 'todo' });
+            api.updateIssue.mockResolvedValue(updatedIssue);
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1', status: 'todo' });
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(mockDeps.setCurrentDetailIssue).toHaveBeenCalledWith(updatedIssue);
+            expect(setCurrentDetailIssue).toHaveBeenCalledWith(updatedIssue);
         });
     });
 
@@ -333,22 +379,22 @@ describe('inline-dropdown', () => {
     describe('toggleIssueLabel', () => {
         it('adds label if not currently on issue', async () => {
             const issue = { id: 'issue-1', labels: [] };
-            mockDeps.getIssues.mockReturnValue([issue]);
-            mockApi.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [{ id: 'label-1' }] });
+            getIssues.mockReturnValue([issue]);
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [{ id: 'label-1' }] });
 
             await toggleIssueLabel('issue-1', 'label-1', null);
 
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: ['label-1'] });
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: ['label-1'] });
         });
 
         it('removes label if currently on issue', async () => {
             const issue = { id: 'issue-1', labels: [{ id: 'label-1' }] };
-            mockDeps.getIssues.mockReturnValue([issue]);
-            mockApi.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [] });
+            getIssues.mockReturnValue([issue]);
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [] });
 
             await toggleIssueLabel('issue-1', 'label-1', null);
 
-            expect(mockApi.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: [] });
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { label_ids: [] });
         });
     });
 
@@ -362,22 +408,22 @@ describe('inline-dropdown', () => {
         });
 
         it('creates label via API', async () => {
-            mockApi.createLabel.mockResolvedValue({ id: 'new-label', name: 'New Label' });
-            mockApi.getLabels.mockResolvedValue([{ id: 'new-label', name: 'New Label' }]);
-            mockDeps.getIssues.mockReturnValue([{ id: 'issue-1', labels: [] }]);
-            mockApi.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [{ id: 'new-label' }] });
+            api.createLabel.mockResolvedValue({ id: 'new-label', name: 'New Label' });
+            api.getLabels.mockResolvedValue([{ id: 'new-label', name: 'New Label' }]);
+            getIssues.mockReturnValue([{ id: 'issue-1', labels: [] }]);
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', labels: [{ id: 'new-label' }] });
 
             await createLabelFromDropdown('issue-1');
 
-            expect(mockApi.createLabel).toHaveBeenCalledWith('team-1', { name: 'New Label' });
+            expect(api.createLabel).toHaveBeenCalledWith('team-1', { name: 'New Label' });
         });
 
         it('does nothing if no team', async () => {
-            mockDeps.getCurrentTeam.mockReturnValue(null);
+            getCurrentTeam.mockReturnValue(null);
 
             await createLabelFromDropdown('issue-1');
 
-            expect(mockApi.createLabel).not.toHaveBeenCalled();
+            expect(api.createLabel).not.toHaveBeenCalled();
         });
     });
 
@@ -411,13 +457,13 @@ describe('inline-dropdown', () => {
         });
 
         it('creates label and adds to selection', async () => {
-            mockApi.createLabel.mockResolvedValue({ id: 'new-label', name: 'Feature' });
-            mockApi.getLabels.mockResolvedValue([{ id: 'new-label', name: 'Feature' }]);
+            api.createLabel.mockResolvedValue({ id: 'new-label', name: 'Feature' });
+            api.getLabels.mockResolvedValue([{ id: 'new-label', name: 'Feature' }]);
             setCreateIssueLabelIds([]);
 
             await createLabelForCreateIssue();
 
-            expect(mockApi.createLabel).toHaveBeenCalledWith('team-1', { name: 'Feature' });
+            expect(api.createLabel).toHaveBeenCalledWith('team-1', { name: 'Feature' });
             expect(getCreateIssueLabelIds()).toContain('new-label');
         });
     });
