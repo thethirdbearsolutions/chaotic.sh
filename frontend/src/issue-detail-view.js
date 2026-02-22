@@ -406,18 +406,6 @@ export function renderDescriptionContent(content) {
  * @param {Event} event - Click event
  * @param {string} issueId - Issue ID
  */
-export function handleDescriptionClick(event, issueId) {
-    // Don't open edit modal if clicking on a link
-    const target = event.target;
-    if (target.tagName === 'A' || target.closest('a')) {
-        return; // Let the link handle the click
-    }
-    // Call editDescription from app.js via window
-    if (window.editDescription) {
-        window.editDescription(issueId);
-    }
-}
-
 /**
  * Toggle a collapsible section (activity, comments)
  * @param {string} sectionName - 'activity' or 'comments'
@@ -621,6 +609,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                 is_pending: !r.attestation.approved_at,
             }));
 
+        // Store ritual status for renderTicketRituals (avoids duplicate API call)
+        currentTicketRituals = ritualStatus;
+
         // Combine and sort chronologically
         const allComments = [...comments, ...attestationNotes].sort((a, b) =>
             new Date(a.created_at) - new Date(b.created_at)
@@ -696,8 +687,14 @@ export async function viewIssue(issueId, pushHistory = true) {
                     ` : ''}
 
                     <div class="issue-detail-description">
-                        <h3>Description</h3>
-                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}" onclick="handleDescriptionClick(event, '${deps.escapeJsString(issue.id)}')">
+                        <div class="section-header">
+                            <h3>Description</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="editDescription('${deps.escapeJsString(issue.id)}')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                Edit
+                            </button>
+                        </div>
+                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}"${!issue.description ? ` onclick="editDescription('${deps.escapeJsString(issue.id)}')"` : ''}>
                             ${issue.description ? renderDescriptionContent(issue.description) : '<span class="add-description-link">Add description...</span>'}
                         </div>
                     </div>
@@ -835,6 +832,11 @@ export async function viewIssue(issueId, pushHistory = true) {
                                 </svg>
                             </button>
                         </div>
+                        <form class="comment-form comment-form-compact" onsubmit="return handleAddComment(event, '${deps.escapeJsString(issue.id)}')">
+                            <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
+                            <div id="mention-suggestions" class="mention-suggestions hidden"></div>
+                            <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
+                        </form>
                         <div class="comments-list section-collapsible-content">
                             ${allComments.length === 0 ? `
                                 <div class="comments-empty">No comments yet</div>
@@ -852,11 +854,6 @@ export async function viewIssue(issueId, pushHistory = true) {
                                 </div>
                             `).join('')}
                         </div>
-                        <form class="comment-form" onsubmit="return handleAddComment(event, '${deps.escapeJsString(issue.id)}')">
-                            <textarea id="new-comment" placeholder="Write a comment..." rows="3"></textarea>
-                            <div id="mention-suggestions" class="mention-suggestions hidden"></div>
-                            <button type="submit" class="btn btn-primary">Comment</button>
-                        </form>
                     </div>
                 </div>
 
@@ -961,9 +958,20 @@ export async function viewIssue(issueId, pushHistory = true) {
             </div>
         `;
 
-        // Load ticket rituals (if any configured)
-        loadTicketRituals(issue.id);
+        // Render ticket rituals (data already fetched in Promise.all above)
+        renderTicketRituals(issue.id);
         deps.setupMentionAutocomplete();
+
+        // Cmd/Ctrl+Enter to submit comment
+        const commentTextarea = document.getElementById('new-comment');
+        if (commentTextarea) {
+            commentTextarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    commentTextarea.closest('form')?.requestSubmit();
+                }
+            });
+        }
 
         // Set up prev/next keyboard navigation
         detailNavPrevId = prevIssue ? prevIssue.id : null;
