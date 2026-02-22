@@ -3738,12 +3738,15 @@ input[type="checkbox"] {
 /* Sticky comment form (bottom of issue detail viewport) */
 .comment-form-sticky {
     position: sticky;
+    position: -webkit-sticky;
     bottom: 0;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
-    padding: 12px 0;
+    /* Extend background edge-to-edge, keep content aligned */
+    margin: 0 -40px;
+    padding: 12px 40px;
     background: var(--bg-color);
     border-top: 1px solid var(--border-color);
     z-index: 5;
@@ -3751,13 +3754,15 @@ input[type="checkbox"] {
 
 .comment-form-sticky .mention-suggestions {
     position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
+    bottom: calc(100% + 4px);
+    left: 40px;
+    right: 40px;
     z-index: 10;
 }
 
 .comment-form-sticky textarea {
+    flex: 1;
+    min-width: 0;
     min-height: 36px;
     max-height: 36px;
     padding: 8px 12px;
