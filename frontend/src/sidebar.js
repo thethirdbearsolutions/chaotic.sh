@@ -9,8 +9,30 @@
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function updateSidebarAria() {
+    const isOpen = document.body.classList.contains('sidebar-open');
     const btn = document.getElementById('hamburger-btn');
-    if (btn) btn.setAttribute('aria-expanded', String(document.body.classList.contains('sidebar-open')));
+    if (btn) btn.setAttribute('aria-expanded', String(isOpen));
+
+    // On mobile, sidebar acts as a modal dialog — apply ARIA + inert dynamically (CHT-899)
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+        if (isOpen) {
+            sidebar.setAttribute('role', 'dialog');
+            sidebar.setAttribute('aria-modal', 'true');
+        } else {
+            sidebar.removeAttribute('role');
+            sidebar.removeAttribute('aria-modal');
+        }
+    }
+
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        if (isOpen) {
+            mainContent.setAttribute('inert', '');
+        } else {
+            mainContent.removeAttribute('inert');
+        }
+    }
 }
 
 export function toggleSidebar() {
