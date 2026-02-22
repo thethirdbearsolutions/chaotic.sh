@@ -220,7 +220,7 @@ def register(cli):
 
     @issue.command("search")
     @click.argument("query")
-    @click.option("--status", type=click.Choice(["backlog", "in_progress", "done", "cancelled"], case_sensitive=False), help="Filter by status")
+    @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False), help="Filter by status")
     @click.option("--all", "-a", "search_all", is_flag=True, help="Search all projects (ignore current project context)")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of results (default: 50)")
     @_main().json_option

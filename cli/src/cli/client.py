@@ -248,7 +248,7 @@ class Client:
         if limit:
             url += f"&limit={limit}"
         if status:
-            url += f"&issue_status={status}"
+            url += f"&issue_status={quote(status)}"
         return self._request("GET", url)
 
     def update_issue(self, issue_id: str, **kwargs) -> dict:
