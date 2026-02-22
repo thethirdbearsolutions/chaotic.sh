@@ -98,22 +98,17 @@ class TestEpicList:
     """Tests for epic list command."""
 
     def test_list_epics(self, cli_runner, mock_epic):
-        """epic list shows epics with progress."""
+        """epic list shows epics with estimate."""
         from cli.main import cli, client
 
         client.get_issues = MagicMock(return_value=[mock_epic])
-        client.get_sub_issues = MagicMock(return_value=[
-            {"id": "s1", "status": "done"},
-            {"id": "s2", "status": "in_progress"},
-            {"id": "s3", "status": "done"},
-        ])
 
         result = cli_runner.invoke(cli, ['epic', 'list'])
 
         assert result.exit_code == 0
         assert 'CHT-50' in result.output
         assert 'User Authentication' in result.output
-        assert '2/3 done' in result.output
+        assert '8' in result.output  # estimate
         # Verify issue_type=epic filter was used
         client.get_issues.assert_called_once()
         call_kwargs = client.get_issues.call_args

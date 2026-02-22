@@ -826,7 +826,7 @@ export async function viewDocument(documentId, pushHistory = true) {
     let contentToRender = doc.content || '';
     const h1Match = contentToRender.match(/^\s*#\s+(.+?)(\n|$)/);
     if (h1Match && h1Match[1].trim() === doc.title.trim()) {
-      contentToRender = contentToRender.replace(/^\s*#\s+.+?\n?/, '').trimStart();
+      contentToRender = contentToRender.replace(/^\s*#\s+[^\n]*\n?/, '').trimStart();
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `

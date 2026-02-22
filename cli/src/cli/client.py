@@ -241,12 +241,14 @@ class Client:
     def get_issue_by_identifier(self, identifier: str) -> dict:
         return self._request("GET", f"/issues/identifier/{identifier}")
 
-    def search_issues(self, team_id: str, query: str, project_id: str = None, limit: int = None) -> list:
+    def search_issues(self, team_id: str, query: str, project_id: str = None, limit: int = None, status: str = None) -> list:
         url = f"/issues/search?team_id={team_id}&q={quote(query)}"
         if project_id:
             url += f"&project_id={project_id}"
         if limit:
             url += f"&limit={limit}"
+        if status:
+            url += f"&issue_status={quote(status)}"
         return self._request("GET", url)
 
     def update_issue(self, issue_id: str, **kwargs) -> dict:
