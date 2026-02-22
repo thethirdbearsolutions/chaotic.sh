@@ -235,6 +235,13 @@ export function createListNavigationHandler(actions) {
                     }
                 }
                 break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    actions.setSelectedIndex(-1);
+                }
+                break;
         }
     };
 }
