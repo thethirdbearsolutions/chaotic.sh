@@ -28,13 +28,24 @@ vi.mock('./utils.js', () => ({
     formatIssueType: vi.fn((t) => t || 'task'),
     escapeHtml: vi.fn((text) => text || ''),
     escapeAttr: vi.fn((text) => text || ''),
-    escapeJsString: vi.fn((text) => text || ''),
     sanitizeColor: vi.fn((c) => c || '#888'),
     renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
 }));
 
 vi.mock('./issues-view.js', () => ({
     getGroupByValue: vi.fn(() => ''),
+}));
+
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
+vi.mock('./inline-dropdown.js', () => ({
+    showInlineDropdown: vi.fn(),
+}));
+
+vi.mock('./issue-detail-view.js', () => ({
+    viewIssue: vi.fn(),
 }));
 
 import {
@@ -53,7 +64,7 @@ import { getIssues } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
-import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, escapeJsString, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { getGroupByValue } from './issues-view.js';
 
 describe('issue-list', () => {
@@ -80,7 +91,6 @@ describe('issue-list', () => {
         formatIssueType.mockImplementation((t) => t || 'task');
         escapeHtml.mockImplementation((text) => text || '');
         escapeAttr.mockImplementation((text) => text || '');
-        escapeJsString.mockImplementation((text) => text || '');
         sanitizeColor.mockImplementation((c) => c || '#888');
         renderAvatar.mockReturnValue('<span class="avatar"></span>');
         getAssigneeOptionList.mockReturnValue([]);

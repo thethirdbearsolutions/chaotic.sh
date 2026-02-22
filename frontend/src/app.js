@@ -3,6 +3,7 @@
  */
 
 import { api } from './api.js';
+import { initEventDelegation } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
 import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout, initAuth } from './auth.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
@@ -597,6 +598,7 @@ function initSidebarNav() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+    initEventDelegation();
     initAuth();
     initSidebarNav();
     initModal();
