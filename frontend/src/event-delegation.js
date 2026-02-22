@@ -28,9 +28,15 @@ function handleEvent(event) {
     const target = event.target.closest('[data-action]');
     if (!target) return;
 
+    // Forms with data-action are handled exclusively by the submit listener
+    // below — don't also fire on click/keydown/input that bubble to the form.
+    // Without this, clicking into a textarea or typing inside a form would
+    // trigger the form's action handler via the click/keydown delegation. (CHT-1100)
+    if (target.tagName === 'FORM') return;
+
     // For keydown/input events from form controls (INPUT, TEXTAREA, SELECT),
     // only fire if the form control itself has data-action. Don't bubble keydown
-    // from a textarea up to a parent form's data-action — that's normal typing,
+    // from a textarea up to a parent div's data-action — that's normal typing,
     // not an action trigger. (CHT-1100)
     const evtType = event.type;
     if ((evtType === 'keydown' || evtType === 'input') && target !== event.target) {
