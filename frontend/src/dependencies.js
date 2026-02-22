@@ -8,11 +8,8 @@
 /* global api */
 import { showModal, closeModal, showToast, closeAllDropdowns, setDropdownKeyHandler, registerDropdownClickOutside } from './ui.js';
 import { getAssigneeById, formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
-import { formatTimeAgo, escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
+import { escapeJsString, formatStatus, formatPriority, escapeHtml, escapeAttr, sanitizeColor, formatIssueType, renderAvatar } from './utils.js';
 import { getProjects, getEstimateOptions, formatEstimate } from './projects.js';
-import { getMembers } from './teams.js';
-import { renderMarkdown } from './gate-approvals.js';
-import { renderTicketRitualActions } from './rituals-view.js';
 import {
     getCurrentView,
     getIssues,
@@ -20,7 +17,6 @@ import {
 } from './state.js';
 import {
     loadIssues,
-    getGroupByValue,
     updateSprintBudgetBar,
 } from './issues-view.js';
 import {
@@ -29,26 +25,18 @@ import {
     loadMyIssues,
 } from './dashboard.js';
 import {
-    setDependencies as setIssueListDependencies,
     renderIssueRow,
     getPriorityIcon,
     getStatusIcon,
 } from './issue-list.js';
 import {
     setDependencies as setInlineDropdownDependencies,
-    showDetailDropdown,
 } from './inline-dropdown.js';
 import {
     setDependencies as setIssueCreationDependencies,
 } from './issue-creation.js';
-import {
-    setDependencies as setIssueDetailViewDependencies,
-    viewIssue,
-} from './issue-detail-view.js';
-import { navigateTo } from './router.js';
-import { getSprintCache, updateSprintCacheForProject } from './sprints.js';
-
-import { setupMentionAutocomplete } from './mention-autocomplete.js';
+import { viewIssue } from './issue-detail-view.js';
+import { updateSprintCacheForProject } from './sprints.js';
 
 /**
  * Initialize all module dependencies.
@@ -70,25 +58,6 @@ export function initAllDependencies(localState) {
         setCurrentDetailIssue,
         getCurrentDetailSprints,
     } = localState;
-
-    // Issue List
-    setIssueListDependencies({
-        getIssues,
-        getAssigneeById,
-        formatAssigneeName,
-        formatEstimate,
-        getSprintCache,
-        formatStatus,
-        formatPriority,
-        formatIssueType,
-        escapeHtml,
-        escapeAttr,
-        escapeJsString,
-        sanitizeColor,
-        renderAvatar,
-        getAssigneeOptionList,
-        getGroupByValue,
-    });
 
     // Inline Dropdown
     setInlineDropdownDependencies({
@@ -157,37 +126,6 @@ export function initAllDependencies(localState) {
         escapeHtml,
         escapeAttr,
         escapeJsString,
-    });
-
-    // Issue Detail View
-    setIssueDetailViewDependencies({
-        api,
-        getCurrentView,
-        showToast,
-        showModal,
-        closeModal,
-        navigateTo,
-        getProjects,
-        getMembers,
-        getAssigneeById,
-        formatAssigneeName,
-        formatStatus,
-        formatPriority,
-        formatIssueType,
-        formatEstimate,
-        formatTimeAgo,
-        getStatusIcon,
-        getPriorityIcon,
-        renderMarkdown,
-        renderAvatar,
-        escapeHtml,
-        escapeAttr,
-        escapeJsString,
-        sanitizeColor,
-        showDetailDropdown,
-        setupMentionAutocomplete,
-        renderTicketRitualActions,
-        getIssues,
     });
 
 }
