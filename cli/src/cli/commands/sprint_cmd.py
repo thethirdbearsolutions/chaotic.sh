@@ -23,9 +23,9 @@ def register(cli):
 
     @sprint.command("create")
     @click.argument("name", required=False)
-    @click.option("--budget", type=int, help="Ignored (sprints are managed automatically)")
-    @click.option("--no-budget", is_flag=True, help="Ignored (sprints are managed automatically)")
-    @click.option("--description", help="Ignored (sprints are managed automatically)")
+    @click.option("--budget", type=int, hidden=True)
+    @click.option("--no-budget", is_flag=True, hidden=True)
+    @click.option("--description", hidden=True)
     @_main().json_option
     @_main().require_project
     @_main().handle_error

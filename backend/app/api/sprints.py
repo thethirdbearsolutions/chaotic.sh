@@ -45,8 +45,8 @@ async def list_sprints(
 @router.post("", response_model=SprintResponse, status_code=status.HTTP_200_OK)
 async def create_sprint(
     project_id: str,
-    sprint_in: SprintCreate,
     current_user: CurrentUser,
+    sprint_in: SprintCreate | None = None,
 ):
     """No-op: sprints are managed automatically.
 
