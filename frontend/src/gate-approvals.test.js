@@ -18,7 +18,21 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s || ''),
+    escapeAttr: vi.fn(s => s || ''),
     escapeJsString: vi.fn(s => s || ''),
+}));
+
+vi.mock('./projects.js', () => ({
+    getProjects: vi.fn(() => []),
+}));
+
+vi.mock('./state.js', () => ({
+    getPendingGates: vi.fn(() => []),
+    setPendingGates: vi.fn(),
+}));
+
+vi.mock('./rituals-view.js', () => ({
+    completeGateRitual: vi.fn(),
 }));
 
 vi.mock('marked', () => ({
@@ -87,7 +101,7 @@ describe('handleGateApproval', () => {
         expect(api.completeTicketGateRitual).toHaveBeenCalledWith('r1', 'i1', 'looks good');
         expect(showToast).toHaveBeenCalledWith('GATE ritual "Test" approved!', 'success');
         expect(closeModal).toHaveBeenCalled();
-        expect(window.loadGateApprovals).toHaveBeenCalled();
+        // loadGateApprovals is now called directly within the module (no longer via window)
     });
 
     it('passes null when note is empty', async () => {

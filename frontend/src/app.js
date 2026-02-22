@@ -74,7 +74,7 @@ import {
     updateGroupBy,
     getGroupByValue,
 } from './issues-view.js';
-import { completeGateFromList, approveReviewFromList } from './gate-approvals.js';
+import { loadGateApprovals, dismissApprovalsExplainer } from './gate-approvals.js';
 import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
 import {
     setDependencies as setEpicDetailViewDependencies,
@@ -215,8 +215,6 @@ import {
     getCurrentView,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
-    getPendingGates,
-    setPendingGates,
     getIssues,
     setIssues,
     getCurrentUser,
@@ -549,317 +547,9 @@ async function viewDocumentByPath(docId) {
     }
 }
 
-// Sprint limbo rituals shown in the approvals view (CHT-905)
-let sprintLimboApprovals = [];
+// loadGateApprovals, renderGateApprovals, dismissApprovalsExplainer, renderApprovalIssue
+// moved to gate-approvals.js (CHT-1040)
 
-async function loadGateApprovals() {
-    if (!window.currentTeam) return;
-
-    const container = document.getElementById('gate-approvals-list');
-    if (!container) return;
-
-    container.innerHTML = '<div class="loading">Loading pending approvals...</div>';
-
-    try {
-        // Load from all projects in parallel
-        const results = await Promise.all(getProjects().map(async project => {
-            const [approvals, limbo] = await Promise.all([
-                api.getPendingApprovals(project.id),
-                api.getLimboStatus(project.id),
-            ]);
-            return { project, approvals, limbo };
-        }));
-
-        const allApprovals = [];
-        const allLimbo = [];
-        for (const { project, approvals, limbo } of results) {
-            allApprovals.push(...approvals);
-            if (limbo && limbo.in_limbo) {
-                // Collect pending sprint rituals that need human action:
-                // gate-mode rituals awaiting completion, or attested rituals awaiting approval
-                const actionable = (limbo.pending_rituals || []).filter(r => {
-                    if (r.attestation?.approved_at) return false;
-                    return r.approval_mode === 'gate' || !!r.attestation;
-                });
-                if (actionable.length > 0) {
-                    allLimbo.push({ project, rituals: actionable });
-                }
-            }
-        }
-        setPendingGates(allApprovals);
-        sprintLimboApprovals = allLimbo;
-        renderGateApprovals();
-    } catch (e) {
-        container.innerHTML = `<div class="empty-state"><h3>Error loading approvals</h3><p>${escapeHtml(e.message)}</p></div>`;
-    }
-}
-
-function renderGateApprovals() {
-    const container = document.getElementById('gate-approvals-list');
-    if (!container) return;
-
-    const pendingItems = getPendingGates();
-    const hasSprintLimbo = sprintLimboApprovals.length > 0;
-
-    // First-use explainer (CHT-766) — shown once, dismissed via localStorage
-    const explainerKey = 'chaotic_approvals_explainer_dismissed';
-    const showExplainer = !localStorage.getItem(explainerKey);
-
-    if (pendingItems.length === 0 && !hasSprintLimbo) {
-        if (showExplainer) {
-            container.innerHTML = `
-                <div class="empty-state approvals-explainer">
-                    <h3>Welcome to Approvals</h3>
-                    <p>This is where you'll review and approve ritual attestations from your team.</p>
-                    <div class="explainer-details">
-                        <p><strong>What are rituals?</strong> Rituals are configurable checks that run when sprints close, tickets are claimed, or tickets are closed. They ensure your team follows processes like running tests, updating docs, or getting code reviewed.</p>
-                        <p><strong>How approvals work:</strong></p>
-                        <ul>
-                            <li><strong>Gate</strong> rituals require a human to complete them directly — agents cannot attest.</li>
-                            <li><strong>Review</strong> rituals are attested by agents but need human approval before they count.</li>
-                            <li><strong>Auto</strong> rituals are cleared immediately by agents (they won't appear here).</li>
-                        </ul>
-                        <p>To set up rituals, go to a project's settings and configure them under the ritual tabs.</p>
-                    </div>
-                    <button class="btn btn-secondary" onclick="dismissApprovalsExplainer()">Got it!</button>
-                </div>
-            `;
-        } else {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <h3>No pending approvals</h3>
-                    <p>All rituals have been completed. Nice work!</p>
-                </div>
-            `;
-        }
-        return;
-    }
-
-    let html = '';
-
-    // Sprint limbo section (CHT-905)
-    if (hasSprintLimbo) {
-        html += `
-            <div class="gate-section">
-                <h3 class="gate-section-title">Sprint Rituals</h3>
-                <p class="gate-section-desc">Sprint is in limbo — complete these rituals to activate the next sprint</p>
-                <div class="gate-list">
-                    ${sprintLimboApprovals.map(({ project, rituals }) => `
-                        <div class="gate-issue-card">
-                            <div class="gate-issue-header">
-                                <span class="gate-issue-id">${escapeHtml(project.name)}</span>
-                                <span class="badge badge-in_progress">in limbo</span>
-                            </div>
-                            <div class="gate-rituals">
-                                ${rituals.map(r => {
-                                    const hasAttestation = r.attestation && !r.attestation.approved_at;
-                                    const statusIcon = hasAttestation ? '⏳' : '○';
-                                    const statusText = hasAttestation
-                                        ? `<span class="gate-waiting-info">Attested by <strong>${escapeHtml(r.attestation.attested_by_name || 'Unknown')}</strong></span>`
-                                        : (r.approval_mode === 'gate'
-                                            ? ''
-                                            : '<span class="text-muted">Awaiting agent attestation</span>');
-                                    const actionBtn = hasAttestation
-                                        ? `<button class="btn btn-small btn-primary sprint-approve-btn"
-                                            data-ritual-id="${escapeAttr(r.id)}"
-                                            data-project-id="${escapeAttr(project.id)}">Approve</button>`
-                                        : (r.approval_mode === 'gate'
-                                            ? `<button class="btn btn-small btn-primary sprint-complete-btn"
-                                                data-ritual-id="${escapeAttr(r.id)}"
-                                                data-project-id="${escapeAttr(project.id)}"
-                                                data-ritual-name="${escapeAttr(r.name)}">Complete</button>`
-                                            : '');
-
-                                    return `
-                                        <div class="gate-ritual">
-                                            <div class="gate-ritual-info">
-                                                <span class="gate-ritual-name">${statusIcon} ${escapeHtml(r.name)}
-                                                    <span class="badge badge-ritual-${escapeAttr(r.approval_mode)}">${escapeHtml(r.approval_mode)}</span>
-                                                </span>
-                                                <span class="gate-ritual-prompt">${escapeHtml(r.prompt)}</span>
-                                                ${statusText}
-                                            </div>
-                                            ${actionBtn}
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    // Filter helper: returns only the approvals matching a predicate
-    const getApprovals = (item) => item.pending_approvals || [];
-    const filterPred = (pred) => (item) => {
-        const filtered = getApprovals(item).filter(pred);
-        return filtered.length > 0 ? { ...item, _filteredApprovals: filtered } : null;
-    };
-
-    // Group by type: GATE claim, GATE close, REVIEW (each issue only shows matching rituals per section)
-    const claimGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'claim')).filter(Boolean);
-    const closeGates = pendingItems.map(filterPred(r => r.approval_mode === 'gate' && r.limbo_type === 'close')).filter(Boolean);
-    const reviewItems = pendingItems.map(filterPred(r => r.approval_mode === 'review')).filter(Boolean);
-
-    if (claimGates.length > 0) {
-        html += `
-            <div class="gate-section">
-                <h3 class="gate-section-title">Waiting to Claim</h3>
-                <p class="gate-section-desc">Someone tried to claim these tickets but is waiting for your approval</p>
-                <div class="gate-list">
-                    ${claimGates.map(renderApprovalIssue).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    if (closeGates.length > 0) {
-        html += `
-            <div class="gate-section">
-                <h3 class="gate-section-title">Waiting to Close</h3>
-                <p class="gate-section-desc">Someone tried to close these tickets but is waiting for your approval</p>
-                <div class="gate-list">
-                    ${closeGates.map(renderApprovalIssue).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    if (reviewItems.length > 0) {
-        html += `
-            <div class="gate-section">
-                <h3 class="gate-section-title">Awaiting Review Approval</h3>
-                <p class="gate-section-desc">An agent attested these rituals and they need your approval</p>
-                <div class="gate-list">
-                    ${reviewItems.map(renderApprovalIssue).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    container.innerHTML = html;
-
-    // Attach click handlers for gate approve buttons (GATE mode)
-    container.querySelectorAll('.gate-approve-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const d = btn.dataset;
-            completeGateFromList(
-                d.ritualId,
-                d.issueId,
-                d.ritualName,
-                d.ritualPrompt,
-                d.issueIdentifier,
-                d.issueTitle,
-                d.requestedBy,
-                d.requestedAt
-            );
-        });
-    });
-
-    // Attach click handlers for review approve buttons (REVIEW mode)
-    container.querySelectorAll('.review-approve-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const d = btn.dataset;
-            approveReviewFromList(
-                d.ritualId,
-                d.issueId,
-                d.ritualName,
-                d.ritualPrompt,
-                d.issueIdentifier,
-                d.issueTitle,
-                d.requestedBy,
-                d.requestedAt,
-                d.attestationNote
-            );
-        });
-    });
-
-    // Attach click handlers for sprint ritual buttons (CHT-905)
-    container.querySelectorAll('.sprint-approve-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            btn.disabled = true;
-            try {
-                await api.approveAttestation(btn.dataset.ritualId, btn.dataset.projectId);
-                showToast('Sprint ritual approved!', 'success');
-                await loadGateApprovals();
-            } catch (e) {
-                btn.disabled = false;
-                showToast(e.message, 'error');
-            }
-        });
-    });
-    container.querySelectorAll('.sprint-complete-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            completeGateRitual(btn.dataset.ritualId, btn.dataset.projectId, btn.dataset.ritualName);
-        });
-    });
-}
-
-/**
- * Dismiss the approvals first-use explainer (CHT-766).
- */
-function dismissApprovalsExplainer() {
-    localStorage.setItem('chaotic_approvals_explainer_dismissed', '1');
-    renderGateApprovals();
-}
-
-function renderApprovalIssue(approvalIssue) {
-    const approvals = approvalIssue._filteredApprovals || approvalIssue.pending_approvals || [];
-    const ritualList = approvals.map(r => {
-        const isReview = r.approval_mode === 'review';
-        const waitingLabel = isReview ? 'Attested by' : 'Waiting';
-        const waitingInfo = r.requested_by_name
-            ? `<span class="gate-waiting-info">${waitingLabel}: <strong>${escapeHtml(r.requested_by_name)}</strong>${r.requested_at ? ` (${formatRelativeTime(r.requested_at)})` : ''}</span>`
-            : '';
-        const attestationNote = isReview && r.attestation_note
-            ? `<div class="gate-attestation-note">${renderMarkdown(r.attestation_note)}</div>`
-            : '';
-        const btnClass = isReview ? 'review-approve-btn' : 'gate-approve-btn';
-        const btnLabel = isReview ? 'Approve' : 'Complete';
-        const modeLabel = isReview
-            ? '<span class="badge badge-review">review</span>'
-            : '<span class="badge badge-gate">gate</span>';
-
-        return `
-            <div class="gate-ritual">
-                <div class="gate-ritual-info">
-                    <span class="gate-ritual-name">${escapeHtml(r.ritual_name)} ${modeLabel}</span>
-                    <span class="gate-ritual-prompt">${escapeHtml(r.ritual_prompt)}</span>
-                    ${waitingInfo}
-                    ${attestationNote}
-                </div>
-                <button class="btn btn-small btn-primary ${btnClass}"
-                    data-ritual-id="${escapeAttr(r.ritual_id)}"
-                    data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
-                    data-ritual-name="${escapeAttr(r.ritual_name)}"
-                    data-ritual-prompt="${escapeAttr(r.ritual_prompt)}"
-                    data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
-                    data-issue-title="${escapeAttr(approvalIssue.title)}"
-                    data-requested-by="${escapeAttr(r.requested_by_name || '')}"
-                    data-requested-at="${escapeAttr(r.requested_at || '')}"
-                    data-attestation-note="${escapeAttr(r.attestation_note || '')}">${btnLabel}</button>
-            </div>
-        `;
-    }).join('');
-
-    return `
-        <div class="gate-issue-card">
-            <div class="gate-issue-header">
-                <a href="/issue/${encodeURIComponent(approvalIssue.identifier)}" onclick="event.preventDefault(); viewIssue('${escapeJsString(approvalIssue.issue_id)}')" class="gate-issue-link">
-                    <span class="gate-issue-id">${escapeHtml(approvalIssue.identifier)}</span>
-                    <span class="gate-issue-title">${escapeHtml(approvalIssue.title)}</span>
-                </a>
-                <span class="badge badge-${approvalIssue.status}">${approvalIssue.status.replace('_', ' ')}</span>
-            </div>
-            <div class="gate-issue-project">${escapeHtml(approvalIssue.project_name)}</div>
-            <div class="gate-rituals">
-                ${ritualList}
-            </div>
-        </div>
-    `;
-}
 
 function getMemberHandle(member) {
     if (member.name) {
@@ -1303,28 +993,6 @@ document.addEventListener('keydown', createModifierKeyHandler({
     closeCommandPalette,
 }));
 
-// Format ISO timestamp to relative time (e.g., "2 hours ago")
-function formatRelativeTime(isoString) {
-    if (!isoString) return '';
-    const date = new Date(isoString);
-    // Handle invalid dates
-    if (isNaN(date.getTime())) return '';
-    const now = new Date();
-    const diffMs = now - date;
-    // Handle future dates
-    if (diffMs < 0) return 'just now';
-    const diffSecs = Math.floor(diffMs / 1000);
-    const diffMins = Math.floor(diffSecs / 60);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffSecs < 60) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays === 1) return 'yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-}
 
 // ============================================
 // QUICK CREATE (with optimistic UI)
@@ -1568,7 +1236,6 @@ Object.assign(window, {
     // Rituals (pending rituals approval)
     approveRitual,
     completeGateRitual,
-    // completeGateFromList moved to gate-approvals.js
 
     // Ticket rituals
     toggleSection,
