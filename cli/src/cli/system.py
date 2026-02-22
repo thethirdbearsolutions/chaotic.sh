@@ -1250,15 +1250,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
     success, message = run_migrations(fake_initial=fake_initial)
     if not success:
         console.print(f"[red]{message}[/red]")
-        # Rollback
-        console.print("Rolling back...")
-        if current_commit:
-            checkout_version(current_commit, force=True)
-        if backup_path:
-            restore_backup(backup_path)
+        console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
+        console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
         if was_running:
+            console.print("Restarting server on new code...")
             if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+                console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         raise SystemExit(1)
 
     # Start server
