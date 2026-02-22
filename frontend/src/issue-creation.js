@@ -14,8 +14,9 @@ import { viewIssue } from './issue-detail-view.js';
 import { loadIssues } from './issues-view.js';
 import { loadMyIssues } from './dashboard.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
-import { formatStatus, formatPriority, formatIssueType, renderAvatar, escapeHtml, escapeJsString } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, renderAvatar, escapeHtml, escapeAttr } from './utils.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
+import { registerActions } from './event-delegation.js';
 
 const ISSUE_TEMPLATES = [
     {
@@ -85,7 +86,7 @@ export function showCreateIssueModal(preselectedProjectId = null) {
     document.getElementById('modal-content').innerHTML = `
         <div class="create-issue-modal">
             <div class="create-issue-header">
-                <select id="create-issue-project" class="project-select" onchange="updateCreateIssueProject()">
+                <select id="create-issue-project" class="project-select" data-action="update-create-project">
                     <option value="">Select project</option>
                     ${projectOptions}
                 </select>
@@ -94,7 +95,7 @@ export function showCreateIssueModal(preselectedProjectId = null) {
             <div class="create-issue-body">
                 <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Issue title" autofocus>
                 <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" onclick="toggleCreateIssueOptions()">
+                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options">
                     <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                     More options
                 </button>
@@ -103,7 +104,7 @@ export function showCreateIssueModal(preselectedProjectId = null) {
                 <div class="create-issue-options-content">
                     <div class="create-issue-template">
                         <label for="create-issue-template">Template</label>
-                        <select id="create-issue-template" onchange="applyIssueTemplate(this.value)">
+                        <select id="create-issue-template" data-action="apply-template">
                             ${ISSUE_TEMPLATES.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
                         </select>
                     </div>
@@ -114,31 +115,31 @@ export function showCreateIssueModal(preselectedProjectId = null) {
                 </div>
                 <div class="create-issue-toolbar">
                     <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('status', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
                             ${getStatusIcon('backlog')}
                             <span id="create-issue-status-label">Backlog</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('priority', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
                             ${getPriorityIcon('no_priority')}
                             <span id="create-issue-priority-label">Priority</span>
                         </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" onclick="toggleCreateIssueDropdown('type', event)">
+                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
                             <span class="issue-type-badge type-task">Task</span>
                             <span id="create-issue-type-label">Task</span>
                         </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" onclick="toggleCreateIssueDropdown('labels', event)">
+                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
                             <span id="create-issue-labels-label">Labels</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('assignee', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
                             <span id="create-issue-assignee-label">Assignee</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('estimate', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                             <span id="create-issue-estimate-label">Estimate</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('sprint', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="sprint">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                             <span id="create-issue-sprint-label">Sprint</span>
                         </button>
@@ -146,8 +147,8 @@ export function showCreateIssueModal(preselectedProjectId = null) {
                 </div>
             </div>
             <div class="create-issue-footer">
-                <button type="button" id="btn-create-and-new" class="btn btn-secondary" onclick="handleCreateIssueAndNew()">Create & New</button>
-                <button type="button" id="btn-create-issue" class="btn btn-primary" onclick="handleCreateIssueNew()">Create issue</button>
+                <button type="button" id="btn-create-and-new" class="btn btn-secondary" data-action="create-issue-and-new">Create & New</button>
+                <button type="button" id="btn-create-issue" class="btn btn-primary" data-action="create-issue-submit">Create issue</button>
             </div>
             <input type="hidden" id="create-issue-status" value="backlog">
             <input type="hidden" id="create-issue-priority" value="no_priority">
@@ -213,7 +214,7 @@ export function showCreateSubIssueModal(parentId, projectId) {
             <div class="create-issue-body">
                 <input type="text" id="create-issue-title" class="create-issue-title-input" placeholder="Sub-issue title" autofocus>
                 <textarea id="create-issue-description" class="create-issue-description-input" placeholder="Add description..." rows="4"></textarea>
-                <button type="button" class="more-options-toggle" id="more-options-toggle" onclick="toggleCreateIssueOptions()">
+                <button type="button" class="more-options-toggle" id="more-options-toggle" data-action="toggle-create-options">
                     <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                     More options
                 </button>
@@ -221,27 +222,27 @@ export function showCreateSubIssueModal(parentId, projectId) {
             <div class="create-issue-options collapsed" id="create-issue-options-panel">
                 <div class="create-issue-toolbar">
                     <div class="toolbar-buttons">
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('status', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="status">
                             ${getStatusIcon('backlog')}
                             <span id="create-issue-status-label">Backlog</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('priority', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="priority">
                             ${getPriorityIcon('no_priority')}
                             <span id="create-issue-priority-label">Priority</span>
                         </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" onclick="toggleCreateIssueDropdown('type', event)">
+                        <button type="button" class="toolbar-btn" id="create-issue-type-btn" data-action="toggle-create-dropdown" data-dropdown-type="type">
                             <span class="issue-type-badge type-task">Task</span>
                             <span id="create-issue-type-label">Task</span>
                         </button>
-                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" onclick="toggleCreateIssueDropdown('labels', event)">
+                        <button type="button" class="toolbar-btn" id="create-issue-labels-btn" data-action="toggle-create-dropdown" data-dropdown-type="labels">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12.99V3h9.99l7.6 7.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
                             <span id="create-issue-labels-label">Labels</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('assignee', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="assignee">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
                             <span id="create-issue-assignee-label">Assignee</span>
                         </button>
-                        <button type="button" class="toolbar-btn" onclick="toggleCreateIssueDropdown('estimate', event)">
+                        <button type="button" class="toolbar-btn" data-action="toggle-create-dropdown" data-dropdown-type="estimate">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                             <span id="create-issue-estimate-label">Estimate</span>
                         </button>
@@ -249,7 +250,7 @@ export function showCreateSubIssueModal(parentId, projectId) {
                 </div>
             </div>
             <div class="create-issue-footer">
-                <button type="button" class="btn btn-primary" onclick="handleCreateSubIssue('${escapeJsString(parentId)}', '${escapeJsString(projectId)}')">Create sub-issue</button>
+                <button type="button" class="btn btn-primary" data-action="create-sub-issue-submit" data-parent-id="${escapeAttr(parentId)}" data-project-id="${escapeAttr(projectId)}">Create sub-issue</button>
             </div>
             <input type="hidden" id="create-issue-status" value="backlog">
             <input type="hidden" id="create-issue-priority" value="no_priority">
@@ -302,7 +303,7 @@ export async function handleCreateSubIssue(parentId, projectId) {
 export async function toggleCreateIssueDropdown(type, event) {
     closeAllDropdowns();
 
-    const btn = event.currentTarget;
+    const btn = event.currentTarget || event.target.closest('[data-action]');
     const rect = btn.getBoundingClientRect();
 
     const dropdown = document.createElement('div');
@@ -317,7 +318,7 @@ export async function toggleCreateIssueDropdown(type, event) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Status</div>
             ${['backlog', 'todo', 'in_progress', 'in_review', 'done'].map(status => `
-                <button class="dropdown-option ${status === currentStatus ? 'selected' : ''}" onclick="setCreateIssueField('status', '${status}', '${formatStatus(status)}')">
+                <button class="dropdown-option ${status === currentStatus ? 'selected' : ''}" data-action="set-create-field" data-field="status" data-value="${status}" data-label="${escapeAttr(formatStatus(status))}">
                     ${getStatusIcon(status)}
                     <span>${formatStatus(status)}</span>
                 </button>
@@ -328,7 +329,7 @@ export async function toggleCreateIssueDropdown(type, event) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Priority</div>
             ${['no_priority', 'urgent', 'high', 'medium', 'low'].map(priority => `
-                <button class="dropdown-option ${priority === currentPriority ? 'selected' : ''}" onclick="setCreateIssueField('priority', '${priority}', '${formatPriority(priority)}')">
+                <button class="dropdown-option ${priority === currentPriority ? 'selected' : ''}" data-action="set-create-field" data-field="priority" data-value="${priority}" data-label="${escapeAttr(formatPriority(priority))}">
                     ${getPriorityIcon(priority)}
                     <span>${formatPriority(priority)}</span>
                 </button>
@@ -339,7 +340,7 @@ export async function toggleCreateIssueDropdown(type, event) {
         dropdown.innerHTML = `
             <div class="dropdown-header">Type</div>
             ${['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'].map(issueType => `
-                <button class="dropdown-option ${issueType === currentType ? 'selected' : ''}" onclick="setCreateIssueField('type', '${issueType}', '${formatIssueType(issueType)}')">
+                <button class="dropdown-option ${issueType === currentType ? 'selected' : ''}" data-action="set-create-field" data-field="type" data-value="${issueType}" data-label="${escapeAttr(formatIssueType(issueType))}">
                     <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
                 </button>
             `).join('')}
@@ -373,7 +374,7 @@ export async function toggleCreateIssueDropdown(type, event) {
         const assigneeOptions = getAssigneeOptionList();
         dropdown.innerHTML = `
             <div class="dropdown-header">Assignee</div>
-            <button class="dropdown-option ${!currentAssignee ? 'selected' : ''}" onclick="setCreateIssueField('assignee', '', 'Assignee')">
+            <button class="dropdown-option ${!currentAssignee ? 'selected' : ''}" data-action="set-create-field" data-field="assignee" data-value="" data-label="Assignee">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
                 <span>Unassigned</span>
             </button>
@@ -382,7 +383,7 @@ export async function toggleCreateIssueDropdown(type, event) {
             ` : assigneeOptions.map(({ assignee, indent }) => {
                 const name = formatAssigneeName(assignee) || 'User';
                 return `
-                <button class="dropdown-option ${assignee.id === currentAssignee ? 'selected' : ''}" onclick="setCreateIssueField('assignee', '${escapeJsString(assignee.id)}', '${escapeJsString(name)}')">
+                <button class="dropdown-option ${assignee.id === currentAssignee ? 'selected' : ''}" data-action="set-create-field" data-field="assignee" data-value="${escapeAttr(assignee.id)}" data-label="${escapeAttr(name)}">
                     ${renderAvatar(assignee, 'avatar-small')}
                     <span>${formatAssigneeOptionLabel(assignee, indent)}</span>
                 </button>
@@ -397,7 +398,7 @@ export async function toggleCreateIssueDropdown(type, event) {
             ${estimateOptions.map(est => {
                 const strValue = est.value === null ? '' : String(est.value);
                 return `
-                <button class="dropdown-option ${strValue === currentEstimate ? 'selected' : ''}" onclick="setCreateIssueField('estimate', '${strValue}', '${escapeJsString(est.value ? est.label : 'Estimate')}')">
+                <button class="dropdown-option ${strValue === currentEstimate ? 'selected' : ''}" data-action="set-create-field" data-field="estimate" data-value="${escapeAttr(strValue)}" data-label="${escapeAttr(est.value ? est.label : 'Estimate')}">
                     <span>${escapeHtml(est.label)}</span>
                 </button>
             `}).join('')}
@@ -413,12 +414,12 @@ export async function toggleCreateIssueDropdown(type, event) {
                 const available = projectSprints.filter(s => s.status !== 'completed');
                 dropdown.innerHTML = `
                     <div class="dropdown-header">Sprint</div>
-                    <button class="dropdown-option ${!currentSprintId ? 'selected' : ''}" onclick="setCreateIssueField('sprint', '', 'Sprint')">
+                    <button class="dropdown-option ${!currentSprintId ? 'selected' : ''}" data-action="set-create-field" data-field="sprint" data-value="" data-label="Sprint">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                         <span>No Sprint</span>
                     </button>
                     ${available.map(sprint => `
-                        <button class="dropdown-option ${sprint.id === currentSprintId ? 'selected' : ''}" onclick="setCreateIssueField('sprint', '${escapeJsString(sprint.id)}', '${escapeJsString(sprint.name)}')">
+                        <button class="dropdown-option ${sprint.id === currentSprintId ? 'selected' : ''}" data-action="set-create-field" data-field="sprint" data-value="${escapeAttr(sprint.id)}" data-label="${escapeAttr(sprint.name)}">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                             <span>${escapeHtml(sprint.name)}${sprint.status === 'active' ? ' (Active)' : ''}</span>
                         </button>
@@ -541,3 +542,31 @@ export async function handleCreateIssueNew() {
 export async function handleCreateIssueAndNew() {
     await submitCreateIssue({ keepOpen: true });
 }
+
+// Register delegated event handlers
+registerActions({
+    'toggle-create-dropdown': (event, data) => {
+        toggleCreateIssueDropdown(data.dropdownType, event);
+    },
+    'set-create-field': (event, data) => {
+        setCreateIssueField(data.field, data.value, data.label);
+    },
+    'create-issue-submit': () => {
+        handleCreateIssueNew();
+    },
+    'create-issue-and-new': () => {
+        handleCreateIssueAndNew();
+    },
+    'update-create-project': () => {
+        updateCreateIssueProject();
+    },
+    'apply-template': (event) => {
+        applyIssueTemplate(event.target.value);
+    },
+    'toggle-create-options': () => {
+        toggleCreateIssueOptions();
+    },
+    'create-sub-issue-submit': (event, data) => {
+        handleCreateSubIssue(data.parentId, data.projectId);
+    },
+});

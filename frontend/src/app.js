@@ -11,15 +11,7 @@ import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import {
     showCreateIssueModal,
-    toggleCreateIssueOptions,
-    applyIssueTemplate,
     showCreateSubIssueModal,
-    handleCreateSubIssue,
-    toggleCreateIssueDropdown,
-    updateCreateIssueProject,
-    setCreateIssueField,
-    handleCreateIssueNew,
-    handleCreateIssueAndNew,
 } from './issue-creation.js';
 import {
     showEditIssueModal,
@@ -932,10 +924,6 @@ Object.assign(window, {
     navigateToIssueByIdentifier,
 
     // Issue creation
-    handleCreateIssueNew,
-    handleCreateIssueAndNew,
-    setCreateIssueField,
-    toggleCreateIssueDropdown,
     toggleCreateIssueLabelSelection,
     createLabelForCreateIssue,
     createLabelFromDropdown,
@@ -945,7 +933,6 @@ Object.assign(window, {
 
     // Sub-issues and relations
     showCreateSubIssueModal,
-    handleCreateSubIssue,
     showAddRelationModal,
     handleAddRelation,
     deleteRelation,
@@ -1054,11 +1041,6 @@ Object.assign(window, {
 
     // Settings - Agents
     showCreateAgentModal,
-
-    // Issue creation helpers (called from HTML onchange handlers)
-    toggleCreateIssueOptions,
-    applyIssueTemplate,
-    updateCreateIssueProject,
 
     // Inline dropdown key handlers (CHT-717)
     handleLabelCreateKey,

@@ -17,6 +17,7 @@ import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
+import { registerActions } from './event-delegation.js';
 
 /**
  * View epic by path (identifier or ID)
@@ -96,7 +97,7 @@ export async function viewEpic(epicId, pushHistory = true) {
             <div class="issue-detail-layout">
                 <div class="issue-detail-main">
                     <div class="issue-detail-nav">
-                        <button class="back-link" onclick="navigateTo('${backView}')">
+                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Back
                         </button>
@@ -263,3 +264,10 @@ export async function viewEpic(epicId, pushHistory = true) {
         showToast(`Failed to load epic: ${e.message}`, 'error');
     }
 }
+
+// Register delegated event handlers
+registerActions({
+    'navigate-to': (_event, data) => {
+        navigateTo(data.view);
+    },
+});

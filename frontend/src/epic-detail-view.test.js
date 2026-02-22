@@ -51,6 +51,10 @@ vi.mock('./issue-list.js', () => ({
     getPriorityIcon: vi.fn(() => '<svg></svg>'),
 }));
 
+vi.mock('./event-delegation.js', () => ({
+    registerActions: vi.fn(),
+}));
+
 vi.mock('./issue-detail-view.js', () => ({
     getActivityIcon: vi.fn(() => '📝'),
     formatActivityActor: vi.fn((a) => a.user_name || 'Unknown'),

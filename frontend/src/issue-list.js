@@ -437,8 +437,8 @@ registerActions({
     'toggle-group': (event, data) => {
         toggleGroup(data.group);
     },
-    'show-inline-dropdown': (event, data) => {
-        showInlineDropdown(event, data.dropdownType, data.issueId);
+    'show-inline-dropdown': (event, data, target) => {
+        showInlineDropdown(event, data.dropdownType, data.issueId, target);
     },
     'navigate-issue': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
