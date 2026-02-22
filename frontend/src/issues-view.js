@@ -570,6 +570,9 @@ function renderProjectOptions(container) {
     container.innerHTML = html;
 }
 
+const OPEN_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review'];
+const CLOSED_STATUSES = ['done', 'canceled'];
+
 function renderStatusOptions(container) {
     const selected = getSelectedStatuses();
     const statuses = [
@@ -581,10 +584,18 @@ function renderStatusOptions(container) {
         { value: 'canceled', label: 'Canceled', icon: '<svg width="14" height="14" viewBox="0 0 16 16" class="status-canceled"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5"/></svg>' },
     ];
 
+    // Determine which preset is active
+    const isOpenPreset = OPEN_STATUSES.every(s => selected.includes(s)) && !CLOSED_STATUSES.some(s => selected.includes(s)) && selected.length === OPEN_STATUSES.length;
+    const isClosedPreset = CLOSED_STATUSES.every(s => selected.includes(s)) && !OPEN_STATUSES.some(s => selected.includes(s)) && selected.length === CLOSED_STATUSES.length;
+
     let html = `
         <div class="filter-options-header">
             <span class="filter-options-title">Status</span>
             ${selected.length > 0 ? '<button class="filter-options-clear" onclick="clearStatusFilterNew()">Clear</button>' : ''}
+        </div>
+        <div class="filter-presets">
+            <button class="filter-preset-btn ${isOpenPreset ? 'active' : ''}" onclick="setStatusPreset('open')">Open</button>
+            <button class="filter-preset-btn ${isClosedPreset ? 'active' : ''}" onclick="setStatusPreset('closed')">Closed</button>
         </div>
     `;
 
@@ -777,6 +788,22 @@ export function setProjectFilter(value) {
 
 export function clearProjectFilter() {
     setProjectFilter('');
+}
+
+export function setStatusPreset(preset) {
+    const statusValues = preset === 'open' ? OPEN_STATUSES : CLOSED_STATUSES;
+    const dropdown = document.getElementById('status-filter-dropdown');
+    if (!dropdown) return;
+
+    // Uncheck all, then check the preset statuses
+    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = statusValues.includes(cb.value);
+    });
+
+    updateStatusFilter();
+    renderFilterMenuCategories();
+    showFilterCategoryOptions('status');
 }
 
 export function toggleStatusOption(value, event) {

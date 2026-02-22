@@ -6192,6 +6192,34 @@ input[type="checkbox"] {
     background: var(--bg-hover);
 }
 
+.filter-presets {
+    display: flex;
+    gap: 6px;
+    padding: 4px 12px 8px;
+}
+
+.filter-preset-btn {
+    padding: 4px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.filter-preset-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.filter-preset-btn.active {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+}
+
 .filter-option {
     display: flex;
     align-items: center;
