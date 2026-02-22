@@ -126,6 +126,61 @@ describe('event-delegation', () => {
         });
     });
 
+    describe('click events do NOT fire on form data-action (CHT-1100)', () => {
+        it('does NOT fire form data-action when clicking textarea inside form', () => {
+            const handler = vi.fn();
+            registerActions({ 'save-comment': handler });
+
+            document.body.innerHTML = `
+                <form data-action="save-comment">
+                    <textarea id="comment">text</textarea>
+                    <button type="submit">Submit</button>
+                </form>
+            `;
+            const textarea = document.querySelector('textarea');
+            textarea.click();
+
+            expect(handler).not.toHaveBeenCalled();
+        });
+
+        it('clicking submit button fires handler exactly once (via submit, not click)', () => {
+            const handler = vi.fn();
+            registerActions({ 'save-comment': handler });
+
+            document.body.innerHTML = `
+                <form data-action="save-comment">
+                    <textarea>text</textarea>
+                    <button type="submit">Submit</button>
+                </form>
+            `;
+            const button = document.querySelector('button');
+            button.click();
+
+            // Should fire exactly once via submit handler, not double-fire via click + submit
+            expect(handler).toHaveBeenCalledTimes(1);
+            // The event should be a SubmitEvent (from submit handler), not a click
+            expect(handler.mock.calls[0][0].type).toBe('submit');
+        });
+
+        it('still fires submit events on forms with data-action', () => {
+            const handler = vi.fn();
+            registerActions({ 'save-comment': handler });
+
+            document.body.innerHTML = `
+                <form data-action="save-comment" data-issue-id="5">
+                    <textarea>text</textarea>
+                    <button type="submit">Submit</button>
+                </form>
+            `;
+            const form = document.querySelector('form');
+            const event = new Event('submit', { bubbles: true, cancelable: true });
+            form.dispatchEvent(event);
+
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(event.defaultPrevented).toBe(true);
+        });
+    });
+
     // input dispatch tests moved to 'input dispatch from form controls' section below
 
     describe('keydown dispatch', () => {
