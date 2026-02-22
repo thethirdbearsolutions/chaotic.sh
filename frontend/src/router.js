@@ -11,6 +11,9 @@ import { getProjectFromUrl } from './url-helpers.js';
 // View handler registry: { viewName: loadFunction }
 const viewHandlers = {};
 
+// Scroll position cache: { url: scrollY }
+const scrollPositions = new Map();
+
 // Configuration callbacks
 let onBeforeNavigate = null;
 let onDetailRoute = null;
@@ -27,6 +30,7 @@ export function resetRouter() {
     for (const key of Object.keys(viewHandlers)) {
         delete viewHandlers[key];
     }
+    scrollPositions.clear();
     onBeforeNavigate = null;
     onDetailRoute = null;
     onDetailPopstate = null;
@@ -74,6 +78,11 @@ export function getValidViews() {
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
  */
 export function navigateTo(view, pushHistory = true) {
+    // Save scroll position of the current page before navigating away
+    if (pushHistory) {
+        scrollPositions.set(window.location.href, window.scrollY);
+    }
+
     setCurrentView(view);
 
     // Update URL (preserve project param across views)
@@ -104,18 +113,32 @@ export function navigateTo(view, pushHistory = true) {
     // Run cleanup callbacks
     if (onBeforeNavigate) onBeforeNavigate();
 
-    // Hide all views
-    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    const switchView = () => {
+        // Hide all views
+        document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
 
-    // Show selected view
-    const viewEl = document.getElementById(`${view}-view`);
-    if (viewEl) {
-        viewEl.classList.remove('hidden');
+        // Show selected view
+        const viewEl = document.getElementById(`${view}-view`);
+        if (viewEl) {
+            viewEl.classList.remove('hidden');
+        }
+    };
+
+    // Use View Transitions API for smooth crossfade (progressive enhancement)
+    if (document.startViewTransition) {
+        document.startViewTransition(switchView);
+    } else {
+        switchView();
     }
 
     // Load view data
     const handler = viewHandlers[view];
     if (handler) handler();
+
+    // Scroll to top on forward navigation; popstate restores saved position
+    if (pushHistory) {
+        window.scrollTo(0, 0);
+    }
 }
 
 /**
@@ -156,6 +179,7 @@ export function handleRoute() {
  * Navigate to an issue by its identifier (e.g., "CHT-123").
  */
 export function navigateToIssueByIdentifier(identifier) {
+    scrollPositions.set(window.location.href, window.scrollY);
     history.pushState({ view: 'issue', identifier }, '', `/issue/${identifier}`);
     if (onIssueNavigate) onIssueNavigate(identifier);
 }
@@ -164,8 +188,22 @@ export function navigateToIssueByIdentifier(identifier) {
  * Navigate to an epic by its identifier (e.g., "CHT-123").
  */
 export function navigateToEpicByIdentifier(identifier) {
+    scrollPositions.set(window.location.href, window.scrollY);
     history.pushState({ view: 'epic', identifier }, '', `/epic/${identifier}`);
     if (onEpicNavigate) onEpicNavigate(identifier);
+}
+
+/**
+ * Restore saved scroll position for the current URL after a brief delay
+ * to allow the DOM to render.
+ */
+function restoreScrollPosition() {
+    const savedY = scrollPositions.get(window.location.href);
+    if (savedY !== undefined) {
+        requestAnimationFrame(() => {
+            window.scrollTo(0, savedY);
+        });
+    }
 }
 
 /**
@@ -176,8 +214,12 @@ export function initRouter() {
     if (initialized) return;
     initialized = true;
     window.addEventListener('popstate', (e) => {
+        // Save scroll position of the page we're leaving
+        scrollPositions.set(window.location.href, window.scrollY);
+
         // Try detail popstate handler first (issues, documents, sprints)
         if (e.state && onDetailPopstate && onDetailPopstate(e.state)) {
+            restoreScrollPosition();
             return;
         }
         // Standard view navigation
@@ -186,5 +228,6 @@ export function initRouter() {
         } else {
             handleRoute();
         }
+        restoreScrollPosition();
     });
 }

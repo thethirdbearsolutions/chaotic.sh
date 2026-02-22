@@ -39,6 +39,33 @@ body.theme-light {
     box-sizing: border-box;
 }
 
+/* View Transitions API — subtle crossfade between views */
+::view-transition-old(root) {
+    animation: fade-out 120ms ease-out;
+}
+
+::view-transition-new(root) {
+    animation: fade-in 120ms ease-in;
+}
+
+@keyframes fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Reduce motion: disable view transitions for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+        animation: none;
+    }
+}
+
 /* Base */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -3352,10 +3379,54 @@ input[type="checkbox"] {
 /* Sidebar Actions */
 .sidebar-actions {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-top: 16px;
+    justify-content: flex-end;
+    padding-top: 12px;
     border-top: 1px solid var(--border-color);
+}
+
+.sidebar-overflow-menu {
+    position: relative;
+}
+
+.overflow-menu-dropdown {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 160px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.overflow-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.overflow-menu-item:hover {
+    background: var(--bg-hover);
+}
+
+.overflow-menu-item.overflow-menu-danger {
+    color: var(--error-color);
+}
+
+.overflow-menu-item.overflow-menu-danger:hover {
+    background: rgba(248, 81, 73, 0.1);
 }
 
 .btn-block {

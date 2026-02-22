@@ -220,3 +220,46 @@ export function handleSpaClick(event, url, spaCallback) {
     event.preventDefault();
     spaCallback();
 }
+
+/**
+ * Format issue type for display
+ * @param {string} issueType - Issue type like 'task', 'bug', 'tech_debt', etc.
+ * @returns {string} Formatted type like 'Task', 'Tech Debt'
+ */
+export function formatIssueType(issueType) {
+    const labels = {
+        task: 'Task',
+        bug: 'Bug',
+        feature: 'Feature',
+        chore: 'Chore',
+        docs: 'Docs',
+        tech_debt: 'Tech Debt',
+        epic: 'Epic',
+    };
+    return labels[issueType] || 'Task';
+}
+
+/**
+ * Check if an avatar value is an image URL
+ */
+export function isImageAvatar(avatar) {
+    return typeof avatar === 'string' && (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('data:'));
+}
+
+/**
+ * Render an avatar element for an assignee
+ * @param {Object} assignee - Assignee object with name, avatar_url, is_agent
+ * @param {string} sizeClass - CSS class for avatar size
+ * @returns {string} HTML string for the avatar
+ */
+export function renderAvatar(assignee, sizeClass = 'avatar-small') {
+    const name = assignee?.name || assignee?.email || 'User';
+    const avatar = assignee?.avatar_url;
+    if (avatar) {
+        if (isImageAvatar(avatar)) {
+            return `<img class="${sizeClass} avatar-img" src="${escapeAttr(avatar)}" alt="${escapeAttr(name)}">`;
+        }
+        return `<div class="${sizeClass} avatar-emoji">${escapeHtml(avatar)}</div>`;
+    }
+    return `<div class="${sizeClass}">${name.charAt(0).toUpperCase()}</div>`;
+}
