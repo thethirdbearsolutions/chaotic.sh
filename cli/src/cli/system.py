@@ -621,7 +621,7 @@ def reinstall_cli() -> tuple[bool, str]:
         return False, "CLI reinstall timed out"
 
 
-def run_migrations() -> tuple[bool, str]:
+def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
     """Run pending database migrations using Oxyde. Returns (success, message)."""
     backend_dir = PROJECT_DIR / "backend"
     try:
@@ -633,28 +633,39 @@ def run_migrations() -> tuple[bool, str]:
         if not ok:
             return ok, msg
 
-        # Run Oxyde migrations
-        try:
+        # If user specified --fake-initial, mark the initial schema migration
+        # as applied without running it (for pre-Oxyde databases)
+        if fake_initial:
             run_command(
-                ["uv", "run", "oxyde", "migrate"],
+                ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
                 cwd=backend_dir,
-                timeout=120,
+                timeout=30,
             )
-        except subprocess.CalledProcessError as e:
-            output = (e.stderr or "") + (e.stdout or "")
-            if "already exists" in output:
-                # Existing DB from pre-Oxyde era — fake-apply to mark as done
-                run_command(
-                    ["uv", "run", "oxyde", "migrate", "--fake"],
-                    cwd=backend_dir,
-                    timeout=30,
-                )
-            else:
-                raise
+
+        # Run Oxyde migrations
+        run_command(
+            ["uv", "run", "oxyde", "migrate"],
+            cwd=backend_dir,
+            timeout=120,
+        )
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
     except subprocess.CalledProcessError as e:
+        output = (e.stderr or "") + (e.stdout or "")
+        if "already exists" in output:
+            if fake_initial:
+                return False, (
+                    "Migration failed: tables already exist even after --fake-initial.\n"
+                    "A migration beyond 0001_initial is trying to create existing tables.\n"
+                    "Manual intervention required — check 'oxyde showmigrations' in the backend directory."
+                )
+            return False, (
+                "Migration failed: tables already exist.\n"
+                "This usually means the database predates the Oxyde migration system.\n"
+                "To fix, re-run with --fake-initial:\n"
+                "  chaotic system upgrade --fake-initial --yes"
+            )
         return False, f"Migration failed: {e.stderr}"
 
 
@@ -1126,16 +1137,26 @@ def system_logs(follow, lines):
 @click.option("--version", "target_version", default=None, help="Version to upgrade to (default: latest)")
 @click.option("--no-backup", is_flag=True, help="Skip database backup (not recommended)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def system_upgrade(target_version, no_backup, yes):
+@click.option("--fake-initial", is_flag=True, help="Fake-apply initial migration (for pre-Oxyde databases)")
+def system_upgrade(target_version, no_backup, yes, fake_initial):
     """Upgrade to a new version.
 
     This command:
     1. Backs up your database (unless --no-backup)
     2. Stops the server
     3. Pulls and checks out the new version
-    4. Syncs dependencies
+    4. Syncs dependencies and runs database migrations
     5. Restarts the server
     6. Rolls back automatically if health check fails
+
+    If migrations fail with "already exists", your database predates the
+    migration system. Re-run with --fake-initial to mark the initial schema
+    as already applied, then apply new migrations normally:
+
+        chaotic system upgrade --fake-initial --yes
+
+    The --fake-initial flag can be used even when already on the latest
+    code version — it will skip the checkout but still run migrations.
     """
     if not is_server_installed():
         console.print("[red]Chaotic server is not installed.[/red]")
@@ -1186,17 +1207,10 @@ def system_upgrade(target_version, no_backup, yes):
             pass  # Non-critical, skip if git log fails
 
     # Check if already on target
-    if current_version == target_version:
+    already_current = current_version == target_version
+    if already_current and not fake_initial:
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
-
-    # Confirm upgrade
-    if not yes:
-        if not _confirm_action(f"\nUpgrade from {current_version} to {target_version}?"):
-            console.print("[yellow]Upgrade cancelled.[/yellow]")
-            raise SystemExit(0)
-
-    console.print()
 
     # Stop server FIRST (before backup to ensure consistent db state)
     was_running = is_service_running()
@@ -1207,6 +1221,20 @@ def system_upgrade(target_version, no_backup, yes):
             raise SystemExit(1)
         if not wait_for_service_stop(timeout=10):
             console.print("[yellow]Warning: Service may still be stopping[/yellow]")
+
+    # Confirm action
+    if not yes:
+        if already_current:
+            action = "Run migrations with --fake-initial?"
+        else:
+            action = f"Upgrade from {current_version} to {target_version}?"
+        if not _confirm_action(f"\n{action}"):
+            console.print("[yellow]Cancelled.[/yellow]")
+            if was_running:
+                start_service()
+            raise SystemExit(0)
+
+    console.print()
 
     # Backup database (now safe since server is stopped)
     backup_path = None
@@ -1219,36 +1247,36 @@ def system_upgrade(target_version, no_backup, yes):
         else:
             console.print("  [dim]No database to backup[/dim]")
 
-    # Checkout new version (force to handle dirty state from uv sync etc.)
-    console.print(f"Checking out {target_version}...")
-    ok, err = checkout_version(target_version, force=True)
-    if not ok:
-        console.print(f"[red]Failed to checkout version.[/red]")
-        if err:
-            console.print(f"  [dim]{err}[/dim]")
-        # Rollback
-        if current_commit:
-            console.print("Rolling back...")
-            checkout_version(current_commit, force=True)
-        if was_running:
-            if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
-        raise SystemExit(1)
+    if already_current:
+        console.print("Already on latest code. Running migrations...")
+    else:
+        # Checkout new version (force to handle dirty state from uv sync etc.)
+        console.print(f"Checking out {target_version}...")
+        ok, err = checkout_version(target_version, force=True)
+        if not ok:
+            console.print(f"[red]Failed to checkout version.[/red]")
+            if err:
+                console.print(f"  [dim]{err}[/dim]")
+            # Rollback
+            if current_commit:
+                console.print("Rolling back...")
+                checkout_version(current_commit, force=True)
+            if was_running:
+                if not start_service():
+                    console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+            raise SystemExit(1)
 
-    # Sync dependencies
-    console.print("Syncing dependencies...")
-    success, message = run_migrations()
+    # Sync dependencies and run database migrations
+    console.print("Syncing dependencies and running migrations...")
+    success, message = run_migrations(fake_initial=fake_initial)
     if not success:
         console.print(f"[red]{message}[/red]")
-        # Rollback
-        console.print("Rolling back...")
-        if current_commit:
-            checkout_version(current_commit, force=True)
-        if backup_path:
-            restore_backup(backup_path)
+        console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
+        console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
         if was_running:
+            console.print("Restarting server on new code...")
             if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+                console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         raise SystemExit(1)
 
     # Start server
