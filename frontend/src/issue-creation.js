@@ -387,8 +387,8 @@ export async function toggleCreateIssueDropdown(type, event) {
             ${estimateOptions.map(est => {
                 const strValue = est.value === null ? '' : String(est.value);
                 return `
-                <button class="dropdown-option ${strValue === currentEstimate ? 'selected' : ''}" onclick="setCreateIssueField('estimate', '${strValue}', '${est.value ? est.label : 'Estimate'}')">
-                    <span>${est.label}</span>
+                <button class="dropdown-option ${strValue === currentEstimate ? 'selected' : ''}" onclick="setCreateIssueField('estimate', '${strValue}', '${escapeJsString(est.value ? est.label : 'Estimate')}')">
+                    <span>${escapeHtml(est.label)}</span>
                 </button>
             `}).join('')}
         `;
@@ -437,20 +437,21 @@ export function updateCreateIssueProject() {
 }
 
 export function setCreateIssueField(field, value, label) {
-    const { getStatusIcon, getPriorityIcon, formatIssueType, closeAllDropdowns } = deps;
+    const { getStatusIcon, getPriorityIcon, formatIssueType, closeAllDropdowns, escapeHtml } = deps;
     document.getElementById(`create-issue-${field}`).value = value;
     document.getElementById(`create-issue-${field}-label`).textContent = label;
 
+    const safeLabel = escapeHtml(label);
     if (field === 'status') {
         const btn = document.querySelector('.toolbar-btn:first-child');
-        btn.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${label}</span>`;
+        btn.innerHTML = `${getStatusIcon(value)}<span id="create-issue-status-label">${safeLabel}</span>`;
     } else if (field === 'priority') {
         const btn = document.querySelectorAll('.toolbar-btn')[1];
-        btn.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${label}</span>`;
+        btn.innerHTML = `${getPriorityIcon(value)}<span id="create-issue-priority-label">${safeLabel}</span>`;
     } else if (field === 'type') {
         const btn = document.getElementById('create-issue-type-btn');
         if (btn) {
-            btn.innerHTML = `<span class="issue-type-badge type-${value}">${formatIssueType(value)}</span><span id="create-issue-type-label">${label}</span>`;
+            btn.innerHTML = `<span class="issue-type-badge type-${value}">${formatIssueType(value)}</span><span id="create-issue-type-label">${safeLabel}</span>`;
         }
     }
 

@@ -124,7 +124,6 @@ export async function handleUpdateIssue(event, issueId) {
     } catch (e) {
         showToast(`Failed to update issue: ${e.message}`, 'error');
     }
-    return false;
 }
 
 export async function deleteIssue(issueId) {
