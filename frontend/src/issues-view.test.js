@@ -406,16 +406,25 @@ describe('issues-view', () => {
             );
         });
 
-        it('saves filters to localStorage (CHT-1042)', () => {
+        it('saves filters to localStorage scoped by team (CHT-1042)', () => {
             document.getElementById('project-filter').value = 'proj-1';
             syncFiltersToUrl();
-            expect(localStorage.getItem('chaotic_issues_filters')).toContain('project=proj-1');
+            expect(localStorage.getItem('chaotic_issues_filters_team-1')).toContain('project=proj-1');
         });
 
         it('clears localStorage when no filters (CHT-1042)', () => {
-            localStorage.setItem('chaotic_issues_filters', 'project=proj-1');
+            localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
             syncFiltersToUrl();
-            expect(localStorage.getItem('chaotic_issues_filters')).toBeNull();
+            expect(localStorage.getItem('chaotic_issues_filters_team-1')).toBeNull();
+        });
+
+        it('does not save to localStorage when no team (CHT-1042)', () => {
+            const savedTeam = window.currentTeam;
+            window.currentTeam = null;
+            document.getElementById('project-filter').value = 'proj-1';
+            syncFiltersToUrl();
+            expect(localStorage.getItem('chaotic_issues_filters_null')).toBeNull();
+            window.currentTeam = savedTeam;
         });
     });
 
@@ -452,13 +461,13 @@ describe('issues-view', () => {
             expect(document.getElementById('project-filter').value).toBe('proj-1');
         });
 
-        it('falls back to localStorage when URL has no params (CHT-1042)', () => {
+        it('falls back to team-scoped localStorage when URL has no params (CHT-1042)', () => {
             Object.defineProperty(window, 'location', {
                 value: { search: '', pathname: '/issues', href: 'http://localhost/issues' },
                 writable: true,
                 configurable: true,
             });
-            localStorage.setItem('chaotic_issues_filters', 'project=proj-1');
+            localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
 
             loadFiltersFromUrl();
 
@@ -468,7 +477,25 @@ describe('issues-view', () => {
                 '',
                 '/issues?project=proj-1'
             );
-            localStorage.removeItem('chaotic_issues_filters');
+            localStorage.removeItem('chaotic_issues_filters_team-1');
+        });
+
+        it('does not fall back to localStorage when no team (CHT-1042)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '', pathname: '/issues', href: 'http://localhost/issues' },
+                writable: true,
+                configurable: true,
+            });
+            const savedTeam = window.currentTeam;
+            window.currentTeam = null;
+            localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
+
+            loadFiltersFromUrl();
+
+            // Should not apply the saved filter
+            expect(document.getElementById('project-filter').value).toBe('');
+            window.currentTeam = savedTeam;
+            localStorage.removeItem('chaotic_issues_filters_team-1');
         });
     });
 

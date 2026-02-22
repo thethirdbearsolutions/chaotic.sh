@@ -250,10 +250,13 @@ export function syncFiltersToUrl() {
     history.replaceState({ view: 'issues' }, '', newUrl);
 
     // Also persist to localStorage for cross-session recall (CHT-1042)
-    if (queryString) {
-        localStorage.setItem('chaotic_issues_filters', queryString);
-    } else {
-        localStorage.removeItem('chaotic_issues_filters');
+    const teamId = window.currentTeam?.id;
+    if (teamId) {
+        if (queryString) {
+            localStorage.setItem(`chaotic_issues_filters_${teamId}`, queryString);
+        } else {
+            localStorage.removeItem(`chaotic_issues_filters_${teamId}`);
+        }
     }
 }
 
@@ -262,7 +265,8 @@ export function loadFiltersFromUrl() {
 
     // Fall back to localStorage if URL has no filter params (CHT-1042)
     if (params.toString() === '') {
-        const saved = localStorage.getItem('chaotic_issues_filters');
+        const teamId = window.currentTeam?.id;
+        const saved = teamId ? localStorage.getItem(`chaotic_issues_filters_${teamId}`) : null;
         if (saved) {
             params = new URLSearchParams(saved);
             // Update URL to reflect restored filters
