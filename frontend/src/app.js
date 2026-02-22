@@ -4,8 +4,8 @@
 
 /* global api -- provided via window by main.js entry point */
 import { showModal, closeModal, isModalOpen } from './ui.js';
-import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout } from './auth.js';
-import { loadDocuments, viewDocument, showCreateDocumentModal } from './documents.js';
+import { updateUserInfo, showAuthScreen, showMainScreen, handleLogin, handleSignup, showLogin, showSignup, logout, initAuth } from './auth.js';
+import { loadDocuments, viewDocument, showCreateDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
 import { getAgents, loadAgents, showCreateAgentModal } from './agents.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import {
@@ -98,6 +98,10 @@ import {
     showCreateProjectModal,
     setGlobalProjectSelection,
     toggleRitualConditions,
+    switchProjectSettingsTab,
+    saveProjectSettingsGeneral,
+    saveProjectSettingsRules,
+    showCreateProjectRitualModal,
 } from './projects.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { showOnboarding, hasCompletedOnboarding, resetOnboarding } from './onboarding.js';
@@ -336,8 +340,273 @@ registerViews({
     },
 });
 
+/**
+ * Initialize modal event listeners (CHT-1057)
+ * Replaces inline onclick handlers on the modal overlay and close button.
+ */
+function initModal() {
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay) {
+        overlay.addEventListener('click', () => closeModal());
+        // Prevent clicks inside the modal from closing it
+        const modal = overlay.querySelector('.modal');
+        if (modal) modal.addEventListener('click', (e) => e.stopPropagation());
+    }
+    const closeBtn = document.querySelector('.modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => closeModal());
+}
+
+/**
+ * Initialize action buttons via data-action attributes (CHT-1057)
+ * Maps data-action values to handler functions.
+ */
+function initActionButtons() {
+    const actionMap = {
+        showCreateIssueModal,
+        showCreateEpicModal,
+        showCreateProjectModal,
+        showCreateDocumentModal,
+        showCreateTeamModal,
+        showEditTeamModal,
+        showInviteModal,
+        showCreateApiKeyModal,
+        showCreateAgentModal,
+        resetOnboarding,
+        logout,
+        navigateToProjects: () => navigateTo('projects'),
+    };
+
+    document.querySelectorAll('[data-action]').forEach(el => {
+        const action = actionMap[el.dataset.action];
+        if (action) el.addEventListener('click', () => action());
+    });
+}
+
+/**
+ * Initialize project settings view event listeners (CHT-1057)
+ * Replaces inline onclick handlers on tabs, save buttons, and ritual create buttons.
+ */
+function initProjectSettings() {
+    const view = document.getElementById('project-settings-view');
+    if (!view) return;
+
+    // Settings tabs
+    view.querySelectorAll('.settings-tab[data-tab]').forEach(tab => {
+        tab.addEventListener('click', () => switchProjectSettingsTab(tab.dataset.tab));
+    });
+
+    // Save buttons
+    const generalSave = view.querySelector('#project-settings-tab-general .btn-primary');
+    if (generalSave) generalSave.addEventListener('click', () => saveProjectSettingsGeneral());
+
+    const rulesSave = view.querySelector('#project-settings-tab-rules .btn-primary');
+    if (rulesSave) rulesSave.addEventListener('click', () => saveProjectSettingsRules());
+
+    // Create ritual buttons — use the tab ID to determine trigger type
+    const ritualTabMap = {
+        'project-settings-tab-sprint-rituals': 'every_sprint',
+        'project-settings-tab-close-rituals': 'ticket_close',
+        'project-settings-tab-claim-rituals': 'ticket_claim',
+    };
+    Object.entries(ritualTabMap).forEach(([tabId, trigger]) => {
+        const btn = view.querySelector(`#${tabId} .btn-primary`);
+        if (btn) btn.addEventListener('click', () => showCreateProjectRitualModal(trigger));
+    });
+}
+
+/**
+ * Initialize documents view event listeners (CHT-1057)
+ */
+function initDocumentsView() {
+    const docListBtn = document.getElementById('doc-view-list');
+    if (docListBtn) docListBtn.addEventListener('click', () => setDocViewMode('list'));
+
+    const docGridBtn = document.getElementById('doc-view-grid');
+    if (docGridBtn) docGridBtn.addEventListener('click', () => setDocViewMode('grid'));
+
+    const docSelectBtn = document.getElementById('doc-select-btn');
+    if (docSelectBtn) docSelectBtn.addEventListener('click', () => enterSelectionMode());
+
+    const docSearch = document.getElementById('doc-search');
+    if (docSearch) docSearch.addEventListener('input', () => debounceDocSearch());
+
+    const docProjectFilter = document.getElementById('doc-project-filter');
+    if (docProjectFilter) docProjectFilter.addEventListener('change', () => onDocProjectFilterChange());
+
+    const docSort = document.getElementById('doc-sort');
+    if (docSort) docSort.addEventListener('change', () => filterDocuments());
+}
+
+/**
+ * Initialize dashboard view event listeners (CHT-1057)
+ */
+function initDashboardView() {
+    const dashboardFilter = document.getElementById('dashboard-project-filter');
+    if (dashboardFilter) dashboardFilter.addEventListener('change', () => filterMyIssues());
+
+    const statusFilter = document.getElementById('my-issues-status-filter');
+    if (statusFilter) statusFilter.addEventListener('change', () => filterMyIssues());
+}
+
+/**
+ * Initialize issues view event listeners (CHT-1057)
+ * Handles search, filter buttons, filter dropdowns, select changes, and quick-create.
+ */
+function initIssuesView() {
+    const search = document.getElementById('issue-search');
+    if (search) search.addEventListener('input', () => debounceSearch());
+
+    // Filter & display menu buttons
+    const filterMenuBtn = document.getElementById('filter-menu-btn');
+    if (filterMenuBtn) filterMenuBtn.addEventListener('click', (e) => toggleFilterMenu(e));
+
+    const displayMenuBtn = document.getElementById('display-menu-btn');
+    if (displayMenuBtn) displayMenuBtn.addEventListener('click', (e) => toggleDisplayMenu(e));
+
+    // Project filter select
+    const projectFilter = document.getElementById('project-filter');
+    if (projectFilter) projectFilter.addEventListener('change', () => onProjectFilterChange());
+
+    // Multi-select toggle buttons (status, priority, label)
+    document.querySelectorAll('.multi-select-btn').forEach(btn => {
+        const wrapper = btn.parentElement;
+        if (wrapper?.querySelector('#status-filter-dropdown')) {
+            btn.addEventListener('click', () => toggleMultiSelect('status-filter-dropdown'));
+        } else if (wrapper?.querySelector('#priority-filter-dropdown')) {
+            btn.addEventListener('click', () => toggleMultiSelect('priority-filter-dropdown'));
+        } else if (wrapper?.querySelector('#label-filter-dropdown')) {
+            btn.addEventListener('click', () => toggleMultiSelect('label-filter-dropdown'));
+        }
+    });
+
+    // Status filter checkboxes
+    const statusDropdown = document.getElementById('status-filter-dropdown');
+    if (statusDropdown) {
+        statusDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => updateStatusFilter());
+        });
+        const clearBtn = statusDropdown.querySelector('.btn-small');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearStatusFilter());
+    }
+
+    // Priority filter checkboxes
+    const priorityDropdown = document.getElementById('priority-filter-dropdown');
+    if (priorityDropdown) {
+        priorityDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => updatePriorityFilter());
+        });
+        const clearBtn = priorityDropdown.querySelector('.btn-small');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearPriorityFilter());
+    }
+
+    // Label filter clear button
+    const labelDropdown = document.getElementById('label-filter-dropdown');
+    if (labelDropdown) {
+        const clearBtn = labelDropdown.querySelector('.btn-small');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearLabelFilter());
+    }
+
+    // Simple select filters
+    const typeFilter = document.getElementById('issue-type-filter');
+    if (typeFilter) typeFilter.addEventListener('change', () => filterIssues());
+
+    const assigneeFilter = document.getElementById('assignee-filter');
+    if (assigneeFilter) assigneeFilter.addEventListener('change', () => filterIssues());
+
+    const sprintFilter = document.getElementById('sprint-filter');
+    if (sprintFilter) sprintFilter.addEventListener('change', () => filterIssues());
+
+    const sortSelect = document.getElementById('sort-by-select');
+    if (sortSelect) sortSelect.addEventListener('change', () => loadIssues());
+
+    const groupSelect = document.getElementById('group-by-select');
+    if (groupSelect) groupSelect.addEventListener('change', () => updateGroupBy());
+
+    // Quick create input
+    const quickCreate = document.querySelector('.quick-create-input');
+    if (quickCreate) quickCreate.addEventListener('keydown', (e) => handleQuickCreate(e));
+}
+
+/**
+ * Initialize board/epics/sprints project filter selects (CHT-1057)
+ */
+function initViewProjectFilters() {
+    const boardFilter = document.getElementById('board-project-filter');
+    if (boardFilter) boardFilter.addEventListener('change', () => onBoardProjectChange());
+
+    const epicsFilter = document.getElementById('epics-project-filter');
+    if (epicsFilter) epicsFilter.addEventListener('change', () => onEpicsProjectChange());
+
+    const sprintProjectFilter = document.getElementById('sprint-project-filter');
+    if (sprintProjectFilter) sprintProjectFilter.addEventListener('change', () => onSprintProjectChange());
+}
+
+/**
+ * Initialize rituals view event listeners (CHT-1057)
+ */
+function initRitualsView() {
+    const ritualsFilter = document.getElementById('rituals-project-filter');
+    if (ritualsFilter) ritualsFilter.addEventListener('change', () => onRitualsProjectChange());
+
+    // Rituals tabs (use data-tab attribute)
+    const ritualsView = document.getElementById('rituals-view');
+    if (ritualsView) {
+        ritualsView.querySelectorAll('.settings-tab[data-tab]').forEach(tab => {
+            tab.addEventListener('click', () => switchRitualsTab(tab.dataset.tab));
+        });
+    }
+}
+
+/**
+ * Initialize sidebar/nav event listeners (CHT-1057)
+ * Replaces inline onclick handlers on sidebar, nav, and mobile header elements.
+ */
+function initSidebarNav() {
+    // Team selector dropdown
+    const teamSelector = document.querySelector('.team-selector');
+    if (teamSelector) teamSelector.addEventListener('click', () => toggleTeamDropdown());
+
+    // Sidebar create issue button
+    const createBtn = document.querySelector('.sidebar-create-btn');
+    if (createBtn) createBtn.addEventListener('click', () => showCreateIssueModal());
+
+    // Navigation items — use data-view attribute
+    document.querySelectorAll('.sidebar-nav .nav-item[data-view]').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            navigateTo(item.dataset.view);
+        });
+    });
+
+    // User menu dropdown
+    const userMenu = document.querySelector('.user-menu');
+    if (userMenu) userMenu.addEventListener('click', () => toggleUserDropdown());
+
+    // Sidebar backdrop (close on click)
+    const backdrop = document.querySelector('.sidebar-backdrop');
+    if (backdrop) backdrop.addEventListener('click', () => closeSidebar());
+
+    // Mobile hamburger button
+    const hamburger = document.getElementById('hamburger-btn');
+    if (hamburger) hamburger.addEventListener('click', () => toggleSidebar());
+
+    // Mobile FAB (create issue)
+    const fab = document.querySelector('.mobile-fab');
+    if (fab) fab.addEventListener('click', () => showCreateIssueModal());
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+    initAuth();
+    initSidebarNav();
+    initModal();
+    initActionButtons();
+    initDashboardView();
+    initIssuesView();
+    initViewProjectFilters();
+    initRitualsView();
+    initProjectSettings();
+    initDocumentsView();
     initThemeToggle();
     initIssueLinkHandler();
     initIssueTooltip({ api });

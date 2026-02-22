@@ -196,16 +196,12 @@ describe('Window Exports', () => {
     expect(exports.has('showModal')).toBe(true);
   });
 
-  it('should find a minimum number of handler functions in the HTML template', () => {
+  it('should have zero inline handlers after CHT-1057 migration', () => {
     const htmlContent = fs.readFileSync(templatePath, 'utf-8');
     const requiredFunctions = extractHandlerFunctions(htmlContent);
 
-    expect(requiredFunctions.size).toBeGreaterThanOrEqual(20);
-
-    const critical = ['handleLogin', 'handleSignup', 'navigateTo', 'showCreateIssueModal', 'filterIssues'];
-    critical.forEach(fn => {
-      expect(requiredFunctions.has(fn)).toBe(true);
-    });
+    // All inline handlers have been migrated to addEventListener (CHT-1057)
+    expect(requiredFunctions.size).toBe(0);
   });
 
   it('should export functions from multiple source files', () => {
