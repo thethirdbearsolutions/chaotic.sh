@@ -494,11 +494,13 @@ export function renderFilterMenuCategories() {
     const container = document.getElementById('filter-menu-categories');
     if (!container) return;
 
+    const projectId = document.getElementById('project-filter')?.value;
     container.innerHTML = FILTER_CATEGORIES.map(cat => {
         const count = getFilterCategoryCount(cat.key);
         const isActive = getActiveFilterCategory() === cat.key;
+        const isDisabled = cat.key === 'sprint' && !projectId;
         return `
-            <div class="filter-menu-category ${isActive ? 'active' : ''}"
+            <div class="filter-menu-category ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
                  data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
                 <span>${cat.label}</span>
                 ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : '<span class="filter-menu-category-arrow">→</span>'}
@@ -714,6 +716,17 @@ function renderAssigneeOptions(container) {
 }
 
 function renderSprintOptions(container) {
+    const projectId = document.getElementById('project-filter')?.value;
+    if (!projectId) {
+        container.innerHTML = `
+            <div class="filter-options-header">
+                <span class="filter-options-title">Sprint</span>
+            </div>
+            <div class="filter-options-empty">Select a project first</div>
+        `;
+        return;
+    }
+
     const sprintFilter = document.getElementById('sprint-filter');
     const currentValue = sprintFilter?.value || '';
     const options = sprintFilter ? Array.from(sprintFilter.options) : [];
@@ -1202,36 +1215,37 @@ export async function updateSprintFilter() {
     const projectId = document.getElementById('project-filter')?.value;
     const currentSelection = sprintFilter.value;
 
-    // Base options always available
+    // No project selected — sprint filter is not applicable (CHT-1084)
+    if (!projectId) {
+        sprintFilter.innerHTML = '<option value="">All Sprints</option>';
+        sprintFilter.value = '';
+        updateSprintBudgetBar(null);
+        return;
+    }
+
+    // Base options
     let options = `
         <option value="">All Sprints</option>
         <option value="no_sprint">No Sprint</option>
     `;
 
-    // If no project selected, hide budget bar and skip sprint loading
-    if (!projectId) {
-        updateSprintBudgetBar(null);
-    }
-
-    // If a project is selected, load its sprints
-    if (projectId) {
-        try {
-            const sprints = await api.getSprints(projectId);
-            // Find current sprint (active)
-            const currentSprint = sprints.find(s => s.status === 'active');
-            if (currentSprint) {
-                options += `<option value="current">Current Sprint (${escapeHtml(currentSprint.name)})</option>`;
-            }
-            // Update budget bar with active sprint data
-            updateSprintBudgetBar(currentSprint || null);
-            // Add all sprints
-            sprints.forEach(s => {
-                const statusLabel = s.status === 'active' ? ' (Active)' : s.status === 'completed' ? ' (Done)' : '';
-                options += `<option value="${s.id}">${escapeHtml(s.name)}${statusLabel}</option>`;
-            });
-        } catch (e) {
-            console.error('Failed to load sprints:', e);
+    // Load sprints for selected project
+    try {
+        const sprints = await api.getSprints(projectId);
+        // Find current sprint (active)
+        const currentSprint = sprints.find(s => s.status === 'active');
+        if (currentSprint) {
+            options += `<option value="current">Current Sprint (${escapeHtml(currentSprint.name)})</option>`;
         }
+        // Update budget bar with active sprint data
+        updateSprintBudgetBar(currentSprint || null);
+        // Add all sprints
+        sprints.forEach(s => {
+            const statusLabel = s.status === 'active' ? ' (Active)' : s.status === 'completed' ? ' (Done)' : '';
+            options += `<option value="${s.id}">${escapeHtml(s.name)}${statusLabel}</option>`;
+        });
+    } catch (e) {
+        console.error('Failed to load sprints:', e);
     }
 
     sprintFilter.innerHTML = options;
@@ -1436,12 +1450,17 @@ export async function onProjectFilterChange() {
     if (projectId) {
         setGlobalProjectSelection(projectId);
     }
+    // Clear sprint filter — sprints are per-project so the old value is stale (CHT-1084)
+    const sprintFilter = document.getElementById('sprint-filter');
+    if (sprintFilter) sprintFilter.value = '';
     // Update sprint filter options for new project
     await updateSprintFilter();
     updateBoardProjectFilter();
     updateSprintProjectFilter();
     // Then filter issues
     filterIssues();
+    updateFilterChips();
+    updateFilterCountBadge();
 }
 
 export async function updateGroupBy() {

@@ -6263,6 +6263,19 @@ input[type="checkbox"] {
     font-size: 10px;
 }
 
+.filter-menu-category.disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
+.filter-options-empty {
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    font-style: italic;
+}
+
 /* Right panel - options */
 .filter-menu-options {
     flex: 1;
