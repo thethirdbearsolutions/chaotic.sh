@@ -12,10 +12,10 @@ import { getGroupByValue } from './issues-view.js';
 import { registerActions } from './event-delegation.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import { viewIssue } from './issue-detail-view.js';
+import { STATUS_ORDER, PRIORITY_ORDER } from './constants.js';
 
-// Status order for grouping
-export const STATUS_ORDER = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
-export const PRIORITY_ORDER = ['urgent', 'high', 'medium', 'low', 'no_priority'];
+// Re-export for backward compatibility
+export { STATUS_ORDER, PRIORITY_ORDER };
 export const ISSUE_TYPE_ORDER = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
 
 /**
