@@ -694,7 +694,7 @@ export function updateDetailViewField(field, updatedIssue) {
     const detailView = document.getElementById('issue-detail-view');
     if (!detailView || detailView.classList.contains('hidden')) return;
 
-    const sidebar = detailView.querySelector('.issue-detail-sidebar');
+    const sidebar = detailView.querySelector('.detail-sidebar');
     if (!sidebar) return;
 
     // Find the property row for this field

@@ -124,7 +124,7 @@ describe('inline-dropdown', () => {
         document.body.innerHTML = `
             <div id="issues-list"></div>
             <div id="issue-detail-view" class="hidden">
-                <div class="issue-detail-sidebar"></div>
+                <div class="detail-sidebar"></div>
             </div>
         `;
     });
@@ -336,7 +336,7 @@ describe('inline-dropdown', () => {
         beforeEach(() => {
             document.body.innerHTML = `
                 <div id="issue-detail-view">
-                    <div class="issue-detail-sidebar">
+                    <div class="detail-sidebar">
                         <div class="property-row">
                             <span class="property-label">Status</span>
                             <button class="property-value"></button>

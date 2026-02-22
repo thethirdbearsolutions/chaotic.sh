@@ -3058,23 +3058,23 @@ input[type="checkbox"] {
 }
 
 /* ========================================
-   Issue Detail View (Linear-style)
+   Detail View Layout (Issues, Documents, Epics)
    ======================================== */
 
-.issue-detail-layout {
+.detail-layout {
     display: grid;
     grid-template-columns: 1fr 280px;
     gap: 0;
     min-height: calc(100vh - 60px);
 }
 
-.issue-detail-main {
+.detail-main {
     padding: 24px 40px;
     overflow-y: auto;
     border-right: 1px solid var(--border-color);
 }
 
-.issue-detail-sidebar {
+.detail-sidebar {
     padding: 24px;
     background: var(--bg-secondary);
     overflow-y: auto;
@@ -4181,15 +4181,15 @@ input[type="checkbox"] {
 
 /* Responsive */
 @media (max-width: 900px) {
-    .issue-detail-layout {
+    .detail-layout {
         grid-template-columns: 1fr;
     }
 
-    .issue-detail-sidebar {
+    .detail-sidebar {
         border-top: 1px solid var(--border-color);
     }
 
-    .issue-detail-main {
+    .detail-main {
         border-right: none;
     }
 }

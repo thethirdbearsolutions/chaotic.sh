@@ -42,6 +42,7 @@ let selectedDocIds = new Set();
 let currentViewMode = 'list';  // 'list' or 'grid'
 let isSelectionMode = false;  // Selection mode for bulk operations
 let searchDebounceTimer = null;  // Debounce timer for search
+let docDetailAbortController = null;  // Cleanup for document detail listeners (CHT-1102)
 
 // Initialize view mode from storage
 const savedViewMode = getDocViewMode();
@@ -800,8 +801,8 @@ export async function viewDocument(documentId, pushHistory = true) {
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `
-      <div class="issue-detail-layout">
-        <div class="issue-detail-main">
+      <div class="detail-layout">
+        <div class="detail-main">
           <div class="issue-detail-nav">
             <button class="back-link" data-action="navigate-to" data-view="documents">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -828,7 +829,7 @@ export async function viewDocument(documentId, pushHistory = true) {
           ${commentsHtml}
         </div>
 
-        <aside class="issue-detail-sidebar">
+        <aside class="detail-sidebar">
           <div class="sidebar-section">
             <h4>Properties</h4>
 
@@ -897,6 +898,11 @@ export async function viewDocument(documentId, pushHistory = true) {
       </div>
     `;
 
+    // Clean up previous detail view listeners (CHT-1102)
+    if (docDetailAbortController) docDetailAbortController.abort();
+    docDetailAbortController = new AbortController();
+    const { signal: docDetailSignal } = docDetailAbortController;
+
     // Set up overflow menu (matches issue-detail-view pattern)
     const overflowTrigger = detailView.querySelector('.sidebar-overflow-trigger');
     const overflowDropdown = detailView.querySelector('.overflow-menu-dropdown');
@@ -909,18 +915,18 @@ export async function viewDocument(documentId, pushHistory = true) {
         const isHidden = overflowDropdown.classList.toggle('hidden');
         overflowTrigger.setAttribute('aria-expanded', String(!isHidden));
       };
-      overflowTrigger.addEventListener('click', toggleOverflow);
+      overflowTrigger.addEventListener('click', toggleOverflow, { signal: docDetailSignal });
       document.addEventListener('click', (e) => {
         if (!overflowTrigger.contains(e.target) && !overflowDropdown.contains(e.target)) {
           closeOverflow();
         }
-      });
+      }, { signal: docDetailSignal });
       overflowDropdown.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           closeOverflow();
           overflowTrigger.focus();
         }
-      });
+      }, { signal: docDetailSignal });
     }
   } catch (e) {
     showToast(e.message, 'error');
