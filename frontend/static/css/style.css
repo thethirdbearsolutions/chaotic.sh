@@ -3431,6 +3431,10 @@ input[type="checkbox"] {
     margin-bottom: 12px;
 }
 
+.sidebar-link-btn {
+    margin-top: 8px;
+}
+
 .property-row {
     display: flex;
     align-items: center;

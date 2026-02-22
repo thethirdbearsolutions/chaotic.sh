@@ -873,7 +873,7 @@ export async function viewDocument(documentId, pushHistory = true) {
             <div class="sidebar-linked-issues">
               ${sidebarLinkedHtml}
             </div>
-            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}" style="margin-top: 8px;">+ Link Issue</button>
+            <button class="btn btn-secondary btn-small sidebar-link-btn" data-action="show-link-issue-modal" data-document-id="${escapeAttr(doc.id)}">+ Link Issue</button>
           </div>
 
           <div class="sidebar-section sidebar-actions">

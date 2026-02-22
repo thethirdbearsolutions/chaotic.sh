@@ -1383,7 +1383,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
             <div class="sidebar-linked-issues">
               ${k}
             </div>
-            <button class="btn btn-secondary btn-small" data-action="show-link-issue-modal" data-document-id="${u(n.id)}" style="margin-top: 8px;">+ Link Issue</button>
+            <button class="btn btn-secondary btn-small sidebar-link-btn" data-action="show-link-issue-modal" data-document-id="${u(n.id)}">+ Link Issue</button>
           </div>
 
           <div class="sidebar-section sidebar-actions">
