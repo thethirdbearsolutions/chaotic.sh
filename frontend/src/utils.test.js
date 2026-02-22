@@ -369,10 +369,16 @@ describe('formatTimeAgo', () => {
 });
 
 describe('sanitizeColor', () => {
-  it('accepts valid hex colors', () => {
+  it('accepts valid 6-digit hex colors', () => {
     expect(sanitizeColor('#ffffff')).toBe('#ffffff');
     expect(sanitizeColor('#FF0000')).toBe('#FF0000');
-    expect(sanitizeColor('#12345678')).toBe('#12345678');
+  });
+
+  it('rejects 4/5/7/8-digit hex (not compatible with opacity suffix pattern)', () => {
+    expect(sanitizeColor('#f00a')).toBe('#888888');
+    expect(sanitizeColor('#12345')).toBe('#888888');
+    expect(sanitizeColor('#1234567')).toBe('#888888');
+    expect(sanitizeColor('#12345678')).toBe('#888888');
   });
 
   it('normalizes 3-digit hex to 6-digit', () => {

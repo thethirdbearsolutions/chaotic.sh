@@ -53,7 +53,7 @@ export function formatDate(dateString) {
  * @returns {string} Sanitized color or default gray
  */
 export function sanitizeColor(color) {
-  if (typeof color !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(color))
+  if (typeof color !== 'string' || !/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color))
     return '#888888';
   // Normalize 3-digit hex to 6-digit so ${color}20 opacity suffix works
   if (color.length === 4) {
