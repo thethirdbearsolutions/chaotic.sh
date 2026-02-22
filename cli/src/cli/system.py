@@ -621,7 +621,7 @@ def reinstall_cli() -> tuple[bool, str]:
         return False, "CLI reinstall timed out"
 
 
-def run_migrations() -> tuple[bool, str]:
+def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
     """Run pending database migrations using Oxyde. Returns (success, message)."""
     backend_dir = PROJECT_DIR / "backend"
     try:
@@ -633,34 +633,33 @@ def run_migrations() -> tuple[bool, str]:
         if not ok:
             return ok, msg
 
-        # Run Oxyde migrations
-        try:
+        # If user specified --fake-initial, mark the initial schema migration
+        # as applied without running it (for pre-Oxyde databases)
+        if fake_initial:
             run_command(
-                ["uv", "run", "oxyde", "migrate"],
+                ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
                 cwd=backend_dir,
-                timeout=120,
+                timeout=30,
             )
-        except subprocess.CalledProcessError as e:
-            output = (e.stderr or "") + (e.stdout or "")
-            if "already exists" in output:
-                # Existing DB from pre-Oxyde era — fake-apply only the initial
-                # migration, then run migrate again to apply any new ones
-                run_command(
-                    ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
-                    cwd=backend_dir,
-                    timeout=30,
-                )
-                run_command(
-                    ["uv", "run", "oxyde", "migrate"],
-                    cwd=backend_dir,
-                    timeout=120,
-                )
-            else:
-                raise
+
+        # Run Oxyde migrations
+        run_command(
+            ["uv", "run", "oxyde", "migrate"],
+            cwd=backend_dir,
+            timeout=120,
+        )
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
     except subprocess.CalledProcessError as e:
+        output = (e.stderr or "") + (e.stdout or "")
+        if "already exists" in output:
+            return False, (
+                "Migration failed: tables already exist.\n"
+                "This usually means the database predates the Oxyde migration system.\n"
+                "To fix, re-run with --fake-initial:\n"
+                "  chaotic system upgrade --fake-initial --yes"
+            )
         return False, f"Migration failed: {e.stderr}"
 
 
@@ -1132,16 +1131,21 @@ def system_logs(follow, lines):
 @click.option("--version", "target_version", default=None, help="Version to upgrade to (default: latest)")
 @click.option("--no-backup", is_flag=True, help="Skip database backup (not recommended)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def system_upgrade(target_version, no_backup, yes):
+@click.option("--fake-initial", is_flag=True, help="Fake-apply initial migration (for pre-Oxyde databases)")
+def system_upgrade(target_version, no_backup, yes, fake_initial):
     """Upgrade to a new version.
 
     This command:
     1. Backs up your database (unless --no-backup)
     2. Stops the server
     3. Pulls and checks out the new version
-    4. Syncs dependencies
+    4. Syncs dependencies and runs database migrations
     5. Restarts the server
     6. Rolls back automatically if health check fails
+
+    If migrations fail with "already exists", your database predates the
+    migration system. Re-run with --fake-initial to mark the initial schema
+    as already applied, then apply new migrations normally.
     """
     if not is_server_installed():
         console.print("[red]Chaotic server is not installed.[/red]")
@@ -1243,7 +1247,7 @@ def system_upgrade(target_version, no_backup, yes):
 
     # Sync dependencies and run database migrations
     console.print("Syncing dependencies and running migrations...")
-    success, message = run_migrations()
+    success, message = run_migrations(fake_initial=fake_initial)
     if not success:
         console.print(f"[red]{message}[/red]")
         # Rollback
