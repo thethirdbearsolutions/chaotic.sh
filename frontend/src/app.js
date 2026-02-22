@@ -204,6 +204,7 @@ import { registerWsHandlers } from './ws-handlers.js';
 import { initAllDependencies } from './dependencies.js';
 import { toggleSidebar, closeSidebar } from './sidebar.js';
 import { handleQuickCreate } from './quick-create.js';
+import { getTheme, setTheme } from './storage.js';
 
 window.currentTeam = null;
 let labels = [];
@@ -359,15 +360,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 function initThemeToggle() {
     const toggle = document.getElementById('theme-toggle');
     if (!toggle) return;
-    const stored = localStorage.getItem('chaotic_theme');
-    const useLight = stored === 'light';
+    const useLight = getTheme() === 'light';
     document.body.classList.toggle('theme-light', useLight);
     toggle.checked = useLight;
 
     toggle.addEventListener('change', () => {
         const isLight = toggle.checked;
         document.body.classList.toggle('theme-light', isLight);
-        localStorage.setItem('chaotic_theme', isLight ? 'light' : 'dark');
+        setTheme(isLight ? 'light' : 'dark');
     });
 }
 

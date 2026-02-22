@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, escapeJsString, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
+import { getSavedProject, setSavedProject } from './storage.js';
 
 // Module state
 let projects = [];
@@ -185,8 +186,8 @@ export function updateProjectFilters() {
     }
     if (selectedProjectId) {
       projectFilter.value = selectedProjectId;
-      // Save to localStorage for future loads
-      localStorage.setItem('chaotic_last_project', selectedProjectId);
+      // Save for future loads
+      setSavedProject(selectedProjectId);
     }
   }
   if (sprintProjectFilter) {
@@ -229,7 +230,7 @@ export function updateProjectFilters() {
  * @returns {string|null} Saved project ID
  */
 export function getSavedProjectId() {
-  return localStorage.getItem('chaotic_last_project');
+  return getSavedProject();
 }
 
 /**
@@ -238,7 +239,7 @@ export function getSavedProjectId() {
  */
 export function setGlobalProjectSelection(projectId) {
   if (!projectId) return;
-  localStorage.setItem('chaotic_last_project', projectId);
+  setSavedProject(projectId);
   const selectors = [
     'project-filter',
     'board-project-filter',

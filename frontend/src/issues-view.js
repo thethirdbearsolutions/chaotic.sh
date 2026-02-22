@@ -23,6 +23,7 @@ import { ensureSprintCacheForIssues, updateSprintProjectFilter } from './sprints
 import { updateBoardProjectFilter } from './board.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
+import { getIssueFilters, setIssueFilters } from './storage.js';
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -249,24 +250,16 @@ export function syncFiltersToUrl() {
     const newUrl = queryString ? `/issues?${queryString}` : '/issues';
     history.replaceState({ view: 'issues' }, '', newUrl);
 
-    // Also persist to localStorage for cross-session recall (CHT-1042)
-    const teamId = window.currentTeam?.id;
-    if (teamId) {
-        if (queryString) {
-            localStorage.setItem(`chaotic_issues_filters_${teamId}`, queryString);
-        } else {
-            localStorage.removeItem(`chaotic_issues_filters_${teamId}`);
-        }
-    }
+    // Also persist for cross-session recall (CHT-1042)
+    setIssueFilters(window.currentTeam?.id, queryString);
 }
 
 export function loadFiltersFromUrl() {
     let params = new URLSearchParams(window.location.search);
 
-    // Fall back to localStorage if URL has no filter params (CHT-1042)
+    // Fall back to saved filters if URL has no filter params (CHT-1042)
     if (params.toString() === '') {
-        const teamId = window.currentTeam?.id;
-        const saved = teamId ? localStorage.getItem(`chaotic_issues_filters_${teamId}`) : null;
+        const saved = getIssueFilters(window.currentTeam?.id);
         if (saved) {
             params = new URLSearchParams(saved);
             // Update URL to reflect restored filters

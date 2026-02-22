@@ -1468,7 +1468,6 @@ describe('ApiClient', () => {
   describe('localStorage Failure Handling', () => {
     describe('constructor with localStorage errors', () => {
       it('handles localStorage.getItem throwing (private browsing mode)', () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const brokenLocalStorage = {
           getItem: vi.fn(() => {
             throw new Error('QuotaExceededError');
@@ -1481,39 +1480,27 @@ describe('ApiClient', () => {
         // Should not throw, should handle gracefully
         const newClient = new ApiClient();
         expect(newClient.token).toBeNull();
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'Failed to access localStorage:',
-          expect.any(Error)
-        );
-        consoleWarnSpy.mockRestore();
       });
 
       it('handles localStorage being null', () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         global.localStorage = null;
 
         // Should not throw, should handle gracefully
         const newClient = new ApiClient();
         expect(newClient.token).toBeNull();
-        expect(consoleWarnSpy).toHaveBeenCalled();
-        consoleWarnSpy.mockRestore();
       });
 
       it('handles localStorage being undefined', () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         global.localStorage = undefined;
 
         // Should not throw, should handle gracefully
         const newClient = new ApiClient();
         expect(newClient.token).toBeNull();
-        expect(consoleWarnSpy).toHaveBeenCalled();
-        consoleWarnSpy.mockRestore();
       });
     });
 
     describe('setToken with localStorage errors', () => {
       it('handles localStorage.setItem throwing (quota exceeded)', () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         localStorageMock.setItem.mockImplementation(() => {
           throw new Error('QuotaExceededError');
         });
@@ -1521,15 +1508,9 @@ describe('ApiClient', () => {
         // Should not throw, should handle gracefully and set token in memory
         client.setToken('test-token');
         expect(client.token).toBe('test-token');
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'Failed to persist token to localStorage:',
-          expect.any(Error)
-        );
-        consoleWarnSpy.mockRestore();
       });
 
       it('handles localStorage.removeItem throwing', () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         localStorageMock.removeItem.mockImplementation(() => {
           throw new Error('StorageError');
         });
@@ -1537,11 +1518,6 @@ describe('ApiClient', () => {
         // Should not throw, should handle gracefully and clear token in memory
         client.setToken(null);
         expect(client.token).toBeNull();
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'Failed to persist token to localStorage:',
-          expect.any(Error)
-        );
-        consoleWarnSpy.mockRestore();
       });
 
       it('still makes authenticated requests when localStorage fails', async () => {

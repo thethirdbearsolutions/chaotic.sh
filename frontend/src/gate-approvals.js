@@ -15,6 +15,7 @@ import { escapeHtml, escapeAttr, escapeJsString } from './utils.js';
 import { getProjects } from './projects.js';
 import { getPendingGates, setPendingGates } from './state.js';
 import { completeGateRitual } from './rituals-view.js';
+import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 
 
 /**
@@ -239,8 +240,7 @@ function renderGateApprovals() {
     const hasSprintLimbo = sprintLimboApprovals.length > 0;
 
     // First-use explainer (CHT-766)
-    const explainerKey = 'chaotic_approvals_explainer_dismissed';
-    const showExplainer = !localStorage.getItem(explainerKey);
+    const showExplainer = !isApprovalsExplainerDismissed();
 
     if (pendingItems.length === 0 && !hasSprintLimbo) {
         if (showExplainer) {
@@ -438,7 +438,7 @@ function renderGateApprovals() {
  * Dismiss the approvals first-use explainer (CHT-766).
  */
 export function dismissApprovalsExplainer() {
-    localStorage.setItem('chaotic_approvals_explainer_dismissed', '1');
+    persistDismissExplainer();
     renderGateApprovals();
 }
 

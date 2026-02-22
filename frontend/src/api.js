@@ -2,32 +2,18 @@
  * API client for Chaotic backend
  */
 
+import { getToken, setToken as persistToken } from './storage.js';
+
 const API_BASE = '/api';
 
 export class ApiClient {
     constructor() {
-        try {
-            this.token = localStorage.getItem('chaotic_token');
-        } catch (e) {
-            // Handle localStorage errors (private browsing, quota exceeded, etc.)
-            console.warn('Failed to access localStorage:', e);
-            this.token = null;
-        }
+        this.token = getToken();
     }
 
     setToken(token) {
         this.token = token;
-        try {
-            if (token) {
-                localStorage.setItem('chaotic_token', token);
-            } else {
-                localStorage.removeItem('chaotic_token');
-            }
-        } catch (e) {
-            // Handle localStorage errors (quota exceeded, private browsing, etc.)
-            console.warn('Failed to persist token to localStorage:', e);
-            // Token is still set in memory, so requests will work for this session
-        }
+        persistToken(token);
     }
 
     getToken() {
