@@ -36,6 +36,8 @@ vi.mock('./board.js', () => ({
 // Mock sprints.js
 vi.mock('./sprints.js', () => ({
     loadSprints: vi.fn(),
+    viewSprint: vi.fn(),
+    getCurrentSprintDetail: vi.fn(() => null),
 }));
 
 // Mock projects.js
@@ -69,7 +71,7 @@ import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailI
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -133,10 +135,19 @@ describe('ws-handlers.js', () => {
             expect(renderBoard).toHaveBeenCalled();
         });
 
-        it('reloads sprints on sprints view', () => {
+        it('reloads sprints on sprints view (list)', () => {
             getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue(null);
             dispatch({ type: 'created', entity: 'issue', data: newIssue });
             expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail on sprints view (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'created', entity: 'issue', data: newIssue });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
         });
 
         it('refreshes detail if child issue created', () => {
@@ -178,6 +189,23 @@ describe('ws-handlers.js', () => {
             expect(renderBoard).toHaveBeenCalled();
         });
 
+        it('reloads sprints list on sprints view', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail on sprints view (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
+        });
+
         it('refreshes detail view if viewing updated issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
             document.body.innerHTML = '<div id="issue-detail-content" data-issue-id="issue-1"></div>';
@@ -200,6 +228,25 @@ describe('ws-handlers.js', () => {
             expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-2' }]);
             expect(setMyIssues).toHaveBeenCalledWith([]);
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1 deleted', 'info');
+        });
+
+        it('reloads sprints list on sprints view', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail on sprints view (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
         });
 
         it('navigates away from deleted issue detail', () => {
@@ -263,16 +310,27 @@ describe('ws-handlers.js', () => {
     });
 
     describe('sprint', () => {
-        it('reloads sprints when on sprints view', () => {
+        it('reloads sprints list when on sprints view with no detail open', () => {
             getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue(null);
             dispatch({ type: 'created', entity: 'sprint', data: { id: 's1' } });
             expect(loadSprints).toHaveBeenCalled();
+            expect(viewSprint).not.toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail when viewing one (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
         });
 
         it('does not reload sprints when on other view', () => {
             getCurrentView.mockReturnValue('issues');
             dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
             expect(loadSprints).not.toHaveBeenCalled();
+            expect(viewSprint).not.toHaveBeenCalled();
         });
     });
 
