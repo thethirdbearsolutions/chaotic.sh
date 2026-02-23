@@ -10,7 +10,7 @@ import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailI
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -99,7 +99,7 @@ function handleIssueCreated(data) {
     if (getCurrentView() === 'board') {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
-        loadSprints();
+        refreshSprintView();
     }
 
     // Refresh issue detail if a child issue was created
@@ -127,7 +127,7 @@ function handleIssueUpdated(data) {
     } else if (getCurrentView() === 'board') {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
-        loadSprints();
+        refreshSprintView();
     } else if (getCurrentView() === 'issue-detail') {
         const detailContent = document.getElementById('issue-detail-content');
         if (detailContent && detailContent.dataset.issueId === data.id) {
@@ -149,7 +149,7 @@ function handleIssueDeleted(data) {
     } else if (getCurrentView() === 'board') {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
-        loadSprints();
+        refreshSprintView();
     }
     showToast(`Issue ${data.identifier} deleted`, 'info');
 
@@ -209,8 +209,18 @@ function handleProject(data, { type }) {
     }
 }
 
+/** Refresh sprint detail if viewing one, otherwise refresh the list (CHT-325). */
+function refreshSprintView() {
+    const detail = getCurrentSprintDetail();
+    if (detail) {
+        viewSprint(detail.id, false);
+    } else {
+        loadSprints();
+    }
+}
+
 function handleSprint() {
     if (getCurrentView() === 'sprints') {
-        loadSprints();
+        refreshSprintView();
     }
 }

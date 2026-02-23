@@ -41,6 +41,10 @@ export function getSprintCache() {
     return sprintCache;
 }
 
+export function getCurrentSprintDetail() {
+    return currentSprintDetail;
+}
+
 export function getLimboStatus() {
     return limboStatus;
 }
