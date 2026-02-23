@@ -1171,4 +1171,47 @@ def register(cli):
 
         console.print(table)
 
+    @cli.command("comments")
+    @click.option("--limit", "-n", type=int, default=20, help="Number of comments to show (default: 20)")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def comments_list(limit):
+        """Show recent team comments (across issues and documents)."""
+        m = _main()
+        team_id = m.get_current_team()
+        comments = _client().get_team_comments(team_id, limit=limit)
+
+        if m.is_json_output():
+            m.output_json(comments or [])
+            return
+
+        if not comments:
+            console.print("[yellow]No recent comments.[/yellow]")
+            return
+
+        table = Table(title="Recent Comments")
+        table.add_column("Date", style="dim")
+        table.add_column("Source")
+        table.add_column("By")
+        table.add_column("Comment", max_width=60)
+
+        for c in comments:
+            date = (c.get("created_at") or "")[:16].replace("T", " ")
+
+            if c.get("source_type") == "issue" and c.get("issue_identifier"):
+                source = c["issue_identifier"]
+            elif c.get("source_type") == "document" and c.get("document_title"):
+                icon = c.get("document_icon") or "\U0001f4c4"
+                source = f"{icon} {c['document_title'][:20]}"
+            else:
+                source = c.get("source_type", "-")
+
+            by = c.get("author_name") or "-"
+            content = (c.get("content") or "").replace("\n", " ")[:80]
+
+            table.add_row(date, source, by, content)
+
+        console.print(table)
+
     return issue

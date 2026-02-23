@@ -522,6 +522,37 @@ class IssueService:
 
         return activities
 
+    async def list_team_comments(
+        self, team_id: str, skip: int = 0, limit: int = 50
+    ) -> list[tuple]:
+        """List recent issue comments for a team.
+
+        Returns list of (comment, issue) tuples so the caller can
+        access issue.identifier and issue.title.
+        """
+        rows = await execute_raw(
+            "SELECT ic.id, ic.issue_id FROM issue_comments ic "
+            "JOIN issues i ON ic.issue_id = i.id "
+            "JOIN projects p ON i.project_id = p.id "
+            "WHERE p.team_id = ? "
+            "ORDER BY ic.created_at DESC LIMIT ? OFFSET ?",
+            [team_id, limit, skip],
+        )
+        if not rows:
+            return []
+
+        comment_ids = [r["id"] for r in rows]
+        issue_ids = list({r["issue_id"] for r in rows})
+
+        comments = await OxydeIssueComment.objects.filter(
+            id__in=comment_ids,
+        ).join("author").order_by("-created_at").all()
+
+        issues = await OxydeIssue.objects.filter(id__in=issue_ids).all()
+        issue_map = {i.id: i for i in issues}
+
+        return [(c, issue_map.get(c.issue_id)) for c in comments]
+
     async def delete(self, issue) -> None:
         """Delete an issue."""
         async with atomic():
