@@ -232,10 +232,10 @@ registerViews({
 function initModal() {
     const overlay = document.getElementById('modal-overlay');
     if (overlay) {
-        // Close modal only when clicking the overlay background itself (CHT-1117)
+        // Close modal only when clicking outside the modal box (CHT-1117)
         // Must NOT use stopPropagation on .modal — that blocks event delegation
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) closeModal();
+            if (!e.target.closest('.modal')) closeModal();
         });
     }
     const closeBtn = document.querySelector('.modal-close');
