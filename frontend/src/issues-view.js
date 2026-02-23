@@ -834,10 +834,10 @@ function renderLabelOptions(container) {
 
 export function setProjectFilter(value) {
     setCurrentProject(value);
+    // Subscriber handles filterIssues, updateFilterChips, updateFilterCountBadge
+    // after sprint options are refreshed — only update the menu UI here.
     renderFilterMenuCategories();
     showFilterCategoryOptions('project');
-    updateFilterChips();
-    updateFilterCountBadge();
 }
 
 export function clearProjectFilter() {
