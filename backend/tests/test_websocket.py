@@ -1,6 +1,6 @@
 """Tests for WebSocket connection manager and broadcast functions (CHT-275)."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event
 
@@ -197,3 +197,70 @@ class TestBroadcastHelpers:
             "entity": "attestation",
             "data": {"ritual_id": "r1", "issue_id": "i1"},
         })
+
+
+class TestWebSocketEndpointTeamValidation:
+    """Tests for CHT-1110: team membership validation on WS connect."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_closes_with_4001(self):
+        """WS with invalid token should close with 4001."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        with patch("app.main.decode_token", return_value=None):
+            await websocket_endpoint(ws, token="bad-token", team_id="team-1")
+        ws.close.assert_awaited_once_with(code=4001)
+
+    @pytest.mark.asyncio
+    async def test_token_missing_sub_closes_with_4001(self):
+        """WS with token lacking 'sub' claim should close with 4001."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        with patch("app.main.decode_token", return_value={"exp": 99999}):
+            await websocket_endpoint(ws, token="no-sub", team_id="team-1")
+        ws.close.assert_awaited_once_with(code=4001)
+
+    @pytest.mark.asyncio
+    async def test_user_not_found_closes_with_4003(self):
+        """WS with token for nonexistent user should close with 4003."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        mock_user_service = AsyncMock()
+        mock_user_service.get_by_id.return_value = None
+        with patch("app.main.decode_token", return_value={"sub": "ghost-user"}), \
+             patch("app.main.UserService", return_value=mock_user_service):
+            await websocket_endpoint(ws, token="valid", team_id="team-1")
+        ws.close.assert_awaited_once_with(code=4003)
+
+    @pytest.mark.asyncio
+    async def test_user_not_team_member_closes_with_4003(self):
+        """WS with token for user NOT in team should close with 4003."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        mock_user = MagicMock(id="user-1")
+        mock_user_service = AsyncMock()
+        mock_user_service.get_by_id.return_value = mock_user
+        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
+             patch("app.main.UserService", return_value=mock_user_service), \
+             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=False):
+            await websocket_endpoint(ws, token="valid", team_id="team-1")
+        ws.close.assert_awaited_once_with(code=4003)
+
+    @pytest.mark.asyncio
+    async def test_valid_team_member_connects(self):
+        """WS with valid token for team member should connect."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        # Simulate WebSocketDisconnect to exit the while True loop
+        from starlette.websockets import WebSocketDisconnect
+        ws.receive_text.side_effect = WebSocketDisconnect()
+        mock_user = MagicMock(id="user-1")
+        mock_user_service = AsyncMock()
+        mock_user_service.get_by_id.return_value = mock_user
+        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
+             patch("app.main.UserService", return_value=mock_user_service), \
+             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=True), \
+             patch("app.main.manager", new_callable=AsyncMock) as mock_manager:
+            await websocket_endpoint(ws, token="valid", team_id="team-1")
+        mock_manager.connect.assert_awaited_once_with(ws, "team-1")
+        ws.close.assert_not_awaited()

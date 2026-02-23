@@ -14,6 +14,8 @@ from app.oxyde_db import init_oxyde, close_oxyde
 from app.api import api_router
 from app.websocket import manager
 from app.utils.security import decode_token
+from app.api.deps import check_user_team_access
+from app.services.user_service import UserService
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -101,6 +103,18 @@ async def websocket_endpoint(
     payload = decode_token(token)
     if not payload:
         await websocket.close(code=4001)
+        return
+
+    # Validate team membership (CHT-1110)
+    user_id = payload.get("sub")
+    if not user_id:
+        await websocket.close(code=4001)
+        return
+
+    user_service = UserService()
+    user = await user_service.get_by_id(user_id)
+    if not user or not await check_user_team_access(user, team_id):
+        await websocket.close(code=4003)
         return
 
     await manager.connect(websocket, team_id)
