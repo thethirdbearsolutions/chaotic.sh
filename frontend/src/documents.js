@@ -184,8 +184,8 @@ function updateDocFilterChips() {
   }
 
   if (projectFilter) {
-    const projectSelect = document.getElementById('doc-project-filter');
-    const projectName = projectSelect?.options[projectSelect.selectedIndex]?.text || 'Project';
+    const matchedProject = getProjects().find(p => p.id === projectFilter);
+    const projectName = matchedProject?.name || 'Project';
     chips.push(`<span class="filter-chip">Project: ${escapeHtml(projectName)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`);
   }
 

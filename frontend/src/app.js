@@ -31,7 +31,7 @@ import {
     updateGroupBy,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { showCreateEpicModal } from './epics.js';
+import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
 import {
@@ -60,6 +60,7 @@ import {
 import { getProjectFromUrl } from './url-helpers.js';
 import { resetOnboarding } from './onboarding.js';
 import {
+    loadSprints,
     viewSprint,
     viewSprintByPath,
 } from './sprints.js';
@@ -196,7 +197,7 @@ registerViews({
         });
     },
     'epics': () => {
-        // Project filter synced by central subscriber
+        loadEpics();
     },
     'board': () => {
         loadBoard();
@@ -205,7 +206,7 @@ registerViews({
         loadProjects().then(renderProjects);
     },
     'sprints': () => {
-        // Project filter synced by central subscriber; loadSprints called by subscriber
+        loadSprints();
     },
     'rituals': () => {
         loadRitualsView();

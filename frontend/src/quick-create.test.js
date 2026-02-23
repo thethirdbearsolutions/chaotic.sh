@@ -14,7 +14,7 @@ vi.mock('./projects.js', () => ({
 vi.mock('./state.js', () => ({
     getIssues: vi.fn(() => []),
     setIssues: vi.fn(),
-    getCurrentProject: vi.fn(() => ''),
+    getCurrentProject: vi.fn(() => null),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -70,7 +70,7 @@ describe('handleQuickCreate', () => {
     });
 
     it('shows error when no project selected', async () => {
-        getCurrentProject.mockReturnValue('');
+        getCurrentProject.mockReturnValue(null);
         const event = { key: 'Enter', target: input };
         await handleQuickCreate(event);
         expect(showToast).toHaveBeenCalledWith('Please select a project first', 'error');

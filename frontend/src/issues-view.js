@@ -31,10 +31,15 @@ import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
 
+// Guard flag: when true, the subscriber skips sprint-clearing logic
+// because loadFiltersFromUrl is restoring filters from URL params.
+let _suppressProjectSubscriber = false;
+
 // React to project changes when issues view is active (CHT-1083)
 subscribe((key) => {
     if (key !== 'currentProject') return;
     if (getCurrentView() !== 'issues') return;
+    if (_suppressProjectSubscriber) return;
     // Clear sprint filter — sprints are per-project so old value is stale (CHT-1084)
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.value = '';
@@ -331,10 +336,14 @@ export function loadFiltersFromUrl() {
         if (assigneeFilter) assigneeFilter.value = assignee;
     }
 
-    // Apply project filter — update reactive state so all views stay in sync
+    // Apply project filter — update reactive state so all views stay in sync.
+    // Suppress subscriber to prevent it from clearing the sprint filter we're
+    // about to set from URL params (race condition fix).
     const project = params.get('project');
     if (project) {
+        _suppressProjectSubscriber = true;
         setCurrentProject(project);
+        _suppressProjectSubscriber = false;
     }
 
     // Apply sprint filter
