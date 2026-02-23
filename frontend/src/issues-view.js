@@ -17,16 +17,34 @@ import {
     getSearchDebounceTimer,
     setSearchDebounceTimer,
     setSelectedIssueIndex,
+    getCurrentProject,
+    setCurrentProject,
+    getCurrentView,
+    subscribe,
 } from './state.js';
-import { getProjects, setGlobalProjectSelection } from './projects.js';
+import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
-import { ensureSprintCacheForIssues, updateSprintProjectFilter } from './sprints.js';
-import { updateBoardProjectFilter } from './board.js';
+import { ensureSprintCacheForIssues } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
+
+// React to project changes when issues view is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'issues') return;
+    // Clear sprint filter — sprints are per-project so old value is stale (CHT-1084)
+    const sprintFilter = document.getElementById('sprint-filter');
+    if (sprintFilter) sprintFilter.value = '';
+    // Update sprint filter options, then re-filter
+    updateSprintFilter().then(() => {
+        filterIssues();
+        updateFilterChips();
+        updateFilterCountBadge();
+    });
+});
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -808,11 +826,7 @@ function renderLabelOptions(container) {
 // ========================================
 
 export function setProjectFilter(value) {
-    const filter = document.getElementById('project-filter');
-    if (filter) {
-        filter.value = value;
-        onProjectFilterChange();
-    }
+    setCurrentProject(value);
     renderFilterMenuCategories();
     showFilterCategoryOptions('project');
     updateFilterChips();
@@ -1214,7 +1228,7 @@ export async function updateSprintFilter() {
     const sprintFilter = document.getElementById('sprint-filter');
     if (!sprintFilter) return;
 
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     const currentSelection = sprintFilter.value;
 
     // No project selected — sprint filter is not applicable (CHT-1084)
@@ -1444,25 +1458,6 @@ export function showIssuesLoadingSkeleton() {
 export function filterIssues() {
     syncFiltersToUrl();
     loadIssues();
-}
-
-export async function onProjectFilterChange() {
-    // Save selection to localStorage
-    const projectId = document.getElementById('project-filter')?.value;
-    if (projectId) {
-        setGlobalProjectSelection(projectId);
-    }
-    // Clear sprint filter — sprints are per-project so the old value is stale (CHT-1084)
-    const sprintFilter = document.getElementById('sprint-filter');
-    if (sprintFilter) sprintFilter.value = '';
-    // Update sprint filter options for new project
-    await updateSprintFilter();
-    updateBoardProjectFilter();
-    updateSprintProjectFilter();
-    // Then filter issues
-    filterIssues();
-    updateFilterChips();
-    updateFilterCountBadge();
 }
 
 export async function updateGroupBy() {

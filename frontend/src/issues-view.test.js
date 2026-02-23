@@ -15,12 +15,15 @@ vi.mock('./state.js', () => ({
     setSelectedIssueIndex: vi.fn(),
     getCurrentTeam: vi.fn(() => null),
     setCurrentTeam: vi.fn(),
+    getCurrentProject: vi.fn(() => null),
+    setCurrentProject: vi.fn(),
+    getCurrentView: vi.fn(() => 'issues'),
+    subscribe: vi.fn(),
 }));
 
 // Mock projects.js
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
-    setGlobalProjectSelection: vi.fn(),
 }));
 
 // Mock teams.js
@@ -31,12 +34,6 @@ vi.mock('./teams.js', () => ({
 // Mock sprints.js
 vi.mock('./sprints.js', () => ({
     ensureSprintCacheForIssues: vi.fn(),
-    updateSprintProjectFilter: vi.fn(),
-}));
-
-// Mock board.js
-vi.mock('./board.js', () => ({
-    updateBoardProjectFilter: vi.fn(),
 }));
 
 // Mock issue-list.js
@@ -65,11 +62,9 @@ vi.mock('./api.js', () => ({
 }));
 
 import { api } from './api.js';
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam } from './state.js';
-import { getProjects, setGlobalProjectSelection } from './projects.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject } from './state.js';
+import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
-import { updateSprintProjectFilter } from './sprints.js';
-import { updateBoardProjectFilter } from './board.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
 
@@ -98,7 +93,6 @@ import {
     loadIssues,
     debounceSearch,
     filterIssues,
-    onProjectFilterChange,
     getGroupByValue,
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
@@ -859,40 +853,6 @@ describe('issues-view', () => {
     });
 
     // ========================================
-    // onProjectFilterChange
-    // ========================================
-
-    describe('onProjectFilterChange', () => {
-        it('saves project selection when project selected', async () => {
-            document.getElementById('project-filter').value = 'proj-1';
-            getProjects.mockReturnValue([{ id: 'proj-1' }]);
-            api.getIssues.mockResolvedValue([]);
-            await onProjectFilterChange();
-            expect(setGlobalProjectSelection).toHaveBeenCalledWith('proj-1');
-        });
-
-        it('updates board and sprint project filters', async () => {
-            document.getElementById('project-filter').value = 'proj-1';
-            getProjects.mockReturnValue([{ id: 'proj-1' }]);
-            api.getIssues.mockResolvedValue([]);
-            await onProjectFilterChange();
-            expect(updateBoardProjectFilter).toHaveBeenCalled();
-            expect(updateSprintProjectFilter).toHaveBeenCalled();
-        });
-
-        it('clears sprint filter when project changes (CHT-1084)', async () => {
-            // Set up a sprint filter value as if user had filtered by sprint
-            document.getElementById('sprint-filter').value = 'old-sprint-id';
-            document.getElementById('project-filter').value = 'proj-2';
-            getProjects.mockReturnValue([{ id: 'proj-2' }]);
-            api.getIssues.mockResolvedValue([]);
-            api.getSprints.mockResolvedValue([]);
-            await onProjectFilterChange();
-            expect(document.getElementById('sprint-filter').value).toBe('');
-        });
-    });
-
-    // ========================================
     // clearAllFilters
     // ========================================
 
@@ -1030,7 +990,7 @@ describe('issues-view', () => {
         });
 
         it('loads sprints for selected project', async () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             api.getSprints.mockResolvedValue([
                 { id: 's-1', name: 'Sprint 1', status: 'active' },
                 { id: 's-2', name: 'Sprint 2', status: 'completed' },

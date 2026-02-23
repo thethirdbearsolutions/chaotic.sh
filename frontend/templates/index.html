@@ -186,7 +186,7 @@
                     <div class="view-header">
                         <h2>Dashboard</h2>
                         <div class="view-actions">
-                            <select id="dashboard-project-filter">
+                            <select id="dashboard-project-filter" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
                             <select id="my-issues-status-filter">
@@ -271,7 +271,7 @@
                     </div>
                     <!-- Hidden original controls (preserve IDs for existing JS) -->
                     <div class="hidden-filter-controls">
-                        <select id="project-filter">
+                        <select id="project-filter" data-action="set-current-project">
                             <option value="">All Projects</option>
                         </select>
                         <div class="multi-select-dropdown" id="status-filter-dropdown">
@@ -426,7 +426,7 @@
                     <div class="view-header">
                         <h2>Board</h2>
                         <div class="view-actions">
-                            <select id="board-project-filter">
+                            <select id="board-project-filter" data-action="set-current-project">
                                 <option value="">Select Project</option>
                             </select>
                         </div>
@@ -438,7 +438,7 @@
                     <div class="view-header">
                         <h2>Epics</h2>
                         <div class="view-actions">
-                            <select id="epics-project-filter">
+                            <select id="epics-project-filter" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
                             <button class="btn btn-primary" data-action="showCreateEpicModal">+ New Epic</button>
@@ -459,7 +459,7 @@
                     <div class="view-header">
                         <h2>Sprints</h2>
                         <div class="view-actions">
-                            <select id="sprint-project-filter">
+                            <select id="sprint-project-filter" data-action="set-current-project">
                                 <option value="">Select Project</option>
                             </select>
                         </div>
@@ -474,7 +474,7 @@
                             <div class="search-box">
                                 <input type="text" id="doc-search" placeholder="Search documents...">
                             </div>
-                            <select id="doc-project-filter" class="filter-select" aria-label="Filter by project">
+                            <select id="doc-project-filter" class="filter-select" aria-label="Filter by project" data-action="set-current-project">
                                 <option value="">All Projects</option>
                             </select>
                             <select id="doc-sort" class="filter-select" aria-label="Sort by">
@@ -517,7 +517,7 @@
                     <div class="view-header">
                         <h2>Rituals</h2>
                         <div class="view-actions">
-                            <select id="rituals-project-filter">
+                            <select id="rituals-project-filter" data-action="set-current-project">
                                 <option value="">Select a project</option>
                             </select>
                         </div>

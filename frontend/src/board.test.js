@@ -16,7 +16,6 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
-    setGlobalProjectSelection: vi.fn(),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -38,6 +37,7 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
+import { setState } from './state.js';
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import {
@@ -99,8 +99,9 @@ describe('board', () => {
                 { id: '2', title: 'Issue 2', status: 'done' },
             ];
             api.getIssues.mockResolvedValue(mockIssues);
+            setState('currentProject', 'project-123');
 
-            await loadBoard('project-123');
+            await loadBoard();
 
             expect(api.getIssues).toHaveBeenCalledWith({ project_id: 'project-123' });
             expect(getBoardIssues()).toEqual(mockIssues);
@@ -108,8 +109,9 @@ describe('board', () => {
 
         it('shows error toast on API failure', async () => {
             api.getIssues.mockRejectedValue(new Error('API Error'));
+            setState('currentProject', 'project-123');
 
-            await loadBoard('project-123');
+            await loadBoard();
 
             expect(showToast).toHaveBeenCalledWith('Failed to load board: API Error', 'error');
         });

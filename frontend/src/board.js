@@ -5,11 +5,10 @@
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { getProjects, setGlobalProjectSelection } from './projects.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
+import { getCurrentProject, getCurrentView, subscribe } from './state.js';
 
 // Board status configuration
 export const BOARD_STATUSES = [
@@ -48,30 +47,19 @@ export function getDraggingIssueId() {
     return draggingIssueId;
 }
 
+// React to project changes when board is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'board') return;
+    loadBoard();
+});
+
 /**
- * Update the board project filter dropdown
+ * Load board issues for the current project
  */
-export function updateBoardProjectFilter() {
-    const filter = document.getElementById('board-project-filter');
-    if (!filter) return;
-
-    const projects = getProjects();
-
-    // Populate project filter
-    filter.innerHTML = '<option value="">Select Project</option>' +
-        projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-
-    if (!filter.value) {
-        // Read from URL first, then localStorage
-        const saved = getProjectFromUrl();
-        if (saved && projects.some(p => p.id === saved)) {
-            filter.value = saved;
-        }
-    }
-
-    if (filter.value) {
-        loadBoard(filter.value);
-    } else {
+export async function loadBoard() {
+    const projectId = getCurrentProject();
+    if (!projectId) {
         const board = document.getElementById('kanban-board');
         if (board) {
             board.innerHTML = `
@@ -81,30 +69,6 @@ export function updateBoardProjectFilter() {
                 </div>
             `;
         }
-    }
-}
-
-/**
- * Handle board project filter change - update URL and reload
- */
-export function onBoardProjectChange() {
-    const projectId = document.getElementById('board-project-filter')?.value;
-    if (projectId) {
-        setGlobalProjectSelection(projectId);
-        updateUrlWithProject(projectId);
-    }
-    loadBoard(projectId);
-}
-
-/**
- * Load board issues for a project
- * @param {string} projectIdParam - Project ID to load, or reads from filter
- */
-export async function loadBoard(projectIdParam) {
-    // Use passed parameter if provided, otherwise read from DOM
-    const projectId = projectIdParam || document.getElementById('board-project-filter')?.value;
-    if (!projectId) {
-        updateBoardProjectFilter();
         return;
     }
 

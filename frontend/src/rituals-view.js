@@ -10,9 +10,6 @@ import { escapeHtml, escapeAttr } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { registerActions } from './event-delegation.js';
 import {
-    getProjects,
-    loadProjects,
-    getSavedProjectId,
     getProjectRituals,
     loadProjectSettingsRituals,
     renderRitualList,
@@ -20,76 +17,57 @@ import {
     showCreateProjectRitualModal,
     setOnRitualsChanged,
 } from './projects.js';
-import { getProjectFromUrl } from './url-helpers.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
+import { getCurrentProject, getCurrentView, subscribe } from './state.js';
 
 // ========================================
 // Rituals top-level view
 // ========================================
 
-/**
- * Update the ritual project filter dropdown in settings view.
- */
-export async function updateRitualProjectFilter() {
-    const filter = document.getElementById('ritual-project-filter');
-    if (!filter) return;
-
-    await loadProjects();
-    filter.innerHTML = '<option value="">Select Project</option>' +
-        getProjects().map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
-}
+// React to project changes when rituals view is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'rituals') return;
+    loadRitualsForProject();
+});
 
 /**
- * Load the top-level rituals view. Sets up project filter and
- * registers the _onRitualsChanged callback for CRUD refresh.
+ * Load rituals for the currently selected project.
  */
-export async function loadRitualsView() {
-    const filter = document.getElementById('rituals-project-filter');
-    if (!filter) return;
-
-    // Set callback so CRUD operations refresh the rituals view
-    setOnRitualsChanged(renderRitualsView);
-
-    await loadProjects();
-    filter.innerHTML = '<option value="">Select a project</option>' +
-        getProjects().map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
-
-    // Auto-select saved project
-    const savedProject = getProjectFromUrl() || getSavedProjectId();
-    if (savedProject && getProjects().some(p => p.id === savedProject)) {
-        filter.value = savedProject;
-        onRitualsProjectChange();
-    } else {
-        document.getElementById('rituals-content').innerHTML =
-            '<div class="empty-state">Select a project to view and manage rituals.</div>';
-    }
-}
-
-/**
- * Handle project filter change in the rituals view.
- */
-export async function onRitualsProjectChange() {
-    const projectId = document.getElementById('rituals-project-filter').value;
+async function loadRitualsForProject() {
+    const projectId = getCurrentProject();
     const container = document.getElementById('rituals-content');
 
     if (!projectId) {
-        document.getElementById('rituals-tabs').classList.add('hidden');
-        container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
+        const tabs = document.getElementById('rituals-tabs');
+        if (tabs) tabs.classList.add('hidden');
+        if (container) container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
         return;
     }
 
     // Set the project context so create/edit/delete functions work
     setCurrentSettingsProjectId(projectId);
 
-    container.innerHTML = '<div class="loading">Loading rituals...</div>';
+    if (container) container.innerHTML = '<div class="loading">Loading rituals...</div>';
 
     try {
         await loadProjectSettingsRituals();
         // renderRitualsView() is called via the _onRitualsChanged callback
     } catch (e) {
-        container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
+        if (container) container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
     }
+}
+
+/**
+ * Load the top-level rituals view. Sets up _onRitualsChanged callback
+ * and loads rituals for the current project.
+ */
+export async function loadRitualsView() {
+    // Set callback so CRUD operations refresh the rituals view
+    setOnRitualsChanged(renderRitualsView);
+
+    loadRitualsForProject();
 }
 
 /**
