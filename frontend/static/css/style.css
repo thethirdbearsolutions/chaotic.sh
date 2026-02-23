@@ -7461,3 +7461,146 @@ input[type="checkbox"] {
     width: 100px;
 }
 
+/* ==========================================================================
+   Mobile overrides (CHT-1118)
+   Must come AFTER component definitions to win specificity cascade.
+   ========================================================================== */
+
+@media (max-width: 768px) {
+    /* Fix #5: Filter dropdown bottom-sheet (was overridden by later desktop styles) */
+    .filter-menu-dropdown {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        min-width: 0;
+        max-height: 70vh;
+        border-radius: 12px 12px 0 0;
+        flex-direction: column;
+        z-index: 300;
+        margin-top: 0;
+        overflow: hidden;
+    }
+
+    .filter-menu-dropdown::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: -1;
+    }
+
+    .filter-menu-categories {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        flex-wrap: wrap;
+        padding: 6px;
+        gap: 4px;
+        background: var(--bg-secondary);
+    }
+
+    .filter-menu-options {
+        min-height: 0;
+        max-height: 50vh;
+        overflow-y: auto;
+    }
+
+    /* Fix #4: Display dropdown bottom-sheet on mobile */
+    .display-menu-dropdown {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        min-width: 0;
+        margin-top: 0;
+        border-radius: 12px 12px 0 0;
+        z-index: 300;
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+
+    .display-menu-dropdown::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: -1;
+    }
+
+    /* Fix #2: Epics card layout — show less info */
+    .epic-row td {
+        padding: 2px 0;
+    }
+
+    .epic-row td:empty {
+        display: none;
+    }
+
+    .epic-row .epic-estimate,
+    .epic-row .epic-dates {
+        display: inline-block;
+        font-size: var(--font-sm);
+        width: auto;
+        margin-right: 8px;
+    }
+
+    .epic-status {
+        width: auto;
+    }
+
+    .epic-title {
+        font-size: var(--font-base);
+        margin-bottom: 2px;
+    }
+
+    /* Fix #3: Button sizing — reduce bulk on mobile */
+    .view-header .btn,
+    .view-actions .btn {
+        padding: 6px 12px;
+        font-size: var(--font-sm);
+    }
+
+    /* Fix #6: Rituals — compact layout on mobile */
+    .ritual-item {
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 14px;
+    }
+
+    .ritual-item-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .ritual-item-actions .btn {
+        padding: 6px 12px;
+        font-size: var(--font-sm);
+    }
+
+    .ritual-item-name {
+        font-size: var(--font-base);
+    }
+
+    .ritual-group-title {
+        font-size: var(--font-lg);
+    }
+
+    /* Fix #7: Document readability — tighten margins */
+    .document-content.markdown-body {
+        font-size: 0.9375rem;
+    }
+
+    .document-content.markdown-body h1 { font-size: 1.5em; }
+    .document-content.markdown-body h2 { font-size: 1.25em; }
+    .document-content.markdown-body h3 { font-size: 1.1em; }
+
+    .document-content.markdown-body ul,
+    .document-content.markdown-body ol {
+        padding-left: 1.5em;
+    }
+}
+
