@@ -120,6 +120,74 @@ describe('ws.js', () => {
             consoleSpy.mockRestore();
         });
 
+        it('schedules reconnect on close with exponential backoff (CHT-1038)', () => {
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+
+                // Simulate disconnect
+                ws.onclose();
+
+                // Should not reconnect immediately
+                expect(MockWebSocket).toHaveBeenCalledTimes(1);
+
+                // Advance past max possible delay for first attempt (1000 + 25% jitter = 1250ms)
+                vi.advanceTimersByTime(1500);
+
+                // Should have reconnected
+                expect(MockWebSocket).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('skips reconnect when team changes after disconnect', () => {
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+
+                // Simulate disconnect
+                ws.onclose();
+
+                // Team changed before reconnect fires
+                getCurrentTeam.mockReturnValue({ id: 'team-2' });
+
+                vi.advanceTimersByTime(60000);
+
+                // Should NOT have reconnected (only the initial connect)
+                expect(MockWebSocket).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('only shows disconnect toast on first failure', () => {
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+
+                // First disconnect — should show toast
+                ws.onclose();
+                expect(showToast).toHaveBeenCalledWith('Live updates disconnected. Reconnecting...', 'warning');
+                expect(showToast).toHaveBeenCalledTimes(1);
+
+                // Let the reconnect timer fire so we get a new WS
+                vi.advanceTimersByTime(1500);
+                const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+
+                // Second disconnect — wsFailCount is now 2 (first onclose + this one)
+                vi.clearAllMocks();
+                ws2.onclose();
+                // Should NOT show disconnect toast again (only shows when wsFailCount === 1)
+                expect(showToast).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it('parses JSON safely on message (CHT-1038)', () => {
             const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             connectWebSocket('team-1');
