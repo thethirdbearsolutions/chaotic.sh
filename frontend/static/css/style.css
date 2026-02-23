@@ -7480,7 +7480,7 @@ input[type="checkbox"] {
         flex-direction: column;
         z-index: 300;
         margin-top: 0;
-        overflow: visible;
+        overflow: hidden;
     }
 
     .filter-menu-dropdown::before {
@@ -7540,7 +7540,7 @@ input[type="checkbox"] {
         display: none;
     }
 
-    .epic-estimate,
+    .epic-row .epic-estimate,
     .epic-row .epic-dates {
         display: inline-block;
         font-size: var(--font-sm);
