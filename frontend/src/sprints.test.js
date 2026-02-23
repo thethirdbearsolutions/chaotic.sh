@@ -28,7 +28,6 @@ vi.mock('./ui.js', () => ({
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
     getEstimateScaleHint: vi.fn(() => ''),
-    setGlobalProjectSelection: vi.fn(),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -68,17 +67,14 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn(s => s || ''),
 }));
 
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, setState } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { setGlobalProjectSelection } from './projects.js';
-import { updateUrlWithProject } from './url-helpers.js';
 import {
     getSprints,
     setSprints,
     getSprintCache,
     getLimboStatus,
-    onSprintProjectChange,
     loadSprints,
     renderSprints,
     viewSprint,
@@ -177,8 +173,8 @@ describe('loadSprints', () => {
         ]);
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
 
-        document.getElementById('sprint-project-filter').value = 'p1';
-        await loadSprints('p1');
+        setState('currentProject', 'p1');
+        await loadSprints();
 
         expect(api.getCurrentSprint).toHaveBeenCalledWith('p1');
         expect(api.getSprints).toHaveBeenCalledWith('p1');
@@ -186,14 +182,16 @@ describe('loadSprints', () => {
     });
 
     it('does nothing without project ID', async () => {
-        await loadSprints('');
+        setState('currentProject', null);
+        await loadSprints();
         expect(api.getSprints).not.toHaveBeenCalled();
     });
 
     it('shows error toast on failure', async () => {
         api.getCurrentSprint.mockRejectedValue(new Error('network'));
 
-        await loadSprints('p1');
+        setState('currentProject', 'p1');
+        await loadSprints();
 
         expect(showToast).toHaveBeenCalledWith('network', 'error');
     });
@@ -265,19 +263,6 @@ describe('renderSprints', () => {
     });
 });
 
-describe('onSprintProjectChange', () => {
-    it('sets global project selection and updates URL', () => {
-        document.getElementById('sprint-project-filter').value = 'p1';
-        api.getCurrentSprint.mockResolvedValue({});
-        api.getSprints.mockResolvedValue([]);
-        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
-
-        onSprintProjectChange();
-
-        expect(setGlobalProjectSelection).toHaveBeenCalledWith('p1');
-        expect(updateUrlWithProject).toHaveBeenCalledWith('p1');
-    });
-});
 
 describe('viewSprint', () => {
     it('loads sprint details and renders detail view', async () => {
@@ -486,7 +471,7 @@ describe('handleUpdateBudget', () => {
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
 
         document.getElementById('sprint-budget').value = '25';
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
 
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
@@ -503,7 +488,7 @@ describe('handleUpdateBudget', () => {
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
 
         document.getElementById('sprint-budget').value = '';
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
 
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
@@ -525,7 +510,7 @@ describe('handleUpdateBudget', () => {
 
 describe('completeSprint', () => {
     beforeEach(() => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
     });
 
     it('closes sprint and reloads', async () => {
@@ -563,7 +548,7 @@ describe('completeSprint', () => {
 
 describe('loadLimboStatus', () => {
     it('loads limbo status and renders banner', async () => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue({
             in_limbo: true,
             pending_rituals: [{ id: 'r1', name: 'test' }],
@@ -577,7 +562,7 @@ describe('loadLimboStatus', () => {
     });
 
     it('does nothing without project filter', async () => {
-        document.getElementById('sprint-project-filter').value = '';
+        setState('currentProject', null);
 
         await loadLimboStatus();
 
@@ -588,7 +573,7 @@ describe('loadLimboStatus', () => {
 describe('showLimboDetailsModal', () => {
     it('does nothing when no limbo status', async () => {
         // Reset limbo state by loading null status
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue(null);
         await loadLimboStatus();
         vi.clearAllMocks();
@@ -598,7 +583,7 @@ describe('showLimboDetailsModal', () => {
     });
 
     it('shows modal when limbo status exists', async () => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue({
             in_limbo: true,
             pending_rituals: [

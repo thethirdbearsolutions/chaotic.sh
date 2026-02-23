@@ -31,6 +31,9 @@ vi.mock('./event-delegation.js', () => ({
 vi.mock('./state.js', () => ({
     getCurrentUser: vi.fn(() => null),
     getCurrentTeam: vi.fn(() => null),
+    getCurrentProject: vi.fn(() => null),
+    getCurrentView: vi.fn(() => 'dashboard'),
+    subscribe: vi.fn(),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -53,7 +56,7 @@ vi.mock('./documents.js', () => ({
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { getCurrentUser, getCurrentTeam } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentProject } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import {
@@ -165,7 +168,7 @@ describe('dashboard module', () => {
         });
 
         it('uses getIssues with project_id when project filter is set (CHT-853)', async () => {
-            document.getElementById('dashboard-project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             const mockIssues = [{ id: 'issue-1', title: 'Filtered' }];
             api.getIssues.mockResolvedValue(mockIssues);
 
@@ -182,7 +185,7 @@ describe('dashboard module', () => {
         });
 
         it('uses getTeamIssues when project filter is empty (CHT-853)', async () => {
-            document.getElementById('dashboard-project-filter').value = '';
+            getCurrentProject.mockReturnValue(null);
             api.getTeamIssues.mockResolvedValue([]);
 
             await loadMyIssues();
@@ -359,6 +362,7 @@ describe('dashboard module', () => {
 
     describe('filterMyIssues', () => {
         it('reloads issues with filter', async () => {
+            getCurrentProject.mockReturnValue(null);
             api.getTeamIssues.mockResolvedValue([]);
 
             await filterMyIssues();

@@ -9,7 +9,6 @@ import {
   loadProjects,
   updateProjectFilters,
   getSavedProjectId,
-  setGlobalProjectSelection,
   renderProjects,
   viewProject,
   showCreateProjectModal,
@@ -266,33 +265,6 @@ describe('getSavedProjectId', () => {
   });
 });
 
-describe('setGlobalProjectSelection', () => {
-  beforeEach(() => {
-    document.body.innerHTML = `
-      <select id="project-filter"><option value="proj-1">P1</option></select>
-      <select id="board-project-filter"><option value="proj-1">P1</option></select>
-      <select id="sprint-project-filter"><option value="proj-1">P1</option></select>
-    `;
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('does nothing for empty projectId', () => {
-    setGlobalProjectSelection('');
-    expect(localStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it('saves to localStorage and updates all selectors', () => {
-    setGlobalProjectSelection('proj-1');
-    expect(localStorage.setItem).toHaveBeenCalledWith('chaotic_last_project', 'proj-1');
-    expect(document.getElementById('project-filter').value).toBe('proj-1');
-    expect(document.getElementById('board-project-filter').value).toBe('proj-1');
-    expect(document.getElementById('sprint-project-filter').value).toBe('proj-1');
-  });
-});
 
 describe('renderProjects', () => {
   beforeEach(() => {

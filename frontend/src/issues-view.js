@@ -17,16 +17,39 @@ import {
     getSearchDebounceTimer,
     setSearchDebounceTimer,
     setSelectedIssueIndex,
+    getCurrentProject,
+    setCurrentProject,
+    getCurrentView,
+    subscribe,
 } from './state.js';
-import { getProjects, setGlobalProjectSelection } from './projects.js';
+import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
-import { ensureSprintCacheForIssues, updateSprintProjectFilter } from './sprints.js';
-import { updateBoardProjectFilter } from './board.js';
+import { ensureSprintCacheForIssues } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showToast } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
+
+// Guard flag: when true, the subscriber skips sprint-clearing logic
+// because loadFiltersFromUrl is restoring filters from URL params.
+let _suppressProjectSubscriber = false;
+
+// React to project changes when issues view is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'issues') return;
+    if (_suppressProjectSubscriber) return;
+    // Clear sprint filter — sprints are per-project so old value is stale (CHT-1084)
+    const sprintFilter = document.getElementById('sprint-filter');
+    if (sprintFilter) sprintFilter.value = '';
+    // Update sprint filter options, then re-filter
+    updateSprintFilter().then(() => {
+        filterIssues();
+        updateFilterChips();
+        updateFilterCountBadge();
+    });
+});
 
 // ========================================
 // Legacy Multi-select Dropdown Functions
@@ -233,7 +256,7 @@ export function syncFiltersToUrl() {
     const priorities = getSelectedPriorities();
     const labels = getSelectedLabels();
     const assignee = document.getElementById('assignee-filter')?.value;
-    const project = document.getElementById('project-filter')?.value;
+    const project = getCurrentProject() || '';
     const sprint = document.getElementById('sprint-filter')?.value;
     const issueType = document.getElementById('issue-type-filter')?.value;
     const groupBy = document.getElementById('group-by-select')?.value;
@@ -313,11 +336,14 @@ export function loadFiltersFromUrl() {
         if (assigneeFilter) assigneeFilter.value = assignee;
     }
 
-    // Apply project filter
+    // Apply project filter — update reactive state so all views stay in sync.
+    // Suppress subscriber to prevent it from clearing the sprint filter we're
+    // about to set from URL params (race condition fix).
     const project = params.get('project');
     if (project) {
-        const projectFilter = document.getElementById('project-filter');
-        if (projectFilter) projectFilter.value = project;
+        _suppressProjectSubscriber = true;
+        setCurrentProject(project);
+        _suppressProjectSubscriber = false;
     }
 
     // Apply sprint filter
@@ -483,7 +509,7 @@ export function closeAllFilterMenus() {
 export function getFilterCategoryCount(category) {
     switch (category) {
         case 'project':
-            return document.getElementById('project-filter')?.value ? 1 : 0;
+            return getCurrentProject() ? 1 : 0;
         case 'status':
             return getSelectedStatuses().length;
         case 'priority':
@@ -513,7 +539,7 @@ export function renderFilterMenuCategories() {
     const container = document.getElementById('filter-menu-categories');
     if (!container) return;
 
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     container.innerHTML = FILTER_CATEGORIES.map(cat => {
         const count = getFilterCategoryCount(cat.key);
         const isActive = getActiveFilterCategory() === cat.key;
@@ -565,8 +591,7 @@ export function showFilterCategoryOptions(category) {
 // ========================================
 
 function renderProjectOptions(container) {
-    const projectFilter = document.getElementById('project-filter');
-    const currentValue = projectFilter?.value || '';
+    const currentValue = getCurrentProject() || '';
     const projects = getProjects() || [];
 
     let html = `
@@ -734,7 +759,7 @@ function renderAssigneeOptions(container) {
 }
 
 function renderSprintOptions(container) {
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     if (!projectId) {
         container.innerHTML = `
             <div class="filter-options-header">
@@ -808,15 +833,11 @@ function renderLabelOptions(container) {
 // ========================================
 
 export function setProjectFilter(value) {
-    const filter = document.getElementById('project-filter');
-    if (filter) {
-        filter.value = value;
-        onProjectFilterChange();
-    }
+    setCurrentProject(value);
+    // Subscriber handles filterIssues, updateFilterChips, updateFilterCountBadge
+    // after sprint options are refreshed — only update the menu UI here.
     renderFilterMenuCategories();
     showFilterCategoryOptions('project');
-    updateFilterChips();
-    updateFilterCountBadge();
 }
 
 export function clearProjectFilter() {
@@ -1037,10 +1058,10 @@ export function updateFilterChips() {
     const chips = [];
 
     // Project chip
-    const projectFilter = document.getElementById('project-filter');
-    if (projectFilter?.value) {
+    const currentProjectId = getCurrentProject();
+    if (currentProjectId) {
         const projects = getProjects() || [];
-        const project = projects.find(p => p.id === projectFilter.value);
+        const project = projects.find(p => p.id === currentProjectId);
         chips.push({
             category: 'project',
             label: 'Project',
@@ -1158,9 +1179,8 @@ export function updateFilterChips() {
 }
 
 export function clearAllFilters() {
-    // Clear all hidden controls
-    const projectFilter = document.getElementById('project-filter');
-    if (projectFilter) projectFilter.value = '';
+    // Clear project via reactive state (syncs DOM + all views)
+    setCurrentProject(null);
 
     clearStatusFilter();
     clearPriorityFilter();
@@ -1214,7 +1234,7 @@ export async function updateSprintFilter() {
     const sprintFilter = document.getElementById('sprint-filter');
     if (!sprintFilter) return;
 
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     const currentSelection = sprintFilter.value;
 
     // No project selected — sprint filter is not applicable (CHT-1084)
@@ -1309,7 +1329,7 @@ export async function loadIssues() {
     setSelectedIssueIndex(-1);
     if (!getCurrentTeam()) return;
 
-    const projectId = document.getElementById('project-filter').value;
+    const projectId = getCurrentProject() || '';
     const statuses = getSelectedStatuses();
     const priorities = getSelectedPriorities();
     const assigneeFilter = document.getElementById('assignee-filter')?.value;
@@ -1444,25 +1464,6 @@ export function showIssuesLoadingSkeleton() {
 export function filterIssues() {
     syncFiltersToUrl();
     loadIssues();
-}
-
-export async function onProjectFilterChange() {
-    // Save selection to localStorage
-    const projectId = document.getElementById('project-filter')?.value;
-    if (projectId) {
-        setGlobalProjectSelection(projectId);
-    }
-    // Clear sprint filter — sprints are per-project so the old value is stale (CHT-1084)
-    const sprintFilter = document.getElementById('sprint-filter');
-    if (sprintFilter) sprintFilter.value = '';
-    // Update sprint filter options for new project
-    await updateSprintFilter();
-    updateBoardProjectFilter();
-    updateSprintProjectFilter();
-    // Then filter issues
-    filterIssues();
-    updateFilterChips();
-    updateFilterCountBadge();
 }
 
 export async function updateGroupBy() {

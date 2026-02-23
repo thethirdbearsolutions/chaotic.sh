@@ -37,6 +37,9 @@ const initialState = {
     // Team
     currentTeam: null,
 
+    // Global project selection (synced across all views)
+    currentProject: null,
+
     // Issue detail view
     currentDetailIssue: null,
     currentDetailSprints: null,
@@ -154,6 +157,9 @@ export const setWebsocket = (ws) => setState('websocket', ws);
 
 export const getCurrentTeam = () => state.currentTeam;
 export const setCurrentTeam = (team) => setState('currentTeam', team);
+
+export const getCurrentProject = () => state.currentProject;
+export const setCurrentProject = (projectId) => setState('currentProject', projectId || null);
 
 export const getCurrentDetailIssue = () => state.currentDetailIssue;
 export const setCurrentDetailIssue = (issue) => setState('currentDetailIssue', issue);

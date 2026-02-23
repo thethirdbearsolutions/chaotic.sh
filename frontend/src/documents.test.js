@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, setState } from './state.js';
 import {
   getDocuments,
   loadDocuments,
@@ -89,14 +89,12 @@ describe('loadDocuments', () => {
     expect(api.getDocuments).toHaveBeenCalledWith('team-1', null);
   });
 
-  it('uses doc-project-filter value if available', async () => {
-    document.body.innerHTML = `
-      <div id="documents-list"></div>
-      <select id="doc-project-filter"><option value="proj-1" selected>Project 1</option></select>
-    `;
+  it('uses currentProject from state if available', async () => {
+    setState('currentProject', 'proj-1');
     api.getDocuments.mockResolvedValue([]);
     await loadDocuments();
     expect(api.getDocuments).toHaveBeenCalledWith('team-1', 'proj-1');
+    setState('currentProject', null);
   });
 
   it('renders documents after loading', async () => {

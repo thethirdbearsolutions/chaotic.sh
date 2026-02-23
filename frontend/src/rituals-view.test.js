@@ -57,9 +57,7 @@ vi.mock('./api.js', () => ({
 }));
 
 import {
-    updateRitualProjectFilter,
     loadRitualsView,
-    onRitualsProjectChange,
     renderRitualsView,
     approveRitual,
     completeGateRitual,
@@ -71,8 +69,7 @@ import {
 } from './rituals-view.js';
 
 import { showModal, closeModal, showToast } from './ui.js';
-import { getProjects, loadProjects, getSavedProjectId, getProjectRituals, loadProjectSettingsRituals, renderRitualList, setCurrentSettingsProjectId } from './projects.js';
-import { getProjectFromUrl } from './url-helpers.js';
+import { getProjectRituals, loadProjectSettingsRituals, renderRitualList, setCurrentSettingsProjectId } from './projects.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
 import { api } from './api.js';
@@ -86,129 +83,45 @@ describe('rituals-view', () => {
     });
 
     // ========================================
-    // updateRitualProjectFilter
-    // ========================================
-    describe('updateRitualProjectFilter', () => {
-        it('returns early if no filter element', async () => {
-            await updateRitualProjectFilter();
-            expect(loadProjects).not.toHaveBeenCalled();
-        });
-
-        it('populates project dropdown', async () => {
-            document.body.innerHTML = '<select id="ritual-project-filter"></select>';
-            getProjects.mockReturnValue([
-                { id: 'p1', name: 'Project One' },
-                { id: 'p2', name: 'Project Two' },
-            ]);
-
-            await updateRitualProjectFilter();
-
-            expect(loadProjects).toHaveBeenCalled();
-            const filter = document.getElementById('ritual-project-filter');
-            expect(filter.innerHTML).toContain('Select Project');
-            expect(filter.innerHTML).toContain('Project One');
-            expect(filter.innerHTML).toContain('Project Two');
-        });
-    });
-
-    // ========================================
     // loadRitualsView
     // ========================================
     describe('loadRitualsView', () => {
-        it('returns early if no filter element', async () => {
-            await loadRitualsView();
-            expect(loadProjects).not.toHaveBeenCalled();
-        });
-
         it('sets _onRitualsChanged callback', async () => {
             document.body.innerHTML = `
-                <select id="rituals-project-filter"></select>
                 <div id="rituals-content"></div>
             `;
-            getProjects.mockReturnValue([]);
 
             await loadRitualsView();
 
             expect(mockSetOnRitualsChanged).toHaveBeenCalledWith(renderRitualsView);
         });
 
-        it('auto-selects saved project from URL', async () => {
+        it('loads rituals for current project', async () => {
+            const { setState } = await import('./state.js');
+            setState('currentProject', 'p1');
             document.body.innerHTML = `
-                <select id="rituals-project-filter"></select>
                 <div id="rituals-content"></div>
             `;
-            getProjects.mockReturnValue([{ id: 'p1', name: 'Project One' }]);
-            getProjectFromUrl.mockReturnValue('p1');
-            // loadProjectSettingsRituals is called by onRitualsProjectChange
-            // which needs the filter value to be set
 
             await loadRitualsView();
 
-            const filter = document.getElementById('rituals-project-filter');
-            expect(filter.value).toBe('p1');
             expect(setCurrentSettingsProjectId).toHaveBeenCalledWith('p1');
+            expect(loadProjectSettingsRituals).toHaveBeenCalled();
+            setState('currentProject', null);
         });
 
-        it('shows empty state when no saved project', async () => {
+        it('shows empty state when no current project', async () => {
+            const { setState } = await import('./state.js');
+            setState('currentProject', null);
             document.body.innerHTML = `
-                <select id="rituals-project-filter"></select>
-                <div id="rituals-content"></div>
-            `;
-            getProjects.mockReturnValue([{ id: 'p1', name: 'Test' }]);
-            getProjectFromUrl.mockReturnValue(null);
-            getSavedProjectId.mockReturnValue(null);
-
-            await loadRitualsView();
-
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('Select a project');
-        });
-    });
-
-    // ========================================
-    // onRitualsProjectChange
-    // ========================================
-    describe('onRitualsProjectChange', () => {
-        it('shows empty state when no project selected', async () => {
-            document.body.innerHTML = `
-                <select id="rituals-project-filter"><option value="">Select</option></select>
                 <div id="rituals-tabs" class="settings-tabs hidden"></div>
                 <div id="rituals-content"></div>
             `;
 
-            await onRitualsProjectChange();
+            await loadRitualsView();
 
             const content = document.getElementById('rituals-content');
             expect(content.innerHTML).toContain('Select a project');
-            expect(setCurrentSettingsProjectId).not.toHaveBeenCalled();
-        });
-
-        it('loads rituals for selected project', async () => {
-            document.body.innerHTML = `
-                <select id="rituals-project-filter"><option value="p1">Project</option></select>
-                <div id="rituals-content"></div>
-            `;
-            document.getElementById('rituals-project-filter').value = 'p1';
-
-            await onRitualsProjectChange();
-
-            expect(setCurrentSettingsProjectId).toHaveBeenCalledWith('p1');
-            expect(loadProjectSettingsRituals).toHaveBeenCalled();
-        });
-
-        it('shows error on failure', async () => {
-            document.body.innerHTML = `
-                <select id="rituals-project-filter"><option value="p1">Project</option></select>
-                <div id="rituals-content"></div>
-            `;
-            document.getElementById('rituals-project-filter').value = 'p1';
-            loadProjectSettingsRituals.mockRejectedValue(new Error('Network fail'));
-
-            await onRitualsProjectChange();
-
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('Error loading rituals');
-            expect(content.innerHTML).toContain('Network fail');
         });
     });
 

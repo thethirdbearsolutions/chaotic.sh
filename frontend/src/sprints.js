@@ -7,10 +7,9 @@
 
 import { api } from './api.js';
 import { showModal, closeModal, showToast } from './ui.js';
-import { getProjects, getEstimateScaleHint, setGlobalProjectSelection } from './projects.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { getEstimateScaleHint } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
-import { getCurrentTeam } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
 import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
@@ -50,40 +49,27 @@ export function getLimboStatus() {
 // Sprint List View
 // ============================================================================
 
-export function updateSprintProjectFilter() {
-    const filter = document.getElementById('sprint-project-filter');
-    if (!filter) return;
-    if (!filter.value) {
-        // Read from URL first, then localStorage
-        const saved = getProjectFromUrl();
-        if (saved && getProjects().some(p => p.id === saved)) {
-            filter.value = saved;
+// React to project changes when sprints view is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'sprints') return;
+    loadSprints();
+});
+
+export async function loadSprints() {
+    const projectId = getCurrentProject();
+    if (!projectId) {
+        const list = document.getElementById('sprints-list');
+        if (list) {
+            list.innerHTML = `
+                <div class="empty-state">
+                    <h3>Select a project</h3>
+                    <p>Choose a project to view its sprints</p>
+                </div>
+            `;
         }
+        return;
     }
-    if (filter.value) {
-        loadSprints(filter.value);
-    } else {
-        document.getElementById('sprints-list').innerHTML = `
-            <div class="empty-state">
-                <h3>Select a project</h3>
-                <p>Choose a project to view its sprints</p>
-            </div>
-        `;
-    }
-}
-
-export function onSprintProjectChange() {
-    const projectId = document.getElementById('sprint-project-filter').value;
-    if (projectId) {
-        setGlobalProjectSelection(projectId);
-        updateUrlWithProject(projectId);
-    }
-    loadSprints(projectId);
-}
-
-export async function loadSprints(projectIdParam) {
-    const projectId = projectIdParam || document.getElementById('sprint-project-filter').value;
-    if (!projectId) return;
 
     invalidateSprintCache();
 
@@ -650,7 +636,7 @@ export async function completeSprint(sprintId) {
 // ============================================================================
 
 export async function loadLimboStatus() {
-    const projectId = document.getElementById('sprint-project-filter')?.value;
+    const projectId = getCurrentProject();
     if (!projectId) return;
 
     try {
@@ -689,7 +675,7 @@ function renderLimboBanner() {
 }
 
 function showLimboModal(sprint) {
-    const projectId = document.getElementById('sprint-project-filter').value;
+    const projectId = getCurrentProject();
     document.getElementById('modal-title').textContent = 'Sprint In Limbo';
     document.getElementById('modal-content').innerHTML = `
         <div class="limbo-modal">
@@ -749,8 +735,7 @@ async function loadLimboRituals(projectId) {
 export function showLimboDetailsModal() {
     if (!limboStatus) return;
 
-    const projectId = document.getElementById('sprint-project-filter')?.value ||
-                      document.getElementById('ritual-project-filter')?.value;
+    const projectId = getCurrentProject();
 
     document.getElementById('modal-title').textContent = 'Limbo Status';
     document.querySelector('.modal')?.classList.add('modal-wide');

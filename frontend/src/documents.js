@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
-import { getCurrentTeam, setSelectedDocIndex } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -147,29 +147,24 @@ export function clearDocSearch() {
 }
 
 /**
- * Clear document project filter (re-fetches from server)
+ * Clear document project filter.
+ * Clears the global project selection (affects all views) — this is intentional
+ * since CHT-1083 unified the project filter across all views.
  */
 export async function clearDocProjectFilter() {
-  const projectFilter = document.getElementById('doc-project-filter');
-  if (projectFilter) {
-    projectFilter.value = '';
-  }
-  await onDocProjectFilterChange();
+  setCurrentProject(null);
 }
 
 /**
- * Clear all document filters (re-fetches from server)
+ * Clear all document filters (search + project).
+ * Clears the global project selection (affects all views) — intentional per CHT-1083.
  */
 export async function clearAllDocFilters() {
   const searchInput = document.getElementById('doc-search');
-  const projectFilter = document.getElementById('doc-project-filter');
   if (searchInput) {
     searchInput.value = '';
   }
-  if (projectFilter) {
-    projectFilter.value = '';
-  }
-  await onDocProjectFilterChange();
+  setCurrentProject(null);
 }
 
 /**
@@ -180,7 +175,7 @@ function updateDocFilterChips() {
   if (!chipsRow) return;
 
   const searchTerm = document.getElementById('doc-search')?.value || '';
-  const projectFilter = document.getElementById('doc-project-filter')?.value || '';
+  const projectFilter = getCurrentProject() || '';
 
   const chips = [];
 
@@ -189,8 +184,8 @@ function updateDocFilterChips() {
   }
 
   if (projectFilter) {
-    const projectSelect = document.getElementById('doc-project-filter');
-    const projectName = projectSelect?.options[projectSelect.selectedIndex]?.text || 'Project';
+    const matchedProject = getProjects().find(p => p.id === projectFilter);
+    const projectName = matchedProject?.name || 'Project';
     chips.push(`<span class="filter-chip">Project: ${escapeHtml(projectName)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`);
   }
 
@@ -255,14 +250,13 @@ export function filterDocuments() {
 }
 
 /**
- * Handle project filter dropdown change (CHT-970).
- * Re-fetches documents from server with new project filter, then re-renders.
+ * Re-fetch documents from server with current project filter, then re-render.
  */
-export async function onDocProjectFilterChange() {
+async function fetchDocumentsForCurrentProject() {
   const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
 
-  const projectFilter = document.getElementById('doc-project-filter')?.value || null;
+  const projectFilter = getCurrentProject() || null;
   try {
     documents = await api.getDocuments(teamId, projectFilter);
     filterDocuments();
@@ -270,6 +264,13 @@ export async function onDocProjectFilterChange() {
     showToast(e.message, 'error');
   }
 }
+
+// React to project changes when documents view is active (CHT-1083)
+subscribe((key) => {
+  if (key !== 'currentProject') return;
+  if (getCurrentView() !== 'documents') return;
+  fetchDocumentsForCurrentProject();
+});
 
 /**
  * Load documents for the current team/project
@@ -300,12 +301,9 @@ export async function loadDocuments(teamId, projectId = null) {
     `).join('');
   }
 
-  // Use project from dropdown if not explicitly specified
+  // Use current project from state if not explicitly specified
   if (projectId === null) {
-    const docProjectFilter = document.getElementById('doc-project-filter');
-    if (docProjectFilter?.value) {
-      projectId = docProjectFilter.value;
-    }
+    projectId = getCurrentProject() || null;
   }
 
   try {
@@ -430,7 +428,7 @@ export function renderDocuments(groupBy = '', viewMode = 'list') {
 
   if (docsToRender.length === 0) {
     const searchTerm = document.getElementById('doc-search')?.value;
-    const projectFilter = document.getElementById('doc-project-filter')?.value;
+    const projectFilter = getCurrentProject();
     const hasFilters = searchTerm || projectFilter;
     list.innerHTML = `
       <div class="empty-state">

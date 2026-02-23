@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
+import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast } from './ui.js';
 import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
@@ -661,7 +661,7 @@ export async function updateIssueField(issueId, field, value) {
 
         // Refresh sprint budget bar if status changed (may affect points_spent)
         if (field === 'status') {
-            const projectId = document.getElementById('project-filter')?.value;
+            const projectId = getCurrentProject();
             if (projectId) {
                 try {
                     const sprints = await api.getSprints(projectId);

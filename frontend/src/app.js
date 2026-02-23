@@ -7,7 +7,7 @@ import { initEventDelegation, registerActions } from './event-delegation.js';
 import { showModal, closeModal, isModalOpen } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
 import { initApp } from './init.js';
-import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, onDocProjectFilterChange, filterDocuments, debounceDocSearch } from './documents.js';
+import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
 import { showEditIssueModal } from './issue-edit.js';
@@ -28,11 +28,10 @@ import {
     loadIssues,
     debounceSearch,
     filterIssues,
-    onProjectFilterChange,
     updateGroupBy,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { updateEpicsProjectFilter, onEpicsProjectChange, showCreateEpicModal } from './epics.js';
+import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
 import {
@@ -52,7 +51,6 @@ import {
     viewProjectSettings,
     clearProjectSettingsState,
     showCreateProjectModal,
-    setGlobalProjectSelection,
     switchProjectSettingsTab,
     saveProjectSettingsGeneral,
     saveProjectSettingsRules,
@@ -62,15 +60,12 @@ import {
 import { getProjectFromUrl } from './url-helpers.js';
 import { resetOnboarding } from './onboarding.js';
 import {
-    updateSprintProjectFilter,
-    onSprintProjectChange,
+    loadSprints,
     viewSprint,
     viewSprintByPath,
 } from './sprints.js';
 import {
-    updateRitualProjectFilter,
     loadRitualsView,
-    onRitualsProjectChange,
     switchRitualsTab,
 } from './rituals-view.js';
 import { loadApiKeys, showCreateApiKeyModal } from './api-keys.js';
@@ -81,7 +76,7 @@ import {
     isOpen as isCommandPaletteOpen,
 } from './command-palette.js';
 import { loadMyIssues, loadDashboardActivity, filterMyIssues } from './dashboard.js';
-import { updateBoardProjectFilter, onBoardProjectChange } from './board.js';
+import { loadBoard } from './board.js';
 import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import {
     getCurrentView,
@@ -90,6 +85,7 @@ import {
     getSelectedDocIndex,
     setSelectedDocIndex,
     setCurrentUser,
+    setCurrentProject,
     setCurrentDetailIssue,
     setCurrentDetailSprints,
 } from './state.js';
@@ -152,7 +148,7 @@ configureRouter({
     restoreProject: () => {
         const urlProject = getProjectFromUrl();
         if (urlProject && getProjects().some(p => p.id === urlProject)) {
-            setGlobalProjectSelection(urlProject);
+            setCurrentProject(urlProject);
         }
     },
     issueNavigate: (identifier) => viewIssueByPath(identifier),
@@ -201,16 +197,16 @@ registerViews({
         });
     },
     'epics': () => {
-        updateEpicsProjectFilter();
+        loadEpics();
     },
     'board': () => {
-        updateBoardProjectFilter();
+        loadBoard();
     },
     'projects': () => {
         loadProjects().then(renderProjects);
     },
     'sprints': () => {
-        updateSprintProjectFilter();
+        loadSprints();
     },
     'rituals': () => {
         loadRitualsView();
@@ -226,7 +222,6 @@ registerViews({
     'settings': () => {
         loadApiKeys();
         loadAgents();
-        updateRitualProjectFilter();
     },
 });
 
@@ -320,9 +315,6 @@ function initDocumentsView() {
     const docSearch = document.getElementById('doc-search');
     if (docSearch) docSearch.addEventListener('input', () => debounceDocSearch());
 
-    const docProjectFilter = document.getElementById('doc-project-filter');
-    if (docProjectFilter) docProjectFilter.addEventListener('change', () => onDocProjectFilterChange());
-
     const docSort = document.getElementById('doc-sort');
     if (docSort) docSort.addEventListener('change', () => filterDocuments());
 }
@@ -331,9 +323,6 @@ function initDocumentsView() {
  * Initialize dashboard view event listeners (CHT-1057)
  */
 function initDashboardView() {
-    const dashboardFilter = document.getElementById('dashboard-project-filter');
-    if (dashboardFilter) dashboardFilter.addEventListener('change', () => filterMyIssues());
-
     const statusFilter = document.getElementById('my-issues-status-filter');
     if (statusFilter) statusFilter.addEventListener('change', () => filterMyIssues());
 }
@@ -352,10 +341,6 @@ function initIssuesView() {
 
     const displayMenuBtn = document.getElementById('display-menu-btn');
     if (displayMenuBtn) displayMenuBtn.addEventListener('click', (e) => toggleDisplayMenu(e));
-
-    // Project filter select
-    const projectFilter = document.getElementById('project-filter');
-    if (projectFilter) projectFilter.addEventListener('change', () => onProjectFilterChange());
 
     // Multi-select toggle buttons (status, priority, label)
     document.querySelectorAll('.multi-select-btn').forEach(btn => {
@@ -418,26 +403,9 @@ function initIssuesView() {
 }
 
 /**
- * Initialize board/epics/sprints project filter selects (CHT-1057)
- */
-function initViewProjectFilters() {
-    const boardFilter = document.getElementById('board-project-filter');
-    if (boardFilter) boardFilter.addEventListener('change', () => onBoardProjectChange());
-
-    const epicsFilter = document.getElementById('epics-project-filter');
-    if (epicsFilter) epicsFilter.addEventListener('change', () => onEpicsProjectChange());
-
-    const sprintProjectFilter = document.getElementById('sprint-project-filter');
-    if (sprintProjectFilter) sprintProjectFilter.addEventListener('change', () => onSprintProjectChange());
-}
-
-/**
  * Initialize rituals view event listeners (CHT-1057)
  */
 function initRitualsView() {
-    const ritualsFilter = document.getElementById('rituals-project-filter');
-    if (ritualsFilter) ritualsFilter.addEventListener('change', () => onRitualsProjectChange());
-
     // Rituals tabs (use data-tab attribute)
     const ritualsView = document.getElementById('rituals-view');
     if (ritualsView) {
@@ -490,6 +458,9 @@ registerActions({
     'navigate-to': (_event, data) => {
         navigateTo(data.view);
     },
+    'set-current-project': (_event, _data, target) => {
+        setCurrentProject(target.value);
+    },
 });
 
 // Initialize
@@ -501,7 +472,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initActionButtons();
     initDashboardView();
     initIssuesView();
-    initViewProjectFilters();
     initRitualsView();
     initProjectSettings();
     initDocumentsView();

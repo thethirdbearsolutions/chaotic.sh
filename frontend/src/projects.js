@@ -7,7 +7,8 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
-import { getCurrentTeam } from './state.js';
+import { getCurrentTeam, getCurrentProject, setCurrentProject, subscribe } from './state.js';
+import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -18,6 +19,36 @@ let projects = [];
 
 // Callback for when rituals change (set by rituals-view)
 let _onRitualsChangedCallback = null;
+
+// All project filter DOM element IDs
+const PROJECT_FILTER_IDS = [
+  'project-filter',
+  'board-project-filter',
+  'sprint-project-filter',
+  'epics-project-filter',
+  'doc-project-filter',
+  'dashboard-project-filter',
+  'rituals-project-filter',
+];
+
+// Central subscriber: sync DOM selects + localStorage when currentProject changes
+subscribe((key, newValue) => {
+  if (key !== 'currentProject') return;
+
+  // Persist to localStorage
+  if (newValue) {
+    setSavedProject(newValue);
+  }
+
+  // Sync all DOM selects
+  PROJECT_FILTER_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = newValue || '';
+  });
+
+  // Update URL
+  updateUrlWithProject(newValue || '');
+});
 
 // Estimate scale definitions
 const ESTIMATE_SCALES = {
@@ -145,101 +176,65 @@ export async function loadProjects() {
   try {
     projects = await api.getProjects(getCurrentTeam().id);
     updateProjectFilters();
+
+    // Initialize currentProject: keep if valid, else URL > saved > first
+    const current = getCurrentProject();
+    if (current && projects.some(p => p.id === current)) return;
+    const urlProject = getProjectFromUrl();
+    if (urlProject && projects.some(p => p.id === urlProject)) {
+      setCurrentProject(urlProject);
+      return;
+    }
+    const saved = getSavedProject();
+    if (saved && projects.some(p => p.id === saved)) {
+      setCurrentProject(saved);
+      return;
+    }
+    if (projects.length > 0) {
+      setCurrentProject(projects[0].id);
+    }
   } catch (e) {
     showToast(e.message, 'error');
   }
 }
 
 /**
- * Update all project filter dropdowns
+ * Update all project filter dropdowns with current project list.
+ * Populates <option> elements and syncs to currentProject state.
  */
 export function updateProjectFilters() {
-  const projectFilter = document.getElementById('project-filter');
-  const sprintProjectFilter = document.getElementById('sprint-project-filter');
-  const boardProjectFilter = document.getElementById('board-project-filter');
-  const docProjectFilter = document.getElementById('doc-project-filter');
-  const dashboardProjectFilter = document.getElementById('dashboard-project-filter');
-
-  // Save current selections
-  const currentProjectSelection = projectFilter?.value;
-  const currentSprintProjectSelection = sprintProjectFilter?.value;
-  const currentBoardProjectSelection = boardProjectFilter?.value;
-  const currentDocProjectSelection = docProjectFilter?.value;
-  const currentDashboardProjectSelection = dashboardProjectFilter?.value;
-
-  const options =
+  const allProjectsOptions =
     '<option value="">All Projects</option>' +
     projects
       .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
       .join('');
 
-  const sprintOptions =
+  const selectProjectOptions =
     '<option value="">Select Project</option>' +
     projects
       .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
       .join('');
 
-  const savedProjectId = getSavedProjectId();
+  // Views that allow "All Projects" (empty = show all)
+  const allProjectsFilterIds = ['project-filter', 'doc-project-filter', 'dashboard-project-filter', 'epics-project-filter'];
+  // Views that require a project selection
+  const selectProjectFilterIds = ['board-project-filter', 'sprint-project-filter', 'rituals-project-filter'];
 
-  if (projectFilter) {
-    projectFilter.innerHTML = options;
-    // Try to restore selection: current > saved > URL > first project
-    let selectedProjectId = currentProjectSelection;
-    if (!selectedProjectId || !projects.some((p) => p.id === selectedProjectId)) {
-      // Try saved project
-      if (savedProjectId && projects.some((p) => p.id === savedProjectId)) {
-        selectedProjectId = savedProjectId;
-      } else {
-        // Try URL params
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlProjectId = urlParams.get('project');
-        if (urlProjectId && projects.some((p) => p.id === urlProjectId)) {
-          selectedProjectId = urlProjectId;
-        } else if (projects.length > 0) {
-          // Default to first project
-          selectedProjectId = projects[0].id;
-        }
-      }
-    }
-    if (selectedProjectId) {
-      projectFilter.value = selectedProjectId;
-      // Save for future loads
-      setSavedProject(selectedProjectId);
-    }
-  }
-  if (sprintProjectFilter) {
-    sprintProjectFilter.innerHTML = sprintOptions;
-    const sprintSelection = currentSprintProjectSelection || savedProjectId;
-    if (sprintSelection && projects.some((p) => p.id === sprintSelection)) {
-      sprintProjectFilter.value = sprintSelection;
-    }
-  }
+  allProjectsFilterIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = allProjectsOptions;
+  });
+  selectProjectFilterIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = selectProjectOptions;
+  });
 
-  if (boardProjectFilter) {
-    boardProjectFilter.innerHTML = sprintOptions;
-    const boardSelection = currentBoardProjectSelection || savedProjectId;
-    if (boardSelection && projects.some((p) => p.id === boardSelection)) {
-      boardProjectFilter.value = boardSelection;
-    }
-  }
-
-  if (docProjectFilter) {
-    docProjectFilter.innerHTML = options;
-    // Preserve current selection, fall back to saved project
-    const docSelection = currentDocProjectSelection || savedProjectId;
-    if (docSelection && projects.some((p) => p.id === docSelection)) {
-      docProjectFilter.value = docSelection;
-    }
-  }
-
-  if (dashboardProjectFilter) {
-    dashboardProjectFilter.innerHTML = options;
-    // Preserve current selection, fall back to saved project (CHT-853)
-    const dashSelection = currentDashboardProjectSelection || savedProjectId;
-    if (dashSelection && projects.some((p) => p.id === dashSelection)) {
-      dashboardProjectFilter.value = dashSelection;
-    }
-  }
+  // Sync all dropdowns to current project state
+  const currentProjectId = getCurrentProject();
+  PROJECT_FILTER_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = currentProjectId || '';
+  });
 }
 
 /**
@@ -248,24 +243,6 @@ export function updateProjectFilters() {
  */
 export function getSavedProjectId() {
   return getSavedProject();
-}
-
-/**
- * Set the global project selection across all filters
- * @param {string} projectId - Project ID to select
- */
-export function setGlobalProjectSelection(projectId) {
-  if (!projectId) return;
-  setSavedProject(projectId);
-  const selectors = [
-    'project-filter',
-    'board-project-filter',
-    'sprint-project-filter',
-  ];
-  selectors.forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.value = projectId;
-  });
 }
 
 /**
@@ -313,7 +290,7 @@ export function renderProjects() {
  * @param {string} projectId - Project ID
  */
 export function viewProject(projectId) {
-  setGlobalProjectSelection(projectId);
+  setCurrentProject(projectId);
   navigateTo('issues');
 }
 

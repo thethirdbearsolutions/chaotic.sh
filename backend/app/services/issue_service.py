@@ -109,20 +109,20 @@ _STATUS_ORDER = {
 }
 
 # SQL CASE expressions for database-side sorting
-_PRIORITY_CASE_SQL = """CASE priority
+_PRIORITY_CASE_SQL = """CASE i.priority
     WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
     WHEN 'LOW' THEN 3 WHEN 'NO_PRIORITY' THEN 4 ELSE 5 END"""
-_STATUS_CASE_SQL = """CASE status
+_STATUS_CASE_SQL = """CASE i.status
     WHEN 'IN_PROGRESS' THEN 0 WHEN 'IN_REVIEW' THEN 1 WHEN 'TODO' THEN 2
     WHEN 'BACKLOG' THEN 3 WHEN 'DONE' THEN 4 WHEN 'CANCELED' THEN 5 ELSE 6 END"""
 
 _SORT_SQL_FIELDS = {
-    "created": "created_at",
-    "updated": "updated_at",
+    "created": "i.created_at",
+    "updated": "i.updated_at",
     "priority": _PRIORITY_CASE_SQL,
     "status": _STATUS_CASE_SQL,
-    "title": "title",
-    "estimate": "estimate",
+    "title": "i.title",
+    "estimate": "i.estimate",
 }
 
 

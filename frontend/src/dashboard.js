@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
-import { getCurrentUser, getCurrentTeam } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import { navigateToIssueByIdentifier } from './router.js';
@@ -14,6 +14,13 @@ import { registerActions } from './event-delegation.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
+
+// React to project changes when dashboard is active (CHT-1083)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'my-issues') return;
+    loadMyIssues();
+});
 
 /**
  * Get the current my-issues list.
@@ -57,7 +64,7 @@ export async function loadMyIssues() {
     if (!currentTeam || !currentUser) return;
 
     const statusFilter = document.getElementById('my-issues-status-filter')?.value;
-    const projectFilter = document.getElementById('dashboard-project-filter')?.value;
+    const projectFilter = getCurrentProject();
 
     // Show loading skeleton
     showMyIssuesLoadingSkeleton();

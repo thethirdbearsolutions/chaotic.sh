@@ -37,6 +37,9 @@ vi.mock('./state.js', () => ({
     setPendingGates: vi.fn(),
     getCurrentTeam: vi.fn(() => null),
     setCurrentTeam: vi.fn(),
+    getCurrentProject: vi.fn(() => null),
+    getCurrentView: vi.fn(() => 'approvals'),
+    subscribe: vi.fn(),
 }));
 
 vi.mock('./rituals-view.js', () => ({

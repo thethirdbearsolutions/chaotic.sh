@@ -8,7 +8,7 @@ import { getCreateIssueLabelIds, setCreateIssueLabelIds, updateCreateIssueLabels
 import { getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft } from './storage.js';
 import { api } from './api.js';
 import { getProjects, getEstimateOptions } from './projects.js';
-import { getCurrentView, getLabels, setLabels, getCurrentTeam } from './state.js';
+import { getCurrentView, getLabels, setLabels, getCurrentTeam, getCurrentProject } from './state.js';
 import { showModal, closeModal, showToast, closeAllDropdowns, registerDropdownClickOutside } from './ui.js';
 import { viewIssue } from './issue-detail-view.js';
 import { loadIssues } from './issues-view.js';
@@ -76,7 +76,7 @@ const ISSUE_TEMPLATES = [
 ];
 
 export function showCreateIssueModal(preselectedProjectId = null) {
-    const projectId = preselectedProjectId || document.getElementById('project-filter')?.value;
+    const projectId = preselectedProjectId || getCurrentProject() || '';
     setCreateIssueLabelIds([]);
 
     const projectOptions = getProjects().map(p => `
