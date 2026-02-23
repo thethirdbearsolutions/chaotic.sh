@@ -189,6 +189,23 @@ describe('ws-handlers.js', () => {
             expect(renderBoard).toHaveBeenCalled();
         });
 
+        it('reloads sprints list on sprints view', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail on sprints view (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
+        });
+
         it('refreshes detail view if viewing updated issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
             document.body.innerHTML = '<div id="issue-detail-content" data-issue-id="issue-1"></div>';
@@ -211,6 +228,25 @@ describe('ws-handlers.js', () => {
             expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-2' }]);
             expect(setMyIssues).toHaveBeenCalledWith([]);
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1 deleted', 'info');
+        });
+
+        it('reloads sprints list on sprints view', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes sprint detail on sprints view (CHT-325)', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+            expect(loadSprints).not.toHaveBeenCalled();
         });
 
         it('navigates away from deleted issue detail', () => {

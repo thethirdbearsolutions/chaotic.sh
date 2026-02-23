@@ -213,9 +213,9 @@ function handleProject(data, { type }) {
 function refreshSprintView() {
     const detail = getCurrentSprintDetail();
     if (detail) {
-        viewSprint(detail.id, false);
+        viewSprint(detail.id, false).catch(e => console.error('Failed to refresh sprint detail:', e));
     } else {
-        loadSprints();
+        loadSprints().catch(e => console.error('Failed to reload sprints:', e));
     }
 }
 
