@@ -287,6 +287,11 @@ class Client:
     def delete_comment(self, issue_id: str, comment_id: str):
         return self._request("DELETE", f"/issues/{issue_id}/comments/{comment_id}")
 
+    # Activities
+    def get_team_activities(self, team_id: str, skip: int = 0, limit: int = 20) -> list:
+        params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
+        return self._request("GET", f"/issues/activities?{params}")
+
     # Sprints
     def get_sprints(self, project_id: str, status: str = None) -> list:
         url = f"/sprints?project_id={project_id}"
