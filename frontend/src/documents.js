@@ -175,7 +175,7 @@ function updateDocFilterChips() {
   if (!chipsRow) return;
 
   const searchTerm = document.getElementById('doc-search')?.value || '';
-  const projectFilter = document.getElementById('doc-project-filter')?.value || '';
+  const projectFilter = getCurrentProject() || '';
 
   const chips = [];
 
@@ -428,7 +428,7 @@ export function renderDocuments(groupBy = '', viewMode = 'list') {
 
   if (docsToRender.length === 0) {
     const searchTerm = document.getElementById('doc-search')?.value;
-    const projectFilter = document.getElementById('doc-project-filter')?.value;
+    const projectFilter = getCurrentProject();
     const hasFilters = searchTerm || projectFilter;
     list.innerHTML = `
       <div class="empty-state">

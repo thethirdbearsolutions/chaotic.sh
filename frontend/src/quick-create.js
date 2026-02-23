@@ -18,7 +18,7 @@ export async function handleQuickCreate(event) {
     const title = input.value.trim();
     if (!title) return;
 
-    const projectId = getCurrentProject() || '';
+    const projectId = getCurrentProject();
     if (!projectId) {
         showToast('Please select a project first', 'error');
         return;

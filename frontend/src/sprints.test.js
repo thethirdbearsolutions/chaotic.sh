@@ -471,7 +471,7 @@ describe('handleUpdateBudget', () => {
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
 
         document.getElementById('sprint-budget').value = '25';
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
 
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
@@ -488,7 +488,7 @@ describe('handleUpdateBudget', () => {
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
 
         document.getElementById('sprint-budget').value = '';
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
 
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
@@ -510,7 +510,7 @@ describe('handleUpdateBudget', () => {
 
 describe('completeSprint', () => {
     beforeEach(() => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
     });
 
     it('closes sprint and reloads', async () => {
@@ -548,7 +548,7 @@ describe('completeSprint', () => {
 
 describe('loadLimboStatus', () => {
     it('loads limbo status and renders banner', async () => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue({
             in_limbo: true,
             pending_rituals: [{ id: 'r1', name: 'test' }],
@@ -562,7 +562,7 @@ describe('loadLimboStatus', () => {
     });
 
     it('does nothing without project filter', async () => {
-        document.getElementById('sprint-project-filter').value = '';
+        setState('currentProject', null);
 
         await loadLimboStatus();
 
@@ -573,7 +573,7 @@ describe('loadLimboStatus', () => {
 describe('showLimboDetailsModal', () => {
     it('does nothing when no limbo status', async () => {
         // Reset limbo state by loading null status
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue(null);
         await loadLimboStatus();
         vi.clearAllMocks();
@@ -583,7 +583,7 @@ describe('showLimboDetailsModal', () => {
     });
 
     it('shows modal when limbo status exists', async () => {
-        document.getElementById('sprint-project-filter').value = 'p1';
+        setState('currentProject', 'p1');
         api.getLimboStatus.mockResolvedValue({
             in_limbo: true,
             pending_rituals: [

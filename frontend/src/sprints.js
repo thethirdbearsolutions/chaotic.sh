@@ -636,7 +636,7 @@ export async function completeSprint(sprintId) {
 // ============================================================================
 
 export async function loadLimboStatus() {
-    const projectId = document.getElementById('sprint-project-filter')?.value;
+    const projectId = getCurrentProject();
     if (!projectId) return;
 
     try {
@@ -675,7 +675,7 @@ function renderLimboBanner() {
 }
 
 function showLimboModal(sprint) {
-    const projectId = document.getElementById('sprint-project-filter').value;
+    const projectId = getCurrentProject();
     document.getElementById('modal-title').textContent = 'Sprint In Limbo';
     document.getElementById('modal-content').innerHTML = `
         <div class="limbo-modal">
@@ -735,8 +735,7 @@ async function loadLimboRituals(projectId) {
 export function showLimboDetailsModal() {
     if (!limboStatus) return;
 
-    const projectId = document.getElementById('sprint-project-filter')?.value ||
-                      document.getElementById('ritual-project-filter')?.value;
+    const projectId = getCurrentProject();
 
     document.getElementById('modal-title').textContent = 'Limbo Status';
     document.querySelector('.modal')?.classList.add('modal-wide');

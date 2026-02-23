@@ -151,7 +151,7 @@ export function renderEpics(epics, container) {
  * A simplified issue creation form with type preset to "epic".
  */
 export function showCreateEpicModal() {
-    const projectId = document.getElementById('epics-project-filter')?.value;
+    const projectId = getCurrentProject();
 
     // Build project options
     const projectOptions = getProjects().map(p => `
