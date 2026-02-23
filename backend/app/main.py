@@ -111,10 +111,18 @@ async def websocket_endpoint(
         await websocket.close(code=4001)
         return
 
-    user_service = UserService()
-    user = await user_service.get_by_id(user_id)
-    if not user or not await check_user_team_access(user, team_id):
-        await websocket.close(code=4003)
+    try:
+        user_service = UserService()
+        user = await user_service.get_by_id(user_id)
+        if not user or not user.is_active:
+            await websocket.close(code=4003)
+            return
+        if not await check_user_team_access(user, team_id):
+            await websocket.close(code=4003)
+            return
+    except Exception:
+        logger.exception("WebSocket auth error during team validation")
+        await websocket.close(code=4011)
         return
 
     await manager.connect(websocket, team_id)
