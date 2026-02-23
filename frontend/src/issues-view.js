@@ -251,7 +251,7 @@ export function syncFiltersToUrl() {
     const priorities = getSelectedPriorities();
     const labels = getSelectedLabels();
     const assignee = document.getElementById('assignee-filter')?.value;
-    const project = document.getElementById('project-filter')?.value;
+    const project = getCurrentProject() || '';
     const sprint = document.getElementById('sprint-filter')?.value;
     const issueType = document.getElementById('issue-type-filter')?.value;
     const groupBy = document.getElementById('group-by-select')?.value;
@@ -331,11 +331,10 @@ export function loadFiltersFromUrl() {
         if (assigneeFilter) assigneeFilter.value = assignee;
     }
 
-    // Apply project filter
+    // Apply project filter — update reactive state so all views stay in sync
     const project = params.get('project');
     if (project) {
-        const projectFilter = document.getElementById('project-filter');
-        if (projectFilter) projectFilter.value = project;
+        setCurrentProject(project);
     }
 
     // Apply sprint filter
@@ -501,7 +500,7 @@ export function closeAllFilterMenus() {
 export function getFilterCategoryCount(category) {
     switch (category) {
         case 'project':
-            return document.getElementById('project-filter')?.value ? 1 : 0;
+            return getCurrentProject() ? 1 : 0;
         case 'status':
             return getSelectedStatuses().length;
         case 'priority':
@@ -531,7 +530,7 @@ export function renderFilterMenuCategories() {
     const container = document.getElementById('filter-menu-categories');
     if (!container) return;
 
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     container.innerHTML = FILTER_CATEGORIES.map(cat => {
         const count = getFilterCategoryCount(cat.key);
         const isActive = getActiveFilterCategory() === cat.key;
@@ -583,8 +582,7 @@ export function showFilterCategoryOptions(category) {
 // ========================================
 
 function renderProjectOptions(container) {
-    const projectFilter = document.getElementById('project-filter');
-    const currentValue = projectFilter?.value || '';
+    const currentValue = getCurrentProject() || '';
     const projects = getProjects() || [];
 
     let html = `
@@ -752,7 +750,7 @@ function renderAssigneeOptions(container) {
 }
 
 function renderSprintOptions(container) {
-    const projectId = document.getElementById('project-filter')?.value;
+    const projectId = getCurrentProject();
     if (!projectId) {
         container.innerHTML = `
             <div class="filter-options-header">
@@ -1051,10 +1049,10 @@ export function updateFilterChips() {
     const chips = [];
 
     // Project chip
-    const projectFilter = document.getElementById('project-filter');
-    if (projectFilter?.value) {
+    const currentProjectId = getCurrentProject();
+    if (currentProjectId) {
         const projects = getProjects() || [];
-        const project = projects.find(p => p.id === projectFilter.value);
+        const project = projects.find(p => p.id === currentProjectId);
         chips.push({
             category: 'project',
             label: 'Project',
@@ -1172,9 +1170,8 @@ export function updateFilterChips() {
 }
 
 export function clearAllFilters() {
-    // Clear all hidden controls
-    const projectFilter = document.getElementById('project-filter');
-    if (projectFilter) projectFilter.value = '';
+    // Clear project via reactive state (syncs DOM + all views)
+    setCurrentProject(null);
 
     clearStatusFilter();
     clearPriorityFilter();
@@ -1323,7 +1320,7 @@ export async function loadIssues() {
     setSelectedIssueIndex(-1);
     if (!getCurrentTeam()) return;
 
-    const projectId = document.getElementById('project-filter').value;
+    const projectId = getCurrentProject() || '';
     const statuses = getSelectedStatuses();
     const priorities = getSelectedPriorities();
     const assigneeFilter = document.getElementById('assignee-filter')?.value;

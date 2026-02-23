@@ -14,6 +14,7 @@ vi.mock('./projects.js', () => ({
 vi.mock('./state.js', () => ({
     getIssues: vi.fn(() => []),
     setIssues: vi.fn(),
+    getCurrentProject: vi.fn(() => ''),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -28,25 +29,22 @@ vi.mock('./api.js', () => ({
 
 import { showToast } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
-import { getIssues, setIssues } from './state.js';
+import { getIssues, setIssues, getCurrentProject } from './state.js';
 import { renderIssues } from './issue-list.js';
 import { api } from './api.js';
 
 describe('handleQuickCreate', () => {
     let input;
-    let projectFilter;
 
     beforeEach(() => {
         vi.clearAllMocks();
         getIssues.mockReturnValue([]);
+        getCurrentProject.mockReturnValue('proj-1');
 
         document.body.innerHTML = `
             <input id="quick-create-input" value="New issue" placeholder="Quick create..." />
-            <select id="project-filter"><option value="proj-1">Test</option></select>
         `;
         input = document.getElementById('quick-create-input');
-        projectFilter = document.getElementById('project-filter');
-        projectFilter.value = 'proj-1';
 
         // Reset api mock
         api.createIssue.mockResolvedValue({
@@ -72,7 +70,7 @@ describe('handleQuickCreate', () => {
     });
 
     it('shows error when no project selected', async () => {
-        projectFilter.value = '';
+        getCurrentProject.mockReturnValue('');
         const event = { key: 'Enter', target: input };
         await handleQuickCreate(event);
         expect(showToast).toHaveBeenCalledWith('Please select a project first', 'error');

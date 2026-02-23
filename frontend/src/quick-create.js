@@ -8,7 +8,7 @@
 import { api } from './api.js';
 import { showToast } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
-import { getIssues, setIssues } from './state.js';
+import { getIssues, setIssues, getCurrentProject } from './state.js';
 import { renderIssues } from './issue-list.js';
 
 export async function handleQuickCreate(event) {
@@ -18,7 +18,7 @@ export async function handleQuickCreate(event) {
     const title = input.value.trim();
     if (!title) return;
 
-    const projectId = document.getElementById('project-filter').value;
+    const projectId = getCurrentProject() || '';
     if (!projectId) {
         showToast('Please select a project first', 'error');
         return;

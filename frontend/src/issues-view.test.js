@@ -62,7 +62,7 @@ vi.mock('./api.js', () => ({
 }));
 
 import { api } from './api.js';
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject } from './state.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { renderIssues } from './issue-list.js';
@@ -106,6 +106,7 @@ describe('issues-view', () => {
         replaceStateSpy = vi.spyOn(history, 'replaceState').mockImplementation(() => {});
 
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        getCurrentProject.mockReturnValue(null);
 
         // Set up minimal DOM for filter elements
         document.body.innerHTML = `
@@ -246,8 +247,9 @@ describe('issues-view', () => {
         });
 
         it('returns 1 for project when a project is selected', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             expect(getFilterCategoryCount('project')).toBe(1);
+            getCurrentProject.mockReturnValue(null);
         });
 
         it('returns number of selected statuses', () => {
@@ -267,9 +269,10 @@ describe('issues-view', () => {
         });
 
         it('sums counts across all categories', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             document.querySelector('#status-filter-dropdown input[value="backlog"]').checked = true;
             expect(getTotalFilterCount()).toBe(2);
+            getCurrentProject.mockReturnValue(null);
         });
     });
 
@@ -348,7 +351,7 @@ describe('issues-view', () => {
         });
 
         it('renders sprint options from select element', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             showFilterCategoryOptions('sprint');
             const container = document.getElementById('filter-menu-options');
             expect(container.innerHTML).toContain('All Sprints');
@@ -356,7 +359,7 @@ describe('issues-view', () => {
         });
 
         it('shows empty message for sprint when no project selected (CHT-1084)', () => {
-            document.getElementById('project-filter').value = '';
+            getCurrentProject.mockReturnValue(null);
             showFilterCategoryOptions('sprint');
             const container = document.getElementById('filter-menu-options');
             expect(container.innerHTML).toContain('Select a project first');
@@ -385,7 +388,7 @@ describe('issues-view', () => {
         });
 
         it('shows count badge for filtered categories', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
             expect(container.innerHTML).toContain('filter-menu-category-count');
@@ -398,7 +401,7 @@ describe('issues-view', () => {
 
     describe('syncFiltersToUrl', () => {
         it('calls replaceState with filter params', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
 
             syncFiltersToUrl();
@@ -420,7 +423,7 @@ describe('issues-view', () => {
         });
 
         it('saves filters to localStorage scoped by team (CHT-1042)', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             syncFiltersToUrl();
             expect(localStorage.getItem('chaotic_issues_filters_team-1')).toContain('project=proj-1');
         });
@@ -433,7 +436,7 @@ describe('issues-view', () => {
 
         it('does not save to localStorage when no team (CHT-1042)', () => {
             getCurrentTeam.mockReturnValue(null);
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             syncFiltersToUrl();
             expect(localStorage.getItem('chaotic_issues_filters_null')).toBeNull();
             getCurrentTeam.mockReturnValue({ id: 'team-1' });
@@ -470,7 +473,7 @@ describe('issues-view', () => {
 
             loadFiltersFromUrl();
 
-            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
         });
 
         it('falls back to team-scoped localStorage when URL has no params (CHT-1042)', () => {
@@ -483,7 +486,7 @@ describe('issues-view', () => {
 
             loadFiltersFromUrl();
 
-            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
             expect(replaceStateSpy).toHaveBeenCalledWith(
                 { view: 'issues' },
                 '',
@@ -510,7 +513,7 @@ describe('issues-view', () => {
             const inProgressCheckbox = document.querySelector('#status-filter-dropdown input[value="in_progress"]');
             expect(inProgressCheckbox.checked).toBe(true);
             // Should preserve project from URL
-            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
@@ -525,7 +528,7 @@ describe('issues-view', () => {
             loadFiltersFromUrl();
 
             // URL project (proj-1) should win over localStorage project (p-1)
-            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
             // Status filter should still be restored from localStorage
             const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
             expect(todoCheckbox.checked).toBe(true);
@@ -543,7 +546,7 @@ describe('issues-view', () => {
             loadFiltersFromUrl();
 
             // Should apply URL filters, NOT localStorage
-            expect(document.getElementById('project-filter').value).toBe('proj-1');
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
             const doneCheckbox = document.querySelector('#status-filter-dropdown input[value="done"]');
             expect(doneCheckbox.checked).toBe(true);
             // 'todo' from localStorage should NOT be applied
@@ -582,8 +585,7 @@ describe('issues-view', () => {
         });
 
         it('shows chips when filters are active', () => {
-            document.getElementById('project-filter').innerHTML = '<option value="proj-1">Project Alpha</option>';
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             getProjects.mockReturnValue([{ id: 'proj-1', name: 'Project Alpha' }]);
 
             updateFilterChips();
@@ -595,7 +597,7 @@ describe('issues-view', () => {
         });
 
         it('shows clear all button when multiple filters', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
             getProjects.mockReturnValue([{ id: 'proj-1', name: 'Test' }]);
 
@@ -614,7 +616,7 @@ describe('issues-view', () => {
         });
 
         it('shows badge with count when filters active', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
 
             updateFilterCountBadge();
@@ -706,8 +708,7 @@ describe('issues-view', () => {
     describe('loadIssues', () => {
         beforeEach(() => {
             getProjects.mockReturnValue([{ id: 'p-1', name: 'Test' }]);
-            document.getElementById('project-filter').innerHTML = '<option value="p-1">Test</option>';
-            document.getElementById('project-filter').value = 'p-1';
+            getCurrentProject.mockReturnValue('p-1');
         });
 
         it('resets selected issue index', async () => {
@@ -767,7 +768,7 @@ describe('issues-view', () => {
         });
 
         it('shows empty state when no projects', async () => {
-            document.getElementById('project-filter').value = '';
+            getCurrentProject.mockReturnValue(null);
             getProjects.mockReturnValue([]);
             await loadIssues();
             const list = document.getElementById('issues-list');
@@ -806,7 +807,7 @@ describe('issues-view', () => {
         });
 
         it('loads team issues when no project selected', async () => {
-            document.getElementById('project-filter').value = '';
+            getCurrentProject.mockReturnValue(null);
             getProjects.mockReturnValue([{ id: 'p-1' }]);
             api.getTeamIssues.mockResolvedValue([]);
             await loadIssues();
@@ -858,11 +859,11 @@ describe('issues-view', () => {
 
     describe('clearAllFilters', () => {
         it('clears project filter', () => {
-            document.getElementById('project-filter').value = 'proj-1';
+            getCurrentProject.mockReturnValue('proj-1');
             getProjects.mockReturnValue([{ id: 'proj-1' }]);
             api.getTeamIssues.mockResolvedValue([]);
             clearAllFilters();
-            expect(document.getElementById('project-filter').value).toBe('');
+            expect(setCurrentProject).toHaveBeenCalledWith(null);
         });
 
         it('clears type filter', () => {
@@ -981,7 +982,7 @@ describe('issues-view', () => {
 
     describe('updateSprintFilter', () => {
         it('shows only All Sprints without project (CHT-1084)', async () => {
-            document.getElementById('project-filter').value = '';
+            getCurrentProject.mockReturnValue(null);
             await updateSprintFilter();
             const sprintFilter = document.getElementById('sprint-filter');
             expect(sprintFilter.innerHTML).toContain('All Sprints');

@@ -147,14 +147,17 @@ export function clearDocSearch() {
 }
 
 /**
- * Clear document project filter (re-fetches from server)
+ * Clear document project filter.
+ * Clears the global project selection (affects all views) — this is intentional
+ * since CHT-1083 unified the project filter across all views.
  */
 export async function clearDocProjectFilter() {
   setCurrentProject(null);
 }
 
 /**
- * Clear all document filters (re-fetches from server)
+ * Clear all document filters (search + project).
+ * Clears the global project selection (affects all views) — intentional per CHT-1083.
  */
 export async function clearAllDocFilters() {
   const searchInput = document.getElementById('doc-search');
