@@ -31,12 +31,25 @@ def register(cli):
     @click.option("--pending", is_flag=True, help="Show only pending/incomplete rituals")
     @click.option("--ticket", "ticket_id", help="Show pending rituals for a specific ticket (e.g., CHT-123)")
     @click.option("--deleted", is_flag=True, help="Include deleted (inactive) rituals")
+    @_main().json_option
     @_main().require_project
     @_main().handle_error
     def ritual_list(pending, ticket_id, deleted):
         """List rituals and show limbo status."""
         m = _main()
         project_id = m.get_current_project()
+
+        # JSON output mode
+        if m.is_json_output():
+            if ticket_id:
+                issue = _client().get_issue_by_identifier(ticket_id)
+                pending_rituals = _client().get_pending_issue_rituals(issue["id"])
+                m.output_json(pending_rituals)
+            else:
+                status = _client().get_limbo_status(project_id)
+                rituals = _client().get_rituals(project_id, include_inactive=deleted)
+                m.output_json({"limbo_status": status, "rituals": rituals})
+            return
 
         # If --ticket is specified, show pending rituals for that ticket
         if ticket_id:

@@ -68,8 +68,9 @@ def register(cli):
     @click.option("--priority", help="Filter by priority (urgent, high, medium, low, no_priority). Comma-separated for multiple.")
     @click.option("--sprint", help="Filter by sprint (name, 'current', 'next', or ID)")
     @click.option("--no-sprint", "no_sprint", is_flag=True, help="Show only issues not assigned to any sprint")
-    @click.option("--epic", help="Filter by epic/parent issue (e.g., CHT-12)")
+    @click.option("--epic", "--parent", help="Filter by epic/parent issue (e.g., CHT-12)")
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
+    @click.option("--assignee", help="Filter by assignee ('me', a name, or user ID)")
     @click.option("--search", help="Search in title, description, and identifier.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
     @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
@@ -78,7 +79,7 @@ def register(cli):
     @_main().json_option
     @_main().require_project
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, search, limit, skip, sort_by, order):
+    def issue_list(status, priority, sprint, no_sprint, epic, label, assignee, search, limit, skip, sort_by, order):
         """List issues in current project."""
         m = _main()
         # Validate status values if provided (CHT-502)
@@ -97,6 +98,11 @@ def register(cli):
                 if p not in valid_priorities:
                     raise click.BadParameter(f"Invalid priority: {p}. Must be one of: {', '.join(valid_priorities)}")
 
+        # Resolve assignee filter
+        assignee_id = None
+        if assignee:
+            assignee_id = m.resolve_assignee_id(assignee)
+
         project_id = m.get_current_project()
         parent_id = None
         if epic:
@@ -110,7 +116,7 @@ def register(cli):
             sprint_id = m.resolve_sprint_id(sprint, project_id)
         else:
             sprint_id = None
-        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search, skip=skip or None)
+        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search, skip=skip or None, assignee_id=assignee_id)
 
         # JSON output mode (CHT-170)
         if m.is_json_output():
@@ -502,6 +508,7 @@ def register(cli):
 
     @issue.command("view")
     @click.argument("identifiers", nargs=-1)
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_view(identifiers):
@@ -526,6 +533,7 @@ def register(cli):
 
     @issue.command("get")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_get(identifier):
@@ -1109,5 +1117,58 @@ def register(cli):
 
     # Add 'ticket' as alias for 'issue' command group
     cli.add_command(issue, name="ticket")
+
+    @cli.command("activity")
+    @click.option("--limit", "-n", type=int, default=20, help="Number of activities to show (default: 20)")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def activity_list(limit):
+        """Show recent team activity (comments, status changes, etc.)."""
+        m = _main()
+        team_id = m.get_current_team()
+        activities = _client().get_team_activities(team_id, limit=limit)
+
+        if m.is_json_output():
+            m.output_json(activities or [])
+            return
+
+        if not activities:
+            console.print("[yellow]No recent activity.[/yellow]")
+            return
+
+        table = Table(title="Recent Activity")
+        table.add_column("Date", style="dim")
+        table.add_column("Issue/Doc")
+        table.add_column("Action")
+        table.add_column("By")
+        table.add_column("Details", max_width=40)
+
+        for a in activities:
+            date = (a.get("created_at") or "")[:16].replace("T", " ")
+            # Issue or document activity
+            if a.get("issue_identifier"):
+                ref = a["issue_identifier"]
+            elif a.get("document_title"):
+                icon = a.get("document_icon") or "\U0001f4c4"
+                ref = f"{icon} {a['document_title'][:20]}"
+            else:
+                ref = "-"
+
+            action = (a.get("activity_type") or "").replace("_", " ")
+            by = a.get("user_name") or a.get("user_email") or "-"
+
+            # Build details
+            details = ""
+            if a.get("field_name"):
+                old = a.get("old_value") or ""
+                new = a.get("new_value") or ""
+                if a.get("sprint_name"):
+                    new = a["sprint_name"]
+                details = f"{a['field_name']}: {old} \u2192 {new}" if old else f"{a['field_name']}: {new}"
+
+            table.add_row(date, ref, action, by, details)
+
+        console.print(table)
 
     return issue

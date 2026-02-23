@@ -7,6 +7,7 @@ import subprocess
 import sys
 import webbrowser
 import click
+import httpx
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -122,7 +123,7 @@ def require_project(f):
 
 
 def handle_error(f):
-    """Decorator to handle API errors and ClickExceptions (for JSON mode)."""
+    """Decorator to handle API errors, httpx errors, and ClickExceptions."""
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
@@ -137,6 +138,27 @@ def handle_error(f):
                 output_json({"error": e.format_message()})
                 raise SystemExit(1)
             raise
+        except httpx.ConnectError:
+            msg = f"Could not connect to server at {get_api_url()}. Is the server running?"
+            if is_json_output():
+                output_json({"error": msg})
+            else:
+                console.print(f"[red]{msg}[/red]")
+            raise SystemExit(1)
+        except httpx.TimeoutException:
+            msg = "Request timed out. The server may be overloaded or unreachable."
+            if is_json_output():
+                output_json({"error": msg})
+            else:
+                console.print(f"[red]{msg}[/red]")
+            raise SystemExit(1)
+        except httpx.HTTPError as e:
+            msg = f"Network error: {e}"
+            if is_json_output():
+                output_json({"error": msg})
+            else:
+                console.print(f"[red]{msg}[/red]")
+            raise SystemExit(1)
     wrapper.__name__ = f.__name__
     wrapper.__doc__ = f.__doc__
     return wrapper
