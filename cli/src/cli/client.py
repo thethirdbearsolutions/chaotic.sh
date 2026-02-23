@@ -289,7 +289,8 @@ class Client:
 
     # Activities
     def get_team_activities(self, team_id: str, skip: int = 0, limit: int = 20) -> list:
-        return self._request("GET", f"/issues/activities?team_id={team_id}&skip={skip}&limit={limit}")
+        params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
+        return self._request("GET", f"/issues/activities?{params}")
 
     # Sprints
     def get_sprints(self, project_id: str, status: str = None) -> list:

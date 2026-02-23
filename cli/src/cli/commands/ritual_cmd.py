@@ -48,7 +48,10 @@ def register(cli):
             else:
                 status = _client().get_limbo_status(project_id)
                 rituals = _client().get_rituals(project_id, include_inactive=deleted)
-                m.output_json({"limbo_status": status, "rituals": rituals})
+                result = {"limbo_status": status, "rituals": rituals}
+                if pending:
+                    result.pop("rituals")  # --pending: only show limbo status
+                m.output_json(result)
             return
 
         # If --ticket is specified, show pending rituals for that ticket
