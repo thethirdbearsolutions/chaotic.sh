@@ -1,5 +1,6 @@
 """Issue schemas."""
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.utils import DateTimeUTC
@@ -205,7 +206,7 @@ class TeamCommentResponse(BaseModel):
 
     id: str
     # Source type: "issue" or "document"
-    source_type: str
+    source_type: Literal["issue", "document"]
     # Issue-specific fields (set when source_type == "issue")
     issue_id: str | None = None
     issue_identifier: str | None = None

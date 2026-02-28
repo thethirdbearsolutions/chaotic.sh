@@ -593,8 +593,8 @@ async def list_team_activities(
 async def list_team_comments(
     team_id: str,
     current_user: CurrentUser,
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
     """List recent comments for a team (both issue and document comments)."""
     issue_service = IssueService()
@@ -607,9 +607,11 @@ async def list_team_comments(
             detail="Not authorized to access this team",
         )
 
-    # Fetch both issue and document comments
-    issue_comments = await issue_service.list_team_comments(team_id, 0, limit * 2)
-    doc_comments = await document_service.list_team_comments(team_id, 0, limit * 2)
+    # Fetch skip + limit from each source to handle worst case where
+    # all top results come from one source
+    fetch_count = skip + limit
+    issue_comments = await issue_service.list_team_comments(team_id, 0, fetch_count)
+    doc_comments = await document_service.list_team_comments(team_id, 0, fetch_count)
 
     # Convert to unified response format
     issue_responses = [
