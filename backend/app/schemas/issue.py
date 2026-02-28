@@ -1,5 +1,6 @@
 """Issue schemas."""
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
 from app.utils import DateTimeUTC
@@ -196,6 +197,30 @@ class IssueActivityFeedResponse(BaseModel):
     new_value: str | None = None
     sprint_name: str | None = None  # For moved_to_sprint activities
     created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamCommentResponse(BaseModel):
+    """Unified schema for team-wide comments (both issue and document comments)."""
+
+    id: str
+    # Source type: "issue" or "document"
+    source_type: Literal["issue", "document"]
+    # Issue-specific fields (set when source_type == "issue")
+    issue_id: str | None = None
+    issue_identifier: str | None = None
+    issue_title: str | None = None
+    # Document-specific fields (set when source_type == "document")
+    document_id: str | None = None
+    document_title: str | None = None
+    document_icon: str | None = None
+    # Common fields
+    author_id: str
+    author_name: str | None = None
+    content: str
+    created_at: DateTimeUTC
+    updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
 

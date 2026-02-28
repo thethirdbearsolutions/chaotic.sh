@@ -17,6 +17,7 @@ from app.schemas.issue import (
     IssueCommentResponse,
     IssueActivityResponse,
     IssueActivityFeedResponse,
+    TeamCommentResponse,
     IssueRelationCreate,
     LabelResponse,
 )
@@ -586,6 +587,71 @@ async def list_team_activities(
 
     # Apply pagination
     return all_activities[skip:skip + limit]
+
+
+@router.get("/comments", response_model=list[TeamCommentResponse])
+async def list_team_comments(
+    team_id: str,
+    current_user: CurrentUser,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """List recent comments for a team (both issue and document comments)."""
+    issue_service = IssueService()
+    document_service = DocumentService()
+
+    has_access = await check_user_team_access(current_user, team_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this team",
+        )
+
+    # Fetch skip + limit from each source to handle worst case where
+    # all top results come from one source
+    fetch_count = skip + limit
+    issue_comments = await issue_service.list_team_comments(team_id, 0, fetch_count)
+    doc_comments = await document_service.list_team_comments(team_id, 0, fetch_count)
+
+    # Convert to unified response format
+    issue_responses = [
+        TeamCommentResponse(
+            id=c.id,
+            source_type="issue",
+            issue_id=c.issue_id,
+            issue_identifier=issue.identifier if issue else None,
+            issue_title=issue.title if issue else None,
+            author_id=c.author_id,
+            author_name=c.author.name if c.author else None,
+            content=c.content,
+            created_at=ensure_utc(c.created_at),
+            updated_at=ensure_utc(c.updated_at),
+        )
+        for c, issue in issue_comments
+    ]
+
+    doc_responses = [
+        TeamCommentResponse(
+            id=c.id,
+            source_type="document",
+            document_id=c.document_id,
+            document_title=doc.title if doc else None,
+            document_icon=doc.icon if doc else None,
+            author_id=c.author_id,
+            author_name=c.author.name if c.author else None,
+            content=c.content,
+            created_at=ensure_utc(c.created_at),
+            updated_at=ensure_utc(c.updated_at),
+        )
+        for c, doc in doc_comments
+    ]
+
+    # Merge and sort by created_at descending
+    all_comments = issue_responses + doc_responses
+    all_comments.sort(key=lambda x: x.created_at, reverse=True)
+
+    # Apply pagination
+    return all_comments[skip:skip + limit]
 
 
 @router.get("/identifier/{identifier}", response_model=IssueResponse)

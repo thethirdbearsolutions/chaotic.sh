@@ -292,6 +292,11 @@ class Client:
         params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
         return self._request("GET", f"/issues/activities?{params}")
 
+    # Comments (team-wide)
+    def get_team_comments(self, team_id: str, skip: int = 0, limit: int = 50) -> list:
+        params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
+        return self._request("GET", f"/issues/comments?{params}")
+
     # Sprints
     def get_sprints(self, project_id: str, status: str = None) -> list:
         url = f"/sprints?project_id={project_id}"

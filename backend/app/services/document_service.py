@@ -361,6 +361,36 @@ class DocumentService:
             document_id=document_id
         ).join("author").order_by("created_at").offset(skip).limit(limit).all()
 
+    async def list_team_comments(
+        self, team_id: str, skip: int = 0, limit: int = 50
+    ) -> list[tuple]:
+        """List recent document comments for a team.
+
+        Returns list of (comment, document) tuples so the caller can
+        access document.title and document.icon.
+        """
+        rows = await execute_raw(
+            "SELECT dc.id, dc.document_id FROM document_comments dc "
+            "JOIN documents d ON dc.document_id = d.id "
+            "WHERE d.team_id = ? "
+            "ORDER BY dc.created_at DESC LIMIT ? OFFSET ?",
+            [team_id, limit, skip],
+        )
+        if not rows:
+            return []
+
+        comment_ids = [r["id"] for r in rows]
+        doc_ids = list({r["document_id"] for r in rows})
+
+        comments = await OxydeDocumentComment.objects.filter(
+            id__in=comment_ids,
+        ).join("author").order_by("-created_at").all()
+
+        docs = await OxydeDocument.objects.filter(id__in=doc_ids).all()
+        doc_map = {d.id: d for d in docs}
+
+        return [(c, doc_map.get(c.document_id)) for c in comments]
+
     async def list_team_activities(
         self, team_id: str, skip: int = 0, limit: int = 50
     ) -> list[OxydeDocumentActivity]:
