@@ -8,6 +8,8 @@ import {
   setDropdownKeyHandler,
   getDropdownKeyHandler,
   registerDropdownClickOutside,
+  extractErrorMessage,
+  showApiError,
 } from './ui.js';
 
 describe('showModal', () => {
@@ -226,5 +228,66 @@ describe('registerDropdownClickOutside', () => {
 
     // Dropdown should still exist because handler was removed
     expect(document.querySelector('.inline-dropdown')).not.toBeNull();
+  });
+});
+
+describe('extractErrorMessage', () => {
+  it('returns message from standard Error', () => {
+    expect(extractErrorMessage(new Error('something broke'))).toBe('something broke');
+  });
+
+  it('returns message from error with string detail', () => {
+    const error = new Error('msg');
+    error.detail = 'detailed reason';
+    // message takes priority
+    expect(extractErrorMessage(error)).toBe('msg');
+  });
+
+  it('returns detail.message from structured error', () => {
+    const error = { detail: { message: 'Sprint is in limbo' } };
+    expect(extractErrorMessage(error)).toBe('Sprint is in limbo');
+  });
+
+  it('handles FastAPI validation error arrays', () => {
+    const error = { detail: [{ loc: ['body', 'name'], msg: 'field required', type: 'value_error' }] };
+    expect(extractErrorMessage(error)).toBe('field required');
+  });
+
+  it('joins multiple validation errors', () => {
+    const error = {
+      detail: [
+        { msg: 'field required' },
+        { msg: 'must be positive' },
+      ],
+    };
+    expect(extractErrorMessage(error)).toBe('field required; must be positive');
+  });
+
+  it('returns fallback for null/undefined', () => {
+    expect(extractErrorMessage(null)).toBe('An unknown error occurred');
+    expect(extractErrorMessage(undefined)).toBe('An unknown error occurred');
+  });
+
+  it('returns fallback for empty error object', () => {
+    expect(extractErrorMessage({})).toBe('An unknown error occurred');
+  });
+});
+
+describe('showApiError', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="toast-container"></div>';
+  });
+
+  it('shows formatted toast with context and message', () => {
+    showApiError('load issues', new Error('Network error'));
+    const toast = document.querySelector('.toast-error');
+    expect(toast).not.toBeNull();
+    expect(toast.textContent).toBe('Failed to load issues: Network error');
+  });
+
+  it('handles structured errors', () => {
+    showApiError('update sprint', { detail: { message: 'Sprint is in limbo' } });
+    const toast = document.querySelector('.toast-error');
+    expect(toast.textContent).toBe('Failed to update sprint: Sprint is in limbo');
   });
 });

@@ -43,6 +43,7 @@ vi.mock('./issue-list.js', () => ({
 
 // Mock ui.js
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 
@@ -66,7 +67,7 @@ import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIs
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { renderIssues } from './issue-list.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 
 import {
     toggleMultiSelect,
@@ -803,7 +804,7 @@ describe('issues-view', () => {
         it('shows error toast on API failure', async () => {
             api.getIssues.mockRejectedValue(new Error('Network error'));
             await loadIssues();
-            expect(showToast).toHaveBeenCalledWith('Network error', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
         it('loads team issues when no project selected', async () => {

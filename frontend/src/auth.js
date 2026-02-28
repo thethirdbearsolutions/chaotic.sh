@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 import { escapeAttr } from './utils.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
 import { initApp } from './init.js';
@@ -79,7 +79,7 @@ export async function handleLogin(event) {
     await initApp();
     showToast('Welcome back!', 'success');
   } catch (e) {
-    showToast(`Login failed: ${e.message}`, 'error');
+    showApiError('log in', e);
   }
   return false;
 }
@@ -102,7 +102,7 @@ export async function handleSignup(event) {
     await initApp();
     showToast('Account created successfully!', 'success');
   } catch (e) {
-    showToast(`Signup failed: ${e.message}`, 'error');
+    showApiError('sign up', e);
   }
   return false;
 }

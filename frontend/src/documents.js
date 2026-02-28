@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -261,7 +261,7 @@ async function fetchDocumentsForCurrentProject() {
     documents = await api.getDocuments(teamId, projectFilter);
     filterDocuments();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load documents', e);
   }
 }
 
@@ -322,7 +322,7 @@ export async function loadDocuments(teamId, projectId = null) {
     // Clear skeleton on error (CHT-1047)
     const errEl = document.getElementById('documents-list');
     if (errEl) errEl.innerHTML = '';
-    showToast(e.message, 'error');
+    showApiError('load documents', e);
   }
 }
 
@@ -927,7 +927,7 @@ export async function viewDocument(documentId, pushHistory = true) {
       }, { signal: docDetailSignal });
     }
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load document', e);
   }
 }
 
@@ -1049,7 +1049,7 @@ export async function handleCreateDocument(event) {
     closeModal();
     showToast('Document created!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('create document', e);
   }
   return false;
 }
@@ -1106,7 +1106,7 @@ export async function showEditDocumentModal(documentId) {
       await updateSprintDropdown('edit-doc-sprint', doc.project_id, doc.sprint_id);
     }
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load document', e);
   }
 }
 
@@ -1134,7 +1134,7 @@ export async function handleUpdateDocument(event, documentId) {
     await viewDocument(documentId);
     showToast('Document updated!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('update document', e);
   }
   return false;
 }
@@ -1153,7 +1153,7 @@ export async function deleteDocument(documentId) {
     navigateTo('documents');
     showToast('Document deleted!', 'success');
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('delete document', e);
   }
 }
 
@@ -1225,7 +1225,7 @@ async function linkToIssue(documentId, issueId) {
     showToast('Issue linked!', 'success');
     await viewDocument(documentId, false);
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('link issue', e);
   }
 }
 
@@ -1242,7 +1242,7 @@ export async function unlinkDocumentFromIssue(documentId, issueId) {
     showToast('Issue unlinked!', 'success');
     await viewDocument(documentId, false);
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('unlink issue', e);
   }
 }
 
@@ -1272,7 +1272,7 @@ export async function handleAddDocumentComment(event, documentId) {
     showToast('Comment added!', 'success');
     await viewDocument(documentId, false);
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('add comment', e);
   } finally {
     docCommentSubmitting = false;
   }
@@ -1315,7 +1315,7 @@ export async function showAddLabelToDocModal(documentId) {
     `;
     showModal();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load labels', e);
   }
 }
 
@@ -1331,7 +1331,7 @@ async function addLabelToDoc(documentId, labelId) {
     showToast('Label added!', 'success');
     await viewDocument(documentId, false);
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('add label', e);
   }
 }
 
@@ -1346,7 +1346,7 @@ async function removeLabelFromDoc(documentId, labelId) {
     showToast('Label removed!', 'success');
     await viewDocument(documentId, false);
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('remove label', e);
   }
 }
 

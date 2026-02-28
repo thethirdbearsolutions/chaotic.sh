@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus } from './utils.js';
 import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { renderIssueRow } from './issue-list.js';
@@ -86,7 +86,7 @@ export async function loadMyIssues() {
         myIssues = issues;
         renderMyIssues();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('load issues', e);
     }
 }
 

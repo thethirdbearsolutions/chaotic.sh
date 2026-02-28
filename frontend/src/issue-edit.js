@@ -5,7 +5,7 @@
  */
 
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { getEstimateOptions, loadProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -88,7 +88,7 @@ export async function showEditIssueModal(issueId) {
         `;
         showModal();
     } catch (e) {
-        showToast(`Failed to load issue: ${e.message}`, 'error');
+        showApiError('load issue', e);
     }
 }
 
@@ -121,7 +121,7 @@ export async function handleUpdateIssue(event, issueId) {
         await viewIssue(issueId);
         showToast('Issue updated!', 'success');
     } catch (e) {
-        showToast(`Failed to update issue: ${e.message}`, 'error');
+        showApiError('update issue', e);
     }
 }
 
@@ -135,7 +135,7 @@ export async function deleteIssue(issueId) {
         navigateTo('issues');
         showToast('Issue deleted!', 'success');
     } catch (e) {
-        showToast(`Failed to delete issue: ${e.message}`, 'error');
+        showApiError('delete issue', e);
     }
 }
 

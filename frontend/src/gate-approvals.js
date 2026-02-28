@@ -10,7 +10,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
@@ -116,7 +116,7 @@ async function handleGateApproval(event, ritualId, issueId, ritualName) {
         closeModal();
         loadGateApprovals();
     } catch (e) {
-        showToast(`Failed to complete gate ritual: ${e.message}`, 'error');
+        showApiError('complete gate ritual', e);
     }
 }
 
@@ -170,7 +170,7 @@ async function handleReviewApproval(event, ritualId, issueId, ritualName) {
         closeModal();
         loadGateApprovals();
     } catch (e) {
-        showToast(`Failed to approve review ritual: ${e.message}`, 'error');
+        showApiError('approve review ritual', e);
     }
 }
 
@@ -425,7 +425,7 @@ function renderGateApprovals() {
                 await loadGateApprovals();
             } catch (e) {
                 btn.disabled = false;
-                showToast(e.message, 'error');
+                showApiError('approve sprint ritual', e);
             }
         });
     });

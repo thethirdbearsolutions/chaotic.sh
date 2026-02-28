@@ -11,6 +11,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 
@@ -39,7 +40,7 @@ vi.mock('./issue-detail-view.js', () => ({
 
 import { setState } from './state.js';
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 import {
     BOARD_STATUSES,
     getBoardIssues,
@@ -113,7 +114,7 @@ describe('board', () => {
 
             await loadBoard();
 
-            expect(showToast).toHaveBeenCalledWith('Failed to load board: API Error', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
         });
     });
 
@@ -284,7 +285,7 @@ describe('board', () => {
 
             await handleDrop(mockEvent, mockTarget);
 
-            expect(showToast).toHaveBeenCalledWith('Failed to update status: Update failed', 'error');
+            expect(showApiError).toHaveBeenCalledWith('update status', expect.objectContaining({ message: 'Update failed' }));
             // Issue should be reverted to original status
             expect(getBoardIssues().find(i => i.id === '1').status).toBe('todo');
         });

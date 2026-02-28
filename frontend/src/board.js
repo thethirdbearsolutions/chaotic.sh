@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -81,7 +81,7 @@ export async function loadBoard() {
         boardIssues = await api.getIssues({ project_id: projectId });
         renderBoard();
     } catch (e) {
-        showToast(`Failed to load board: ${e.message}`, 'error');
+        showApiError('load board', e);
     }
 }
 
@@ -177,7 +177,7 @@ export async function handleDrop(e, target) {
         // Revert on error
         issue.status = oldStatus;
         renderBoard();
-        showToast(`Failed to update status: ${e.message}`, 'error');
+        showApiError('update status', e);
     }
 }
 
@@ -209,7 +209,7 @@ export async function handleCardDrop(e, target) {
     } catch (e) {
         issue.status = oldStatus;
         renderBoard();
-        showToast(`Failed to update status: ${e.message}`, 'error');
+        showApiError('update status', e);
     }
 }
 

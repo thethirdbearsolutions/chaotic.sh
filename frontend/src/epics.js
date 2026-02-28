@@ -5,7 +5,7 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { navigateToEpicByIdentifier } from './router.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 
@@ -214,6 +214,6 @@ async function handleCreateEpic(event) {
         showToast(`Created epic ${issue.identifier}`, 'success');
         loadEpics();
     } catch (e) {
-        showToast(`Failed to create epic: ${e.message}`, 'error');
+        showApiError('create epic', e);
     }
 }

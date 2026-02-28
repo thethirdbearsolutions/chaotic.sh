@@ -7,7 +7,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
 import {
     getProjectRituals,
@@ -137,7 +137,7 @@ export async function approveRitual(ritualId, projectId) {
         await loadLimboStatus();
         showLimboDetailsModal();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('approve ritual', e);
     }
 }
 
@@ -176,7 +176,7 @@ async function handleCompleteGateRitual(event, ritualId, projectId) {
             showLimboDetailsModal();
         }
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('complete gate ritual', e);
     }
     return false;
 }
@@ -245,7 +245,7 @@ async function handleAttestTicketRitual(event, ritualId, issueId) {
         closeModal();
         await loadTicketRituals(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('attest ticket ritual', e);
     }
     return false;
 }
@@ -256,7 +256,7 @@ export async function attestTicketRitual(ritualId, issueId) {
         showToast('Ritual attested!', 'success');
         await loadTicketRituals(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('attest ticket ritual', e);
     }
 }
 
@@ -266,7 +266,7 @@ export async function approveTicketRitual(ritualId, issueId) {
         showToast('Ritual approved!', 'success');
         await loadTicketRituals(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('approve ticket ritual', e);
     }
 }
 
@@ -298,7 +298,7 @@ async function handleCompleteTicketRitual(event, ritualId, issueId) {
         closeModal();
         await loadTicketRituals(issueId);
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('complete ticket ritual', e);
     }
     return false;
 }

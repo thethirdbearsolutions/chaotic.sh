@@ -20,6 +20,7 @@ vi.mock('./api.js', () => ({
 
 // Mock the ui module
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
   showToast: vi.fn(),
 }));
 
@@ -30,7 +31,7 @@ vi.mock('./utils.js', () => ({
 }));
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 
 // Set up DOM before importing auth module
 document.body.innerHTML = `
@@ -250,7 +251,7 @@ describe('handleLogin', () => {
     api.login.mockRejectedValue(new Error('Invalid credentials'));
 
     await handleLogin(event);
-    expect(showToast).toHaveBeenCalledWith('Login failed: Invalid credentials', 'error');
+    expect(showApiError).toHaveBeenCalledWith('log in', expect.objectContaining({ message: 'Invalid credentials' }));
   });
 
   it('does not set currentUser on error', async () => {
@@ -385,7 +386,7 @@ describe('handleSignup', () => {
     api.signup.mockRejectedValue(new Error('Email already exists'));
 
     await handleSignup(event);
-    expect(showToast).toHaveBeenCalledWith('Signup failed: Email already exists', 'error');
+    expect(showApiError).toHaveBeenCalledWith('sign up', expect.objectContaining({ message: 'Email already exists' }));
   });
 
   it('does not login if signup fails', async () => {

@@ -12,7 +12,7 @@ import {
 } from './issue-detail-view.js';
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -251,7 +251,7 @@ export async function viewEpic(epicId, pushHistory = true) {
             });
         }
     } catch (e) {
-        showToast(`Failed to load epic: ${e.message}`, 'error');
+        showApiError('load epic', e);
     }
 }
 

@@ -23,6 +23,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
@@ -98,7 +99,7 @@ vi.mock('./state.js', async (importOriginal) => {
 
 import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getIssues } from './state.js';
 import { api } from './api.js';
-import { showToast, showModal, closeModal } from './ui.js';
+import { showToast, showModal, closeModal, showApiError } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -445,7 +446,7 @@ describe('issue-detail-view', () => {
 
             await viewIssue('issue-1');
 
-            expect(showToast).toHaveBeenCalledWith('Failed to load issue: API Error', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load issue', expect.objectContaining({ message: 'API Error' }));
         });
 
         it('renders attestation info for pending rituals (CHT-901)', async () => {
@@ -813,7 +814,7 @@ describe('issue-detail-view', () => {
 
             await handleAddComment({ preventDefault: vi.fn() }, 'i1');
 
-            expect(showToast).toHaveBeenCalledWith('Failed to add comment: forbidden', 'error');
+            expect(showApiError).toHaveBeenCalledWith('add comment', expect.objectContaining({ message: 'forbidden' }));
         });
 
         it('clears comment draft on successful submit (CHT-1041)', async () => {
@@ -1098,7 +1099,7 @@ describe('issue-detail-view', () => {
 
             await deleteRelation('i1', 'r1');
 
-            expect(showToast).toHaveBeenCalledWith('Failed to remove relation: not found', 'error');
+            expect(showApiError).toHaveBeenCalledWith('remove relation', expect.objectContaining({ message: 'not found' }));
         });
     });
 });
