@@ -12,6 +12,7 @@ import { formatActivityText, formatActivityActor, getActivityIcon } from './issu
 import { navigateToIssueByIdentifier } from './router.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
@@ -195,12 +196,11 @@ export function renderMyIssues() {
     list.classList.add('issue-list-linear');
 
     if (myIssues.length === 0) {
-        list.innerHTML = `
-            <div class="empty-state">
-                <h3>No issues assigned to you</h3>
-                <p>Issues assigned to you will appear here</p>
-            </div>
-        `;
+        list.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.dashboard,
+            heading: 'No issues assigned to you',
+            description: 'Issues assigned to you will appear here',
+        });
         return;
     }
 

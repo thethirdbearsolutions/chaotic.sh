@@ -8,6 +8,7 @@ import { navigateToEpicByIdentifier } from './router.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // React to project changes when epics view is active (CHT-1083)
 subscribe((key) => {
@@ -52,12 +53,12 @@ export async function loadEpics() {
         }
 
         if (!epics || epics.length === 0) {
-            listEl.innerHTML = `
-                <div class="empty-state">
-                    <p>No epics found.</p>
-                    <p class="empty-state-hint">Click "+ New Epic" above or use the CLI: <code>chaotic epic create "Epic title"</code></p>
-                </div>
-            `;
+            listEl.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.epics,
+                heading: 'No epics found',
+                description: 'Epics help you organize related issues into larger goals',
+                cta: { label: 'Create epic', action: 'showCreateEpicModal' },
+            });
             return;
         }
 

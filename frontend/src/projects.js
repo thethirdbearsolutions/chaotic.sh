@@ -12,6 +12,7 @@ import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
 import { renderMarkdown } from './gate-approvals.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { renderConditionBuilder, collectConditions } from './rituals.js';
 
 // Module state
@@ -263,12 +264,12 @@ export function getSavedProjectId() {
 export function renderProjects() {
   const list = document.getElementById('projects-list');
   if (projects.length === 0) {
-    list.innerHTML = `
-            <div class="empty-state">
-                <h3>No projects yet</h3>
-                <p>Create your first project to get started</p>
-            </div>
-        `;
+    list.innerHTML = renderEmptyState({
+      icon: EMPTY_ICONS.projects,
+      heading: 'No projects yet',
+      description: 'Create your first project to get started',
+      cta: { label: 'Create project', action: 'showCreateProjectModal' },
+    });
     return;
   }
 

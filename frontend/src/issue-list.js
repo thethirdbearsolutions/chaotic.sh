@@ -12,6 +12,7 @@ import { getGroupByValue } from './issues-view.js';
 import { registerActions } from './event-delegation.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import { viewIssue } from './issue-detail-view.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { STATUS_ORDER, PRIORITY_ORDER } from './constants.js';
 
 // Re-export for backward compatibility
@@ -45,12 +46,12 @@ export function renderIssues() {
     const issues = getIssues();
 
     if (issues.length === 0) {
-        list.innerHTML = `
-            <div class="empty-state">
-                <h3>No issues found</h3>
-                <p>Create your first issue to get started</p>
-            </div>
-        `;
+        list.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.issues,
+            heading: 'No issues found',
+            description: 'Create your first issue to get started',
+            cta: { label: 'Create issue', action: 'showCreateIssueModal' },
+        });
         return;
     }
 

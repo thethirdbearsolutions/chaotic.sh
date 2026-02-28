@@ -30,6 +30,7 @@ import { showApiError } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Guard flag: when true, the subscriber skips sprint-clearing logic
 // because loadFiltersFromUrl is restoring filters from URL params.
@@ -1334,12 +1335,12 @@ export async function loadIssues() {
     const searchQuery = document.getElementById('issue-search')?.value?.trim();
 
     if (!projectId && getProjects().length === 0) {
-        document.getElementById('issues-list').innerHTML = `
-            <div class="empty-state">
-                <h3>No projects yet</h3>
-                <p>Create a project first to add issues</p>
-            </div>
-        `;
+        document.getElementById('issues-list').innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.projects,
+            heading: 'No projects yet',
+            description: 'Create a project first to add issues',
+            cta: { label: 'Create project', action: 'showCreateProjectModal' },
+        });
         return;
     }
 

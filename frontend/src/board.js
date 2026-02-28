@@ -9,6 +9,7 @@ import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Board status configuration
 export const BOARD_STATUSES = [
@@ -62,12 +63,11 @@ export async function loadBoard() {
     if (!projectId) {
         const board = document.getElementById('kanban-board');
         if (board) {
-            board.innerHTML = `
-                <div class="empty-state" style="width: 100%; padding: 3rem;">
-                    <h3>Select a project</h3>
-                    <p>Choose a project to view its board</p>
-                </div>
-            `;
+            board.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.board,
+                heading: 'Select a project',
+                description: 'Choose a project to view its board',
+            });
         }
         return;
     }

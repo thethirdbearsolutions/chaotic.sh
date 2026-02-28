@@ -15,6 +15,7 @@ import { navigateTo } from './router.js';
 import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { approveRitual, completeGateRitual } from './rituals-view.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 
@@ -167,12 +168,11 @@ export function renderSprints() {
         `;
     }
 
-    list.innerHTML = html || `
-        <div class="empty-state">
-            <h3>No sprints yet</h3>
-            <p>Sprints are created automatically when you close the current one, or you can create one from the project settings.</p>
-        </div>
-    `;
+    list.innerHTML = html || renderEmptyState({
+        icon: EMPTY_ICONS.sprints,
+        heading: 'No sprints yet',
+        description: 'Sprints are created automatically when you close the current one, or you can create one from the project settings.',
+    });
 }
 
 function renderSprintBurndown(sprint) {
