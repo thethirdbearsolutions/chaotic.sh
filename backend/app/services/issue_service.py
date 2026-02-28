@@ -101,28 +101,43 @@ class EstimateRequiredError(Exception):
 
 
 # Semantic ordering maps for Python-side sorting
+# Keys include both enum names (DB storage) and values (API/Pydantic) for robustness
 _PRIORITY_ORDER = {
-    "URGENT": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "NO_PRIORITY": 4,
+    "URGENT": 0, "urgent": 0, "HIGH": 1, "high": 1, "MEDIUM": 2, "medium": 2,
+    "LOW": 3, "low": 3, "NO_PRIORITY": 4, "no_priority": 4,
 }
 _STATUS_ORDER = {
-    "IN_PROGRESS": 0, "IN_REVIEW": 1, "TODO": 2, "BACKLOG": 3, "DONE": 4, "CANCELED": 5,
+    "IN_PROGRESS": 0, "in_progress": 0, "IN_REVIEW": 1, "in_review": 1,
+    "TODO": 2, "todo": 2, "BACKLOG": 3, "backlog": 3,
+    "DONE": 4, "done": 4, "CANCELED": 5, "canceled": 5,
 }
 
-# SQL CASE expressions for database-side sorting
-_PRIORITY_CASE_SQL = """CASE i.priority
-    WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
-    WHEN 'LOW' THEN 3 WHEN 'NO_PRIORITY' THEN 4 ELSE 5 END"""
-_STATUS_CASE_SQL = """CASE i.status
-    WHEN 'IN_PROGRESS' THEN 0 WHEN 'IN_REVIEW' THEN 1 WHEN 'TODO' THEN 2
-    WHEN 'BACKLOG' THEN 3 WHEN 'DONE' THEN 4 WHEN 'CANCELED' THEN 5 ELSE 6 END"""
-
+# Fields that can be sorted in SQL (simple column references only)
 _SORT_SQL_FIELDS = {
     "created": "i.created_at",
     "updated": "i.updated_at",
-    "priority": _PRIORITY_CASE_SQL,
-    "status": _STATUS_CASE_SQL,
     "title": "i.title",
     "estimate": "i.estimate",
+}
+
+def _get_order(order_map, value):
+    """Get sort order for a value, handling enum members and raw strings."""
+    # Try direct lookup first
+    result = order_map.get(value)
+    if result is not None:
+        return result
+    # Try .name for enum members, .value for enum values
+    for attr in ('name', 'value'):
+        if hasattr(value, attr):
+            result = order_map.get(getattr(value, attr))
+            if result is not None:
+                return result
+    return 99
+
+# Fields that require Python-side sorting (semantic ordering)
+_SORT_PYTHON_KEYS = {
+    "priority": lambda i: (_get_order(_PRIORITY_ORDER, i.priority), i.created_at),
+    "status": lambda i: (_get_order(_STATUS_ORDER, i.status), i.created_at),
 }
 
 
@@ -654,9 +669,11 @@ class IssueService:
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Sorting
+        # Sorting: use SQL for simple fields, Python for semantic ordering
         needs_shuffle = sort_by == "random"
-        if needs_shuffle:
+        python_sort_key = _SORT_PYTHON_KEYS.get(sort_by)
+        if needs_shuffle or python_sort_key:
+            # Fetch with a stable fallback order; re-sort in Python after
             order_clause = "ORDER BY i.created_at DESC"
         else:
             default_sort = "i.updated_at" if team_id else "i.created_at"
@@ -677,12 +694,15 @@ class IssueService:
             id__in=issue_ids,
         ).join("creator").prefetch("labels").all()
 
-        # Preserve sort order from SQL
-        id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
-        issues.sort(key=lambda i: id_order.get(i.id, 0))
-
         if needs_shuffle:
             random.shuffle(issues)
+        elif python_sort_key:
+            reverse = order != "asc"
+            issues.sort(key=python_sort_key, reverse=reverse)
+        else:
+            # Preserve sort order from SQL
+            id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
+            issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         return issues
 
@@ -725,7 +745,8 @@ class IssueService:
 
         where_clause = " AND ".join(conditions)
         needs_shuffle = sort_by == "random"
-        if needs_shuffle:
+        python_sort_key = _SORT_PYTHON_KEYS.get(sort_by)
+        if needs_shuffle or python_sort_key:
             order_clause = "ORDER BY i.created_at DESC"
         else:
             sort_field = _SORT_SQL_FIELDS.get(sort_by, "i.created_at")
@@ -741,11 +762,15 @@ class IssueService:
 
         issue_ids = [r["id"] for r in rows]
         issues = await OxydeIssue.objects.filter(id__in=issue_ids).join("creator").prefetch("labels").all()
-        id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
-        issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         if needs_shuffle:
             random.shuffle(issues)
+        elif python_sort_key:
+            reverse = order != "asc"
+            issues.sort(key=python_sort_key, reverse=reverse)
+        else:
+            id_order = {iid: idx for idx, iid in enumerate(issue_ids)}
+            issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         return issues
 
