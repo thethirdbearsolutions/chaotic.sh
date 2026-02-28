@@ -620,12 +620,36 @@ function showKeyboardShortcutsHelp() {
                     <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">c</kbd>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Reassign</span>
+                    <span>Next/prev issue</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">j/k</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Prev/next (arrows)</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">\u2190/\u2192</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Status</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">s</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Priority</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">p</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Assignee</span>
                     <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">a</kbd>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Next/prev issue</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">j/k</kbd>
+                    <span>Labels</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">l</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Estimate</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">e</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Type</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">t</kbd>
                 </div>
             </div>
         </div>
