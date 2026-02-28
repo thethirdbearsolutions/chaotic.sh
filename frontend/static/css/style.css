@@ -1353,18 +1353,6 @@ textarea {
     font-family: monospace;
 }
 
-/* Empty State */
-.empty-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-secondary);
-}
-
-.empty-state h3 {
-    color: var(--text-primary);
-    margin-bottom: 0.5rem;
-}
-
 /* Approvals explainer (CHT-766) */
 .approvals-explainer {
     text-align: left;
@@ -5320,13 +5308,6 @@ input[type="checkbox"] {
     font-size: var(--font-sm);
     color: var(--text-muted);
     margin-top: 4px;
-}
-
-.empty-state {
-    color: var(--text-muted);
-    font-size: var(--font-md);
-    text-align: center;
-    padding: 24px;
 }
 
 /* Issue group-by styles */
