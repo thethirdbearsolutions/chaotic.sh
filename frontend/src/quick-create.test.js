@@ -3,6 +3,7 @@ import { handleQuickCreate } from './quick-create.js';
 
 // Mock dependencies
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 
@@ -27,7 +28,7 @@ vi.mock('./api.js', () => ({
     },
 }));
 
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
 import { getIssues, setIssues, getCurrentProject } from './state.js';
 import { renderIssues } from './issue-list.js';
@@ -151,7 +152,7 @@ describe('handleQuickCreate', () => {
         expect(lastCall).toHaveLength(0);
 
         // Error toast
-        expect(showToast).toHaveBeenCalledWith('Failed to create issue: Server error', 'error');
+        expect(showApiError).toHaveBeenCalledWith('create issue', expect.objectContaining({ message: 'Server error' }));
 
         // Input should be re-enabled
         expect(input.disabled).toBe(false);

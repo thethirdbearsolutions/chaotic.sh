@@ -15,6 +15,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 
@@ -55,7 +56,7 @@ vi.mock('./documents.js', () => ({
 }));
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 import { getCurrentUser, getCurrentTeam, getCurrentProject } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
@@ -148,7 +149,7 @@ describe('dashboard module', () => {
 
             await loadMyIssues();
 
-            expect(showToast).toHaveBeenCalledWith('Network error', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
         it('does nothing if no current team', async () => {

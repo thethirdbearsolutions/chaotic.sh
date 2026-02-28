@@ -14,6 +14,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showToast: vi.fn(),
@@ -60,7 +61,7 @@ vi.mock('dompurify', () => ({
 }));
 
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { setPendingGates, getCurrentTeam } from './state.js';
 import {
@@ -141,7 +142,7 @@ describe('handleGateApproval', () => {
 
         await handleGateApproval(event, 'r1', 'i1', 'Test');
 
-        expect(showToast).toHaveBeenCalledWith('Failed to complete gate ritual: fail', 'error');
+        expect(showApiError).toHaveBeenCalledWith('complete gate ritual', expect.objectContaining({ message: 'fail' }));
     });
 });
 
@@ -198,7 +199,7 @@ describe('handleReviewApproval', () => {
 
         await handleReviewApproval(event, 'r1', 'i1', 'Review');
 
-        expect(showToast).toHaveBeenCalledWith('Failed to approve review ritual: unauthorized', 'error');
+        expect(showApiError).toHaveBeenCalledWith('approve review ritual', expect.objectContaining({ message: 'unauthorized' }));
     });
 });
 

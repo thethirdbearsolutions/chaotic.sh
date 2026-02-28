@@ -26,7 +26,7 @@ import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { ensureSprintCacheForIssues } from './sprints.js';
 import { renderIssues } from './issue-list.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { registerActions } from './event-delegation.js';
 import { OPEN_STATUSES } from './constants.js';
@@ -1435,7 +1435,7 @@ export async function loadIssues() {
 
         renderIssues();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('load issues', e);
     }
 }
 

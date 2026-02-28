@@ -15,6 +15,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showToast: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('./event-delegation.js', () => ({
 
 // Import after mocks are set up
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
     getApiKeys,
     setApiKeys,
@@ -98,7 +99,7 @@ describe('api-keys module', () => {
 
             await loadApiKeys();
 
-            expect(showToast).toHaveBeenCalledWith('Network error', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load API keys', expect.objectContaining({ message: 'Network error' }));
         });
     });
 
@@ -202,7 +203,7 @@ describe('api-keys module', () => {
 
             await handleCreateApiKey({ preventDefault: vi.fn() });
 
-            expect(showToast).toHaveBeenCalledWith('Create failed', 'error');
+            expect(showApiError).toHaveBeenCalledWith('create API key', expect.objectContaining({ message: 'Create failed' }));
         });
 
         it('returns false to prevent form submission', async () => {
@@ -268,7 +269,7 @@ describe('api-keys module', () => {
 
             await revokeApiKey('key-1', 'Test Key');
 
-            expect(showToast).toHaveBeenCalledWith('Revoke failed', 'error');
+            expect(showApiError).toHaveBeenCalledWith('revoke API key', expect.objectContaining({ message: 'Revoke failed' }));
         });
     });
 });

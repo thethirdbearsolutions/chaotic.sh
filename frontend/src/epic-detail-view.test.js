@@ -19,6 +19,7 @@ vi.mock('./state.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 
@@ -66,7 +67,7 @@ vi.mock('./issue-detail-view.js', () => ({
 
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
-import { showToast } from './ui.js';
+import { showApiError } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -297,7 +298,7 @@ describe('epic-detail-view', () => {
             api.getIssue.mockRejectedValue(new Error('Not found'));
             await viewEpic('epic-1');
 
-            expect(showToast).toHaveBeenCalledWith('Failed to load epic: Not found', 'error');
+            expect(showApiError).toHaveBeenCalledWith('load epic', expect.objectContaining({ message: 'Not found' }));
         });
 
         it('sub-issue row click navigates to issue detail', async () => {

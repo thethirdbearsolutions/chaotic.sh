@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, formatDate } from './utils.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
@@ -98,7 +98,7 @@ export async function loadAgents(teamId) {
     updateAssigneeFilter();
     renderAgents();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load agents', e);
   }
 }
 
@@ -231,7 +231,7 @@ export async function handleCreateAgent(event) {
     `;
     showModal();
   } catch (e) {
-    showToast(`Failed to create agent: ${e.message}`, 'error');
+    showApiError('create agent', e);
   }
   return false;
 }
@@ -270,7 +270,7 @@ export async function deleteAgent(agentId, agentName) {
     showToast('Agent deleted', 'success');
     loadAgents();
   } catch (e) {
-    showToast(`Failed to delete agent: ${e.message}`, 'error');
+    showApiError('delete agent', e);
   }
 }
 

@@ -6,7 +6,7 @@
  */
 
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getEstimateScaleHint } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
@@ -83,7 +83,7 @@ export async function loadSprints() {
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('load sprints', e);
     }
 }
 
@@ -564,7 +564,7 @@ export async function handleUpdateBudget(event, sprintId, projectId) {
                          scope === 'default' ? ' (and set as project default)' : '';
         showToast(`Budget updated${scopeMsg}!`, 'success');
     } catch (e) {
-        showToast(`Failed to update budget: ${e.message}`, 'error');
+        showApiError('update budget', e);
     }
     return false;
 }
@@ -638,7 +638,7 @@ export async function completeSprint(sprintId) {
             showToast('Sprint completed!', 'success');
         }
     } catch (e) {
-        showToast(`Failed to complete sprint: ${e.message}`, 'error');
+        showApiError('complete sprint', e);
     }
 }
 

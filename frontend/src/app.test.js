@@ -38,6 +38,7 @@ vi.mock('./event-delegation.js', () => ({
     registerActions: vi.fn((actions) => { Object.assign(registeredActions, actions); }),
 }));
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
     isModalOpen: vi.fn().mockReturnValue(false),
@@ -188,7 +189,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl, updateSprintFilter } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';

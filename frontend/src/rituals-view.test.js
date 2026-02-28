@@ -10,6 +10,7 @@ vi.mock('./utils.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showToast: vi.fn(),
@@ -68,7 +69,7 @@ import {
     showCompleteTicketRitualModal,
 } from './rituals-view.js';
 
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjectRituals, loadProjectSettingsRituals, renderRitualList, setCurrentSettingsProjectId } from './projects.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
@@ -198,7 +199,7 @@ describe('rituals-view', () => {
 
             await approveRitual('ritual-1', 'proj-1');
 
-            expect(showToast).toHaveBeenCalledWith('Denied', 'error');
+            expect(showApiError).toHaveBeenCalledWith('approve ritual', expect.objectContaining({ message: 'Denied' }));
         });
     });
 
@@ -260,7 +261,7 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(showToast).toHaveBeenCalledWith('Server error', 'error');
+                expect(showApiError).toHaveBeenCalledWith('complete gate ritual', expect.objectContaining({ message: 'Server error' }));
             });
         });
     });
@@ -322,7 +323,7 @@ describe('rituals-view', () => {
 
             await attestTicketRitual('r1', 'issue-1');
 
-            expect(showToast).toHaveBeenCalledWith('Failed', 'error');
+            expect(showApiError).toHaveBeenCalledWith('attest ticket ritual', expect.objectContaining({ message: 'Failed' }));
         });
     });
 
@@ -343,7 +344,7 @@ describe('rituals-view', () => {
 
             await approveTicketRitual('r1', 'issue-1');
 
-            expect(showToast).toHaveBeenCalledWith('Nope', 'error');
+            expect(showApiError).toHaveBeenCalledWith('approve ticket ritual', expect.objectContaining({ message: 'Nope' }));
         });
     });
 
@@ -456,7 +457,7 @@ describe('rituals-view', () => {
             form.dispatchEvent(new Event('submit', { cancelable: true }));
 
             await vi.waitFor(() => {
-                expect(showToast).toHaveBeenCalledWith('Deploy blocked', 'error');
+                expect(showApiError).toHaveBeenCalledWith('complete ticket ritual', expect.objectContaining({ message: 'Deploy blocked' }));
             });
         });
     });

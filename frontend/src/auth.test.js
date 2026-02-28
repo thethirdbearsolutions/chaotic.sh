@@ -20,6 +20,7 @@ vi.mock('./api.js', () => ({
 
 // Mock the ui module
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
   showToast: vi.fn(),
 }));
 

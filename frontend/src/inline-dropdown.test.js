@@ -30,6 +30,7 @@ vi.mock('./dashboard.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     closeAllDropdowns: vi.fn(),
     registerDropdownClickOutside: vi.fn(),
     setDropdownKeyHandler: vi.fn(),

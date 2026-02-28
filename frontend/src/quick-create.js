@@ -6,7 +6,7 @@
  */
 
 import { api } from './api.js';
-import { showToast } from './ui.js';
+import { showToast, showApiError } from './ui.js';
 import { getProjects, loadProjects } from './projects.js';
 import { getIssues, setIssues, getCurrentProject } from './state.js';
 import { renderIssues } from './issue-list.js';
@@ -69,7 +69,7 @@ export async function handleQuickCreate(event) {
         // Remove optimistic on error
         setIssues(getIssues().filter(i => i.id !== tempId));
         renderIssues();
-        showToast(`Failed to create issue: ${e.message}`, 'error');
+        showApiError('create issue', e);
     } finally {
         input.disabled = false;
         input.placeholder = originalPlaceholder;

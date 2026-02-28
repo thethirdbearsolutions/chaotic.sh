@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
 import { getCurrentTeam, getCurrentProject, setCurrentProject, subscribe } from './state.js';
 import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
@@ -206,7 +206,7 @@ export async function loadProjects() {
       setCurrentProject(projects[0].id);
     }
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load projects', e);
   }
 }
 
@@ -376,7 +376,7 @@ export async function handleCreateProject(event) {
     closeModal();
     showToast('Project created!', 'success');
   } catch (e) {
-    showToast(`Failed to create project: ${e.message}`, 'error');
+    showApiError('create project', e);
   }
   return false;
 }
@@ -468,7 +468,7 @@ export async function handleUpdateProject(event, projectId) {
     closeModal();
     showToast('Project updated!', 'success');
   } catch (e) {
-    showToast(`Failed to update project: ${e.message}`, 'error');
+    showApiError('update project', e);
   }
   return false;
 }
@@ -493,7 +493,7 @@ export async function confirmDeleteProject(projectId) {
       closeModal();
       showToast('Project deleted', 'success');
     } catch (e) {
-      showToast(`Failed to delete project: ${e.message}`, 'error');
+      showApiError('delete project', e);
     }
   }
 }
@@ -633,7 +633,7 @@ export async function saveProjectSettingsGeneral() {
       document.getElementById('project-settings-title').textContent = `${project.name} Settings`;
     }
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('save project settings', e);
   }
 }
 
@@ -659,7 +659,7 @@ export async function saveProjectSettingsRules() {
     await loadProjects(); // Refresh project list
     showToast('Settings saved', 'success');
   } catch (e) {
-    showToast(`Failed to save settings: ${e.message}`, 'error');
+    showApiError('save settings', e);
   }
 }
 
@@ -684,7 +684,7 @@ export async function loadProjectSettingsRituals() {
       _onRitualsChangedCallback();
     }
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load rituals', e);
   }
 }
 
@@ -959,7 +959,7 @@ export async function handleCreateProjectRitual(event) {
     closeModal();
     showToast('Ritual created!', 'success');
   } catch (e) {
-    showToast(`Failed to create ritual: ${e.message}`, 'error');
+    showApiError('create ritual', e);
   }
   return false;
 }
@@ -1108,7 +1108,7 @@ export async function handleUpdateProjectRitual(event, ritualId) {
     closeModal();
     showToast('Ritual updated!', 'success');
   } catch (e) {
-    showToast(`Failed to update ritual: ${e.message}`, 'error');
+    showApiError('update ritual', e);
   }
   return false;
 }
@@ -1126,7 +1126,7 @@ export async function deleteProjectRitual(ritualId, ritualName) {
     await loadProjectSettingsRituals();
     showToast('Ritual deleted', 'success');
   } catch (e) {
-    showToast(`Failed to delete ritual: ${e.message}`, 'error');
+    showApiError('delete ritual', e);
   }
 }
 

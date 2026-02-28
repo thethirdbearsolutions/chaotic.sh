@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr } from './utils.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam, setCurrentTeam, getCurrentView, getCurrentUser, setLabels } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo, handleRoute } from './router.js';
@@ -53,7 +53,7 @@ export async function loadTeams() {
     teams = await api.getMyTeams();
     renderTeamList();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load teams', e);
   }
 }
 
@@ -152,7 +152,7 @@ export async function loadTeamMembers() {
     updateAssigneeFilter();
     renderTeamMembers();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load team members', e);
   }
 }
 
@@ -242,7 +242,7 @@ export async function loadTeamAgents() {
     teamAgents = await api.getTeamAgents(getCurrentTeam().id);
     renderTeamAgents();
   } catch (e) {
-    showToast(e.message, 'error');
+    showApiError('load team agents', e);
   }
 }
 
@@ -320,7 +320,7 @@ export async function handleInvite(event) {
     closeModal();
     showToast('Invitation sent!', 'success');
   } catch (e) {
-    showToast(`Failed to send invitation: ${e.message}`, 'error');
+    showApiError('send invitation', e);
   }
   return false;
 }
@@ -337,7 +337,7 @@ export async function removeMember(userId) {
     await loadTeamMembers();
     showToast('Member removed!', 'success');
   } catch (e) {
-    showToast(`Failed to remove member: ${e.message}`, 'error');
+    showApiError('remove member', e);
   }
 }
 
@@ -351,7 +351,7 @@ export async function deleteInvitation(invitationId) {
     await loadTeamInvitations();
     showToast('Invitation canceled!', 'success');
   } catch (e) {
-    showToast(`Failed to cancel invitation: ${e.message}`, 'error');
+    showApiError('cancel invitation', e);
   }
 }
 
@@ -430,7 +430,7 @@ export async function handleCreateTeam(event) {
     closeModal();
     showToast('Team created!', 'success');
   } catch (e) {
-    showToast(`Failed to create team: ${e.message}`, 'error');
+    showApiError('create team', e);
   }
   return false;
 }
@@ -459,7 +459,7 @@ export async function handleUpdateTeam(event) {
     closeModal();
     showToast('Team updated!', 'success');
   } catch (e) {
-    showToast(`Failed to update team: ${e.message}`, 'error');
+    showApiError('update team', e);
   }
   return false;
 }

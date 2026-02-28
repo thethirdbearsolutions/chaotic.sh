@@ -20,6 +20,7 @@ vi.mock('./api.js', () => ({
 }));
 
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showToast: vi.fn(),
@@ -69,7 +70,7 @@ vi.mock('./utils.js', () => ({
 
 import { setCurrentTeam, setState } from './state.js';
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
     getSprints,
     setSprints,
@@ -193,7 +194,7 @@ describe('loadSprints', () => {
         setState('currentProject', 'p1');
         await loadSprints();
 
-        expect(showToast).toHaveBeenCalledWith('network', 'error');
+        expect(showApiError).toHaveBeenCalledWith('load sprints', expect.objectContaining({ message: 'network' }));
     });
 });
 
@@ -504,7 +505,7 @@ describe('handleUpdateBudget', () => {
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
 
-        expect(showToast).toHaveBeenCalledWith('Failed to update budget: forbidden', 'error');
+        expect(showApiError).toHaveBeenCalledWith('update budget', expect.objectContaining({ message: 'forbidden' }));
     });
 });
 
@@ -542,7 +543,7 @@ describe('completeSprint', () => {
 
         await completeSprint('s1');
 
-        expect(showToast).toHaveBeenCalledWith('Failed to complete sprint: cannot close', 'error');
+        expect(showApiError).toHaveBeenCalledWith('complete sprint', expect.objectContaining({ message: 'cannot close' }));
     });
 });
 

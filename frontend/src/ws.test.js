@@ -17,6 +17,7 @@ vi.mock('./state.js', () => ({
 
 // Mock ui.js
 vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(),
     showToast: vi.fn(),
 }));
 

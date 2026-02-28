@@ -58,6 +58,45 @@ export function showToast(message, type = 'success') {
 }
 
 /**
+ * Extract a human-readable message from an error.
+ * Handles: plain Error objects, structured API errors with .detail,
+ * FastAPI validation error arrays, and nested {message: ...} objects.
+ * @param {Error|Object} error
+ * @returns {string}
+ */
+export function extractErrorMessage(error) {
+    if (!error) return 'An unknown error occurred';
+
+    // Standard Error with a string message
+    if (typeof error.message === 'string' && error.message) {
+        return error.message;
+    }
+
+    // Structured detail (attached by api.js)
+    const detail = error.detail;
+    if (detail) {
+        if (typeof detail === 'string') return detail;
+        if (typeof detail === 'object' && detail.message) return detail.message;
+        // FastAPI validation errors: [{loc: [...], msg: "...", type: "..."}]
+        if (Array.isArray(detail)) {
+            return detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+        }
+    }
+
+    return 'An unknown error occurred';
+}
+
+/**
+ * Show a toast for an API/action error with consistent formatting.
+ * @param {string} context - What was being attempted (e.g. "load issues", "delete agent")
+ * @param {Error|Object} error - The caught error
+ */
+export function showApiError(context, error) {
+    const msg = extractErrorMessage(error);
+    showToast(`Failed to ${context}: ${msg}`, 'error');
+}
+
+/**
  * Close all open inline dropdowns
  */
 export function closeAllDropdowns() {

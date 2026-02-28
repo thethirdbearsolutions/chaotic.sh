@@ -9,7 +9,7 @@ import { getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft } from 
 import { api } from './api.js';
 import { getProjects, getEstimateOptions } from './projects.js';
 import { getCurrentView, getLabels, setLabels, getCurrentTeam, getCurrentProject } from './state.js';
-import { showModal, closeModal, showToast, closeAllDropdowns, registerDropdownClickOutside } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, closeAllDropdowns, registerDropdownClickOutside } from './ui.js';
 import { viewIssue } from './issue-detail-view.js';
 import { loadIssues } from './issues-view.js';
 import { loadMyIssues } from './dashboard.js';
@@ -297,7 +297,7 @@ export async function handleCreateSubIssue(parentId, projectId) {
         showToast(`Created sub-issue ${issue.identifier}`, 'success');
         viewIssue(parentId);
     } catch (e) {
-        showToast(`Failed to create sub-issue: ${e.message}`, 'error');
+        showApiError('create sub-issue', e);
     }
 }
 
@@ -529,7 +529,7 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
             viewIssue(issue.id);
         }
     } catch (e) {
-        showToast(`Failed to create issue: ${e.message}`, 'error');
+        showApiError('create issue', e);
     } finally {
         if (btnCreate) btnCreate.disabled = false;
         if (btnCreateAndNew) btnCreateAndNew.disabled = false;

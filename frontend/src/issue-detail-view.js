@@ -6,7 +6,7 @@
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft } from './storage.js';
 import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getIssues } from './state.js';
 import { api } from './api.js';
-import { showToast, showModal, closeModal } from './ui.js';
+import { showToast, showModal, closeModal, showApiError } from './ui.js';
 import { navigateTo } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
@@ -1049,7 +1049,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         };
         document.addEventListener('keydown', detailKeyHandler, { signal: detailSignal });
     } catch (e) {
-        showToast(`Failed to load issue: ${e.message}`, 'error');
+        showApiError('load issue', e);
     }
 }
 
@@ -1078,7 +1078,7 @@ export async function handleAddComment(event, issueId) {
     } catch (e) {
         // Restore draft on failure so user doesn't lose their comment
         setCommentDraft(issueId, content);
-        showToast(`Failed to add comment: ${e.message}`, 'error');
+        showApiError('add comment', e);
     } finally {
         commentSubmitting = false;
     }
@@ -1176,7 +1176,7 @@ export async function editDescription(issueId) {
             showToast('Description updated', 'success');
             viewIssue(issueId, false);
         } catch (e) {
-            showToast(`Failed to update description: ${e.message}`, 'error');
+            showApiError('update description', e);
         }
     });
 }
@@ -1328,7 +1328,7 @@ export async function handleAddRelation(event, issueId) {
         showToast('Relation added', 'success');
         viewIssue(issueId);
     } catch (e) {
-        showToast(`Failed to add relation: ${e.message}`, 'error');
+        showApiError('add relation', e);
     }
     return false;
 }
@@ -1342,7 +1342,7 @@ export async function deleteRelation(issueId, relationId) {
         showToast('Relation removed', 'success');
         viewIssue(issueId);
     } catch (e) {
-        showToast(`Failed to remove relation: ${e.message}`, 'error');
+        showApiError('remove relation', e);
     }
 }
 

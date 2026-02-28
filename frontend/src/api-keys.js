@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { showModal, closeModal, showToast } from './ui.js';
+import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { registerActions } from './event-delegation.js';
 
@@ -35,7 +35,7 @@ export async function loadApiKeys() {
         apiKeys = await api.getApiKeys();
         renderApiKeys();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('load API keys', e);
     }
 }
 
@@ -118,7 +118,7 @@ export async function handleCreateApiKey(event) {
         `;
         showModal();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('create API key', e);
     }
     return false;
 }
@@ -151,7 +151,7 @@ export async function revokeApiKey(keyId, keyName) {
         showToast('API key revoked', 'success');
         await loadApiKeys();
     } catch (e) {
-        showToast(e.message, 'error');
+        showApiError('revoke API key', e);
     }
 }
 
