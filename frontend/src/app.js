@@ -315,10 +315,10 @@ function initIssuesView() {
 
     // Filter & display menu buttons
     const filterMenuBtn = document.getElementById('filter-menu-btn');
-    if (filterMenuBtn) filterMenuBtn.addEventListener('click', (e) => toggleFilterMenu(e));
+    if (filterMenuBtn) filterMenuBtn.addEventListener('click', () => toggleFilterMenu());
 
     const displayMenuBtn = document.getElementById('display-menu-btn');
-    if (displayMenuBtn) displayMenuBtn.addEventListener('click', (e) => toggleDisplayMenu(e));
+    if (displayMenuBtn) displayMenuBtn.addEventListener('click', () => toggleDisplayMenu());
 
     // Multi-select toggle buttons (status, priority, label)
     document.querySelectorAll('.multi-select-btn').forEach(btn => {
