@@ -550,6 +550,7 @@ def register(cli):
     @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
     @click.option("--estimate", "--points", type=int, help="Story point estimate")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
+    @click.option("--no-sprint", "clear_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")
     @click.option("--no-parent", "clear_parent", is_flag=True, help="Detach from parent issue")
     @click.option("--label", "-l", "add_labels", multiple=True, help="Add label(s) to issue (can be used multiple times)")
@@ -562,7 +563,7 @@ def register(cli):
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
+    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
         """Update an issue."""
         m = _main()
         iss = _client().get_issue_by_identifier(identifier)
@@ -652,7 +653,11 @@ def register(cli):
             data["parent_id"] = parent_issue["id"]
         if clear_parent:
             data["parent_id"] = None
-        if sprint is not None:
+        if sprint is not None and clear_sprint:
+            raise click.ClickException("Cannot use --sprint and --no-sprint together.")
+        if clear_sprint:
+            data["sprint_id"] = None
+        elif sprint is not None:
             if sprint.lower() == "none" or sprint == "":
                 data["sprint_id"] = None
             else:
