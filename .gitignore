@@ -30,6 +30,9 @@ node_modules/
 # Frontend build cache
 .vite/
 
+# Generated dev entry (from templates/index.html via scripts/generate-dev-html.js)
+frontend/index.html
+
 # Environment / secrets
 .env
 .env.*
