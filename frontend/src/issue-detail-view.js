@@ -1331,6 +1331,86 @@ export async function deleteRelation(issueId, relationId) {
 }
 
 // ============================================================================
+// Issue detail hotkeys (CHT-1087)
+// ============================================================================
+
+/**
+ * Navigate to the next or previous issue in the current list.
+ * @param {number} direction - 1 for next, -1 for previous
+ */
+function navigateAdjacentIssue(direction) {
+    const currentIssue = getCurrentDetailIssue();
+    if (!currentIssue) return;
+
+    // Try the issues list first, fall back to my-issues (dashboard)
+    const issues = getIssues();
+    if (!issues || issues.length === 0) return;
+
+    const currentIndex = issues.findIndex(i => i.id === currentIssue.id);
+    if (currentIndex === -1) return;
+
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= issues.length) return;
+
+    viewIssue(issues[nextIndex].id);
+}
+
+/**
+ * Check if issue detail view is currently visible.
+ */
+function isDetailViewVisible() {
+    const el = document.getElementById('issue-detail-view');
+    return el && !el.classList.contains('hidden');
+}
+
+// Issue detail keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (!isDetailViewVisible()) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    // Check if modal is open (don't override modal shortcuts)
+    const modal = document.getElementById('modal');
+    if (modal && !modal.classList.contains('hidden')) return;
+
+    switch (e.key) {
+        case 'c': {
+            // Focus comment textarea
+            e.preventDefault();
+            e.stopPropagation(); // Prevent global 'c' (create issue)
+            const textarea = document.getElementById('new-comment');
+            if (textarea) {
+                textarea.focus();
+                textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+            break;
+        }
+        case 'a': {
+            // Open assignee dropdown
+            e.preventDefault();
+            const currentIssue = getCurrentDetailIssue();
+            if (currentIssue) {
+                const assigneeBtn = document.querySelector('[data-field="assignee"] .property-value');
+                if (assigneeBtn) assigneeBtn.click();
+            }
+            break;
+        }
+        case 'j':
+            // Next issue
+            e.preventDefault();
+            e.stopPropagation();
+            navigateAdjacentIssue(1);
+            break;
+        case 'k':
+            // Previous issue
+            e.preventDefault();
+            e.stopPropagation();
+            navigateAdjacentIssue(-1);
+            break;
+    }
+});
+
+// ============================================================================
 // Event delegation actions
 // ============================================================================
 
@@ -1379,6 +1459,8 @@ registerActions({
         event.preventDefault();
         document.getElementById('comments-section')?.scrollIntoView({ behavior: 'smooth' });
     },
+    'navigate-prev-issue': () => navigateAdjacentIssue(-1),
+    'navigate-next-issue': () => navigateAdjacentIssue(1),
     'edit': (_event, data) => {
         // Close overflow menu before showing edit modal (CHT-1119)
         const dropdown = document.querySelector('.overflow-menu-dropdown:not(.hidden)');

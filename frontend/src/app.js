@@ -612,6 +612,23 @@ function showKeyboardShortcutsHelp() {
                 </div>
             </div>
         </div>
+        <div style="margin-top: 1rem;">
+            <h4 style="margin-bottom: 0.75rem; color: var(--text-secondary)">Issue Detail View</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Focus comment</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">c</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Reassign</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">a</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
+                    <span>Next/prev issue</span>
+                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">j/k</kbd>
+                </div>
+            </div>
+        </div>
     `;
     showModal();
 }
