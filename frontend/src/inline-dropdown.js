@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
-import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast } from './ui.js';
+import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError } from './ui.js';
 import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { registerActions } from './event-delegation.js';
@@ -411,8 +411,8 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
                 `).join('')
                 : '<span class="text-muted">No Labels</span>';
         }
-    } catch {
-        showToast('Failed to update labels', 'error');
+    } catch (e) {
+        showApiError('update labels', e);
         // Revert UI
         if (buttonEl) {
             const wasSelected = idx >= 0;
@@ -493,7 +493,7 @@ export async function createLabelFromDropdown(issueId) {
         }
         input.value = '';
     } catch (e) {
-        showToast(e.message || 'Failed to create label', 'error');
+        showApiError('create label', e);
     } finally {
         input.disabled = false;
         input.focus();
@@ -594,7 +594,7 @@ export async function createLabelForCreateIssue() {
         }
         input.value = '';
     } catch (e) {
-        showToast(e.message || 'Failed to create label', 'error');
+        showApiError('create label', e);
     } finally {
         input.disabled = false;
         input.focus();
@@ -680,7 +680,7 @@ export async function updateIssueField(issueId, field, value) {
             }
         }
     } catch (error) {
-        showToast(error.message || 'Failed to update issue', 'error');
+        showApiError('update issue', error);
         if (row) row.classList.remove('updating');
     }
 }

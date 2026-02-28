@@ -78,7 +78,7 @@ vi.mock('./issues-view.js', () => ({
 import { api } from './api.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
-import { closeAllDropdowns, showToast } from './ui.js';
+import { closeAllDropdowns, showToast, showApiError } from './ui.js';
 import { getAssigneeOptionList } from './assignees.js';
 import { getEstimateOptions } from './projects.js';
 
@@ -307,7 +307,7 @@ describe('inline-dropdown', () => {
 
             await updateIssueField('issue-1', 'status', 'done');
 
-            expect(showToast).toHaveBeenCalledWith('Update failed', 'error');
+            expect(showApiError).toHaveBeenCalledWith('update issue', expect.objectContaining({ message: 'Update failed' }));
         });
 
         it('updates myIssues state if issue exists there', async () => {
