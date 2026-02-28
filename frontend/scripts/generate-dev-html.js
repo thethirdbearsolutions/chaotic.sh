@@ -20,7 +20,15 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-const source = readFileSync(resolve(root, 'templates/index.html'), 'utf-8');
+const templatePath = resolve(root, 'templates/index.html');
+
+let source;
+try {
+    source = readFileSync(templatePath, 'utf-8');
+} catch {
+    console.error(`Error: templates/index.html not found at ${templatePath}`);
+    process.exit(1);
+}
 
 let output = source;
 
@@ -29,14 +37,19 @@ let output = source;
 //    /static/css/style.css -> /css/style.css
 output = output.replace(/(?<==")\/static\//g, '/');
 
-// 2. Remove cache-busting query strings (?v=NN)
-output = output.replace(/\?v=\d+/g, '');
+// 2. Remove cache-busting query strings (?v=NN) in attribute values
+output = output.replace(/\?v=\d+(?=")/g, '');
 
 // 3. Replace the production bundle script with Vite module entry
 output = output.replace(
     /<script src="\/js\/app\.bundle\.js"><\/script>/,
     '<script type="module" src="/src/main.js"></script>'
 );
+
+if (output.includes('app.bundle.js')) {
+    console.error('Error: failed to replace bundle script tag — format may have changed');
+    process.exit(1);
+}
 
 // 4. Add DO NOT EDIT header after <!DOCTYPE html>
 output = output.replace(
