@@ -1138,8 +1138,7 @@ registerActions({
   'view-project': (event, dataset) => {
     viewProject(dataset.projectId);
   },
-  'view-project-settings': (event, dataset) => {
-    event.stopPropagation();
+  'view-project-settings': (_event, dataset) => {
     viewProjectSettings(dataset.projectId);
   },
   'create-project': (event) => {

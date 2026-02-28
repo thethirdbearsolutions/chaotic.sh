@@ -1395,8 +1395,7 @@ registerActions({
     'show-add-relation-modal': (_event, data) => {
         showAddRelationModal(data.issueId);
     },
-    'remove-relation': (event, data) => {
-        event.stopPropagation();
+    'remove-relation': (_event, data) => {
         deleteRelation(data.issueId, data.relationId);
     },
     'show-create-sub-issue-modal': (_event, data) => {

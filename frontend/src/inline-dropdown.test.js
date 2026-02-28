@@ -264,9 +264,8 @@ describe('inline-dropdown', () => {
     });
 
     describe('showDetailDropdown', () => {
-        it('calls showInlineDropdown with stopPropagation', async () => {
+        it('delegates to showInlineDropdown', async () => {
             const mockEvent = {
-                stopPropagation: vi.fn(),
                 preventDefault: vi.fn(),
                 currentTarget: {
                     getBoundingClientRect: () => ({ left: 100, right: 200, top: 50, bottom: 70 }),
@@ -275,7 +274,8 @@ describe('inline-dropdown', () => {
 
             await showDetailDropdown(mockEvent, 'status', 'issue-1');
 
-            expect(mockEvent.stopPropagation).toHaveBeenCalled();
+            // Dropdown should be created in the DOM
+            expect(document.querySelector('.inline-dropdown')).not.toBeNull();
         });
     });
 

@@ -871,20 +871,17 @@ registerActions({
         }
         viewSprint(data.sprintId);
     },
-    'stop-propagation': (event) => {
-        event.stopPropagation();
-    },
-    'show-edit-budget-modal': (event, data) => {
-        event.stopPropagation();
+    // Exists so closest('[data-action]') finds this wrapper before the parent
+    // card's view-sprint action when clicking whitespace between buttons.
+    'stop-propagation': () => {},
+    'show-edit-budget-modal': (_event, data) => {
         const budget = data.budget ? parseFloat(data.budget) : null;
         showEditBudgetModal(data.sprintId, data.sprintName, budget, data.projectId);
     },
-    'show-limbo-details-modal': (event) => {
-        event.stopPropagation();
+    'show-limbo-details-modal': () => {
         showLimboDetailsModal();
     },
-    'show-close-sprint-confirmation': (event, data) => {
-        event.stopPropagation();
+    'show-close-sprint-confirmation': (_event, data) => {
         showCloseSprintConfirmation(data.sprintId);
     },
     'handle-update-budget': (event, data) => {

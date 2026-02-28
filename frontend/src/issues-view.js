@@ -425,8 +425,7 @@ export const FILTER_CATEGORIES = [
     { key: 'labels', label: 'Labels' },
 ];
 
-export function toggleFilterMenu(event) {
-    event.stopPropagation();
+export function toggleFilterMenu() {
     const dropdown = document.getElementById('filter-menu-dropdown');
     const displayDropdown = document.getElementById('display-menu-dropdown');
 
@@ -452,8 +451,7 @@ export function toggleFilterMenu(event) {
     }
 }
 
-export function toggleDisplayMenu(event) {
-    event.stopPropagation();
+export function toggleDisplayMenu() {
     const dropdown = document.getElementById('display-menu-dropdown');
     const filterDropdown = document.getElementById('filter-menu-dropdown');
 
