@@ -418,6 +418,17 @@ describe('issue-creation', () => {
                 expect.objectContaining({ issue_type: 'task' })
             );
         });
+
+        it('sends assignee_id when set', async () => {
+            document.getElementById('create-issue-title').value = 'Test';
+            document.getElementById('create-issue-assignee').value = 'user-42';
+
+            await handleCreateSubIssue('parent-1', 'proj-1');
+
+            expect(api.createIssue).toHaveBeenCalledWith('proj-1',
+                expect.objectContaining({ assignee_id: 'user-42' })
+            );
+        });
     });
 
     describe('handleCreateIssueNew (submitCreateIssue keepOpen=false)', () => {
@@ -586,6 +597,15 @@ describe('issue-creation', () => {
             expect(viewIssue).not.toHaveBeenCalled();
         });
 
+        it('does not clear draft on error', async () => {
+            api.createIssue.mockRejectedValue(new Error('fail'));
+            document.getElementById('create-issue-title').value = 'Test';
+
+            await handleCreateIssueNew();
+
+            expect(clearCreateIssueDraft).not.toHaveBeenCalled();
+        });
+
         it('defaults issue_type to task when empty', async () => {
             document.getElementById('create-issue-title').value = 'Test';
             document.getElementById('create-issue-type').value = '';
@@ -647,6 +667,19 @@ describe('issue-creation', () => {
             await handleCreateIssueAndNew();
 
             expect(showToast).toHaveBeenCalledWith('Please select a project', 'error');
+        });
+
+        it('preserves field selections (status, priority, etc.) after Create & New', async () => {
+            document.getElementById('create-issue-title').value = 'Test';
+            document.getElementById('create-issue-status').value = 'todo';
+            document.getElementById('create-issue-priority').value = 'high';
+            document.getElementById('create-issue-type').value = 'bug';
+
+            await handleCreateIssueAndNew();
+
+            expect(document.getElementById('create-issue-status').value).toBe('todo');
+            expect(document.getElementById('create-issue-priority').value).toBe('high');
+            expect(document.getElementById('create-issue-type').value).toBe('bug');
         });
     });
 
@@ -924,6 +957,16 @@ describe('issue-creation', () => {
 
             expect(api.getLabels).toHaveBeenCalledWith('team-1');
             expect(setLabels).toHaveBeenCalledWith([{ id: 'l1', name: 'Bug' }]);
+        });
+
+        it('still renders label dropdown even when fetch fails', async () => {
+            getLabels.mockReturnValue([]);
+            api.getLabels.mockRejectedValue(new Error('Network error'));
+            const btn = document.querySelector('[data-dropdown-type="labels"]');
+            await toggleCreateIssueDropdown('labels', { currentTarget: btn });
+
+            // Should still call renderCreateIssueLabelDropdown despite fetch error
+            expect(renderCreateIssueLabelDropdown).toHaveBeenCalled();
         });
 
         it('uses cached labels when available', async () => {
