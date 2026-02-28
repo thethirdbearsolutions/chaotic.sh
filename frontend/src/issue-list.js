@@ -236,7 +236,7 @@ function renderGroupedByAssignee(list, issues) {
         const name = formatAssigneeName(assignee) || 'Unknown';
         const extra = assignee.is_agent ? (assignee.parent_user_name ? ` (${assignee.parent_user_name})` : ' (agent)') : '';
         html += `
-            <div class="issue-group" data-group="${assignee.id}">
+            <div class="issue-group" data-group="${escapeAttr(assignee.id)}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${escapeAttr(assignee.id)}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>

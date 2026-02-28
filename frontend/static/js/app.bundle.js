@@ -424,7 +424,7 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                 </div>
             </div>
         `),i.forEach(({assignee:o})=>{const r=n[o.id];if(!r||r.length===0)return;const d=It(o)||"Unknown",l=o.is_agent?o.parent_user_name?` (${o.parent_user_name})`:" (agent)":"";a+=`
-            <div class="issue-group" data-group="${o.id}">
+            <div class="issue-group" data-group="${p(o.id)}">
                 <div class="issue-group-header" data-action="toggle-group" data-group="${p(o.id)}">
                     <svg class="group-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M4 6l4 4 4-4"/>
