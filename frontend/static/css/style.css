@@ -1847,19 +1847,38 @@ select:focus-visible {
     }
 }
 
-/* Improved empty states */
+/* Improved empty states (CHT-1146) */
 .empty-state {
     animation: fadeIn 0.3s ease;
+    text-align: center;
+    padding: 2.5rem 1.5rem;
+    color: var(--text-secondary);
+}
+
+.empty-state-icon {
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+    opacity: 0.6;
 }
 
 .empty-state h3 {
     font-size: 1.125rem;
     font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
 }
 
 .empty-state p {
     font-size: 0.875rem;
     margin-top: 0.25rem;
+    color: var(--text-secondary);
+    max-width: 360px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.empty-state-cta {
+    margin-top: 1rem;
 }
 
 /* Quick create bar */

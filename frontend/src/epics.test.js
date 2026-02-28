@@ -45,7 +45,7 @@ describe('loadEpics', () => {
 
         const el = document.getElementById('epics-list');
         expect(el.innerHTML).toContain('No epics found');
-        expect(el.innerHTML).toContain('chaotic epic create');
+        expect(el.innerHTML).toContain('Create epic');
     });
 
     it('renders epics with progress bars', async () => {

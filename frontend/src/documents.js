@@ -12,6 +12,7 @@ import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { marked } from 'marked';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { navigateTo } from './router.js';
 
 /**
@@ -430,12 +431,12 @@ export function renderDocuments(groupBy = '', viewMode = 'list') {
     const searchTerm = document.getElementById('doc-search')?.value;
     const projectFilter = getCurrentProject();
     const hasFilters = searchTerm || projectFilter;
-    list.innerHTML = `
-      <div class="empty-state">
-        <h3>${hasFilters ? 'No documents match your filters' : 'No documents yet'}</h3>
-        <p>${hasFilters ? 'Try different search terms or filters' : 'Create your first document to get started'}</p>
-      </div>
-    `;
+    list.innerHTML = renderEmptyState({
+      icon: hasFilters ? EMPTY_ICONS.search : EMPTY_ICONS.documents,
+      heading: hasFilters ? 'No documents match your filters' : 'No documents yet',
+      description: hasFilters ? 'Try different search terms or filters' : 'Create your first document to get started',
+      ...(!hasFilters && { cta: { label: 'Create document', action: 'showCreateDocumentModal' } }),
+    });
     return;
   }
 
