@@ -7,7 +7,7 @@
 
 import { subscribe } from './ws.js';
 import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
-import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
+import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
@@ -222,5 +222,7 @@ function refreshSprintView() {
 function handleSprint() {
     if (getCurrentView() === 'sprints') {
         refreshSprintView();
+    } else if (getCurrentView() === 'my-issues') {
+        loadSprintStatus();
     }
 }
