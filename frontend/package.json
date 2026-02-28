@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "eslint src/ && vite build",
+    "generate-html": "node scripts/generate-dev-html.js",
+    "dev": "node scripts/generate-dev-html.js && vite",
+    "build": "node scripts/generate-dev-html.js && eslint src/ && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
