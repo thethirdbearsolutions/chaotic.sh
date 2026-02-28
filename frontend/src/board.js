@@ -183,7 +183,6 @@ export async function handleDrop(e, target) {
 
 export async function handleCardDrop(e, target) {
     e.preventDefault();
-    e.stopPropagation();
     target.classList.remove('drag-over');
 
     const issueId = draggingIssueId || e.dataTransfer.getData('text/plain');

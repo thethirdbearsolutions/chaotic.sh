@@ -234,7 +234,7 @@ function initModal() {
     const overlay = document.getElementById('modal-overlay');
     if (overlay) {
         // Close modal only when clicking outside the modal box (CHT-1117)
-        // Must NOT use stopPropagation on .modal — that blocks event delegation
+        // Uses closest() check instead of stopPropagation (CHT-1121)
         overlay.addEventListener('click', (e) => {
             if (!e.target.closest('.modal')) closeModal();
         });
@@ -315,10 +315,10 @@ function initIssuesView() {
 
     // Filter & display menu buttons
     const filterMenuBtn = document.getElementById('filter-menu-btn');
-    if (filterMenuBtn) filterMenuBtn.addEventListener('click', (e) => toggleFilterMenu(e));
+    if (filterMenuBtn) filterMenuBtn.addEventListener('click', () => toggleFilterMenu());
 
     const displayMenuBtn = document.getElementById('display-menu-btn');
-    if (displayMenuBtn) displayMenuBtn.addEventListener('click', (e) => toggleDisplayMenu(e));
+    if (displayMenuBtn) displayMenuBtn.addEventListener('click', () => toggleDisplayMenu());
 
     // Multi-select toggle buttons (status, priority, label)
     document.querySelectorAll('.multi-select-btn').forEach(btn => {

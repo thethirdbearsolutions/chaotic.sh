@@ -151,8 +151,8 @@ export function registerDropdownClickOutside(dropdown, options = {}) {
     document.removeEventListener('click', handler, true);
   };
 
-  // Use capture phase so clicks inside modals (which stopPropagation on bubble)
-  // are still detected. Use setTimeout to avoid the current click triggering it.
+  // Capture phase ensures we detect all clicks regardless of intermediate handlers.
+  // setTimeout defers registration so the current click doesn't immediately trigger it.
   setTimeout(() => document.addEventListener('click', handler, true), 0);
 
   // Return cleanup function

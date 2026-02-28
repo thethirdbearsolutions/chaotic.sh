@@ -1359,8 +1359,7 @@ registerActions({
         event.preventDefault();
         viewDocument(data.documentId);
     },
-    'toggle-doc-selection': (event, data) => {
-        event.stopPropagation();
+    'toggle-doc-selection': (_event, data) => {
         toggleDocSelection(data.docId);
     },
     'clear-doc-search': () => {
