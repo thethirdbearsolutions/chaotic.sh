@@ -1798,6 +1798,55 @@ select:focus-visible {
     color: var(--text-muted);
 }
 
+/* Keyboard shortcuts help overlay (CHT-1145) */
+.shortcuts-help {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+}
+
+.shortcut-group-title {
+    margin-bottom: 0.75rem;
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
+    padding: 0.2rem 0;
+}
+
+.shortcut-description {
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+}
+
+.shortcut-keys {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    margin-left: 1rem;
+}
+
+.shortcut-separator {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin: 0 0.1rem;
+}
+
+@media (max-width: 600px) {
+    .shortcuts-help {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Improved empty states */
 .empty-state {
     animation: fadeIn 0.3s ease;

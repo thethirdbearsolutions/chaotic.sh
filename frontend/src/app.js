@@ -4,12 +4,13 @@
 
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
-import { showModal, closeModal, isModalOpen } from './ui.js';
+import { closeModal, isModalOpen } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
 import { initApp } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
 import { loadAgents, showCreateAgentModal } from './agents.js';
 import { showCreateIssueModal } from './issue-creation.js';
+import { showKeyboardShortcutsHelp } from './keyboard-help.js';
 import { showEditIssueModal } from './issue-edit.js';
 import {
     toggleMultiSelect,
@@ -547,115 +548,6 @@ document.addEventListener('keydown', createKeyboardHandler({
         document.getElementById('user-dropdown').classList.add('hidden');
     },
 }));
-
-// Keyboard shortcuts help modal
-function showKeyboardShortcutsHelp() {
-    document.getElementById('modal-title').textContent = 'Keyboard Shortcuts';
-    document.getElementById('modal-content').innerHTML = `
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-            <div>
-                <h4 style="margin-bottom: 0.75rem; color: var(--text-secondary)">Navigation</h4>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Dashboard</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">m</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>All Issues</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">i</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Board</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">b</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Projects</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">p</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Sprints</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">g s</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Documents</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">g d</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Team</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">g t</kbd>
-                </div>
-            </div>
-            <div>
-                <h4 style="margin-bottom: 0.75rem; color: var(--text-secondary)">Actions</h4>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Command palette</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">⌘K</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Search issues</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">/</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Create new item</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">c</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Navigate list</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">j/k</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Close modal</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">Esc</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Show shortcuts</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">?</kbd>
-                </div>
-            </div>
-        </div>
-        <div style="margin-top: 1rem;">
-            <h4 style="margin-bottom: 0.75rem; color: var(--text-secondary)">Issue Detail View</h4>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Focus comment</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">c</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Next/prev issue</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">j/k</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Prev/next (arrows)</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">\u2190/\u2192</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Status</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">s</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Priority</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">p</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Assignee</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">a</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Labels</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">l</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Estimate</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">e</kbd>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem">
-                    <span>Type</span>
-                    <kbd style="background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace;">t</kbd>
-                </div>
-            </div>
-        </div>
-    `;
-    showModal();
-}
 
 // ============================================
 // COMMAND PALETTE (logic in command-palette.js)
