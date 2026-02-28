@@ -35,6 +35,7 @@ vi.mock('./router.js', () => ({
 vi.mock('./projects.js', () => ({
     getProjects: vi.fn(() => []),
     formatEstimate: vi.fn((e) => e ? `${e}pt` : 'None'),
+    isOutOfScale: vi.fn(() => false),
 }));
 
 vi.mock('./teams.js', () => ({

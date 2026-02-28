@@ -16,6 +16,7 @@ vi.mock('./assignees.js', () => ({
 
 vi.mock('./projects.js', () => ({
     formatEstimate: vi.fn((e) => e ? `${e}pt` : ''),
+    isOutOfScale: vi.fn(() => false),
 }));
 
 vi.mock('./sprints.js', () => ({

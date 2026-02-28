@@ -5,7 +5,7 @@
 
 import { getIssues } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
-import { formatEstimate } from './projects.js';
+import { formatEstimate, isOutOfScale } from './projects.js';
 import { getSprintCache } from './sprints.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { getGroupByValue } from './issues-view.js';
@@ -360,6 +360,7 @@ export function renderIssueRow(issue) {
     const assigneeName = assignee ? formatAssigneeName(assignee) : null;
     const createdDate = new Date(issue.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const estimateDisplay = issue.estimate ? formatEstimate(issue.estimate, issue.project_id) : '';
+    const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
     const sprintInfo = issue.sprint_id ? getSprintCache()[issue.sprint_id] : null;
     const sprintName = sprintInfo ? sprintInfo.name : null;
 
@@ -387,8 +388,8 @@ export function renderIssueRow(issue) {
                 <button class="issue-icon-btn sprint-btn" data-action="show-inline-dropdown" data-dropdown-type="sprint" data-issue-id="${escapeAttr(issue.id)}" title="Sprint: ${sprintName ? escapeHtml(sprintName) : 'None'}">
                     ${sprintName ? `<span class="sprint-badge">${escapeHtml(sprintName)}</span>` : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`}
                 </button>
-                <button class="issue-icon-btn estimate-btn" data-action="show-inline-dropdown" data-dropdown-type="estimate" data-issue-id="${escapeAttr(issue.id)}" title="Estimate: ${estimateDisplay || 'None'}">
-                    ${estimateDisplay ? `<span class="estimate-badge">${estimateDisplay}</span>` : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`}
+                <button class="issue-icon-btn estimate-btn" data-action="show-inline-dropdown" data-dropdown-type="estimate" data-issue-id="${escapeAttr(issue.id)}" title="${outOfScale ? 'Estimate outside current scale' : `Estimate: ${estimateDisplay || 'None'}`}">
+                    ${estimateDisplay ? `<span class="estimate-badge${outOfScale ? ' out-of-scale' : ''}">${estimateDisplay}</span>` : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`}
                 </button>
                 <span class="issue-date">${createdDate}</span>
                 <button class="issue-icon-btn assignee-btn" data-action="show-inline-dropdown" data-dropdown-type="assignee" data-issue-id="${escapeAttr(issue.id)}" title="${escapeAttr(assigneeName || 'Unassigned')}">

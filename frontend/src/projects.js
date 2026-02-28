@@ -145,6 +145,18 @@ export function formatEstimate(value, projectId) {
 }
 
 /**
+ * Check if an estimate value is outside the project's current scale
+ * @param {number|null} value - Estimate value
+ * @param {string} projectId - Project ID
+ * @returns {boolean} True if value is set but not in the scale
+ */
+export function isOutOfScale(value, projectId) {
+  if (!value) return false;
+  const options = getEstimateOptions(projectId);
+  return !options.some((o) => o.value === value);
+}
+
+/**
  * Get a hint about the estimate scale for a project
  * @param {string} projectId - Project ID
  * @returns {string} Scale hint text

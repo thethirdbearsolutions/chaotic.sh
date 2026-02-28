@@ -2700,6 +2700,12 @@ input[type="checkbox"] {
     color: var(--text-primary);
 }
 
+.estimate-badge.out-of-scale,
+.property-value.out-of-scale {
+    color: var(--warning, #f59e0b);
+    font-style: italic;
+}
+
 .sprint-btn {
     width: auto;
     padding: 0 6px;
