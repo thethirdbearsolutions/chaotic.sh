@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
+import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus } from './utils.js';
 import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
@@ -228,7 +228,15 @@ export async function loadSprintStatus() {
         const sprintPromises = projects.map(async (project) => {
             try {
                 const sprint = await api.getCurrentSprint(project.id);
-                return sprint ? { project, sprint } : null;
+                if (!sprint) return null;
+                let statusCounts = {};
+                try {
+                    const issues = await api.getIssues({ sprint_id: sprint.id, project_id: project.id, limit: 500 });
+                    for (const issue of issues) {
+                        statusCounts[issue.status] = (statusCounts[issue.status] || 0) + 1;
+                    }
+                } catch { /* ignore */ }
+                return { project, sprint, statusCounts };
             } catch {
                 return null;
             }
@@ -253,17 +261,21 @@ export function renderSprintStatus(sprintData) {
         return;
     }
 
+    const STATUS_ORDER = ['done', 'in_review', 'in_progress', 'todo', 'backlog'];
+
     container.innerHTML = `
         <div class="section-header">
             <h3>Active Sprints</h3>
         </div>
         <div class="sprint-status-cards">
-            ${sprintData.map(({ project, sprint }) => {
+            ${sprintData.map(({ project, sprint, statusCounts }) => {
                 const budget = sprint.budget || 0;
                 const spent = sprint.points_spent || 0;
                 const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
                 const overBudget = budget > 0 && spent > budget;
                 const statusClass = sprint.limbo ? 'limbo' : overBudget ? 'arrears' : '';
+                const counts = statusCounts || {};
+                const totalIssues = Object.values(counts).reduce((a, b) => a + b, 0);
 
                 return `
                     <div class="sprint-status-card ${statusClass}">
@@ -285,6 +297,21 @@ export function renderSprintStatus(sprintData) {
                                 <span class="sprint-status-points">${spent} pts (no budget)</span>
                             </div>
                         `}
+                        ${totalIssues > 0 ? `
+                            <div class="sprint-issue-breakdown">
+                                <div class="sprint-stacked-bar">
+                                    ${STATUS_ORDER.filter(s => counts[s]).map(s => {
+                                        const widthPct = Math.round((counts[s] / totalIssues) * 100);
+                                        return `<div class="sprint-stacked-segment status-${s}" style="width: ${widthPct}%" title="${formatStatus(s)}: ${counts[s]}"></div>`;
+                                    }).join('')}
+                                </div>
+                                <div class="sprint-status-counts">
+                                    ${STATUS_ORDER.filter(s => counts[s]).map(s =>
+                                        `<span class="sprint-count-label status-${s}">${counts[s]} ${formatStatus(s)}</span>`
+                                    ).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
                 `;
             }).join('')}
