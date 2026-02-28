@@ -5,7 +5,7 @@
  * registerActions, setCommandPaletteCommands, and wires up keyboard handlers.
  * We test those registrations by capturing what was passed to the mock functions.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Track what was registered via captured mock call args
 let registeredViews = {};
@@ -193,10 +193,19 @@ import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
 import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
-import { viewEpicByPath } from './epic-detail-view.js';
-import { viewSprintByPath } from './sprints.js';
-import { viewProjectSettings, clearProjectSettingsState } from './projects.js';
-import { setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject } from './state.js';
+import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
+import { viewDocument } from './documents.js';
+import { viewSprintByPath, viewSprint } from './sprints.js';
+import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged } from './projects.js';
+import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject } from './state.js';
+import { loadGateApprovals } from './gate-approvals.js';
+import { loadEpics } from './epics.js';
+import { loadBoard } from './board.js';
+import { loadSprints } from './sprints.js';
+import { loadRitualsView } from './rituals-view.js';
+import { loadDocuments } from './documents.js';
+import { initApp } from './init.js';
+import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo } from './router.js';
@@ -210,6 +219,18 @@ import { api } from './api.js';
 
 // Import app.js — side effects run on import
 await import('./app.js');
+
+// Capture import-time call args before clearing mocks
+const keyboardHandlerConfig = createKeyboardHandler.mock.calls[0]?.[0];
+const modifierHandlerConfig = createModifierKeyHandler.mock.calls[0]?.[0];
+const listNavCallCount = createListNavigationHandler.mock.calls.length;
+const docListNavCallCount = createDocListNavigationHandler.mock.calls.length;
+
+// Clear mock call counts after import-time side effects so each test
+// starts fresh and assertions aren't cumulative.
+beforeEach(() => {
+    vi.clearAllMocks();
+});
 
 describe('app.js view registrations', () => {
     it('registers all expected views', () => {
@@ -249,6 +270,36 @@ describe('app.js view registrations', () => {
         expect(loadApiKeys).toHaveBeenCalled();
         expect(loadAgents).toHaveBeenCalled();
     });
+
+    it('gate-approvals view loads approvals', () => {
+        registeredViews['gate-approvals']();
+        expect(loadGateApprovals).toHaveBeenCalled();
+    });
+
+    it('epics view loads epics', () => {
+        registeredViews['epics']();
+        expect(loadEpics).toHaveBeenCalled();
+    });
+
+    it('board view loads board', () => {
+        registeredViews['board']();
+        expect(loadBoard).toHaveBeenCalled();
+    });
+
+    it('sprints view loads sprints', () => {
+        registeredViews['sprints']();
+        expect(loadSprints).toHaveBeenCalled();
+    });
+
+    it('rituals view loads rituals', () => {
+        registeredViews['rituals']();
+        expect(loadRitualsView).toHaveBeenCalled();
+    });
+
+    it('documents view loads documents', () => {
+        registeredViews['documents']();
+        expect(loadDocuments).toHaveBeenCalled();
+    });
 });
 
 describe('app.js router configuration', () => {
@@ -268,6 +319,13 @@ describe('app.js router configuration', () => {
         const result = routerConfig.detailRoute(['sprint', 'sprint-1']);
         expect(result).toBe(true);
         expect(viewSprintByPath).toHaveBeenCalledWith('sprint-1');
+    });
+
+    it('configures detailRoute for document paths', () => {
+        // viewDocumentByPath is internal to app.js; it calls viewDocument
+        const result = routerConfig.detailRoute(['document', 'doc-1']);
+        expect(result).toBe(true);
+        expect(viewDocument).toHaveBeenCalledWith('doc-1', false);
     });
 
     it('configures detailRoute for project settings paths', () => {
@@ -293,9 +351,28 @@ describe('app.js router configuration', () => {
         expect(viewIssueByPath).toHaveBeenCalledWith('CHT-456');
     });
 
+    it('configures detailPopstate for epic state', () => {
+        const result = routerConfig.detailPopstate({ epicId: 'epic-1' });
+        expect(result).toBe(true);
+        expect(viewEpic).toHaveBeenCalledWith('epic-1', false);
+    });
+
+    it('configures detailPopstate for document state', () => {
+        const result = routerConfig.detailPopstate({ documentId: 'doc-1' });
+        expect(result).toBe(true);
+        expect(viewDocument).toHaveBeenCalledWith('doc-1', false);
+    });
+
+    it('configures detailPopstate for sprint state', () => {
+        const result = routerConfig.detailPopstate({ sprintId: 'sprint-1' });
+        expect(result).toBe(true);
+        expect(viewSprint).toHaveBeenCalledWith('sprint-1', false);
+    });
+
     it('beforeNavigate clears detail state and closes sidebar', () => {
         routerConfig.beforeNavigate();
         expect(clearProjectSettingsState).toHaveBeenCalled();
+        expect(setOnRitualsChanged).toHaveBeenCalledWith(null);
         expect(setCurrentDetailIssue).toHaveBeenCalledWith(null);
         expect(setCurrentDetailSprints).toHaveBeenCalledWith(null);
         expect(closeSidebar).toHaveBeenCalled();
@@ -357,26 +434,24 @@ describe('app.js command palette registration', () => {
 
 describe('app.js keyboard handler wiring', () => {
     it('creates keyboard handler with correct action callbacks', () => {
-        expect(createKeyboardHandler).toHaveBeenCalledTimes(1);
-        const config = createKeyboardHandler.mock.calls[0][0];
-        expect(config).toHaveProperty('closeModal');
-        expect(config).toHaveProperty('navigateTo');
-        expect(config).toHaveProperty('showCreateIssueModal');
-        expect(config).toHaveProperty('isModalOpen');
-        expect(config).toHaveProperty('focusSearch');
-        expect(config).toHaveProperty('closeDropdowns');
+        expect(keyboardHandlerConfig).toBeDefined();
+        expect(keyboardHandlerConfig).toHaveProperty('closeModal');
+        expect(keyboardHandlerConfig).toHaveProperty('navigateTo');
+        expect(keyboardHandlerConfig).toHaveProperty('showCreateIssueModal');
+        expect(keyboardHandlerConfig).toHaveProperty('isModalOpen');
+        expect(keyboardHandlerConfig).toHaveProperty('focusSearch');
+        expect(keyboardHandlerConfig).toHaveProperty('closeDropdowns');
     });
 
     it('creates modifier key handler', () => {
-        expect(createModifierKeyHandler).toHaveBeenCalledTimes(1);
-        const config = createModifierKeyHandler.mock.calls[0][0];
-        expect(config).toHaveProperty('isModalOpen');
-        expect(config).toHaveProperty('isCommandPaletteOpen');
+        expect(modifierHandlerConfig).toBeDefined();
+        expect(modifierHandlerConfig).toHaveProperty('isModalOpen');
+        expect(modifierHandlerConfig).toHaveProperty('isCommandPaletteOpen');
     });
 
     it('creates list navigation handlers for issues and documents', () => {
-        expect(createListNavigationHandler).toHaveBeenCalledTimes(1);
-        expect(createDocListNavigationHandler).toHaveBeenCalledTimes(1);
+        expect(listNavCallCount).toBe(1);
+        expect(docListNavCallCount).toBe(1);
     });
 });
 
@@ -387,16 +462,38 @@ describe('app.js DOMContentLoaded initialization', () => {
     });
 
     it('init sequence calls core initialization functions', async () => {
+        api.getToken.mockReturnValue(null);
         await domReadyCallback();
         expect(initEventDelegation).toHaveBeenCalled();
         expect(initAuth).toHaveBeenCalled();
         expect(initRouter).toHaveBeenCalled();
         expect(registerWsHandlers).toHaveBeenCalled();
+        expect(initIssueTooltip).toHaveBeenCalled();
     });
 
     it('shows auth screen when no token', async () => {
         api.getToken.mockReturnValue(null);
         await domReadyCallback();
+        expect(showAuthScreen).toHaveBeenCalled();
+        expect(initApp).not.toHaveBeenCalled();
+    });
+
+    it('loads user and calls initApp when token present', async () => {
+        const fakeUser = { id: 'user-1', name: 'Alice' };
+        api.getToken.mockReturnValue('valid-token');
+        api.getMe.mockResolvedValue(fakeUser);
+        await domReadyCallback();
+        expect(api.getMe).toHaveBeenCalled();
+        expect(setCurrentUser).toHaveBeenCalledWith(fakeUser);
+        expect(initApp).toHaveBeenCalled();
+        expect(showAuthScreen).not.toHaveBeenCalled();
+    });
+
+    it('falls back to auth screen when getMe fails', async () => {
+        api.getToken.mockReturnValue('expired-token');
+        api.getMe.mockRejectedValue(new Error('Unauthorized'));
+        await domReadyCallback();
+        expect(api.logout).toHaveBeenCalled();
         expect(showAuthScreen).toHaveBeenCalled();
     });
 });
