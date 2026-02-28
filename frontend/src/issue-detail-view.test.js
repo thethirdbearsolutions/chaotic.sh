@@ -621,6 +621,110 @@ describe('issue-detail-view', () => {
 
                 expect(api.getIssue).not.toHaveBeenCalled();
             });
+
+            it('handles keyboard j to navigate to next issue', async () => {
+                getIssues.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                api.getIssue.mockClear();
+                api.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-c',
+                });
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).toHaveBeenCalledWith('issue-c');
+            });
+
+            it('handles keyboard k to navigate to prev issue', async () => {
+                getIssues.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                api.getIssue.mockClear();
+                api.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-a',
+                });
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).toHaveBeenCalledWith('issue-a');
+            });
+
+            it('handles keyboard c to focus comment textarea', async () => {
+                getIssues.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+
+                const textarea = document.getElementById('new-comment');
+                textarea.scrollIntoView = vi.fn();
+                const focusSpy = vi.spyOn(textarea, 'focus');
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(focusSpy).toHaveBeenCalled();
+            });
+
+            it('ignores hotkeys when typing in textarea', async () => {
+                getIssues.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                api.getIssue.mockClear();
+
+                const textarea = document.getElementById('new-comment');
+                textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).not.toHaveBeenCalled();
+            });
+
+            it('ignores hotkeys when modifier key is pressed', async () => {
+                getIssues.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                api.getIssue.mockClear();
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', metaKey: true }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).not.toHaveBeenCalled();
+            });
+
+            it('j does nothing on last issue in list', async () => {
+                getIssues.mockReturnValue(issueList);
+                api.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-c',
+                });
+
+                await viewIssue('issue-c');
+                api.getIssue.mockClear();
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).not.toHaveBeenCalled();
+            });
+
+            it('k does nothing on first issue in list', async () => {
+                getIssues.mockReturnValue(issueList);
+                api.getIssue.mockResolvedValue({
+                    ...mockIssue,
+                    id: 'issue-a',
+                });
+
+                await viewIssue('issue-a');
+                api.getIssue.mockClear();
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(api.getIssue).not.toHaveBeenCalled();
+            });
         });
     });
 
