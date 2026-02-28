@@ -476,7 +476,7 @@ describe('handleUpdateBudget', () => {
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
 
-        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: 25 });
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: 25, name: 'Sprint 1' });
         expect(closeModal).toHaveBeenCalled();
         expect(showToast).toHaveBeenCalledWith('Budget updated!', 'success');
     });
@@ -493,7 +493,7 @@ describe('handleUpdateBudget', () => {
         const event = { preventDefault: vi.fn() };
         await handleUpdateBudget(event, 's1', 'p1');
 
-        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: null });
+        expect(api.updateSprint).toHaveBeenCalledWith('s1', { budget: null, name: 'Sprint 1' });
     });
 
     it('shows error toast on failure', async () => {

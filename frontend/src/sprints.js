@@ -117,7 +117,7 @@ export function renderSprints() {
                     ${budgetDisplay}
                 </div>
                 <div class="sprint-card-actions" data-action="stop-propagation">
-                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(now.id)}" data-sprint-name="${escapeAttr(now.name)}" data-budget="${now.budget || ''}" data-project-id="${escapeAttr(now.project_id)}">Edit Budget</button>
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(now.id)}" data-sprint-name="${escapeAttr(now.name)}" data-budget="${now.budget || ''}" data-project-id="${escapeAttr(now.project_id)}">Edit Sprint</button>
                     ${now.limbo ? `
                         <button class="btn btn-primary btn-small" data-action="show-limbo-details-modal">View Rituals</button>
                     ` : `
@@ -144,7 +144,7 @@ export function renderSprints() {
                 <div class="sprint-card-title">${escapeHtml(next.name)}</div>
                 <div class="sprint-card-budget">${budgetDisplay}</div>
                 <div class="sprint-card-actions" data-action="stop-propagation">
-                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(next.id)}" data-sprint-name="${escapeAttr(next.name)}" data-budget="${next.budget || ''}" data-project-id="${escapeAttr(next.project_id)}">Edit Budget</button>
+                    <button class="btn btn-secondary btn-small" data-action="show-edit-budget-modal" data-sprint-id="${escapeAttr(next.id)}" data-sprint-name="${escapeAttr(next.name)}" data-budget="${next.budget || ''}" data-project-id="${escapeAttr(next.project_id)}">Edit Sprint</button>
                 </div>
             </div>
         `;
@@ -498,6 +498,10 @@ export function showEditBudgetModal(sprintId, sprintName, currentBudget, project
     document.getElementById('modal-content').innerHTML = `
         <form data-action="handle-update-budget" data-sprint-id="${escapeAttr(sprintId)}" data-project-id="${escapeAttr(projectId)}">
             <div class="form-group">
+                <label for="sprint-name">Name</label>
+                <input type="text" id="sprint-name" value="${escapeAttr(sprintName)}" placeholder="Sprint name">
+            </div>
+            <div class="form-group">
                 <label for="sprint-budget">Point Budget</label>
                 <input type="number" id="sprint-budget" min="1" value="${currentBudget || ''}" placeholder="Leave empty for unlimited">
                 <small class="form-hint">Set a point budget to track velocity. When exceeded, sprint enters arrears.</small>
@@ -520,7 +524,7 @@ export function showEditBudgetModal(sprintId, sprintName, currentBudget, project
                     </label>
                 </div>
             </div>
-            <button type="submit" class="btn btn-primary">Save Budget</button>
+            <button type="submit" class="btn btn-primary">Save</button>
         </form>
     `;
     showModal();
@@ -528,13 +532,16 @@ export function showEditBudgetModal(sprintId, sprintName, currentBudget, project
 
 export async function handleUpdateBudget(event, sprintId, projectId) {
     event.preventDefault();
+    const nameInput = document.getElementById('sprint-name')?.value?.trim();
     const budgetInput = document.getElementById('sprint-budget').value;
     const budget = budgetInput ? parseInt(budgetInput) : null;
     const scope = document.querySelector('input[name="budget-scope"]:checked')?.value || 'this';
 
     try {
-        // Always update this sprint
-        await api.updateSprint(sprintId, { budget });
+        // Always update this sprint (name + budget)
+        const updateData = { budget };
+        if (nameInput) updateData.name = nameInput;
+        await api.updateSprint(sprintId, updateData);
 
         // Handle cascade options
         if (scope === 'planned' || scope === 'default') {
