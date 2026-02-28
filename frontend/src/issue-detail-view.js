@@ -976,18 +976,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                     overflowTrigger.focus();
                 }
             }, { signal: detailSignal });
-            // Action handlers
-            overflowDropdown.querySelectorAll('.overflow-menu-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const issueId = item.dataset.issueId;
-                    closeOverflow();
-                    if (item.dataset.action === 'edit') {
-                        showEditIssueModal(issueId);
-                    } else if (item.dataset.action === 'delete') {
-                        deleteIssue(issueId);
-                    }
-                }, { signal: detailSignal });
-            });
+            // Edit/delete actions handled via event delegation (CHT-1119)
         }
 
         // Render ticket rituals (data already fetched in Promise.all above)
@@ -1389,5 +1378,17 @@ registerActions({
     'scroll-to-comments': (event) => {
         event.preventDefault();
         document.getElementById('comments-section')?.scrollIntoView({ behavior: 'smooth' });
+    },
+    'edit': (_event, data) => {
+        // Close overflow menu before showing edit modal (CHT-1119)
+        const dropdown = document.querySelector('.overflow-menu-dropdown:not(.hidden)');
+        if (dropdown) dropdown.classList.add('hidden');
+        showEditIssueModal(data.issueId);
+    },
+    'delete': (_event, data) => {
+        // Close overflow menu before showing delete confirmation (CHT-1119)
+        const dropdown = document.querySelector('.overflow-menu-dropdown:not(.hidden)');
+        if (dropdown) dropdown.classList.add('hidden');
+        deleteIssue(data.issueId);
     },
 });

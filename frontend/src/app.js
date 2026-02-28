@@ -242,31 +242,7 @@ function initModal() {
     if (closeBtn) closeBtn.addEventListener('click', () => closeModal());
 }
 
-/**
- * Initialize action buttons via data-action attributes (CHT-1057)
- * Maps data-action values to handler functions.
- */
-function initActionButtons() {
-    const actionMap = {
-        showCreateIssueModal,
-        showCreateEpicModal,
-        showCreateProjectModal,
-        showCreateDocumentModal,
-        showCreateTeamModal,
-        showEditTeamModal,
-        showInviteModal,
-        showCreateApiKeyModal,
-        showCreateAgentModal,
-        resetOnboarding,
-        logout,
-        navigateToProjects: () => navigateTo('projects'),
-    };
-
-    document.querySelectorAll('[data-action]').forEach(el => {
-        const action = actionMap[el.dataset.action];
-        if (action) el.addEventListener('click', () => action());
-    });
-}
+// initActionButtons removed (CHT-1120) — all actions now use event delegation via registerActions()
 
 /**
  * Initialize project settings view event listeners (CHT-1057)
@@ -454,7 +430,7 @@ function initSidebarNav() {
     if (fab) fab.addEventListener('click', () => showCreateIssueModal());
 }
 
-// Register shared delegated actions
+// Register shared delegated actions (CHT-1120: migrated from initActionButtons)
 registerActions({
     'navigate-to': (_event, data) => {
         navigateTo(data.view);
@@ -462,6 +438,18 @@ registerActions({
     'set-current-project': (_event, _data, target) => {
         setCurrentProject(target.value);
     },
+    'showCreateIssueModal': () => showCreateIssueModal(),
+    'showCreateEpicModal': () => showCreateEpicModal(),
+    'showCreateProjectModal': () => showCreateProjectModal(),
+    'showCreateDocumentModal': () => showCreateDocumentModal(),
+    'showCreateTeamModal': () => showCreateTeamModal(),
+    'showEditTeamModal': () => showEditTeamModal(),
+    'showInviteModal': () => showInviteModal(),
+    'showCreateApiKeyModal': () => showCreateApiKeyModal(),
+    'showCreateAgentModal': () => showCreateAgentModal(),
+    'resetOnboarding': () => resetOnboarding(),
+    'logout': () => logout(),
+    'navigateToProjects': () => navigateTo('projects'),
 });
 
 // Initialize
@@ -470,7 +458,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initAuth();
     initSidebarNav();
     initModal();
-    initActionButtons();
     initDashboardView();
     initIssuesView();
     initRitualsView();
