@@ -11,6 +11,7 @@ import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import { navigateToIssueByIdentifier } from './router.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
 // State
 let myIssues = [];
 let dashboardActivities = [];
@@ -204,6 +205,91 @@ export function renderMyIssues() {
     }
 
     list.innerHTML = myIssues.map(issue => renderIssueRow(issue)).join('');
+}
+
+// ========================================
+// Sprint Status Section (CHT-1128)
+// ========================================
+
+/**
+ * Load and render active sprint status across all projects.
+ */
+export async function loadSprintStatus() {
+    const container = document.getElementById('dashboard-sprint-status');
+    if (!container) return;
+
+    const projects = getProjects();
+    if (!projects.length) {
+        container.innerHTML = '';
+        return;
+    }
+
+    try {
+        const sprintPromises = projects.map(async (project) => {
+            try {
+                const sprint = await api.getCurrentSprint(project.id);
+                return sprint ? { project, sprint } : null;
+            } catch {
+                return null;
+            }
+        });
+        const results = (await Promise.all(sprintPromises)).filter(Boolean);
+        renderSprintStatus(results);
+    } catch {
+        container.innerHTML = '';
+    }
+}
+
+/**
+ * Render sprint status cards.
+ * @param {Array<{project, sprint}>} sprintData
+ */
+export function renderSprintStatus(sprintData) {
+    const container = document.getElementById('dashboard-sprint-status');
+    if (!container) return;
+
+    if (!sprintData.length) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="section-header">
+            <h3>Active Sprints</h3>
+        </div>
+        <div class="sprint-status-cards">
+            ${sprintData.map(({ project, sprint }) => {
+                const budget = sprint.budget || 0;
+                const spent = sprint.points_spent || 0;
+                const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+                const overBudget = budget > 0 && spent > budget;
+                const statusClass = sprint.limbo ? 'limbo' : overBudget ? 'arrears' : '';
+
+                return `
+                    <div class="sprint-status-card ${statusClass}">
+                        <div class="sprint-status-header">
+                            <span class="sprint-status-project">${escapeHtml(project.name)}</span>
+                            ${sprint.limbo ? '<span class="sprint-status-badge limbo">Limbo</span>' : ''}
+                            ${overBudget ? '<span class="sprint-status-badge arrears">Arrears</span>' : ''}
+                        </div>
+                        <div class="sprint-status-name">${escapeHtml(sprint.name)}</div>
+                        ${budget > 0 ? `
+                            <div class="sprint-status-progress">
+                                <div class="sprint-progress-bar">
+                                    <div class="sprint-progress-fill ${statusClass}" style="width: ${pct}%"></div>
+                                </div>
+                                <span class="sprint-status-points">${spent}/${budget} pts</span>
+                            </div>
+                        ` : `
+                            <div class="sprint-status-progress">
+                                <span class="sprint-status-points">${spent} pts (no budget)</span>
+                            </div>
+                        `}
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
 }
 
 // ========================================

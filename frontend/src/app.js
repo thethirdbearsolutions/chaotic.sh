@@ -75,7 +75,7 @@ import {
     close as closeCommandPalette,
     isOpen as isCommandPaletteOpen,
 } from './command-palette.js';
-import { loadMyIssues, loadDashboardActivity, filterMyIssues } from './dashboard.js';
+import { loadMyIssues, loadDashboardActivity, loadSprintStatus, filterMyIssues } from './dashboard.js';
 import { loadBoard } from './board.js';
 import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import {
@@ -157,6 +157,7 @@ configureRouter({
 
 registerViews({
     'my-issues': () => {
+        loadSprintStatus();
         loadMyIssues();
         loadDashboardActivity();
     },
