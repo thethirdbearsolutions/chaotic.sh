@@ -1018,6 +1018,22 @@ export async function viewIssue(issueId, pushHistory = true) {
             } else if (e.key === 'ArrowRight' && detailNavNextId) {
                 e.preventDefault();
                 viewIssue(detailNavNextId);
+            } else if (e.key === 'c') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                const textarea = document.getElementById('new-comment');
+                if (textarea) {
+                    textarea.focus();
+                    textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            } else if (e.key === 'j') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                navigateAdjacentIssue(1);
+            } else if (e.key === 'k') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                navigateAdjacentIssue(-1);
             }
 
             // Metadata keyboard shortcuts — click the property row to open its dropdown
@@ -1342,7 +1358,7 @@ function navigateAdjacentIssue(direction) {
     const currentIssue = getCurrentDetailIssue();
     if (!currentIssue) return;
 
-    // Try the issues list first, fall back to my-issues (dashboard)
+    // Navigate within the current issues list (only works when navigated from issues view)
     const issues = getIssues();
     if (!issues || issues.length === 0) return;
 
@@ -1355,60 +1371,6 @@ function navigateAdjacentIssue(direction) {
     viewIssue(issues[nextIndex].id);
 }
 
-/**
- * Check if issue detail view is currently visible.
- */
-function isDetailViewVisible() {
-    const el = document.getElementById('issue-detail-view');
-    return el && !el.classList.contains('hidden');
-}
-
-// Issue detail keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (!isDetailViewVisible()) return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-    // Check if modal is open (don't override modal shortcuts)
-    const modal = document.getElementById('modal');
-    if (modal && !modal.classList.contains('hidden')) return;
-
-    switch (e.key) {
-        case 'c': {
-            // Focus comment textarea
-            e.preventDefault();
-            e.stopPropagation(); // Prevent global 'c' (create issue)
-            const textarea = document.getElementById('new-comment');
-            if (textarea) {
-                textarea.focus();
-                textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
-            break;
-        }
-        case 'a': {
-            // Open assignee dropdown
-            e.preventDefault();
-            const currentIssue = getCurrentDetailIssue();
-            if (currentIssue) {
-                const assigneeBtn = document.querySelector('[data-field="assignee"] .property-value');
-                if (assigneeBtn) assigneeBtn.click();
-            }
-            break;
-        }
-        case 'j':
-            // Next issue
-            e.preventDefault();
-            e.stopPropagation();
-            navigateAdjacentIssue(1);
-            break;
-        case 'k':
-            // Previous issue
-            e.preventDefault();
-            e.stopPropagation();
-            navigateAdjacentIssue(-1);
-            break;
-    }
-});
 
 // ============================================================================
 // Event delegation actions
