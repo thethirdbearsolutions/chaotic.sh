@@ -21,7 +21,7 @@ function getTooltip() {
     tooltipEl = document.createElement('div');
     tooltipEl.className = 'quote-tooltip';
     tooltipEl.setAttribute('role', 'button');
-    tooltipEl.innerHTML = '<span class="quote-tooltip-icon">\u201C</span> Quote';
+    tooltipEl.textContent = 'Quote';
     tooltipEl.addEventListener('mousedown', (e) => {
         // Prevent mousedown from clearing the selection
         e.preventDefault();
@@ -136,16 +136,16 @@ export function quoteSelectionIntoComment() {
     // Trigger input event for any other listeners
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-    // Focus and scroll
+    // Clear selection and hide tooltip first
+    window.getSelection().removeAllRanges();
+    hideTooltip();
+
+    // Then focus textarea so user can type immediately
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     if (textarea.scrollIntoView) {
         textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-
-    // Clear selection and hide tooltip
-    window.getSelection().removeAllRanges();
-    hideTooltip();
 
     return true;
 }

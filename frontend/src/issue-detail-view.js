@@ -1010,9 +1010,6 @@ export async function viewIssue(issueId, pushHistory = true) {
         detailNavNextId = nextIssue ? nextIssue.id : null;
         const detailKeyHandler = (e) => {
             // Quote selected text into comment (CHT-1173)
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-                console.log('[quote] Cmd+Shift detected, e.key:', JSON.stringify(e.key), 'e.code:', e.code);
-            }
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '>' || e.key === '.' || e.code === 'Period')) {
                 if (quoteSelectionIntoComment()) {
                     e.preventDefault();
