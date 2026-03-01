@@ -424,9 +424,13 @@ describe('app.js action registrations', () => {
 describe('app.js command palette registration', () => {
     it('registers navigation commands', () => {
         const navCommands = commandPaletteCommands.filter(c => c.category === 'Navigation');
-        expect(navCommands.length).toBeGreaterThanOrEqual(7);
+        expect(navCommands.length).toBeGreaterThanOrEqual(10);
         expect(navCommands.map(c => c.id)).toContain('nav-issues');
         expect(navCommands.map(c => c.id)).toContain('nav-my-issues');
+        expect(navCommands.map(c => c.id)).toContain('nav-rituals');
+        expect(navCommands.map(c => c.id)).toContain('nav-approvals');
+        expect(navCommands.map(c => c.id)).toContain('nav-settings');
+        expect(navCommands.map(c => c.id)).toContain('nav-epics');
     });
 
     it('registers create commands', () => {
