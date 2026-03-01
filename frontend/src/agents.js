@@ -8,6 +8,7 @@ import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getCurrentTeam } from './state.js';
 import { registerActions } from './event-delegation.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { getProjects } from './projects.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import { getMembers } from './teams.js';
@@ -110,8 +111,7 @@ export function renderAgents() {
   if (!container) return;
 
   if (agents.length === 0) {
-    container.innerHTML =
-      '<p class="empty-state">No agents yet. Create an agent to enable CLI automation with its own identity.</p>';
+    container.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.dashboard, heading: 'No agents yet', description: 'Create an agent to enable CLI automation with its own identity' });
     return;
   }
 

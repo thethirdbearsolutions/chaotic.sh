@@ -387,7 +387,7 @@ function renderSprintDetail() {
             <div class="sprint-detail-section">
                 <h3>Open Issues (${openIssues.length})</h3>
                 ${openIssues.length === 0 ? `
-                    <div class="empty-state-small">No open issues in this sprint</div>
+                    ${renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'No open issues', description: 'All issues in this sprint are completed' })}
                 ` : `
                     <div class="sprint-issues-list">
                         ${openIssues.map(issue => renderSprintIssueRow(issue)).join('')}
@@ -398,7 +398,7 @@ function renderSprintDetail() {
             <details class="sprint-detail-section" ${closedIssues.length > 0 ? 'open' : ''}>
                 <summary><h3>Completed Issues (${closedIssues.length})</h3></summary>
                 ${closedIssues.length === 0 ? `
-                    <div class="empty-state-small">No completed issues yet</div>
+                    ${renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'No completed issues', description: 'Issues will appear here once marked done' })}
                 ` : `
                     <div class="sprint-issues-list">
                         ${closedIssues.map(issue => renderSprintIssueRow(issue)).join('')}
@@ -425,7 +425,7 @@ function renderSprintDetail() {
                         ${currentSprintDocuments.map(doc => renderSprintDocumentRow(doc)).join('')}
                     </div>
                 ` : `
-                    <div class="empty-state-small">No documents in this sprint yet</div>
+                    ${renderEmptyState({ icon: EMPTY_ICONS.documents, heading: 'No documents yet', description: 'Create a sprint document to get started' })}
                 `}
             </div>
         </div>

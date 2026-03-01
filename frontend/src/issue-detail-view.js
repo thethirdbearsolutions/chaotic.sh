@@ -17,6 +17,7 @@ import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
 import { showDetailDropdown } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 
@@ -687,9 +688,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <div class="sub-issues-list">
-                            ${subIssues.length === 0 ? `
-                                <div class="sub-issues-empty">No sub-issues</div>
-                            ` : subIssues.map(subIssue => `
+                            ${subIssues.length === 0 ? renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'No sub-issues', description: 'Break this issue down by creating sub-issues' }) : subIssues.map(subIssue => `
                                 <a href="/issue/${encodeURIComponent(subIssue.identifier)}" class="sub-issue-item" data-action="navigate-issue" data-issue-id="${escapeAttr(subIssue.id)}" data-identifier="${escapeAttr(subIssue.identifier)}">
                                     <span class="sub-issue-status">${getStatusIcon(subIssue.status)}</span>
                                     <span class="sub-issue-id">${subIssue.identifier}</span>
@@ -815,9 +814,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <div class="activity-list section-collapsible-content collapsed">
-                            ${activities.length === 0 ? `
-                                <div class="activity-empty">No activity yet</div>
-                            ` : activities.map(activity => `
+                            ${activities.length === 0 ? renderEmptyState({ icon: EMPTY_ICONS.activity, heading: 'No activity yet', description: 'Activity will appear here as the issue is updated' }) : activities.map(activity => `
                                 <div class="activity-item">
                                     <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
                                     <div class="activity-content">

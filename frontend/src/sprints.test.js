@@ -335,7 +335,7 @@ describe('viewSprint', () => {
 
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView.innerHTML).toContain('Documents (0)');
-        expect(detailView.innerHTML).toContain('No documents in this sprint yet');
+        expect(detailView.innerHTML).toContain('No documents yet');
         expect(detailView.innerHTML).toContain('+ New Document');
     });
 
