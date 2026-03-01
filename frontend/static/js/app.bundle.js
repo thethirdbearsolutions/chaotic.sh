@@ -1002,34 +1002,9 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                         </div>
                     </div>
 
-                    <div class="issue-detail-section" id="activity-section">
-                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
-                            <h3>Activity</h3>
-                            <button type="button" class="section-toggle" aria-label="Toggle activity">
-                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M4 6l4 4 4-4"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="activity-list section-collapsible-content">
-                            ${i.length===0?`
-                                <div class="activity-empty">No activity yet</div>
-                            `:i.map(b=>`
-                                <div class="activity-item">
-                                    <div class="activity-icon">${Fi(b.activity_type)}</div>
-                                    <div class="activity-content">
-                                        <span class="activity-text">${zi(b)}</span>
-                                        <span class="activity-actor">by ${p(Ui(b))}</span>
-                                        <span class="activity-time">${Ve(b.created_at)}</span>
-                                    </div>
-                                </div>
-                            `).join("")}
-                        </div>
-                    </div>
-
                     <div class="issue-detail-section" id="comments-section">
                         <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="comments">
-                            <h3>Comments</h3>
+                            <h3>Comments${c.length>0?` <span class="section-count">(${c.length})</span>`:""}</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle comments">
                                 <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M4 6l4 4 4-4"/>
@@ -1049,6 +1024,31 @@ Please report this to https://github.com/markedjs/marked.`,e){const s="<p>An err
                                             <span class="comment-date">${Ve(b.created_at)}</span>
                                         </div>
                                         <div class="comment-content markdown-body">${Iu(b.content)}</div>
+                                    </div>
+                                </div>
+                            `).join("")}
+                        </div>
+                    </div>
+
+                    <div class="issue-detail-section" id="activity-section">
+                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
+                            <h3>Activity${i.length>0?` <span class="section-count">(${i.length})</span>`:""}</h3>
+                            <button type="button" class="section-toggle" aria-label="Toggle activity">
+                                <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4 6l4 4 4-4"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="activity-list section-collapsible-content collapsed">
+                            ${i.length===0?`
+                                <div class="activity-empty">No activity yet</div>
+                            `:i.map(b=>`
+                                <div class="activity-item">
+                                    <div class="activity-icon">${Fi(b.activity_type)}</div>
+                                    <div class="activity-content">
+                                        <span class="activity-text">${zi(b)}</span>
+                                        <span class="activity-actor">by ${p(Ui(b))}</span>
+                                        <span class="activity-time">${Ve(b.created_at)}</span>
                                     </div>
                                 </div>
                             `).join("")}

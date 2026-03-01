@@ -5981,6 +5981,12 @@ input[type="checkbox"] {
     transform: rotate(180deg);
 }
 
+.section-count {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+
 /* Generic collapsible section content */
 .section-collapsible-content.collapsed {
     display: none;
