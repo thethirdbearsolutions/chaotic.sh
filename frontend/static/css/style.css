@@ -7858,3 +7858,35 @@ input[type="checkbox"] {
     }
 }
 
+/* ============================================
+   Quote-and-comment tooltip (CHT-1173)
+   ============================================ */
+
+.quote-tooltip {
+    position: fixed;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 4px 10px;
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    z-index: 20;
+    box-shadow: var(--shadow-md);
+    display: none;
+    align-items: center;
+    gap: 4px;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.quote-tooltip:hover {
+    background: var(--accent-color);
+    color: white;
+}
+
+.quote-tooltip-icon {
+    font-size: 1.1em;
+    line-height: 1;
+}
+

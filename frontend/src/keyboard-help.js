@@ -58,6 +58,7 @@ const SHORTCUT_GROUPS = [
             { key: 'l', description: 'Labels' },
             { key: 'e', description: 'Estimate' },
             { key: 't', description: 'Type' },
+            { key: '⌘⇧C', description: 'Quote selection into comment' },
         ],
     },
     {
