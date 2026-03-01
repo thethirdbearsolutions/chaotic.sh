@@ -19,6 +19,7 @@ import { showDetailDropdown } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
+import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 
 // Module state
 let commentSubmitting = false;
@@ -982,6 +983,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         // Render ticket rituals (data already fetched in Promise.all above)
         renderTicketRituals(issue.id);
         setupMentionAutocomplete();
+        setupQuoteComment();
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');
@@ -1007,6 +1009,13 @@ export async function viewIssue(issueId, pushHistory = true) {
         detailNavPrevId = prevIssue ? prevIssue.id : null;
         detailNavNextId = nextIssue ? nextIssue.id : null;
         const detailKeyHandler = (e) => {
+            // Quote selected text into comment (CHT-1173)
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '>') {
+                if (quoteSelectionIntoComment()) {
+                    e.preventDefault();
+                    return;
+                }
+            }
             if (e.metaKey || e.ctrlKey || e.altKey) return;
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;

@@ -27,6 +27,7 @@ import './api-keys.js';
 import './command-palette.js';
 import './dashboard.js';
 import './onboarding.js';
+import './quote-comment.js';
 
 // Import main application (attaches all handlers to window)
 import './app.js';
