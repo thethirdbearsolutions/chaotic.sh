@@ -496,29 +496,27 @@ describe('issues-view', () => {
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
-        it('restores filters from localStorage when URL has only project param (CHT-1085)', () => {
-            // Simulate navigating back to issues from board — URL has project but no filters
+        it('does not restore localStorage filters when URL has project param (CHT-1156)', () => {
+            // Navigating to /issues?project=proj-1 should show all issues for that project
+            // without mixing in stale filters from localStorage
             Object.defineProperty(window, 'location', {
                 value: { search: '?project=proj-1', pathname: '/issues', href: 'http://localhost/issues?project=proj-1' },
                 writable: true,
                 configurable: true,
             });
-            // Saved filters include status and project
             localStorage.setItem('chaotic_issues_filters_team-1', 'status=todo&status=in_progress&project=proj-1');
 
             loadFiltersFromUrl();
 
-            // Should restore status filters from localStorage
-            const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
-            expect(todoCheckbox.checked).toBe(true);
-            const inProgressCheckbox = document.querySelector('#status-filter-dropdown input[value="in_progress"]');
-            expect(inProgressCheckbox.checked).toBe(true);
-            // Should preserve project from URL
+            // Should apply project from URL
             expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
+            // Should NOT restore stale status filters from localStorage
+            const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
+            expect(todoCheckbox.checked).toBe(false);
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
-        it('URL project takes precedence over localStorage project (CHT-1085)', () => {
+        it('URL project param prevents localStorage fallback (CHT-1156)', () => {
             Object.defineProperty(window, 'location', {
                 value: { search: '?project=proj-1', pathname: '/issues', href: 'http://localhost/issues?project=proj-1' },
                 writable: true,
@@ -528,11 +526,11 @@ describe('issues-view', () => {
 
             loadFiltersFromUrl();
 
-            // URL project (proj-1) should win over localStorage project (p-1)
+            // URL project should be applied
             expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
-            // Status filter should still be restored from localStorage
+            // Stale status filter from localStorage should NOT be restored
             const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
-            expect(todoCheckbox.checked).toBe(true);
+            expect(todoCheckbox.checked).toBe(false);
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
