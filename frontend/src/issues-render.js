@@ -599,7 +599,7 @@ export function updateFilterChips() {
 
     container.classList.remove('hidden');
     let html = chips.map(chip => `
-        <span class="filter-chip">
+        <span class="filter-chip" title="${escapeAttr(chip.label)}: ${escapeAttr(chip.value)}">
             <span class="filter-chip-label">${chip.label}:</span>
             <span class="filter-chip-value">${escapeHtml(chip.value)}</span>
             <button class="filter-chip-remove" data-action="${chip.clearAction}" title="Remove filter">×</button>
