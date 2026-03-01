@@ -74,13 +74,22 @@ export async function loadBoard() {
 
     const board = document.getElementById('kanban-board');
     if (board) {
-        board.innerHTML = '<div class="loading-spinner" style="margin: 2rem auto;"></div>';
+        board.innerHTML = Array(4).fill(0).map(() => `
+            <div class="kanban-column" style="opacity: 0.5;">
+                <div class="kanban-column-header">
+                    <div class="skeleton skeleton-title" style="width: 80px;"></div>
+                </div>
+                <div class="skeleton" style="height: 60px; border-radius: 6px; margin-bottom: 8px;"></div>
+                <div class="skeleton" style="height: 60px; border-radius: 6px;"></div>
+            </div>
+        `).join('');
     }
 
     try {
         boardIssues = await api.getIssues({ project_id: projectId });
         renderBoard();
     } catch (e) {
+        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again' });
         showApiError('load board', e);
     }
 }
