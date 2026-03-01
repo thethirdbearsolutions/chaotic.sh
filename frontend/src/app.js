@@ -35,6 +35,7 @@ import { loadGateApprovals } from './gate-approvals.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
+import { showInlineDropdown } from './inline-dropdown.js';
 import {
     toggleTeamDropdown,
     toggleUserDropdown,
@@ -602,6 +603,7 @@ document.addEventListener('keydown', createListNavigationHandler({
     setSelectedIndex: setSelectedIssueIndex,
     viewIssue,
     showEditIssueModal,
+    showInlineDropdown,
     isModalOpen,
     isCommandPaletteOpen,
 }));

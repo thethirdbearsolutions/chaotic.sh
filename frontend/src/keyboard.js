@@ -193,34 +193,56 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
  * @param {Function} actions.setSelectedIndex - Sets the selected index
  * @param {Function} actions.viewIssue - Opens an issue by ID
  * @param {Function} actions.showEditIssueModal - Opens edit modal for an issue
+ * @param {Function} actions.showInlineDropdown - Opens an inline dropdown for a field
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
  * @returns {Function} The keydown event handler
  */
 export function createListNavigationHandler(actions) {
+    const selector = '#issues-list .issue-row';
+
+    function getSelectedItem(selectedIndex) {
+        if (selectedIndex < 0) return null;
+        const items = document.querySelectorAll(selector);
+        return items[selectedIndex] || null;
+    }
+
+    function triggerInlineDropdown(e, selectedIndex, dropdownType, btnClass) {
+        const item = getSelectedItem(selectedIndex);
+        if (!item) return;
+        const issueId = item.dataset.issueId;
+        if (!issueId || issueId.startsWith('temp-')) return;
+        e.preventDefault();
+        e.stopImmediatePropagation(); // Prevent global shortcuts (e.g. 'p' → projects)
+        const btn = item.querySelector(`.${btnClass}`);
+        if (btn && actions.showInlineDropdown) {
+            actions.showInlineDropdown(e, dropdownType, issueId, btn);
+        }
+    }
+
     return function handleListNavigation(e) {
         if (actions.getCurrentView() !== 'issues') return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
-        const items = document.querySelectorAll('#issues-list .list-item');
+        const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
 
         const selectedIndex = actions.getSelectedIndex();
         switch (e.key) {
             case 'j':
                 e.preventDefault();
-                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex);
+                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
                 e.preventDefault();
-                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex);
+                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;
             case 'Enter':
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
-                    const issueId = items[selectedIndex].dataset.id;
+                    const issueId = items[selectedIndex].dataset.issueId;
                     if (issueId && !issueId.startsWith('temp-')) {
                         actions.viewIssue(issueId);
                     }
@@ -229,11 +251,20 @@ export function createListNavigationHandler(actions) {
             case 'e':
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
-                    const issueId = items[selectedIndex].dataset.id;
+                    const issueId = items[selectedIndex].dataset.issueId;
                     if (issueId && !issueId.startsWith('temp-')) {
                         actions.showEditIssueModal(issueId);
                     }
                 }
+                break;
+            case 's':
+                triggerInlineDropdown(e, selectedIndex, 'status', 'status-btn');
+                break;
+            case 'p':
+                triggerInlineDropdown(e, selectedIndex, 'priority', 'priority-btn');
+                break;
+            case 'a':
+                triggerInlineDropdown(e, selectedIndex, 'assignee', 'assignee-btn');
                 break;
             case 'Escape':
                 if (selectedIndex >= 0) {

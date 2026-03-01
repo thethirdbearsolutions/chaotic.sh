@@ -37,6 +37,9 @@ const SHORTCUT_GROUPS = [
             { key: 'j / k', description: 'Navigate list' },
             { key: 'Enter', description: 'Open selected issue' },
             { key: 'e', description: 'Edit selected issue' },
+            { key: 's', description: 'Change status' },
+            { key: 'p', description: 'Change priority' },
+            { key: 'a', description: 'Change assignee' },
         ],
     },
     {
