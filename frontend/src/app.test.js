@@ -20,7 +20,7 @@ vi.spyOn(document, 'addEventListener').mockImplementation((event, handler, optio
     if (event === 'DOMContentLoaded') {
         domReadyCallback = handler;
     }
-    if (event === 'keydown') {
+    if (event === 'keydown' || event === 'click') {
         originalAddEventListener(event, handler, options);
     }
 });
@@ -217,6 +217,21 @@ import { showAuthScreen } from './auth.js';
 import { initRouter } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { api } from './api.js';
+import { closeModal } from './ui.js';
+import { toggleTeamDropdown, toggleUserDropdown, showInviteModal } from './teams.js';
+import { showCreateIssueModal } from './issue-creation.js';
+import { toggleSidebar } from './sidebar.js';
+import { setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
+import { filterMyIssues } from './dashboard.js';
+import {
+    toggleMultiSelect, updateStatusFilter, clearStatusFilter,
+    updatePriorityFilter, clearPriorityFilter, clearLabelFilter,
+    toggleFilterMenu, toggleDisplayMenu, debounceSearch, filterIssues, updateGroupBy,
+} from './issues-view.js';
+import { switchProjectSettingsTab, saveProjectSettingsGeneral, saveProjectSettingsRules, showCreateProjectRitualModal } from './projects.js';
+import { switchRitualsTab } from './rituals-view.js';
+import { handleQuickCreate } from './quick-create.js';
+import { setTheme } from './storage.js';
 
 // Import app.js — side effects run on import
 await import('./app.js');
@@ -496,5 +511,444 @@ describe('app.js DOMContentLoaded initialization', () => {
         await domReadyCallback();
         expect(api.logout).toHaveBeenCalled();
         expect(showAuthScreen).toHaveBeenCalled();
+    });
+});
+
+// ============================================================================
+// DOM event binding tests (CHT-1142)
+// These test the init* functions that wire DOM elements to event handlers.
+// ============================================================================
+
+/**
+ * Helper: set up DOM elements, call domReadyCallback, then run assertions.
+ * Cleans up DOM after each test.
+ */
+function setupAndInit(htmlSetup) {
+    return async () => {
+        htmlSetup();
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    };
+}
+
+describe('initModal DOM bindings', () => {
+    let overlay, closeBtn;
+
+    beforeEach(async () => {
+        overlay = document.createElement('div');
+        overlay.id = 'modal-overlay';
+        const modalBox = document.createElement('div');
+        modalBox.className = 'modal';
+        overlay.appendChild(modalBox);
+        closeBtn = document.createElement('button');
+        closeBtn.className = 'modal-close';
+        overlay.appendChild(closeBtn);
+        document.body.appendChild(overlay);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => overlay.remove());
+
+    it('closes modal when clicking overlay outside modal box', () => {
+        overlay.click();
+        expect(closeModal).toHaveBeenCalled();
+    });
+
+    it('does not close modal when clicking inside modal box', () => {
+        overlay.querySelector('.modal').click();
+        expect(closeModal).not.toHaveBeenCalled();
+    });
+
+    it('close button triggers closeModal', () => {
+        closeBtn.click();
+        expect(closeModal).toHaveBeenCalled();
+    });
+});
+
+describe('initSidebarNav DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.innerHTML = `
+            <div class="team-selector"></div>
+            <button class="sidebar-create-btn"></button>
+            <nav class="sidebar-nav">
+                <a class="nav-item" data-view="issues" href="#">Issues</a>
+                <a class="nav-item" data-view="board" href="#">Board</a>
+            </nav>
+            <div class="user-menu"></div>
+            <div class="sidebar-backdrop"></div>
+            <button id="hamburger-btn"></button>
+            <button class="mobile-fab"></button>
+        `;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('team selector click toggles dropdown', () => {
+        container.querySelector('.team-selector').click();
+        expect(toggleTeamDropdown).toHaveBeenCalled();
+    });
+
+    it('sidebar create button shows create issue modal', () => {
+        container.querySelector('.sidebar-create-btn').click();
+        expect(showCreateIssueModal).toHaveBeenCalled();
+    });
+
+    it('nav items call navigateTo with view', () => {
+        container.querySelector('[data-view="issues"]').click();
+        expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    it('user menu click toggles dropdown', () => {
+        container.querySelector('.user-menu').click();
+        expect(toggleUserDropdown).toHaveBeenCalled();
+    });
+
+    it('sidebar backdrop click closes sidebar', () => {
+        container.querySelector('.sidebar-backdrop').click();
+        expect(closeSidebar).toHaveBeenCalled();
+    });
+
+    it('hamburger button toggles sidebar', () => {
+        container.querySelector('#hamburger-btn').click();
+        expect(toggleSidebar).toHaveBeenCalled();
+    });
+
+    it('mobile FAB shows create issue modal', () => {
+        container.querySelector('.mobile-fab').click();
+        expect(showCreateIssueModal).toHaveBeenCalled();
+    });
+});
+
+describe('initDocumentsView DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.innerHTML = `
+            <button id="doc-view-list"></button>
+            <button id="doc-view-grid"></button>
+            <button id="doc-select-btn"></button>
+            <input id="doc-search" />
+            <select id="doc-sort"><option>Date</option></select>
+        `;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('list view button sets list mode', () => {
+        document.getElementById('doc-view-list').click();
+        expect(setDocViewMode).toHaveBeenCalledWith('list');
+    });
+
+    it('grid view button sets grid mode', () => {
+        document.getElementById('doc-view-grid').click();
+        expect(setDocViewMode).toHaveBeenCalledWith('grid');
+    });
+
+    it('select button enters selection mode', () => {
+        document.getElementById('doc-select-btn').click();
+        expect(enterSelectionMode).toHaveBeenCalled();
+    });
+
+    it('search input triggers debounced search', () => {
+        document.getElementById('doc-search').dispatchEvent(new Event('input'));
+        expect(debounceDocSearch).toHaveBeenCalled();
+    });
+
+    it('sort select triggers filter', () => {
+        document.getElementById('doc-sort').dispatchEvent(new Event('change'));
+        expect(filterDocuments).toHaveBeenCalled();
+    });
+});
+
+describe('initDashboardView DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.innerHTML = `<select id="my-issues-status-filter"><option>All</option></select>`;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('status filter change triggers filterMyIssues', () => {
+        document.getElementById('my-issues-status-filter').dispatchEvent(new Event('change'));
+        expect(filterMyIssues).toHaveBeenCalled();
+    });
+});
+
+describe('initIssuesView DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.innerHTML = `
+            <input id="issue-search" />
+            <button id="filter-menu-btn"></button>
+            <button id="display-menu-btn"></button>
+            <div>
+                <button class="multi-select-btn"></button>
+                <div id="status-filter-dropdown">
+                    <input type="checkbox" />
+                    <button class="btn-small">Clear</button>
+                </div>
+            </div>
+            <div>
+                <button class="multi-select-btn"></button>
+                <div id="priority-filter-dropdown">
+                    <input type="checkbox" />
+                    <button class="btn-small">Clear</button>
+                </div>
+            </div>
+            <div>
+                <button class="multi-select-btn"></button>
+                <div id="label-filter-dropdown">
+                    <button class="btn-small">Clear</button>
+                </div>
+            </div>
+            <select id="issue-type-filter"><option>All</option></select>
+            <select id="assignee-filter"><option>All</option></select>
+            <select id="sprint-filter"><option>All</option></select>
+            <select id="sort-by-select"><option>Created</option></select>
+            <select id="group-by-select"><option>None</option></select>
+            <input class="quick-create-input" />
+        `;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('search input triggers debounced search', () => {
+        document.getElementById('issue-search').dispatchEvent(new Event('input'));
+        expect(debounceSearch).toHaveBeenCalled();
+    });
+
+    it('filter menu button toggles filter menu', () => {
+        document.getElementById('filter-menu-btn').click();
+        expect(toggleFilterMenu).toHaveBeenCalled();
+    });
+
+    it('display menu button toggles display menu', () => {
+        document.getElementById('display-menu-btn').click();
+        expect(toggleDisplayMenu).toHaveBeenCalled();
+    });
+
+    it('status multi-select button toggles status dropdown', () => {
+        const btns = container.querySelectorAll('.multi-select-btn');
+        btns[0].click();
+        expect(toggleMultiSelect).toHaveBeenCalledWith('status-filter-dropdown');
+    });
+
+    it('status checkbox change triggers updateStatusFilter', () => {
+        document.querySelector('#status-filter-dropdown input[type="checkbox"]').dispatchEvent(new Event('change'));
+        expect(updateStatusFilter).toHaveBeenCalled();
+    });
+
+    it('status clear button triggers clearStatusFilter', () => {
+        document.querySelector('#status-filter-dropdown .btn-small').click();
+        expect(clearStatusFilter).toHaveBeenCalled();
+    });
+
+    it('priority multi-select button toggles priority dropdown', () => {
+        const btns = container.querySelectorAll('.multi-select-btn');
+        btns[1].click();
+        expect(toggleMultiSelect).toHaveBeenCalledWith('priority-filter-dropdown');
+    });
+
+    it('priority checkbox triggers updatePriorityFilter', () => {
+        document.querySelector('#priority-filter-dropdown input[type="checkbox"]').dispatchEvent(new Event('change'));
+        expect(updatePriorityFilter).toHaveBeenCalled();
+    });
+
+    it('priority clear button triggers clearPriorityFilter', () => {
+        document.querySelector('#priority-filter-dropdown .btn-small').click();
+        expect(clearPriorityFilter).toHaveBeenCalled();
+    });
+
+    it('label clear button triggers clearLabelFilter', () => {
+        document.querySelector('#label-filter-dropdown .btn-small').click();
+        expect(clearLabelFilter).toHaveBeenCalled();
+    });
+
+    it('type filter change triggers filterIssues', () => {
+        document.getElementById('issue-type-filter').dispatchEvent(new Event('change'));
+        expect(filterIssues).toHaveBeenCalled();
+    });
+
+    it('assignee filter change triggers filterIssues', () => {
+        document.getElementById('assignee-filter').dispatchEvent(new Event('change'));
+        expect(filterIssues).toHaveBeenCalled();
+    });
+
+    it('sprint filter change triggers filterIssues', () => {
+        document.getElementById('sprint-filter').dispatchEvent(new Event('change'));
+        expect(filterIssues).toHaveBeenCalled();
+    });
+
+    it('sort select change triggers loadIssues', () => {
+        document.getElementById('sort-by-select').dispatchEvent(new Event('change'));
+        expect(loadIssues).toHaveBeenCalled();
+    });
+
+    it('group select change triggers updateGroupBy', () => {
+        document.getElementById('group-by-select').dispatchEvent(new Event('change'));
+        expect(updateGroupBy).toHaveBeenCalled();
+    });
+
+    it('quick create input keydown triggers handleQuickCreate', () => {
+        container.querySelector('.quick-create-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        expect(handleQuickCreate).toHaveBeenCalled();
+    });
+});
+
+describe('initProjectSettings DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.id = 'project-settings-view';
+        container.innerHTML = `
+            <button class="settings-tab" data-tab="general">General</button>
+            <button class="settings-tab" data-tab="rules">Rules</button>
+            <div id="project-settings-tab-general"><button class="btn-primary">Save</button></div>
+            <div id="project-settings-tab-rules"><button class="btn-primary">Save</button></div>
+            <div id="project-settings-tab-sprint-rituals"><button class="btn-primary">Create</button></div>
+            <div id="project-settings-tab-close-rituals"><button class="btn-primary">Create</button></div>
+            <div id="project-settings-tab-claim-rituals"><button class="btn-primary">Create</button></div>
+        `;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('settings tab clicks switch tab', () => {
+        container.querySelector('[data-tab="rules"]').click();
+        expect(switchProjectSettingsTab).toHaveBeenCalledWith('rules');
+    });
+
+    it('general save button saves general settings', () => {
+        container.querySelector('#project-settings-tab-general .btn-primary').click();
+        expect(saveProjectSettingsGeneral).toHaveBeenCalled();
+    });
+
+    it('rules save button saves rules settings', () => {
+        container.querySelector('#project-settings-tab-rules .btn-primary').click();
+        expect(saveProjectSettingsRules).toHaveBeenCalled();
+    });
+
+    it('sprint ritual create button shows create modal', () => {
+        container.querySelector('#project-settings-tab-sprint-rituals .btn-primary').click();
+        expect(showCreateProjectRitualModal).toHaveBeenCalledWith('every_sprint');
+    });
+
+    it('close ritual create button shows create modal', () => {
+        container.querySelector('#project-settings-tab-close-rituals .btn-primary').click();
+        expect(showCreateProjectRitualModal).toHaveBeenCalledWith('ticket_close');
+    });
+
+    it('claim ritual create button shows create modal', () => {
+        container.querySelector('#project-settings-tab-claim-rituals .btn-primary').click();
+        expect(showCreateProjectRitualModal).toHaveBeenCalledWith('ticket_claim');
+    });
+});
+
+describe('initRitualsView DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.id = 'rituals-view';
+        container.innerHTML = `
+            <button class="settings-tab" data-tab="sprint">Sprint</button>
+            <button class="settings-tab" data-tab="close">Close</button>
+        `;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => container.remove());
+
+    it('rituals tab click switches tab', () => {
+        container.querySelector('[data-tab="close"]').click();
+        expect(switchRitualsTab).toHaveBeenCalledWith('close');
+    });
+});
+
+describe('initThemeToggle DOM bindings', () => {
+    let container;
+
+    beforeEach(async () => {
+        container = document.createElement('div');
+        container.innerHTML = `<input type="checkbox" id="theme-toggle" />`;
+        document.body.appendChild(container);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+    });
+
+    afterEach(() => {
+        container.remove();
+        document.body.classList.remove('theme-light');
+    });
+
+    it('theme toggle change updates body class and storage', () => {
+        const toggle = document.getElementById('theme-toggle');
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        expect(document.body.classList.contains('theme-light')).toBe(true);
+        expect(setTheme).toHaveBeenCalledWith('light');
+    });
+
+    it('toggling back to dark removes light class', () => {
+        const toggle = document.getElementById('theme-toggle');
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+        expect(document.body.classList.contains('theme-light')).toBe(false);
+        expect(setTheme).toHaveBeenCalledWith('dark');
+    });
+});
+
+describe('initIssueLinkHandler DOM bindings', () => {
+    it('clicking issue-link anchor navigates to issue', async () => {
+        const link = document.createElement('a');
+        link.className = 'issue-link';
+        link.href = '#/issue/CHT-999';
+        document.body.appendChild(link);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+
+        const { navigateToIssueByIdentifier } = await import('./router.js');
+        link.click();
+        expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-999');
+
+        link.remove();
     });
 });
