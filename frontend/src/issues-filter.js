@@ -130,17 +130,12 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     let params = new URLSearchParams(window.location.search);
 
     // Fall back to saved filters if URL has no issue-specific filter params (CHT-1042, CHT-1085)
-    const FILTER_KEYS = ['status', 'priority', 'label', 'assignee', 'sprint', 'issue_type', 'groupBy'];
+    const FILTER_KEYS = ['status', 'priority', 'label', 'assignee', 'sprint', 'issue_type', 'groupBy', 'project'];
     const hasFilterParams = FILTER_KEYS.some(k => params.has(k));
     if (!hasFilterParams) {
         const saved = getIssueFilters(getCurrentTeam()?.id);
         if (saved) {
-            const savedParams = new URLSearchParams(saved);
-            const project = params.get('project');
-            params = savedParams;
-            if (project) {
-                params.set('project', project);
-            }
+            params = new URLSearchParams(saved);
             const newUrl = `/issues?${params.toString()}`;
             history.replaceState({ view: 'issues' }, '', newUrl);
         }
