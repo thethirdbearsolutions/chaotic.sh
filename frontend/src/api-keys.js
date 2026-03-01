@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatDate } from './utils.js';
 import { registerActions } from './event-delegation.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // State
 let apiKeys = [];
@@ -47,7 +48,7 @@ export function renderApiKeys() {
     if (!container) return;
 
     if (apiKeys.length === 0) {
-        container.innerHTML = '<p class="empty-state">No API keys yet. Create one to get started.</p>';
+        container.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.dashboard, heading: 'No API keys yet', description: 'Create one to get started' });
         return;
     }
 

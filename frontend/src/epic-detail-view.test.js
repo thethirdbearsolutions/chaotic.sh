@@ -231,7 +231,7 @@ describe('epic-detail-view', () => {
             await viewEpic('epic-1');
 
             const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('No activity yet');
+            expect(content).toContain('No activity yet'); // renderEmptyState heading
         });
 
         it('renders sidebar properties', async () => {

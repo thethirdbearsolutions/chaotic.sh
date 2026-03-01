@@ -121,7 +121,7 @@ export async function loadDashboardActivity({ showLoading = true } = {}) {
         renderDashboardActivity();
     } catch {
         if (container) {
-            container.innerHTML = `<div class="activity-empty">Failed to load activity</div>`;
+            container.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.activity, heading: 'Failed to load activity', description: 'Check your connection and try again' });
         }
     }
 }
@@ -134,7 +134,7 @@ export function renderDashboardActivity() {
     if (!container) return;
 
     if (!dashboardActivities.length) {
-        container.innerHTML = `<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>`;
+        container.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.activity, heading: 'No recent activity', description: 'Create or update issues to see activity here' });
         return;
     }
 

@@ -18,6 +18,7 @@ import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 /**
  * View epic by path (identifier or ID)
@@ -123,9 +124,7 @@ export async function viewEpic(epicId, pushHistory = true) {
                     <div class="issue-detail-section sub-issues-section">
                         <h3>Sub-issues</h3>
                         <div class="sub-issues-list">
-                            ${subIssues.length === 0 ? `
-                                <div class="sub-issues-empty">No sub-issues</div>
-                            ` : subIssues.map(subIssue => {
+                            ${subIssues.length === 0 ? renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'No sub-issues', description: 'Break this epic down by creating sub-issues' }) : subIssues.map(subIssue => {
                                 const subAssignee = subIssue.assignee_id ? getAssigneeById(subIssue.assignee_id) : null;
                                 const subAssigneeName = subAssignee ? formatAssigneeName(subAssignee) : null;
                                 return `
@@ -143,9 +142,7 @@ export async function viewEpic(epicId, pushHistory = true) {
                     <div class="issue-detail-section" id="epic-activity-section">
                         <h3>Activity</h3>
                         <div class="activity-list">
-                            ${activities.length === 0 ? `
-                                <div class="activity-empty">No activity yet</div>
-                            ` : activities.map(activity => `
+                            ${activities.length === 0 ? renderEmptyState({ icon: EMPTY_ICONS.activity, heading: 'No activity yet', description: 'Activity will appear here as the epic is updated' }) : activities.map(activity => `
                                 <div class="activity-item">
                                     <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
                                     <div class="activity-content">
