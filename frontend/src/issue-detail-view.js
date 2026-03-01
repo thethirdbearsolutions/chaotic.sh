@@ -777,34 +777,9 @@ export async function viewIssue(issueId, pushHistory = true) {
                         </div>
                     </div>
 
-                    <div class="issue-detail-section" id="activity-section">
-                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
-                            <h3>Activity</h3>
-                            <button type="button" class="section-toggle" aria-label="Toggle activity">
-                                <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M4 6l4 4 4-4"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="activity-list section-collapsible-content">
-                            ${activities.length === 0 ? `
-                                <div class="activity-empty">No activity yet</div>
-                            ` : activities.map(activity => `
-                                <div class="activity-item">
-                                    <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
-                                    <div class="activity-content">
-                                        <span class="activity-text">${formatActivityText(activity)}</span>
-                                        <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
-                                        <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-
                     <div class="issue-detail-section" id="comments-section">
                         <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="comments">
-                            <h3>Comments</h3>
+                            <h3>Comments${allComments.length > 0 ? ` <span class="section-count">(${allComments.length})</span>` : ''}</h3>
                             <button type="button" class="section-toggle" aria-label="Toggle comments">
                                 <svg class="section-toggle-icon rotated" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M4 6l4 4 4-4"/>
@@ -824,6 +799,31 @@ export async function viewIssue(issueId, pushHistory = true) {
                                             <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
                                         </div>
                                         <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="issue-detail-section" id="activity-section">
+                        <div class="section-header section-header-collapsible" data-action="toggle-section" data-section="activity">
+                            <h3>Activity${activities.length > 0 ? ` <span class="section-count">(${activities.length})</span>` : ''}</h3>
+                            <button type="button" class="section-toggle" aria-label="Toggle activity">
+                                <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M4 6l4 4 4-4"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="activity-list section-collapsible-content collapsed">
+                            ${activities.length === 0 ? `
+                                <div class="activity-empty">No activity yet</div>
+                            ` : activities.map(activity => `
+                                <div class="activity-item">
+                                    <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
+                                    <div class="activity-content">
+                                        <span class="activity-text">${formatActivityText(activity)}</span>
+                                        <span class="activity-actor">by ${escapeHtml(formatActivityActor(activity))}</span>
+                                        <span class="activity-time">${formatTimeAgo(activity.created_at)}</span>
                                     </div>
                                 </div>
                             `).join('')}
