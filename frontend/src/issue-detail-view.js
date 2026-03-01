@@ -983,7 +983,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         // Render ticket rituals (data already fetched in Promise.all above)
         renderTicketRituals(issue.id);
         setupMentionAutocomplete();
-        setupQuoteComment();
+        setupQuoteComment({ signal: detailSignal });
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');

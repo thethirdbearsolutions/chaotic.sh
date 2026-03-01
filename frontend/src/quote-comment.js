@@ -51,6 +51,7 @@ function showTooltip(x, y) {
 
     // Ensure it stays in viewport
     requestAnimationFrame(() => {
+        if (!tooltipVisible) return;
         const tipRect = tip.getBoundingClientRect();
         if (tipRect.left < 4) {
             tip.style.left = `${4 + tipRect.width / 2}px`;
@@ -78,11 +79,13 @@ function hideTooltip() {
 
 /**
  * Check if a node is inside a quotable area (.description-content or .comment-content).
+ * @returns {Element|null} the quotable area element, or null
  */
 function isInQuotableArea(node) {
-    if (!node) return false;
+    if (!node) return null;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-    return el && (el.closest('.description-content') || el.closest('.comment-content'));
+    if (!el) return null;
+    return el.closest('.description-content') || el.closest('.comment-content') || null;
 }
 
 /**
@@ -94,7 +97,10 @@ function getQuotableSelection() {
     if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
 
     const range = sel.getRangeAt(0);
-    if (!isInQuotableArea(range.startContainer) || !isInQuotableArea(range.endContainer)) {
+    const startArea = isInQuotableArea(range.startContainer);
+    const endArea = isInQuotableArea(range.endContainer);
+    // Both ends must be in quotable areas, and in the same one
+    if (!startArea || !endArea || startArea !== endArea) {
         return null;
     }
 
@@ -170,13 +176,15 @@ function handleMouseUp(e) {
 /**
  * Set up the quote-comment feature on the issue detail view.
  * Call after rendering the issue detail content.
+ * @param {object} [options]
+ * @param {AbortSignal} [options.signal] - signal to clean up the container listener
  */
-export function setupQuoteComment() {
+export function setupQuoteComment({ signal } = {}) {
     const container = document.getElementById('issue-detail-content');
     if (!container) return;
 
-    // Container-level mouseup — fires when user finishes selecting text
-    container.addEventListener('mouseup', handleMouseUp);
+    // Container-level mouseup — tied to the detail view lifecycle via signal
+    container.addEventListener('mouseup', handleMouseUp, signal ? { signal } : undefined);
 
     // Document-level listeners only need to be attached once
     if (!documentListenersAttached) {
