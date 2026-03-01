@@ -973,6 +973,7 @@ async function updateSprintDropdown(selectId, projectId, selectedSprintId = null
  * Show the create document modal
  */
 export async function showCreateDocumentModal() {
+  _onDocumentCreated = null; // Clear any sprint-context callback
   // Get projects for dropdown
   const projects = getProjects();
   // Get current project from localStorage if available
@@ -1037,7 +1038,7 @@ export async function showCreateSprintDocumentModal(sprintId, projectId, onCreat
   const projects = getProjects();
 
   const projectOptions = projects.map(p =>
-    `<option value="${p.id}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+    `<option value="${escapeAttr(p.id)}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
   ).join('');
 
   document.getElementById('modal-title').textContent = 'Create Sprint Document';
