@@ -78,12 +78,26 @@ export async function loadSprints() {
 
     invalidateSprintCache();
 
+    // Show loading skeleton (CHT-1160)
+    const list = document.getElementById('sprints-list');
+    if (list) {
+        list.innerHTML = Array(3).fill(0).map(() => `
+            <div class="skeleton-list-item">
+                <div style="flex: 1">
+                    <div class="skeleton skeleton-title"></div>
+                    <div class="skeleton skeleton-meta" style="margin-top: 6px;"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
     try {
         await api.getCurrentSprint(projectId);
         sprints = await api.getSprints(projectId);
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
+        if (list) list.innerHTML = '<div class="empty-state"><h3>Failed to load sprints</h3></div>';
         showApiError('load sprints', e);
     }
 }
