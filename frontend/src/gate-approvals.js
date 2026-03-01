@@ -147,6 +147,10 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
                 ${attestationNote ? `<div class="gate-approval-attestation-note"><strong>Attestation note:</strong><br>${renderMarkdown(attestationNote)}</div>` : ''}
             </div>
             <form id="review-approval-form">
+                <div class="form-group">
+                    <label for="review-approval-comment">Comment (optional)</label>
+                    <textarea id="review-approval-comment" placeholder="Add a comment about your approval..."></textarea>
+                </div>
                 <button type="submit" class="btn btn-primary">Approve Attestation</button>
             </form>
         </div>
@@ -163,9 +167,17 @@ function showReviewApprovalModal(ritualId, issueId, ritualName, ritualPrompt, is
  */
 async function handleReviewApproval(event, ritualId, issueId, ritualName) {
     event.preventDefault();
+    const comment = document.getElementById('review-approval-comment')?.value?.trim();
 
     try {
         await api.approveTicketRitual(ritualId, issueId);
+        if (comment) {
+            try {
+                await api.createComment(issueId, comment);
+            } catch (commentErr) {
+                console.error('Failed to post approval comment:', commentErr);
+            }
+        }
         showToast(`Review ritual "${ritualName}" approved!`, 'success');
         closeModal();
         loadGateApprovals();

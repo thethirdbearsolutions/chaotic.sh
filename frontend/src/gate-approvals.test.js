@@ -10,6 +10,7 @@ vi.mock('./api.js', () => ({
         getPendingApprovals: vi.fn(() => Promise.resolve([])),
         getLimboStatus: vi.fn(() => Promise.resolve({ in_limbo: false })),
         approveAttestation: vi.fn(),
+        createComment: vi.fn(),
     },
 }));
 
@@ -163,6 +164,11 @@ describe('showReviewApprovalModal', () => {
         expect(document.getElementById('review-approval-form')).toBeTruthy();
         expect(showModal).toHaveBeenCalled();
     });
+
+    it('renders a comment textarea', () => {
+        showReviewApprovalModal('r1', 'i1', 'Code Review', 'Review', 'CHT-2', 'Feature', null, null, null);
+        expect(document.getElementById('review-approval-comment')).toBeTruthy();
+    });
 });
 
 describe('showReviewApprovalModal - markdown rendering', () => {
@@ -189,6 +195,46 @@ describe('handleReviewApproval', () => {
 
         expect(event.preventDefault).toHaveBeenCalled();
         expect(api.approveTicketRitual).toHaveBeenCalledWith('r1', 'i1');
+        expect(showToast).toHaveBeenCalledWith('Review ritual "Review" approved!', 'success');
+        expect(closeModal).toHaveBeenCalled();
+    });
+
+    it('posts comment when provided', async () => {
+        api.approveTicketRitual.mockResolvedValue({});
+        api.createComment.mockResolvedValue({});
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = 'Looks good to me';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
+        expect(api.createComment).toHaveBeenCalledWith('i1', 'Looks good to me');
+        expect(showToast).toHaveBeenCalled();
+    });
+
+    it('does not post comment when empty', async () => {
+        api.approveTicketRitual.mockResolvedValue({});
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = '';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
+        expect(api.createComment).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds if comment post fails', async () => {
+        api.approveTicketRitual.mockResolvedValue({});
+        api.createComment.mockRejectedValue(new Error('comment failed'));
+        const event = { preventDefault: vi.fn() };
+
+        showReviewApprovalModal('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', null, null, null);
+        document.getElementById('review-approval-comment').value = 'my comment';
+
+        await handleReviewApproval(event, 'r1', 'i1', 'Review');
+
         expect(showToast).toHaveBeenCalledWith('Review ritual "Review" approved!', 'success');
         expect(closeModal).toHaveBeenCalled();
     });
