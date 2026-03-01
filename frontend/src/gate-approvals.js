@@ -409,7 +409,27 @@ function renderGateApprovals() {
         });
     });
 
-    // Attach click handlers for review approve buttons (REVIEW mode)
+    // Attach click handlers for review quick-approve buttons (inline, no modal)
+    container.querySelectorAll('.review-quick-approve-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            // Disable sibling "Comment & Approve" button to prevent modal during in-flight approval
+            const siblingBtn = btn.closest('.gate-ritual-actions')?.querySelector('.review-approve-btn');
+            if (siblingBtn) siblingBtn.disabled = true;
+            const d = btn.dataset;
+            try {
+                await api.approveTicketRitual(d.ritualId, d.issueId);
+                showToast(`Review ritual "${d.ritualName}" approved!`, 'success');
+                await loadGateApprovals();
+            } catch (e) {
+                btn.disabled = false;
+                if (siblingBtn) siblingBtn.disabled = false;
+                showApiError('approve review ritual', e);
+            }
+        });
+    });
+
+    // Attach click handlers for review comment+approve buttons (opens modal)
     container.querySelectorAll('.review-approve-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const d = btn.dataset;
@@ -470,11 +490,36 @@ function renderApprovalIssue(approvalIssue) {
         const attestationNote = isReview && r.attestation_note
             ? `<div class="gate-attestation-note">${renderMarkdown(r.attestation_note)}</div>`
             : '';
-        const btnClass = isReview ? 'review-approve-btn' : 'gate-approve-btn';
-        const btnLabel = isReview ? 'Approve' : 'Complete';
         const modeLabel = isReview
             ? '<span class="badge badge-review">review</span>'
             : '<span class="badge badge-gate">gate</span>';
+
+        const actionButtons = isReview
+            ? `<div class="gate-ritual-actions">
+                    <button class="btn btn-small btn-primary review-quick-approve-btn"
+                        data-ritual-id="${escapeAttr(r.ritual_id)}"
+                        data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
+                        data-ritual-name="${escapeAttr(r.ritual_name)}">Approve</button>
+                    <button class="btn btn-small btn-secondary review-approve-btn"
+                        data-ritual-id="${escapeAttr(r.ritual_id)}"
+                        data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
+                        data-ritual-name="${escapeAttr(r.ritual_name)}"
+                        data-ritual-prompt="${escapeAttr(r.ritual_prompt)}"
+                        data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
+                        data-issue-title="${escapeAttr(approvalIssue.title)}"
+                        data-requested-by="${escapeAttr(r.requested_by_name || '')}"
+                        data-requested-at="${escapeAttr(r.requested_at || '')}"
+                        data-attestation-note="${escapeAttr(r.attestation_note || '')}">Comment &amp; Approve</button>
+                </div>`
+            : `<button class="btn btn-small btn-primary gate-approve-btn"
+                    data-ritual-id="${escapeAttr(r.ritual_id)}"
+                    data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
+                    data-ritual-name="${escapeAttr(r.ritual_name)}"
+                    data-ritual-prompt="${escapeAttr(r.ritual_prompt)}"
+                    data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
+                    data-issue-title="${escapeAttr(approvalIssue.title)}"
+                    data-requested-by="${escapeAttr(r.requested_by_name || '')}"
+                    data-requested-at="${escapeAttr(r.requested_at || '')}">Complete</button>`;
 
         return `
             <div class="gate-ritual">
@@ -484,16 +529,7 @@ function renderApprovalIssue(approvalIssue) {
                     ${waitingInfo}
                     ${attestationNote}
                 </div>
-                <button class="btn btn-small btn-primary ${btnClass}"
-                    data-ritual-id="${escapeAttr(r.ritual_id)}"
-                    data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
-                    data-ritual-name="${escapeAttr(r.ritual_name)}"
-                    data-ritual-prompt="${escapeAttr(r.ritual_prompt)}"
-                    data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
-                    data-issue-title="${escapeAttr(approvalIssue.title)}"
-                    data-requested-by="${escapeAttr(r.requested_by_name || '')}"
-                    data-requested-at="${escapeAttr(r.requested_at || '')}"
-                    data-attestation-note="${escapeAttr(r.attestation_note || '')}">${btnLabel}</button>
+                ${actionButtons}
             </div>
         `;
     }).join('');

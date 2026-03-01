@@ -64,7 +64,7 @@ vi.mock('dompurify', () => ({
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
-import { setPendingGates, getCurrentTeam } from './state.js';
+import { setPendingGates, getPendingGates, getCurrentTeam } from './state.js';
 import {
     showGateApprovalModal,
     handleGateApproval,
@@ -254,6 +254,82 @@ describe('approveReviewFromList', () => {
         approveReviewFromList('r1', 'i1', 'Review', 'prompt', 'CHT-1', 'Title', 'Bob', '2026-01-01', 'note');
         expect(showModal).toHaveBeenCalled();
         expect(document.getElementById('modal-title').textContent).toBe('Approve: Review');
+    });
+});
+
+describe('quick approve button rendering', () => {
+    let storedGates;
+    beforeEach(() => {
+        storedGates = [];
+        setPendingGates.mockImplementation(v => { storedGates = v; });
+        getPendingGates.mockImplementation(() => storedGates);
+    });
+
+    it('renders both quick approve and comment+approve buttons for review items', async () => {
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        api.getPendingApprovals.mockResolvedValue([{
+            issue_id: 'i1',
+            identifier: 'CHT-1',
+            title: 'Test Issue',
+            status: 'in_progress',
+            project_name: 'Test',
+            pending_approvals: [{
+                ritual_id: 'r1',
+                ritual_name: 'Code Review',
+                ritual_prompt: 'Review the code',
+                approval_mode: 'review',
+                requested_by_name: 'Alice',
+                requested_at: '2026-01-01',
+                attestation_note: 'All good',
+                limbo_type: 'close',
+            }],
+        }]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await loadGateApprovals();
+
+        const container = document.getElementById('gate-approvals-list');
+        expect(container.querySelectorAll('.review-quick-approve-btn').length).toBe(1);
+        expect(container.querySelectorAll('.review-approve-btn').length).toBe(1);
+        expect(container.querySelector('.review-quick-approve-btn').textContent).toBe('Approve');
+        expect(container.querySelector('.review-approve-btn').textContent).toContain('Comment');
+    });
+
+    it('quick approve calls API directly without modal', async () => {
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        api.getPendingApprovals.mockResolvedValue([{
+            issue_id: 'i1',
+            identifier: 'CHT-1',
+            title: 'Test Issue',
+            status: 'in_progress',
+            project_name: 'Test',
+            pending_approvals: [{
+                ritual_id: 'r1',
+                ritual_name: 'Code Review',
+                ritual_prompt: 'Review the code',
+                approval_mode: 'review',
+                requested_by_name: 'Alice',
+                requested_at: '2026-01-01',
+                attestation_note: '',
+                limbo_type: 'close',
+            }],
+        }]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        api.approveTicketRitual.mockResolvedValue({});
+
+        await loadGateApprovals();
+
+        const quickBtn = document.querySelector('.review-quick-approve-btn');
+        quickBtn.click();
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(api.approveTicketRitual).toHaveBeenCalledWith('r1', 'i1');
+        expect(showToast).toHaveBeenCalledWith('Review ritual "Code Review" approved!', 'success');
+        expect(showModal).not.toHaveBeenCalled();
     });
 });
 

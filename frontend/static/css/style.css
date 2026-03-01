@@ -6878,6 +6878,13 @@ input[type="checkbox"] {
     align-self: center;
 }
 
+.gate-ritual-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+    align-self: center;
+}
+
 .gate-attestation-note {
     font-size: var(--font-sm);
     color: var(--text-secondary);
