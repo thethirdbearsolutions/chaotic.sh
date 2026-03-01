@@ -30,6 +30,7 @@ const PROJECT_FILTER_IDS = [
   'doc-project-filter',
   'dashboard-project-filter',
   'rituals-project-filter',
+  'approvals-project-filter',
 ];
 
 // Central subscriber: sync DOM selects + localStorage when currentProject changes
@@ -229,7 +230,7 @@ export function updateProjectFilters() {
       .join('');
 
   // Views that allow "All Projects" (empty = show all)
-  const allProjectsFilterIds = ['project-filter', 'doc-project-filter', 'dashboard-project-filter', 'epics-project-filter'];
+  const allProjectsFilterIds = ['project-filter', 'doc-project-filter', 'dashboard-project-filter', 'epics-project-filter', 'approvals-project-filter'];
   // Views that require a project selection
   const selectProjectFilterIds = ['board-project-filter', 'sprint-project-filter', 'rituals-project-filter'];
 

@@ -64,7 +64,7 @@ vi.mock('dompurify', () => ({
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
-import { setPendingGates, getPendingGates, getCurrentTeam } from './state.js';
+import { setPendingGates, getPendingGates, getCurrentTeam, getCurrentProject } from './state.js';
 import {
     showGateApprovalModal,
     handleGateApproval,
@@ -267,7 +267,7 @@ describe('quick approve button rendering', () => {
 
     it('renders both quick approve and comment+approve buttons for review items', async () => {
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
-        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        document.body.innerHTML += '<div id="approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockResolvedValue([{
             issue_id: 'i1',
@@ -290,7 +290,7 @@ describe('quick approve button rendering', () => {
 
         await loadGateApprovals();
 
-        const container = document.getElementById('gate-approvals-list');
+        const container = document.getElementById('approvals-list');
         expect(container.querySelectorAll('.review-quick-approve-btn').length).toBe(1);
         expect(container.querySelectorAll('.review-approve-btn').length).toBe(1);
         expect(container.querySelector('.review-quick-approve-btn').textContent).toBe('Approve');
@@ -299,7 +299,7 @@ describe('quick approve button rendering', () => {
 
     it('quick approve calls API directly without modal', async () => {
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
-        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        document.body.innerHTML += '<div id="approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockResolvedValue([{
             issue_id: 'i1',
@@ -342,7 +342,7 @@ describe('loadGateApprovals', () => {
 
     it('loads approvals from all projects', async () => {
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
-        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        document.body.innerHTML += '<div id="approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockResolvedValue([]);
         api.getLimboStatus.mockResolvedValue({ in_limbo: false });
@@ -354,15 +354,32 @@ describe('loadGateApprovals', () => {
         expect(setPendingGates).toHaveBeenCalledWith([]);
     });
 
+    it('filters by current project when project filter is active', async () => {
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        getCurrentProject.mockReturnValue('p2');
+        document.body.innerHTML += '<div id="approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }]);
+        api.getPendingApprovals.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await loadGateApprovals();
+
+        expect(api.getPendingApprovals).toHaveBeenCalledTimes(1);
+        expect(api.getPendingApprovals).toHaveBeenCalledWith('p2');
+        expect(api.getLimboStatus).toHaveBeenCalledTimes(1);
+        expect(api.getLimboStatus).toHaveBeenCalledWith('p2');
+        getCurrentProject.mockReturnValue(null);
+    });
+
     it('shows error state on failure', async () => {
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
-        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        document.body.innerHTML += '<div id="approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
         api.getPendingApprovals.mockRejectedValue(new Error('Network error'));
 
         await loadGateApprovals();
 
-        const container = document.getElementById('gate-approvals-list');
+        const container = document.getElementById('approvals-list');
         expect(container.innerHTML).toContain('Error loading approvals');
         expect(container.innerHTML).toContain('Network error');
     });
@@ -370,7 +387,7 @@ describe('loadGateApprovals', () => {
 
 describe('dismissApprovalsExplainer', () => {
     it('sets localStorage and re-renders', () => {
-        document.body.innerHTML += '<div id="gate-approvals-list"></div>';
+        document.body.innerHTML += '<div id="approvals-list"></div>';
         const spy = vi.spyOn(Storage.prototype, 'setItem');
         dismissApprovalsExplainer();
         expect(spy).toHaveBeenCalledWith('chaotic_approvals_explainer_dismissed', '1');

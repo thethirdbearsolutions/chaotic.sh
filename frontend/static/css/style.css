@@ -6764,6 +6764,10 @@ input[type="checkbox"] {
     margin-top: 4px;
 }
 
+#approvals-view #approvals-list {
+    max-width: 900px;
+}
+
 .gate-section {
     margin-bottom: 24px;
 }

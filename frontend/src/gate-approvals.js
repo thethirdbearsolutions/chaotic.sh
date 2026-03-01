@@ -14,7 +14,7 @@ import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
-import { getPendingGates, setPendingGates, getCurrentTeam } from './state.js';
+import { getPendingGates, setPendingGates, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { completeGateRitual } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -198,6 +198,13 @@ function approveReviewFromList(ritualId, issueId, ritualName, ritualPrompt, issu
 // Approvals list view (consolidated from app.js, CHT-1040)
 // ============================================================================
 
+// React to project changes when approvals view is active (CHT-1164)
+subscribe((key) => {
+    if (key !== 'currentProject') return;
+    if (getCurrentView() !== 'approvals') return;
+    loadGateApprovals();
+});
+
 // Sprint limbo rituals shown in the approvals view (CHT-905)
 let sprintLimboApprovals = [];
 
@@ -207,13 +214,17 @@ let sprintLimboApprovals = [];
 export async function loadGateApprovals() {
     if (!getCurrentTeam()) return;
 
-    const container = document.getElementById('gate-approvals-list');
+    const container = document.getElementById('approvals-list');
     if (!container) return;
 
     container.innerHTML = '<div class="loading">Loading pending approvals...</div>';
 
     try {
-        const results = await Promise.all(getProjects().map(async project => {
+        const currentProjectId = getCurrentProject();
+        const projects = currentProjectId
+            ? getProjects().filter(p => p.id === currentProjectId)
+            : getProjects();
+        const results = await Promise.all(projects.map(async project => {
             const [approvals, limbo] = await Promise.all([
                 api.getPendingApprovals(project.id),
                 api.getLimboStatus(project.id),
@@ -247,7 +258,7 @@ export async function loadGateApprovals() {
  * Render the gate approvals list view.
  */
 function renderGateApprovals() {
-    const container = document.getElementById('gate-approvals-list');
+    const container = document.getElementById('approvals-list');
     if (!container) return;
 
     const pendingItems = getPendingGates();

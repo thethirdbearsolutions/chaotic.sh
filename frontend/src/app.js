@@ -163,7 +163,7 @@ registerViews({
         loadMyIssues();
         loadDashboardActivity();
     },
-    'gate-approvals': () => {
+    'approvals': () => {
         loadGateApprovals();
     },
     'issues': () => {
@@ -589,7 +589,7 @@ setCommandPaletteCommands([
     { id: 'nav-documents', title: 'Go to Documents', subtitle: 'View all documents', icon: '📄', shortcut: 'G D', action: () => navigateTo('documents'), category: 'Navigation' },
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },
     { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'View project rituals', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
-    { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('gate-approvals'), category: 'Navigation' },
+    { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
     { id: 'nav-team', title: 'Go to Team', subtitle: 'Manage team members', icon: '👥', shortcut: 'G T', action: () => navigateTo('team'), category: 'Navigation' },
     { id: 'nav-settings', title: 'Go to Settings', subtitle: 'Project and team settings', icon: '⚙️', shortcut: 'G ,', action: () => navigateTo('settings'), category: 'Navigation' },
 
