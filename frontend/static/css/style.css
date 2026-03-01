@@ -6759,19 +6759,19 @@ input[type="checkbox"] {
 .gate-section-title {
     font-size: var(--font-lg);
     font-weight: 600;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
 .gate-section-desc {
-    font-size: var(--font-base);
+    font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 }
 
 .gate-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
 }
 
 .gate-issue-card {
@@ -6818,20 +6818,22 @@ input[type="checkbox"] {
 .gate-issue-project {
     font-size: var(--font-sm);
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .gate-rituals {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
 }
 
 .gate-ritual {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
-    padding: 12px;
+    gap: 16px;
+    padding: 16px;
     background: var(--bg-tertiary);
     border-radius: var(--radius-md);
 }
@@ -6840,7 +6842,7 @@ input[type="checkbox"] {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -6850,8 +6852,9 @@ input[type="checkbox"] {
 }
 
 .gate-ritual-prompt {
-    font-size: var(--font-base);
+    font-size: var(--font-sm);
     color: var(--text-muted);
+    line-height: 1.5;
 }
 
 .gate-waiting-info {
@@ -6872,11 +6875,12 @@ input[type="checkbox"] {
 .gate-attestation-note {
     font-size: var(--font-sm);
     color: var(--text-secondary);
-    margin-top: 4px;
-    padding: 6px 8px;
+    margin-top: 8px;
+    padding: 10px 12px;
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
     border-left: 3px solid var(--accent-color);
+    line-height: 1.5;
 }
 
 .gate-approval-attestation-note {
@@ -6890,13 +6894,13 @@ input[type="checkbox"] {
 }
 
 .badge-gate {
-    background: var(--badge-urgent-bg, #f97316);
-    color: var(--badge-urgent-text, #fff);
+    background: #713f12;
+    color: #fcd34d;
 }
 
 .badge-review {
-    background: var(--badge-medium-bg, #3b82f6);
-    color: var(--badge-medium-text, #fff);
+    background: #3b2f63;
+    color: #a78bfa;
 }
 
 /* ============================================================================
