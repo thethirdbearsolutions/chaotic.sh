@@ -413,6 +413,9 @@ function renderGateApprovals() {
     container.querySelectorAll('.review-quick-approve-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             btn.disabled = true;
+            // Disable sibling "Comment & Approve" button to prevent modal during in-flight approval
+            const siblingBtn = btn.closest('.gate-ritual-actions')?.querySelector('.review-approve-btn');
+            if (siblingBtn) siblingBtn.disabled = true;
             const d = btn.dataset;
             try {
                 await api.approveTicketRitual(d.ritualId, d.issueId);
@@ -420,6 +423,7 @@ function renderGateApprovals() {
                 await loadGateApprovals();
             } catch (e) {
                 btn.disabled = false;
+                if (siblingBtn) siblingBtn.disabled = false;
                 showApiError('approve review ritual', e);
             }
         });
