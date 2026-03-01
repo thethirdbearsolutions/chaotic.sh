@@ -97,7 +97,7 @@ export async function loadSprints() {
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
-        if (list) list.innerHTML = '<div class="empty-state"><h3>Failed to load sprints</h3></div>';
+        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again' });
         showApiError('load sprints', e);
     }
 }

@@ -89,7 +89,7 @@ export async function loadBoard() {
         boardIssues = await api.getIssues({ project_id: projectId });
         renderBoard();
     } catch (e) {
-        if (board) board.innerHTML = '<div class="empty-state"><h3>Failed to load board</h3></div>';
+        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again' });
         showApiError('load board', e);
     }
 }
