@@ -205,7 +205,7 @@ describe('dashboard module', () => {
 
             await loadDashboardActivity();
 
-            expect(api.getTeamActivities).toHaveBeenCalledWith('team-1', 0, 10);
+            expect(api.getTeamActivities).toHaveBeenCalledWith('team-1', 0, 10, { projectId: null });
             expect(getDashboardActivities()).toEqual(mockActivities);
         });
 

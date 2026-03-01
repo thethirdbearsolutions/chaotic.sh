@@ -503,8 +503,9 @@ async def list_team_activities(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 50,
+    project_id: str | None = None,
 ):
-    """List recent activities for a team (issues and documents)."""
+    """List recent activities for a team (issues and documents), optionally filtered by project."""
     issue_service = IssueService()
     sprint_service = SprintService()
     document_service = DocumentService()
@@ -516,10 +517,18 @@ async def list_team_activities(
             detail="Not authorized to access this team",
         )
 
+    if project_id:
+        project = await ProjectService().get_by_id(project_id)
+        if not project or project.team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
+
     # Fetch both issue and document activities (CHT-639)
     # Get more than needed so we can merge and sort, then limit
-    issue_activities = await issue_service.list_team_activities(team_id, 0, limit * 2)
-    doc_activities = await document_service.list_team_activities(team_id, 0, limit * 2)
+    issue_activities = await issue_service.list_team_activities(team_id, 0, limit * 2, project_id=project_id)
+    doc_activities = await document_service.list_team_activities(team_id, 0, limit * 2, project_id=project_id)
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()

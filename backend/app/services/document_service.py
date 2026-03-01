@@ -392,9 +392,20 @@ class DocumentService:
         return [(c, doc_map.get(c.document_id)) for c in comments]
 
     async def list_team_activities(
-        self, team_id: str, skip: int = 0, limit: int = 50
+        self, team_id: str, skip: int = 0, limit: int = 50, project_id: str | None = None,
     ) -> list[OxydeDocumentActivity]:
-        """List document activities for a team."""
+        """List document activities for a team, optionally filtered by project."""
+        if project_id:
+            # Filter to documents belonging to this project first
+            project_docs = await OxydeDocument.objects.filter(
+                team_id=team_id, project_id=project_id,
+            ).all()
+            doc_ids = [d.id for d in project_docs]
+            if not doc_ids:
+                return []
+            return await OxydeDocumentActivity.objects.filter(
+                team_id=team_id, document_id__in=doc_ids,
+            ).join("user", "document").order_by("-created_at").offset(skip).limit(limit).all()
         return await OxydeDocumentActivity.objects.filter(
             team_id=team_id
         ).join("user", "document").order_by("-created_at").offset(skip).limit(limit).all()

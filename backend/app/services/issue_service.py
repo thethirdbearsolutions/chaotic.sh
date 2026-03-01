@@ -514,17 +514,23 @@ class IssueService:
         ).join("user").order_by("-created_at").offset(skip).limit(limit).all()
 
     async def list_team_activities(
-        self, team_id: str, skip: int = 0, limit: int = 50
+        self, team_id: str, skip: int = 0, limit: int = 50, project_id: str | None = None,
     ) -> list:
-        """List recent activities for a team."""
-        # Raw SQL for multi-join: issue_activities → issues → projects
+        """List recent activities for a team, optionally filtered by project."""
+        # Raw SQL for multi-join: issue_activities → issues → projects (CHT-1166 tracks ORM migration)
+        where = "p.team_id = ?"
+        params: list = [team_id]
+        if project_id:
+            where += " AND i.project_id = ?"
+            params.append(project_id)
+        params.extend([limit, skip])
         rows = await execute_raw(
             "SELECT ia.* FROM issue_activities ia "
             "JOIN issues i ON ia.issue_id = i.id "
             "JOIN projects p ON i.project_id = p.id "
-            "WHERE p.team_id = ? "
+            f"WHERE {where} "
             "ORDER BY ia.created_at DESC LIMIT ? OFFSET ?",
-            [team_id, limit, skip],
+            params,
         )
         if not rows:
             return []

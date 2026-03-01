@@ -17,11 +17,13 @@ import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 let myIssues = [];
 let dashboardActivities = [];
 
-// React to project changes when dashboard is active (CHT-1083)
+// React to project changes when dashboard is active (CHT-1083, CHT-1165)
 subscribe((key) => {
     if (key !== 'currentProject') return;
     if (getCurrentView() !== 'my-issues') return;
     loadMyIssues();
+    loadSprintStatus();
+    loadDashboardActivity();
 });
 
 /**
@@ -114,7 +116,8 @@ export async function loadDashboardActivity({ showLoading = true } = {}) {
     }
 
     try {
-        dashboardActivities = await api.getTeamActivities(currentTeam.id, 0, 10);
+        const projectId = getCurrentProject();
+        dashboardActivities = await api.getTeamActivities(currentTeam.id, 0, 10, { projectId });
         renderDashboardActivity();
     } catch {
         if (container) {
@@ -218,7 +221,11 @@ export async function loadSprintStatus() {
     const container = document.getElementById('dashboard-sprint-status');
     if (!container) return;
 
-    const projects = getProjects();
+    const currentProjectId = getCurrentProject();
+    const allProjects = getProjects();
+    const projects = currentProjectId
+        ? allProjects.filter(p => p.id === currentProjectId)
+        : allProjects;
     if (!projects.length) {
         container.innerHTML = '';
         return;
