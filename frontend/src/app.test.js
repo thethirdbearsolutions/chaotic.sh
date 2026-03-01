@@ -251,7 +251,7 @@ beforeEach(() => {
 describe('app.js view registrations', () => {
     it('registers all expected views', () => {
         const expectedViews = [
-            'my-issues', 'gate-approvals', 'issues', 'epics', 'board',
+            'my-issues', 'approvals', 'issues', 'epics', 'board',
             'projects', 'sprints', 'rituals', 'documents', 'team', 'settings',
         ];
         for (const view of expectedViews) {
@@ -287,8 +287,8 @@ describe('app.js view registrations', () => {
         expect(loadAgents).toHaveBeenCalled();
     });
 
-    it('gate-approvals view loads approvals', () => {
-        registeredViews['gate-approvals']();
+    it('approvals view loads approvals', () => {
+        registeredViews['approvals']();
         expect(loadGateApprovals).toHaveBeenCalled();
     });
 

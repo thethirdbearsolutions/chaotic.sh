@@ -344,8 +344,8 @@ describe('ws-handlers.js', () => {
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
         });
 
-        it('calls loadGateApprovals on gate-approvals view', () => {
-            getCurrentView.mockReturnValue('gate-approvals');
+        it('calls loadGateApprovals on approvals view', () => {
+            getCurrentView.mockReturnValue('approvals');
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
             expect(mockLoadGateApprovals).toHaveBeenCalled();

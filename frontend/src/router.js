@@ -160,6 +160,9 @@ export function handleRoute() {
     } else {
         // Standard view routing
         view = parts[0];
+        // Backward-compat aliases for renamed routes
+        const routeAliases = { 'gate-approvals': 'approvals' };
+        if (routeAliases[view]) view = routeAliases[view];
         const validViews = getValidViews();
         if (validViews.includes(view)) {
             navigateTo(view, false);

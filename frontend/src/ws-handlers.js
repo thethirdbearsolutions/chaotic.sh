@@ -179,7 +179,7 @@ function handleRelation(data) {
 }
 
 function handleAttestation(data) {
-    if (getCurrentView() === 'gate-approvals') {
+    if (getCurrentView() === 'approvals') {
         loadGateApprovals();
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {

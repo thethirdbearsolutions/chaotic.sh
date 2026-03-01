@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=56">
+    <link rel="stylesheet" href="/static/css/style.css?v=57">
     <!-- Fallback for when JS is disabled: show auth screen -->
     <noscript>
         <style>#auth-screen { display: block !important; }</style>
@@ -98,7 +98,7 @@
                         </svg>
                         Issues
                     </a>
-                    <a href="#" class="nav-item" data-view="gate-approvals">
+                    <a href="#" class="nav-item" data-view="approvals">
                         <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
                         </svg>
@@ -210,12 +210,16 @@
                 </div>
 
                 <!-- GATE Approvals view -->
-                <div id="gate-approvals-view" class="view hidden">
+                <div id="approvals-view" class="view hidden">
                     <div class="view-header">
-                        <h2>GATE Approvals</h2>
-                        <p class="view-subtitle">Issues awaiting human approval for GATE rituals</p>
+                        <h2>Approvals</h2>
+                        <div class="view-actions">
+                            <select id="approvals-project-filter" data-action="set-current-project">
+                                <option value="">All Projects</option>
+                            </select>
+                        </div>
                     </div>
-                    <div id="gate-approvals-list" class="list"></div>
+                    <div id="approvals-list" class="list"></div>
                 </div>
 
                 <!-- Issues view with search -->
