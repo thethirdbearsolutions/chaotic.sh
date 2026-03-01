@@ -51,14 +51,15 @@ export function renderIssues() {
         const hasSearch = searchQuery && searchQuery.length >= 2;
 
         if (hasFilters || hasSearch) {
+            const filterCount = getTotalFilterCount();
             const parts = [];
-            if (hasSearch) parts.push(`search "${escapeHtml(searchQuery)}"`);
-            if (hasFilters) parts.push(`${getTotalFilterCount()} active filter${getTotalFilterCount() > 1 ? 's' : ''}`);
+            if (hasSearch) parts.push(`search "${searchQuery}"`);
+            if (hasFilters) parts.push(`${filterCount} active filter${filterCount > 1 ? 's' : ''}`);
             list.innerHTML = renderEmptyState({
                 icon: EMPTY_ICONS.issues,
                 heading: 'No matching issues',
                 description: `No issues match your ${parts.join(' and ')}`,
-                cta: { label: 'Clear filters', action: 'clear-all-filters' },
+                cta: { label: 'Clear all', action: 'clear-all-filters' },
             });
         } else {
             list.innerHTML = renderEmptyState({

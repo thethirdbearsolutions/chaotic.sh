@@ -145,7 +145,7 @@ describe('issue-list', () => {
             const list = document.getElementById('issues-list');
             expect(list.innerHTML).toContain('No matching issues');
             expect(list.innerHTML).toContain('2 active filters');
-            expect(list.innerHTML).toContain('Clear filters');
+            expect(list.innerHTML).toContain('Clear all');
             expect(list.innerHTML).toContain('clear-all-filters');
         });
 
@@ -158,7 +158,7 @@ describe('issue-list', () => {
             expect(list.innerHTML).toContain('No matching issues');
             expect(list.innerHTML).toContain('search');
             expect(list.innerHTML).toContain('nonexistent');
-            expect(list.innerHTML).toContain('Clear filters');
+            expect(list.innerHTML).toContain('Clear all');
         });
 
         it('shows combined empty state when both filters and search active', () => {
