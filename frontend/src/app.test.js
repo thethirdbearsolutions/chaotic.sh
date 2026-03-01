@@ -218,7 +218,7 @@ import { initRouter } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { api } from './api.js';
 import { closeModal } from './ui.js';
-import { toggleTeamDropdown, toggleUserDropdown, showInviteModal } from './teams.js';
+import { toggleTeamDropdown, toggleUserDropdown } from './teams.js';
 import { showCreateIssueModal } from './issue-creation.js';
 import { toggleSidebar } from './sidebar.js';
 import { setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
@@ -518,18 +518,6 @@ describe('app.js DOMContentLoaded initialization', () => {
 // DOM event binding tests (CHT-1142)
 // These test the init* functions that wire DOM elements to event handlers.
 // ============================================================================
-
-/**
- * Helper: set up DOM elements, call domReadyCallback, then run assertions.
- * Cleans up DOM after each test.
- */
-function setupAndInit(htmlSetup) {
-    return async () => {
-        htmlSetup();
-        api.getToken.mockReturnValue(null);
-        await domReadyCallback();
-    };
-}
 
 describe('initModal DOM bindings', () => {
     let overlay, closeBtn;
