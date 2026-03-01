@@ -35,6 +35,7 @@ import { loadGateApprovals } from './gate-approvals.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
+import { showInlineDropdown } from './inline-dropdown.js';
 import {
     toggleTeamDropdown,
     toggleUserDropdown,
@@ -531,6 +532,30 @@ async function viewDocumentByPath(docId) {
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
 
+// List navigation handlers registered BEFORE global shortcuts so
+// stopImmediatePropagation can block conflicts (e.g. 'p' = priority, not projects)
+document.addEventListener('keydown', createListNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedIssueIndex,
+    setSelectedIndex: setSelectedIssueIndex,
+    viewIssue,
+    showEditIssueModal,
+    showInlineDropdown,
+    isModalOpen,
+    isCommandPaletteOpen,
+}));
+
+// j/k/Enter/e list navigation for documents
+document.addEventListener('keydown', createDocListNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedDocIndex,
+    setSelectedIndex: setSelectedDocIndex,
+    viewDocument,
+    showEditDocumentModal,
+    isModalOpen,
+    isCommandPaletteOpen,
+}));
+
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
@@ -594,26 +619,4 @@ document.addEventListener('keydown', createModifierKeyHandler({
 
 
 // handleQuickCreate moved to quick-create.js (CHT-1045)
-
-// j/k/Enter/e list navigation - logic in keyboard.js
-document.addEventListener('keydown', createListNavigationHandler({
-    getCurrentView,
-    getSelectedIndex: getSelectedIssueIndex,
-    setSelectedIndex: setSelectedIssueIndex,
-    viewIssue,
-    showEditIssueModal,
-    isModalOpen,
-    isCommandPaletteOpen,
-}));
-
-// j/k/Enter/e list navigation for documents
-document.addEventListener('keydown', createDocListNavigationHandler({
-    getCurrentView,
-    getSelectedIndex: getSelectedDocIndex,
-    setSelectedIndex: setSelectedDocIndex,
-    viewDocument,
-    showEditDocumentModal,
-    isModalOpen,
-    isCommandPaletteOpen,
-}));
 

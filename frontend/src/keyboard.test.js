@@ -15,6 +15,7 @@ function makeEvent(key, overrides = {}) {
         altKey: false,
         target: { tagName: 'DIV' },
         preventDefault: vi.fn(),
+        stopImmediatePropagation: vi.fn(),
         ...overrides,
     };
 }
@@ -442,9 +443,9 @@ describe('updateKeyboardSelection', () => {
         Element.prototype.scrollIntoView = vi.fn();
         document.body.innerHTML = `
             <div id="issues-list">
-                <div class="list-item" data-id="issue-1">Issue 1</div>
-                <div class="list-item" data-id="issue-2">Issue 2</div>
-                <div class="list-item" data-id="issue-3">Issue 3</div>
+                <div class="issue-row" data-issue-id="issue-1">Issue 1</div>
+                <div class="issue-row" data-issue-id="issue-2">Issue 2</div>
+                <div class="issue-row" data-issue-id="issue-3">Issue 3</div>
             </div>
         `;
     });
@@ -452,7 +453,7 @@ describe('updateKeyboardSelection', () => {
     it('selects the given index', () => {
         updateKeyboardSelection(1, setIndex);
         expect(setIndex).toHaveBeenCalledWith(1);
-        const items = document.querySelectorAll('.list-item');
+        const items = document.querySelectorAll('.issue-row');
         expect(items[1].classList.contains('keyboard-selected')).toBe(true);
         expect(items[0].classList.contains('keyboard-selected')).toBe(false);
     });
@@ -460,20 +461,20 @@ describe('updateKeyboardSelection', () => {
     it('clamps to 0 for negative index', () => {
         updateKeyboardSelection(-5, setIndex);
         expect(setIndex).toHaveBeenCalledWith(0);
-        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[0].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('clamps to last index for overflow', () => {
         updateKeyboardSelection(100, setIndex);
         expect(setIndex).toHaveBeenCalledWith(2);
-        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[2].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('removes previous selection', () => {
-        document.querySelectorAll('.list-item')[0].classList.add('keyboard-selected');
+        document.querySelectorAll('.issue-row')[0].classList.add('keyboard-selected');
         updateKeyboardSelection(2, setIndex);
-        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(false);
-        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[0].classList.contains('keyboard-selected')).toBe(false);
+        expect(document.querySelectorAll('.issue-row')[2].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('does nothing when no list items exist', () => {
@@ -484,7 +485,7 @@ describe('updateKeyboardSelection', () => {
 
     it('scrolls selected item into view', () => {
         const scrollSpy = vi.fn();
-        document.querySelectorAll('.list-item')[1].scrollIntoView = scrollSpy;
+        document.querySelectorAll('.issue-row')[1].scrollIntoView = scrollSpy;
         updateKeyboardSelection(1, setIndex);
         expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
     });
@@ -517,6 +518,7 @@ describe('List Navigation Handler', () => {
             setSelectedIndex: vi.fn(),
             viewIssue: vi.fn(),
             showEditIssueModal: vi.fn(),
+            showInlineDropdown: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
         };
@@ -524,9 +526,24 @@ describe('List Navigation Handler', () => {
         Element.prototype.scrollIntoView = vi.fn();
         document.body.innerHTML = `
             <div id="issues-list">
-                <div class="list-item" data-id="issue-1">Issue 1</div>
-                <div class="list-item" data-id="issue-2">Issue 2</div>
-                <div class="list-item" data-id="issue-3">Issue 3</div>
+                <div class="issue-row" data-issue-id="issue-1">
+                    <button class="status-btn"></button>
+                    <button class="priority-btn"></button>
+                    <button class="assignee-btn"></button>
+                    Issue 1
+                </div>
+                <div class="issue-row" data-issue-id="issue-2">
+                    <button class="status-btn"></button>
+                    <button class="priority-btn"></button>
+                    <button class="assignee-btn"></button>
+                    Issue 2
+                </div>
+                <div class="issue-row" data-issue-id="issue-3">
+                    <button class="status-btn"></button>
+                    <button class="priority-btn"></button>
+                    <button class="assignee-btn"></button>
+                    Issue 3
+                </div>
             </div>
         `;
     });
@@ -624,7 +641,7 @@ describe('List Navigation Handler', () => {
         });
 
         it('skips temp items', () => {
-            document.querySelector('.list-item').dataset.id = 'temp-123';
+            document.querySelector('.issue-row').dataset.issueId = 'temp-123';
             actions.getSelectedIndex.mockReturnValue(0);
             handler(makeEvent('Enter'));
             expect(actions.viewIssue).not.toHaveBeenCalled();
@@ -647,7 +664,7 @@ describe('List Navigation Handler', () => {
         });
 
         it('skips temp items', () => {
-            document.querySelector('.list-item').dataset.id = 'temp-456';
+            document.querySelector('.issue-row').dataset.issueId = 'temp-456';
             actions.getSelectedIndex.mockReturnValue(0);
             handler(makeEvent('e'));
             expect(actions.showEditIssueModal).not.toHaveBeenCalled();
@@ -664,7 +681,7 @@ describe('List Navigation Handler', () => {
         it('clears selection when item is selected', () => {
             actions.getSelectedIndex.mockReturnValue(1);
             // Add keyboard-selected class to simulate selection
-            document.querySelectorAll('.list-item')[1].classList.add('keyboard-selected');
+            document.querySelectorAll('.issue-row')[1].classList.add('keyboard-selected');
             const event = makeEvent('Escape');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
@@ -679,11 +696,63 @@ describe('List Navigation Handler', () => {
         });
     });
 
+    describe('quick-edit shortcuts', () => {
+        it('s opens status dropdown on selected issue', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('s');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
+            expect(actions.showInlineDropdown).toHaveBeenCalledWith(
+                event, 'status', 'issue-2',
+                document.querySelectorAll('.issue-row')[1].querySelector('.status-btn')
+            );
+        });
+
+        it('p opens priority dropdown on selected issue', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('p');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
+            expect(actions.showInlineDropdown).toHaveBeenCalledWith(
+                event, 'priority', 'issue-1',
+                document.querySelectorAll('.issue-row')[0].querySelector('.priority-btn')
+            );
+        });
+
+        it('a opens assignee dropdown on selected issue', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('a');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
+            expect(actions.showInlineDropdown).toHaveBeenCalledWith(
+                event, 'assignee', 'issue-3',
+                document.querySelectorAll('.issue-row')[2].querySelector('.assignee-btn')
+            );
+        });
+
+        it('does nothing when no item selected', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('s'));
+            expect(actions.showInlineDropdown).not.toHaveBeenCalled();
+        });
+
+        it('skips temp items', () => {
+            document.querySelector('.issue-row').dataset.issueId = 'temp-999';
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('s'));
+            expect(actions.showInlineDropdown).not.toHaveBeenCalled();
+        });
+    });
+
     describe('unrecognized keys', () => {
         it('does not act on other keys', () => {
             handler(makeEvent('x'));
             expect(actions.viewIssue).not.toHaveBeenCalled();
             expect(actions.showEditIssueModal).not.toHaveBeenCalled();
+            expect(actions.showInlineDropdown).not.toHaveBeenCalled();
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
     });
