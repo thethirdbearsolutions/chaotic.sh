@@ -1114,6 +1114,56 @@ async def test_list_team_activities(db, test_team, test_project, test_user, test
 
 
 @pytest.mark.asyncio
+async def test_list_team_activities_filtered_by_project(db, test_team, test_project, test_user, test_issue):
+    """Test that list_team_activities can filter by project_id."""
+    from app.services.issue_service import IssueService
+    from app.schemas.issue import IssueUpdate
+    from app.enums import IssueStatus
+    from app.oxyde_models.project import OxydeProject
+    from app.oxyde_models.issue import OxydeIssue
+
+    service = IssueService()
+
+    # Create a second project with an issue and activity
+    project2 = await OxydeProject.objects.create(
+        team_id=test_team.id,
+        name="Other Project",
+        key="OTH",
+        description="Another project",
+        color="#22c55e",
+    )
+    issue2 = await OxydeIssue.objects.create(
+        project_id=project2.id,
+        identifier="OTH-1",
+        number=1,
+        title="Other issue",
+        status=IssueStatus.BACKLOG,
+        creator_id=test_user.id,
+    )
+
+    # Create activities on both projects
+    update = IssueUpdate(status=IssueStatus.IN_PROGRESS)
+    await service.update(test_issue, update, user_id=test_user.id)
+    await service.update(issue2, update, user_id=test_user.id)
+
+    # Unfiltered: should see activities from both projects
+    all_activities = await service.list_team_activities(test_team.id, limit=50)
+    assert len(all_activities) >= 2
+
+    # Filtered to project 1: should only see test_project activities
+    proj1_activities = await service.list_team_activities(test_team.id, limit=50, project_id=test_project.id)
+    assert len(proj1_activities) >= 1
+    for a in proj1_activities:
+        assert a.issue.project_id == test_project.id
+
+    # Filtered to project 2: should only see project2 activities
+    proj2_activities = await service.list_team_activities(test_team.id, limit=50, project_id=project2.id)
+    assert len(proj2_activities) >= 1
+    for a in proj2_activities:
+        assert a.issue.project_id == project2.id
+
+
+@pytest.mark.asyncio
 async def test_list_issues_with_multiple_statuses(client, auth_headers, test_project, test_user, db):
     """Test listing issues with multiple status filters."""
     from app.oxyde_models.issue import OxydeIssue

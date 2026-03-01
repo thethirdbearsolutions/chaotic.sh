@@ -517,6 +517,14 @@ async def list_team_activities(
             detail="Not authorized to access this team",
         )
 
+    if project_id:
+        project = await ProjectService().get_by_id(project_id)
+        if not project or project.team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
+
     # Fetch both issue and document activities (CHT-639)
     # Get more than needed so we can merge and sort, then limit
     issue_activities = await issue_service.list_team_activities(team_id, 0, limit * 2, project_id=project_id)
