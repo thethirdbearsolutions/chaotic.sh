@@ -42,6 +42,7 @@ import {
     updateStatusFilterLabel,
     updatePriorityFilterLabel,
     updateLabelFilterLabel,
+    populateLabelFilter,
     CLOSED_STATUSES,
 } from './issues-filter.js';
 
@@ -107,8 +108,12 @@ subscribe((key) => {
     // Clear sprint filter — sprints are per-project so old value is stale (CHT-1084)
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.value = '';
-    // Update sprint filter options, then re-filter
-    updateSprintFilter().then(() => {
+    // Clear label filter — selected labels may not apply to new project's issues (CHT-1162)
+    const labelDropdown = document.getElementById('label-filter-dropdown');
+    labelDropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+    updateLabelFilterLabel();
+    // Update sprint and label filter options, then re-filter
+    Promise.all([updateSprintFilter(), populateLabelFilter()]).then(() => {
         filterIssues();
         updateFilterChips();
         updateFilterCountBadge();
