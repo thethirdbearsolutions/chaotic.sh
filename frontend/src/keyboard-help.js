@@ -18,7 +18,11 @@ const SHORTCUT_GROUPS = [
             { key: 'p', description: 'Projects' },
             { key: 'g s', description: 'Sprints' },
             { key: 'g d', description: 'Documents' },
+            { key: 'g e', description: 'Epics' },
+            { key: 'g r', description: 'Rituals' },
+            { key: 'g a', description: 'Approvals' },
             { key: 'g t', description: 'Team' },
+            { key: 'g ,', description: 'Settings' },
         ],
     },
     {
