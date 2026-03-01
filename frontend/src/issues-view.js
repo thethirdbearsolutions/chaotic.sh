@@ -10,7 +10,6 @@
  */
 
 import { api } from './api.js';
-import { formatStatus, formatPriority } from './utils.js';
 import {
     getCurrentUser,
     getCurrentTeam,
@@ -40,6 +39,9 @@ import {
     getGroupByValue,
     syncFiltersToUrl,
     loadFiltersFromUrl as _loadFiltersFromUrl,
+    updateStatusFilterLabel,
+    updatePriorityFilterLabel,
+    updateLabelFilterLabel,
     CLOSED_STATUSES,
 } from './issues-filter.js';
 
@@ -126,18 +128,7 @@ export function loadFiltersFromUrl() {
 // ========================================
 
 export function updateStatusFilter() {
-    const selectedStatuses = getSelectedStatuses();
-    const dropdown = document.getElementById('status-filter-dropdown');
-    const label = dropdown.querySelector('.multi-select-label');
-
-    if (selectedStatuses.length === 0) {
-        label.textContent = 'All Statuses';
-    } else if (selectedStatuses.length === 1) {
-        label.textContent = formatStatus(selectedStatuses[0]);
-    } else {
-        label.innerHTML = `${selectedStatuses.length} statuses<span class="multi-select-badge">${selectedStatuses.length}</span>`;
-    }
-
+    updateStatusFilterLabel();
     filterIssues();
     updateFilterChips();
     updateFilterCountBadge();
@@ -145,24 +136,12 @@ export function updateStatusFilter() {
 
 export function clearStatusFilter() {
     const dropdown = document.getElementById('status-filter-dropdown');
-    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => cb.checked = false);
+    dropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updateStatusFilter();
 }
 
 export function updatePriorityFilter() {
-    const selectedPriorities = getSelectedPriorities();
-    const dropdown = document.getElementById('priority-filter-dropdown');
-    const label = dropdown.querySelector('.multi-select-label');
-
-    if (selectedPriorities.length === 0) {
-        label.textContent = 'All Priorities';
-    } else if (selectedPriorities.length === 1) {
-        label.textContent = formatPriority(selectedPriorities[0]);
-    } else {
-        label.innerHTML = `${selectedPriorities.length} priorities<span class="multi-select-badge">${selectedPriorities.length}</span>`;
-    }
-
+    updatePriorityFilterLabel();
     filterIssues();
     updateFilterChips();
     updateFilterCountBadge();
@@ -170,26 +149,12 @@ export function updatePriorityFilter() {
 
 export function clearPriorityFilter() {
     const dropdown = document.getElementById('priority-filter-dropdown');
-    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => cb.checked = false);
+    dropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updatePriorityFilter();
 }
 
 export function updateLabelFilter() {
-    const selectedLabels = getSelectedLabels();
-    const dropdown = document.getElementById('label-filter-dropdown');
-    const label = dropdown.querySelector('.multi-select-label');
-
-    if (selectedLabels.length === 0) {
-        label.textContent = 'All Labels';
-    } else if (selectedLabels.length === 1) {
-        const checkbox = dropdown.querySelector(`input[value="${selectedLabels[0]}"]`);
-        const labelName = checkbox?.closest('label')?.querySelector('.label-name')?.textContent || '1 Label';
-        label.textContent = labelName;
-    } else {
-        label.textContent = `${selectedLabels.length} Labels`;
-    }
-
+    updateLabelFilterLabel();
     filterIssues();
     updateFilterChips();
     updateFilterCountBadge();
@@ -197,8 +162,7 @@ export function updateLabelFilter() {
 
 export function clearLabelFilter() {
     const dropdown = document.getElementById('label-filter-dropdown');
-    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => cb.checked = false);
+    dropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updateLabelFilter();
 }
 
