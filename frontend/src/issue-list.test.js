@@ -35,6 +35,7 @@ vi.mock('./utils.js', () => ({
 
 vi.mock('./issues-view.js', () => ({
     getGroupByValue: vi.fn(() => ''),
+    getTotalFilterCount: vi.fn(() => 0),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -66,7 +67,7 @@ import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './as
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
-import { getGroupByValue } from './issues-view.js';
+import { getGroupByValue, getTotalFilterCount } from './issues-view.js';
 
 describe('issue-list', () => {
     let testIssues;
@@ -96,10 +97,12 @@ describe('issue-list', () => {
         renderAvatar.mockReturnValue('<span class="avatar"></span>');
         getAssigneeOptionList.mockReturnValue([]);
         getGroupByValue.mockReturnValue('');
+        getTotalFilterCount.mockReturnValue(0);
 
         // Setup minimal DOM
         document.body.innerHTML = `
             <div id="issues-list" class=""></div>
+            <input id="issue-search" value="" />
         `;
     });
 
@@ -124,12 +127,50 @@ describe('issue-list', () => {
     });
 
     describe('renderIssues', () => {
-        it('shows empty state when no issues', () => {
+        it('shows empty state when no issues and no filters', () => {
             setTestIssues([]);
             renderIssues();
 
             const list = document.getElementById('issues-list');
             expect(list.innerHTML).toContain('No issues found');
+            expect(list.innerHTML).toContain('Create issue');
+            expect(list.innerHTML).toContain('showCreateIssueModal');
+        });
+
+        it('shows filter-aware empty state when filters active', () => {
+            setTestIssues([]);
+            getTotalFilterCount.mockReturnValue(2);
+            renderIssues();
+
+            const list = document.getElementById('issues-list');
+            expect(list.innerHTML).toContain('No matching issues');
+            expect(list.innerHTML).toContain('2 active filters');
+            expect(list.innerHTML).toContain('Clear all');
+            expect(list.innerHTML).toContain('clear-all-filters');
+        });
+
+        it('shows search-aware empty state when search active', () => {
+            setTestIssues([]);
+            document.getElementById('issue-search').value = 'nonexistent';
+            renderIssues();
+
+            const list = document.getElementById('issues-list');
+            expect(list.innerHTML).toContain('No matching issues');
+            expect(list.innerHTML).toContain('search');
+            expect(list.innerHTML).toContain('nonexistent');
+            expect(list.innerHTML).toContain('Clear all');
+        });
+
+        it('shows combined empty state when both filters and search active', () => {
+            setTestIssues([]);
+            getTotalFilterCount.mockReturnValue(1);
+            document.getElementById('issue-search').value = 'test query';
+            renderIssues();
+
+            const list = document.getElementById('issues-list');
+            expect(list.innerHTML).toContain('No matching issues');
+            expect(list.innerHTML).toContain('search');
+            expect(list.innerHTML).toContain('1 active filter');
         });
 
         it('renders flat list when no grouping selected', () => {

@@ -466,6 +466,9 @@ export function clearAllFilters() {
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.value = '';
 
+    const searchInput = document.getElementById('issue-search');
+    if (searchInput) searchInput.value = '';
+
     clearLabelFilter();
     filterIssues();
     updateFilterChips();

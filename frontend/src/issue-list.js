@@ -8,7 +8,7 @@ import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './as
 import { formatEstimate, isOutOfScale } from './projects.js';
 import { getSprintCache } from './sprints.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
-import { getGroupByValue } from './issues-view.js';
+import { getGroupByValue, getTotalFilterCount } from './issues-view.js';
 import { registerActions } from './event-delegation.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -46,12 +46,29 @@ export function renderIssues() {
     const issues = getIssues();
 
     if (issues.length === 0) {
-        list.innerHTML = renderEmptyState({
-            icon: EMPTY_ICONS.issues,
-            heading: 'No issues found',
-            description: 'Create your first issue to get started',
-            cta: { label: 'Create issue', action: 'showCreateIssueModal' },
-        });
+        const searchQuery = document.getElementById('issue-search')?.value?.trim();
+        const hasFilters = getTotalFilterCount() > 0;
+        const hasSearch = searchQuery && searchQuery.length >= 2;
+
+        if (hasFilters || hasSearch) {
+            const filterCount = getTotalFilterCount();
+            const parts = [];
+            if (hasSearch) parts.push(`search "${searchQuery}"`);
+            if (hasFilters) parts.push(`${filterCount} active filter${filterCount > 1 ? 's' : ''}`);
+            list.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.issues,
+                heading: 'No matching issues',
+                description: `No issues match your ${parts.join(' and ')}`,
+                cta: { label: 'Clear all', action: 'clear-all-filters' },
+            });
+        } else {
+            list.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.issues,
+                heading: 'No issues found',
+                description: 'Create your first issue to get started',
+                cta: { label: 'Create issue', action: 'showCreateIssueModal' },
+            });
+        }
         return;
     }
 
