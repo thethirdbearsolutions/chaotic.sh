@@ -249,8 +249,10 @@ export class ApiClient {
         return this.request('GET', `/issues/${issueId}/activities?skip=${skip}&limit=${limit}`);
     }
 
-    async getTeamActivities(teamId, skip = 0, limit = 20) {
-        return this.request('GET', `/issues/activities?team_id=${teamId}&skip=${skip}&limit=${limit}`);
+    async getTeamActivities(teamId, skip = 0, limit = 20, { projectId } = {}) {
+        let url = `/issues/activities?team_id=${teamId}&skip=${skip}&limit=${limit}`;
+        if (projectId) url += `&project_id=${projectId}`;
+        return this.request('GET', url);
     }
 
     async getSubIssues(issueId) {
