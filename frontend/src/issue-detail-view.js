@@ -1010,7 +1010,7 @@ export async function viewIssue(issueId, pushHistory = true) {
         detailNavNextId = nextIssue ? nextIssue.id : null;
         const detailKeyHandler = (e) => {
             // Quote selected text into comment (CHT-1173)
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '>') {
                 if (quoteSelectionIntoComment()) {
                     e.preventDefault();
                     return;
