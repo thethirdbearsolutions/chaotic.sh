@@ -973,6 +973,7 @@ async function updateSprintDropdown(selectId, projectId, selectedSprintId = null
  * Show the create document modal
  */
 export async function showCreateDocumentModal() {
+  _onDocumentCreated = null; // Clear any sprint-context callback
   // Get projects for dropdown
   const projects = getProjects();
   // Get current project from localStorage if available
@@ -1021,6 +1022,64 @@ export async function showCreateDocumentModal() {
   }
 }
 
+// Callback invoked after a document is created (CHT-1126).
+// Set by showCreateSprintDocumentModal to refresh the sprint detail view.
+let _onDocumentCreated = null;
+
+/**
+ * Show the create document modal pre-configured for a specific sprint (CHT-1126).
+ * Used from the sprint detail view to author a doc attached to that sprint.
+ * @param {string} sprintId - Sprint ID to pre-select
+ * @param {string} projectId - Project ID the sprint belongs to
+ * @param {Function} [onCreated] - Optional callback after successful creation
+ */
+export async function showCreateSprintDocumentModal(sprintId, projectId, onCreated) {
+  _onDocumentCreated = onCreated || null;
+  const projects = getProjects();
+
+  const projectOptions = projects.map(p =>
+    `<option value="${escapeAttr(p.id)}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  document.getElementById('modal-title').textContent = 'Create Sprint Document';
+  document.getElementById('modal-content').innerHTML = `
+    <form data-action="create-document">
+      <div class="form-group">
+        <label for="doc-title">Title</label>
+        <input type="text" id="doc-title" required>
+      </div>
+      <div class="form-group">
+        <label for="doc-project">Project</label>
+        <select id="doc-project" data-action="update-doc-sprint-dropdown" data-sprint-select="doc-sprint">
+          <option value="">Global (Team-wide)</option>
+          ${projectOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="doc-sprint">Sprint</label>
+        <select id="doc-sprint" disabled>
+          <option value="">Loading sprints...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="doc-content">Content</label>
+        <textarea id="doc-content" style="min-height: 200px"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="doc-icon">Icon (emoji)</label>
+        <input type="text" id="doc-icon" placeholder="\u{1F4C4}" maxlength="2">
+      </div>
+      <button type="submit" class="btn btn-primary">Create Document</button>
+    </form>
+  `;
+  showModal();
+
+  // Pre-select the sprint
+  if (projectId) {
+    await updateSprintDropdown('doc-sprint', projectId, sprintId);
+  }
+}
+
 /**
  * Handle create document form submission
  * @param {Event} event - Form submit event
@@ -1049,6 +1108,11 @@ export async function handleCreateDocument(event) {
     await loadDocuments(teamId);
     closeModal();
     showToast('Document created!', 'success');
+    if (_onDocumentCreated) {
+      const cb = _onDocumentCreated;
+      _onDocumentCreated = null;
+      cb();
+    }
   } catch (e) {
     showApiError('create document', e);
   }

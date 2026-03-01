@@ -322,7 +322,7 @@ describe('viewSprint', () => {
         expect(detailView.innerHTML).toContain('Retrospective');
     });
 
-    it('hides documents section when no documents', async () => {
+    it('shows documents section with empty state when no documents', async () => {
         api.getSprint.mockResolvedValue({
             id: 's1', name: 'Sprint 1', status: 'active',
             budget: 20, points_spent: 5, project_id: 'p1',
@@ -334,7 +334,9 @@ describe('viewSprint', () => {
         await viewSprint('s1');
 
         const detailView = document.getElementById('sprint-detail-view');
-        expect(detailView.innerHTML).not.toContain('Documents (');
+        expect(detailView.innerHTML).toContain('Documents (0)');
+        expect(detailView.innerHTML).toContain('No documents in this sprint yet');
+        expect(detailView.innerHTML).toContain('+ New Document');
     });
 
     it('fetches documents with team and project context', async () => {
@@ -362,11 +364,11 @@ describe('viewSprint', () => {
 
         await viewSprint('s1');
 
-        // Should still render without documents
+        // Should still render with empty documents section
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView).toBeTruthy();
         expect(detailView.innerHTML).toContain('Sprint 1');
-        expect(detailView.innerHTML).not.toContain('Documents (');
+        expect(detailView.innerHTML).toContain('Documents (0)');
     });
 
     it('renders document icon from document data', async () => {

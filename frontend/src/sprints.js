@@ -17,7 +17,7 @@ import { renderMarkdown } from './gate-approvals.js';
 import { approveRitual, completeGateRitual } from './rituals-view.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { viewIssue } from './issue-detail-view.js';
-import { viewDocument } from './documents.js';
+import { viewDocument, showCreateSprintDocumentModal } from './documents.js';
 
 // State
 let sprints = [];
@@ -397,14 +397,23 @@ function renderSprintDetail() {
                 ${renderBudgetLedger()}
             </div>
 
-            ${currentSprintDocuments.length > 0 ? `
             <div class="sprint-detail-section">
-                <h3>Documents (${currentSprintDocuments.length})</h3>
-                <div class="sprint-issues-list">
-                    ${currentSprintDocuments.map(doc => renderSprintDocumentRow(doc)).join('')}
+                <div class="sprint-section-header">
+                    <h3>Documents (${currentSprintDocuments.length})</h3>
+                    <button class="btn btn-secondary btn-small" data-action="create-sprint-document"
+                        data-sprint-id="${escapeAttr(sprint.id)}"
+                        data-project-id="${escapeAttr(sprint.project_id)}">
+                        + New Document
+                    </button>
                 </div>
+                ${currentSprintDocuments.length > 0 ? `
+                    <div class="sprint-issues-list">
+                        ${currentSprintDocuments.map(doc => renderSprintDocumentRow(doc)).join('')}
+                    </div>
+                ` : `
+                    <div class="empty-state-small">No documents in this sprint yet</div>
+                `}
             </div>
-            ` : ''}
         </div>
     `;
 }
@@ -911,6 +920,12 @@ registerActions({
             return;
         }
         viewIssue(data.issueId);
+    },
+    'create-sprint-document': async (_event, data) => {
+        await showCreateSprintDocumentModal(data.sprintId, data.projectId, () => {
+            // Refresh sprint detail to show the new document
+            viewSprint(data.sprintId, false);
+        });
     },
     'navigate-sprint-document': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
