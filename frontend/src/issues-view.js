@@ -42,6 +42,7 @@ import {
     updateStatusFilterLabel,
     updatePriorityFilterLabel,
     updateLabelFilterLabel,
+    populateLabelFilter,
     CLOSED_STATUSES,
 } from './issues-filter.js';
 
@@ -107,8 +108,17 @@ subscribe((key) => {
     // Clear sprint filter — sprints are per-project so old value is stale (CHT-1084)
     const sprintFilter = document.getElementById('sprint-filter');
     if (sprintFilter) sprintFilter.value = '';
-    // Update sprint filter options, then re-filter
-    updateSprintFilter().then(() => {
+    // Update sprint and label filter options, then clear labels and re-filter (CHT-1162)
+    Promise.all([updateSprintFilter(), populateLabelFilter()]).then(() => {
+        // Clear label checkboxes after repopulation so DOM state is consistent
+        const labelDropdown = document.getElementById('label-filter-dropdown');
+        labelDropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+        updateLabelFilterLabel();
+        filterIssues();
+        updateFilterChips();
+        updateFilterCountBadge();
+    }).catch(e => {
+        console.error('Failed to update filters on project switch:', e);
         filterIssues();
         updateFilterChips();
         updateFilterCountBadge();
