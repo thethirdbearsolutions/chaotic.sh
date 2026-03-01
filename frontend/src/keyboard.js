@@ -171,7 +171,7 @@ export function createModifierKeyHandler(actions) {
  * @param {Function} setSelectedIndex - Setter for the selected index state
  * @param {string} [selector='#issues-list .list-item'] - CSS selector for list items
  */
-export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '#issues-list .list-item') {
+export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '#issues-list .issue-row') {
     const items = document.querySelectorAll(selector);
     if (items.length === 0) return;
 

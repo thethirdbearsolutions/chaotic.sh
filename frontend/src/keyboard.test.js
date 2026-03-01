@@ -443,9 +443,9 @@ describe('updateKeyboardSelection', () => {
         Element.prototype.scrollIntoView = vi.fn();
         document.body.innerHTML = `
             <div id="issues-list">
-                <div class="list-item" data-id="issue-1">Issue 1</div>
-                <div class="list-item" data-id="issue-2">Issue 2</div>
-                <div class="list-item" data-id="issue-3">Issue 3</div>
+                <div class="issue-row" data-issue-id="issue-1">Issue 1</div>
+                <div class="issue-row" data-issue-id="issue-2">Issue 2</div>
+                <div class="issue-row" data-issue-id="issue-3">Issue 3</div>
             </div>
         `;
     });
@@ -453,7 +453,7 @@ describe('updateKeyboardSelection', () => {
     it('selects the given index', () => {
         updateKeyboardSelection(1, setIndex);
         expect(setIndex).toHaveBeenCalledWith(1);
-        const items = document.querySelectorAll('.list-item');
+        const items = document.querySelectorAll('.issue-row');
         expect(items[1].classList.contains('keyboard-selected')).toBe(true);
         expect(items[0].classList.contains('keyboard-selected')).toBe(false);
     });
@@ -461,20 +461,20 @@ describe('updateKeyboardSelection', () => {
     it('clamps to 0 for negative index', () => {
         updateKeyboardSelection(-5, setIndex);
         expect(setIndex).toHaveBeenCalledWith(0);
-        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[0].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('clamps to last index for overflow', () => {
         updateKeyboardSelection(100, setIndex);
         expect(setIndex).toHaveBeenCalledWith(2);
-        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[2].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('removes previous selection', () => {
-        document.querySelectorAll('.list-item')[0].classList.add('keyboard-selected');
+        document.querySelectorAll('.issue-row')[0].classList.add('keyboard-selected');
         updateKeyboardSelection(2, setIndex);
-        expect(document.querySelectorAll('.list-item')[0].classList.contains('keyboard-selected')).toBe(false);
-        expect(document.querySelectorAll('.list-item')[2].classList.contains('keyboard-selected')).toBe(true);
+        expect(document.querySelectorAll('.issue-row')[0].classList.contains('keyboard-selected')).toBe(false);
+        expect(document.querySelectorAll('.issue-row')[2].classList.contains('keyboard-selected')).toBe(true);
     });
 
     it('does nothing when no list items exist', () => {
@@ -485,7 +485,7 @@ describe('updateKeyboardSelection', () => {
 
     it('scrolls selected item into view', () => {
         const scrollSpy = vi.fn();
-        document.querySelectorAll('.list-item')[1].scrollIntoView = scrollSpy;
+        document.querySelectorAll('.issue-row')[1].scrollIntoView = scrollSpy;
         updateKeyboardSelection(1, setIndex);
         expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
     });
@@ -702,6 +702,7 @@ describe('List Navigation Handler', () => {
             const event = makeEvent('s');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
             expect(actions.showInlineDropdown).toHaveBeenCalledWith(
                 event, 'status', 'issue-2',
                 document.querySelectorAll('.issue-row')[1].querySelector('.status-btn')
@@ -713,6 +714,7 @@ describe('List Navigation Handler', () => {
             const event = makeEvent('p');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
             expect(actions.showInlineDropdown).toHaveBeenCalledWith(
                 event, 'priority', 'issue-1',
                 document.querySelectorAll('.issue-row')[0].querySelector('.priority-btn')
@@ -724,6 +726,7 @@ describe('List Navigation Handler', () => {
             const event = makeEvent('a');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
+            expect(event.stopImmediatePropagation).toHaveBeenCalled();
             expect(actions.showInlineDropdown).toHaveBeenCalledWith(
                 event, 'assignee', 'issue-3',
                 document.querySelectorAll('.issue-row')[2].querySelector('.assignee-btn')
