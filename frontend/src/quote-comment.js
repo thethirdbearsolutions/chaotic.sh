@@ -37,19 +37,16 @@ function getTooltip() {
 }
 
 /**
- * Show the tooltip near the current selection.
+ * Show the tooltip near a given position (mouse coordinates).
  */
-function showTooltip(rect) {
+function showTooltip(x, y) {
     const tip = getTooltip();
     tip.style.display = 'flex';
     tooltipVisible = true;
 
-    // Position above the selection end, centered horizontally
-    const x = rect.right;
-    const y = rect.top - 6;
-
+    // Position above and slightly right of the cursor
     tip.style.left = `${x}px`;
-    tip.style.top = `${y}px`;
+    tip.style.top = `${y - 8}px`;
     tip.style.transform = 'translate(-50%, -100%)';
 
     // Ensure it stays in viewport
@@ -62,8 +59,8 @@ function showTooltip(rect) {
             tip.style.left = `${window.innerWidth - 4 - tipRect.width / 2}px`;
         }
         if (tipRect.top < 4) {
-            // Show below selection instead
-            tip.style.top = `${rect.bottom + 6}px`;
+            // Show below cursor instead
+            tip.style.top = `${y + 8}px`;
             tip.style.transform = 'translate(-50%, 0)';
         }
     });
@@ -156,7 +153,9 @@ export function quoteSelectionIntoComment() {
 /**
  * Handle mouseup to check for quotable selection and show tooltip.
  */
-function handleMouseUp() {
+function handleMouseUp(e) {
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
     // Small delay lets the selection finalize after mouseup
     setTimeout(() => {
         const text = getQuotableSelection();
@@ -164,13 +163,8 @@ function handleMouseUp() {
             hideTooltip();
             return;
         }
-        const sel = window.getSelection();
-        if (!sel.rangeCount) return;
-        const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        if (rect.width === 0 && rect.height === 0) return;
-        showTooltip(rect);
-    }, 20);
+        showTooltip(mouseX, mouseY);
+    }, 10);
 }
 
 /**
