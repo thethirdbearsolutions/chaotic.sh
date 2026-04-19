@@ -158,8 +158,7 @@ human — or another agent — does something I care about."
 
 The command hangs on stdin/stdout, exits 0 on the first matching activity,
 exits 124 on timeout. The event that caused the wake is emitted on stdout
-(rendered by default, JSON with `--json`). Transport is polling in MVP; the
-CLI contract does not change if that is later replaced with WebSockets.
+(rendered by default, JSON with `--json`).
 
 ### Subcommands
 
@@ -289,12 +288,9 @@ chaotic await sprint --include-self
   loop by re-invoking `await` from the harness.
 - The watermark (`created_at` threshold) is set internally at command
   start. Events that landed before the command started are not replayed.
-  Harnesses that crash mid-wait lose events between death and restart;
-  resume semantics will come with future watermark/cursor flags.
+  Harnesses that crash mid-wait lose events between death and restart.
 - `--until` predicates should be fast and side-effect-free — they run
   synchronously on every candidate event.
-- When the transport is upgraded from polling to WebSockets, none of the
-  above contracts change.
 
 ## Status Values
 
