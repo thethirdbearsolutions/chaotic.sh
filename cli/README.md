@@ -150,6 +150,152 @@ chaotic doc update <id>        # Update a document
 chaotic doc delete <id>        # Delete a document
 ```
 
+## Await
+
+`chaotic await` blocks until something happens in the scope you're watching,
+then exits. It's the agent-harness primitive for "park this process until a
+human — or another agent — does something I care about."
+
+The command hangs on stdin/stdout, exits 0 on the first matching activity,
+exits 124 on timeout. The event that caused the wake is emitted on stdout
+(rendered by default, JSON with `--json`). Transport is polling in MVP; the
+CLI contract does not change if that is later replaced with WebSockets.
+
+### Subcommands
+
+`chaotic await` mirrors the top-level chaotic groups. Singular subcommands
+take a positional ID and wait on that specific entity; plural subcommands
+take collection filters and wait on any matching entity.
+
+```bash
+chaotic await issue CHT-1334                  # Specific issue
+chaotic await issues --project CHT            # Any issue in project CHT
+chaotic await issues --assignee me            # Any issue assigned to me
+chaotic await doc D-91                        # Specific document
+chaotic await docs                            # Any document in current team
+chaotic await project CHT                     # Any activity in a project
+chaotic await project                         # Current project
+chaotic await sprint CHT-S24                  # Specific sprint
+chaotic await sprint                          # Current sprint
+chaotic await team platform                   # Any activity on a team
+chaotic await team                            # Current team
+```
+
+Collection filters on plurals (`issues`, `docs`) mirror the filters on the
+corresponding `list` commands: `--project`, `--sprint`, `--assignee`,
+`--author`, `--status`, etc.
+
+### Flags
+
+```
+-t, --type TYPES    Comma-separated activity types to wake on. Raw values
+                    from the backend vocabulary (commented, status_changed,
+                    assigned, unassigned, priority_changed, moved_to_sprint,
+                    removed_from_sprint, labeled, unlabeled, created,
+                    updated, ritual_attested). Default: any.
+--include-self      Wake on activity authored by the current auth principal.
+                    Default: excluded — an agent that spawns `await` as a
+                    background subprocess and keeps working should not wake
+                    itself on its own ongoing activity. Pass this flag
+                    (typically for interactive human use) to disable the
+                    filter.
+--timeout DURATION  Give up after DURATION (e.g. 30s, 5m, 8h). Default: no
+                    timeout. Exits 124 on expiry. The calling harness is
+                    free to impose its own timeout; this flag exists so
+                    timeouts can live next to the intent they constrain.
+--json              Emit the event as a single JSON object on stdout
+                    instead of rendered text.
+--until CMD         Predicate. When a candidate event would match, CMD is
+                    run with the event JSON piped to its stdin. Exit 0
+                    wakes (await prints and exits); any non-zero exit keeps
+                    polling. Lets the calling agent declare its wake
+                    condition up front so it only burns context on wakes
+                    that actually matter.
+```
+
+### Exit codes
+
+| Code | Meaning                           |
+|------|-----------------------------------|
+| 0    | Matching event received           |
+| 1    | Error (network, auth, server)     |
+| 2    | Usage error                       |
+| 124  | `--timeout` expired               |
+| 130  | Interrupted (SIGINT)              |
+
+### Event JSON schema
+
+With `--json`, a single object is emitted on stdout, mirroring the backend
+`IssueActivityFeedResponse`. Issue activities set `issue_*` fields; document
+activities set `document_*` fields; common fields are always present.
+
+```json
+{
+  "id": "act_48213",
+  "activity_type": "commented",
+  "created_at": "2026-04-19T14:22:07Z",
+  "user_id": "u_42",
+  "user_name": "ali",
+  "user_email": "ali@example.com",
+  "issue_id": "iss_9f...",
+  "issue_identifier": "CHT-1334",
+  "issue_title": "Polling await command",
+  "document_id": null,
+  "document_title": null,
+  "document_icon": null,
+  "field_name": null,
+  "old_value": null,
+  "new_value": null,
+  "sprint_name": null
+}
+```
+
+### Usage patterns
+
+**Agent parks on its current ticket.** Process blocks until a human
+comments or changes status; then the harness resumes its next turn.
+
+```bash
+chaotic await issue CHT-1334 --type commented,status_changed --timeout 8h
+```
+
+**On-call agent watching a project.** Each wake is the trigger for one
+agent turn; the harness re-enters `await` when the turn is over.
+
+```bash
+chaotic await issues --project CHT --type commented --json
+```
+
+**Narrow wake condition via `--until`.** Wake only when the ticket
+transitions to review, not on any status change. The jq predicate runs in
+a cheap subprocess per candidate; the agent itself never sees the
+non-matching events.
+
+```bash
+chaotic await issue CHT-1334 --type status_changed --json \
+  --until 'jq -e ".new_value == \"in_review\""'
+```
+
+**Interactive human use.** Pass `--include-self` so you see your own edits
+in the feed.
+
+```bash
+chaotic await sprint --include-self
+```
+
+### Notes for harness authors
+
+- `await` is single-shot by design. There is no `--follow` / tail mode;
+  loop by re-invoking `await` from the harness.
+- The watermark (`created_at` threshold) is set internally at command
+  start. Events that landed before the command started are not replayed.
+  Harnesses that crash mid-wait lose events between death and restart;
+  resume semantics will come with future watermark/cursor flags.
+- `--until` predicates should be fast and side-effect-free — they run
+  synchronously on every candidate event.
+- When the transport is upgraded from polling to WebSockets, none of the
+  above contracts change.
+
 ## Status Values
 
 - `backlog` - Not yet planned
