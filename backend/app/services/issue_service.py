@@ -2,10 +2,13 @@
 
 Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 """
+import logging
 import re
 import random
 from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
+
+logger = logging.getLogger(__name__)
 
 
 from app.oxyde_models.issue import (
@@ -263,13 +266,18 @@ class IssueService:
         """Write an OxydeIssueActivity row + broadcast to the team. Used
         for INTENT_OPENED and INTENT_CLEARED. Best-effort: failures are
         logged but do not abort the surrounding operation.
+
+        The intent type goes in `new_value` rather than `field_name`:
+        `field_name` is by convention an issue column name (status,
+        priority, sprint_id), and downstream consumers filter/group on
+        that. Putting "claim"/"close" there would pollute those buckets.
         """
         try:
             await OxydeIssueActivity.objects.create(
                 issue_id=issue.id,
                 user_id=user_id,
                 activity_type=activity_type,
-                field_name=limbo_type.value,
+                new_value=limbo_type.value,
             )
         except Exception:
             logger.exception(

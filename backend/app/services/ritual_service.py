@@ -70,7 +70,8 @@ class RitualService:
         """
         if not ritual.conditions:
             return
-        if not await self._evaluate_conditions(ritual, issue):
+        # _evaluate_conditions is a sync method that returns bool; do NOT await.
+        if not self._evaluate_conditions(ritual, issue):
             raise ValueError(
                 f"Ritual '{ritual.name}' conditions do not match issue "
                 f"{issue.identifier}; cannot attest."
@@ -689,7 +690,10 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
-        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        # Prefetch labels so _validate_conditions_match can evaluate
+        # `labels__contains` / `labels__eq` rules without silently
+        # treating issue.labels as empty.
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
         if not issue:
             raise ValueError(f"Issue '{issue_id}' not found")
         if ritual.project_id != issue.project_id:
@@ -774,6 +778,13 @@ class RitualService:
         the (ritual, issue) intent type, then clear it. Covers both
         normal flow (limbo opened by intent expression) and standalone
         attest (no prior intent — audit row created here).
+
+        When called via standalone attest (no prior intent), the
+        auto-transition MUST be suppressed: an agent who attests an
+        AUTO TICKET_CLAIM ritual on a TODO ticket without first
+        attempting to claim it must NOT silently flip the ticket to
+        IN_PROGRESS as a side effect. Auto-transition only fires for
+        intents the user actually opened.
         """
         if ritual.trigger == RitualTrigger.TICKET_CLAIM:
             limbo_type = LimboType.CLAIM
@@ -787,6 +798,7 @@ class RitualService:
             issue_id=issue_id,
             cleared_at=None,
         ).first()
+        had_prior_intent = existing is not None
         if existing is None:
             try:
                 await OxydeTicketLimbo.objects.create(
@@ -798,8 +810,12 @@ class RitualService:
             except IntegrityError:
                 # Concurrent intent open; the existing row will be
                 # cleared by the call below.
-                pass
-        await self._clear_ticket_limbo(ritual.id, issue_id, user_id)
+                had_prior_intent = True
+        # Only fire the one-step auto-transition when there was a real
+        # prior intent. Standalone attest must be a pure audit event.
+        await self._clear_ticket_limbo(
+            ritual.id, issue_id, user_id, fire_transition=had_prior_intent,
+        )
 
     async def complete_gate_ritual_for_issue(
         self,
@@ -817,7 +833,8 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
-        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        # Prefetch labels (see attest_for_issue for rationale).
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
         if not issue:
             raise ValueError(f"Issue '{issue_id}' not found")
         if ritual.project_id != issue.project_id:
@@ -952,13 +969,15 @@ class RitualService:
         await attestation.save(update_fields={"approved_by", "approved_at"})
 
         # Emit RITUAL_APPROVED before clearing limbo: the approval is the
-        # primary event; intent_cleared (if any) is downstream.
+        # primary event; intent_cleared (if any) is downstream. The
+        # ritual name goes in new_value, not field_name (field_name is
+        # by convention an issue column name).
         try:
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=approver_id,
                 activity_type=ActivityType.RITUAL_APPROVED,
-                field_name=ritual.name,
+                new_value=ritual.name,
             )
         except Exception:
             logger.exception(
@@ -1000,10 +1019,15 @@ class RitualService:
         return attestation
 
     async def _clear_ticket_limbo(
-        self, ritual_id: str, issue_id: str, cleared_by_id: str
+        self, ritual_id: str, issue_id: str, cleared_by_id: str,
+        fire_transition: bool = True,
     ) -> None:
         """Clear limbo rows for a (ritual, issue) and, if that resolves
         the last block on an intent, fire the one-step auto-transition.
+
+        fire_transition=False is used by callers that want pure audit
+        clearing without triggering the status update — notably the
+        standalone-attest path where the user never expressed intent.
         """
         limbo_records = await OxydeTicketLimbo.objects.filter(
             ritual_id=ritual_id,
@@ -1019,6 +1043,9 @@ class RitualService:
             limbo.cleared_at = now
             limbo.cleared_by_id = cleared_by_id
             await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+
+        if not fire_transition:
+            return
 
         # For each intent type whose blocks we just touched, check if any
         # blocks remain. If none, the intent is fully resolved — fire the
