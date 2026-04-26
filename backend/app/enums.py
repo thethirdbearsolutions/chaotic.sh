@@ -59,6 +59,9 @@ class ActivityType(str, Enum):
     MOVED_TO_SPRINT = "moved_to_sprint"
     REMOVED_FROM_SPRINT = "removed_from_sprint"
     RITUAL_ATTESTED = "ritual_attested"
+    RITUAL_APPROVED = "ritual_approved"
+    INTENT_OPENED = "intent_opened"
+    INTENT_CLEARED = "intent_cleared"
 
 
 # --- Sprint enums ---

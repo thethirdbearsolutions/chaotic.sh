@@ -20,6 +20,7 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
 from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.user import OxydeUser
 
 
 class RitualService:
@@ -27,6 +28,76 @@ class RitualService:
 
     def __init__(self, db=None):
         self.db = db  # Kept for API compat during transition; not used by Oxyde
+
+    # ------------------------------------------------------------------
+    # Service-layer validation helpers. These run regardless of caller
+    # (HTTP API, internal task, future webhook) so the API layer is not
+    # the only enforcement boundary.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_note(ritual: "OxydeRitual", note: str | None) -> None:
+        """Reject empty/whitespace-only notes when the ritual requires one.
+        Applies to all attestation/completion paths, not just attest.
+        """
+        if ritual.note_required and not (note and note.strip()):
+            raise ValueError(
+                f"Ritual '{ritual.name}' requires a note. "
+                f"Prompt: {ritual.prompt}"
+            )
+
+    async def _validate_not_agent_for_gate(
+        self, ritual: "OxydeRitual", user_id: str
+    ) -> None:
+        """GATE rituals can only be performed by humans. The is_agent
+        check lives at the service layer so internal callers (background
+        tasks, future webhooks) can't bypass the human-only invariant.
+        """
+        if ritual.approval_mode != ApprovalMode.GATE:
+            return
+        user = await OxydeUser.objects.get_or_none(id=user_id)
+        if user is not None and user.is_agent:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is GATE mode and requires a human. "
+                f"Agents cannot attest or complete GATE rituals."
+            )
+
+    async def _validate_conditions_match(
+        self, ritual: "OxydeRitual", issue: "OxydeIssue"
+    ) -> None:
+        """Re-evaluate ritual conditions against the issue at attest time.
+        Listing-time selection is advisory; this is enforcement.
+        """
+        if not ritual.conditions:
+            return
+        if not await self._evaluate_conditions(ritual, issue):
+            raise ValueError(
+                f"Ritual '{ritual.name}' conditions do not match issue "
+                f"{issue.identifier}; cannot attest."
+            )
+
+    async def _validate_group_selection(
+        self, ritual: "OxydeRitual", issue_id: str
+    ) -> None:
+        """For RANDOM_ONE/ROUND_ROBIN groups, only the selected ritual
+        may be attested. Without this, group selection is purely advisory
+        and any ritual in the group can clear the gate.
+        """
+        if not ritual.group_id:
+            return
+        group = await OxydeRitualGroup.objects.get_or_none(id=ritual.group_id)
+        if group is None:
+            return
+        if group.selection_mode == SelectionMode.PERCENTAGE:
+            # Independent rolls per ritual; selection is per-ritual, not per-group.
+            return
+        if group.selection_mode in (SelectionMode.RANDOM_ONE, SelectionMode.ROUND_ROBIN):
+            selected_id = group.last_selected_ritual_id
+            if selected_id and selected_id != ritual.id:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' is not the selected ritual in "
+                    f"group '{group.name}'; choose the selected ritual instead."
+                )
 
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
         """Create a new ritual for a project."""
@@ -528,11 +599,13 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
+        await self._validate_not_agent_for_gate(ritual, user_id)
         if ritual.approval_mode == ApprovalMode.GATE:
             raise ValueError(
-                f"Ritual '{ritual.name}' requires human completion (gate mode). "
-                "Use the web UI to complete this ritual."
+                f"Ritual '{ritual.name}' is GATE mode. "
+                "Use complete_gate_ritual to perform it."
             )
+        self._validate_note(ritual, note)
 
         ritual_id = ritual.id
 
@@ -595,27 +668,23 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = issue.status.value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
-                raise ValueError(
-                    f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue_status_str}. "
-                    "TICKET_CLOSE rituals are for issues being closed, not already closed."
-                )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
-                raise ValueError(
-                    f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue_status_str}. "
-                    "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
-                )
-
+        # Attest is decoupled from the gate: the gate fires at the actual
+        # status transition (in IssueService), so attestation is allowed
+        # in any status — including retroactive record-keeping after the
+        # transition already occurred. The trigger names express intent
+        # (which rituals to list when), not enforcement at attest time.
+        await self._validate_not_agent_for_gate(ritual, user_id)
         if ritual.approval_mode == ApprovalMode.GATE:
+            # Humans use complete_gate_ritual_for_issue, which both attests
+            # and approves in one step. Direct attest on a GATE ritual is
+            # the wrong entry point — route the caller to the right path.
             raise ValueError(
-                f"Ritual '{ritual.name}' requires human completion (gate mode). "
-                "Use the web UI to complete this ritual."
+                f"Ritual '{ritual.name}' is GATE mode. "
+                "Use complete_gate_ritual_for_issue to perform it."
             )
+        self._validate_note(ritual, note)
+        await self._validate_conditions_match(ritual, issue)
+        await self._validate_group_selection(ritual, issue_id)
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -677,21 +746,16 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = issue.status.value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
-                raise ValueError(
-                    f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue_status_str}. "
-                    "TICKET_CLOSE rituals are for issues being closed, not already closed."
-                )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
-                raise ValueError(
-                    f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue_status_str}. "
-                    "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
-                )
+        # Decoupled from the status gate (same reasoning as attest_for_issue).
+        if ritual.approval_mode != ApprovalMode.GATE:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is not a GATE ritual. "
+                "Use attest_for_issue instead."
+            )
+        await self._validate_not_agent_for_gate(ritual, user_id)
+        self._validate_note(ritual, note)
+        await self._validate_conditions_match(ritual, issue)
+        await self._validate_group_selection(ritual, issue_id)
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -734,10 +798,44 @@ class RitualService:
 
         return attestation
 
+    async def _validate_approve_mode_and_pending(
+        self, attestation: OxydeRitualAttestation, expected_trigger: "RitualTrigger | None" = None,
+    ) -> "OxydeRitual":
+        """Service-layer guards for approve(): the attestation's ritual
+        must be REVIEW mode (AUTO is auto-approved at write; GATE is
+        approved-on-attestation), the attestation must not already be
+        approved, and the trigger must match the call site (sprint vs
+        issue).
+        """
+        if attestation.approved_at is not None:
+            raise ValueError(
+                "Attestation is already approved; cannot approve again."
+            )
+        ritual = await OxydeRitual.objects.get_or_none(id=attestation.ritual_id)
+        if ritual is None:
+            raise ValueError(
+                f"Attestation references missing ritual {attestation.ritual_id}."
+            )
+        if ritual.approval_mode != ApprovalMode.REVIEW:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is {ritual.approval_mode.value} mode; "
+                "only REVIEW attestations require explicit approval."
+            )
+        if expected_trigger is not None and ritual.trigger != expected_trigger:
+            raise ValueError(
+                f"Ritual '{ritual.name}' has trigger={ritual.trigger.value}; "
+                f"this approve path requires trigger={expected_trigger.value}."
+            )
+        return ritual
+
     async def approve(
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
-        """Approve a ritual attestation (for REVIEW/GATE modes)."""
+        """Approve a sprint-level REVIEW ritual attestation."""
+        await self._validate_approve_mode_and_pending(
+            attestation, expected_trigger=RitualTrigger.EVERY_SPRINT,
+        )
+
         attestation.approved_by = approver_id
         attestation.approved_at = datetime.now(timezone.utc)
         await attestation.save(update_fields={"approved_by", "approved_at"})
@@ -749,7 +847,17 @@ class RitualService:
     async def approve_for_issue(
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
-        """Approve a ticket-close ritual attestation (for REVIEW mode)."""
+        """Approve a ticket-level REVIEW ritual attestation."""
+        # Either ticket-level trigger is acceptable here; we allow both.
+        ritual = await self._validate_approve_mode_and_pending(attestation)
+        if ritual.trigger not in (
+            RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM,
+        ):
+            raise ValueError(
+                f"Ritual '{ritual.name}' has trigger={ritual.trigger.value}; "
+                "ticket-level approve requires TICKET_CLOSE or TICKET_CLAIM."
+            )
+
         ritual_id = attestation.ritual_id
         issue_id = attestation.issue_id
 
@@ -840,6 +948,13 @@ class RitualService:
                 f"Only rituals with trigger=EVERY_SPRINT can be completed for sprints. "
                 f"This ritual has trigger={ritual.trigger.value}."
             )
+        if ritual.approval_mode != ApprovalMode.GATE:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is not a GATE ritual. "
+                "Use attest instead."
+            )
+        await self._validate_not_agent_for_gate(ritual, user_id)
+        self._validate_note(ritual, note)
 
         ritual_id = ritual.id
 

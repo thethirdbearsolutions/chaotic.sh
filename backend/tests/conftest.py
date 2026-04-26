@@ -285,6 +285,9 @@ CREATE TABLE IF NOT EXISTS ticket_limbo (
     cleared_at DATETIME,
     cleared_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_open_intent
+    ON ticket_limbo (issue_id, limbo_type)
+    WHERE cleared_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS ritual_attestations (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -297,6 +300,12 @@ CREATE TABLE IF NOT EXISTS ritual_attestations (
     approved_by VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
     approved_at DATETIME
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_issue
+    ON ritual_attestations (ritual_id, issue_id)
+    WHERE issue_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_sprint
+    ON ritual_attestations (ritual_id, sprint_id)
+    WHERE sprint_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS oxyde_migrations (
     id INTEGER PRIMARY KEY,
