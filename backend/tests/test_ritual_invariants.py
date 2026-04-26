@@ -377,7 +377,7 @@ class TestSoftDeleteHandling:
         from app.enums import LimboType
         rows = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE.value,
+            limbo_type=LimboType.CLOSE.name,
         ).all()
         assert len(rows) == 1
         assert rows[0].cleared_at is not None, (

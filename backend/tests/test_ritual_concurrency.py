@@ -125,7 +125,7 @@ class TestExclusiveIntentLockUnderConcurrency:
         # creating a parallel limbo row.
         rows = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLAIM.value,
+            limbo_type=LimboType.CLAIM.name,
             cleared_at=None,
         ).all()
         assert len(rows) == 1, (

@@ -81,6 +81,26 @@ class TicketRitualsError(Exception):
         )
 
 
+class IntentInFlightError(Exception):
+    """Raised when an intent (claim/close) is already open on a ticket
+    by another principal. The ticket is locked under the unified
+    intent+limbo model — second claimants cannot stack new intents on
+    top of an existing open one.
+    """
+
+    def __init__(
+        self, issue_id: str, intent_type: str, initiator_user_id: str
+    ):
+        self.issue_id = issue_id
+        self.intent_type = intent_type
+        self.initiator_user_id = initiator_user_id
+        super().__init__(
+            f"{intent_type} intent already in flight on ticket {issue_id} "
+            f"(initiated by {initiator_user_id}). Wait for the open intent "
+            "to clear or be cancelled."
+        )
+
+
 class ClaimRitualsError(Exception):
     """Raised when ticket has pending claim rituals and cannot be claimed."""
 
@@ -172,10 +192,115 @@ class IssueService:
         if current_sprint.budget is not None and current_sprint.points_spent > current_sprint.budget:
             raise SprintInArrearsError(current_sprint.budget, current_sprint.points_spent)
 
+    async def _enforce_exclusive_intent_lock(
+        self, issue_id: str, limbo_type: "LimboType", requesting_user_id: str,
+    ) -> "OxydeTicketLimbo | None":
+        """Check whether an open intent of this type exists on the
+        ticket. Returns the canonical 'lock-holder' row if the requester
+        owns the existing intent (so they can be told to attest, same
+        as before). Raises IntentInFlightError if a different principal
+        owns the intent.
+        """
+        existing = await OxydeTicketLimbo.objects.filter(
+            issue_id=issue_id,
+            limbo_type=limbo_type.name,
+            cleared_at=None,
+        ).all()
+        if not existing:
+            return None
+        # All open rows of a given (issue, type) belong to one intent.
+        # The requested_by_id of any row identifies the initiator.
+        initiator = existing[0].requested_by_id
+        if initiator != requesting_user_id:
+            raise IntentInFlightError(
+                issue_id=issue_id,
+                intent_type=limbo_type.name,
+                initiator_user_id=initiator,
+            )
+        return existing[0]
+
+    async def _open_intent_with_limbo(
+        self,
+        issue,
+        user_id: str,
+        is_human_request: bool,
+        pending_rituals: list,
+        limbo_type: "LimboType",
+        error_class: type,
+    ) -> None:
+        """Generalized intent-open: enforce exclusive lock, create limbo
+        rows for ALL pending rituals (not just GATE), then raise the
+        appropriate ClaimRitualsError / TicketRitualsError so the caller
+        knows which rituals to attest.
+
+        AUTO-mode rituals get a limbo row that's cleared in the same
+        transaction by the AUTO attestation pathway when it runs — for
+        non-attested AUTO rituals, the intent itself records the gap.
+        """
+        if not pending_rituals:
+            return
+
+        existing_lock = await self._enforce_exclusive_intent_lock(
+            issue.id, limbo_type, user_id,
+        )
+
+        if existing_lock is None:
+            for ritual in pending_rituals:
+                await self._create_limbo_record(
+                    issue.id, ritual.id, limbo_type, user_id,
+                )
+            await self._emit_intent_event(
+                issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
+            )
+
+        pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
+        raise error_class(issue.identifier, pending_info)
+
+    async def _emit_intent_event(
+        self, issue, user_id: str, limbo_type: "LimboType",
+        activity_type: "ActivityType",
+    ) -> None:
+        """Write an OxydeIssueActivity row + broadcast to the team. Used
+        for INTENT_OPENED and INTENT_CLEARED. Best-effort: failures are
+        logged but do not abort the surrounding operation.
+        """
+        try:
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue.id,
+                user_id=user_id,
+                activity_type=activity_type,
+                field_name=limbo_type.value,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write %s activity for issue=%s",
+                activity_type.value, issue.id,
+            )
+
+        try:
+            from app.websocket import broadcast_activity_event
+            project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+            if project is not None:
+                await broadcast_activity_event(
+                    project.team_id,
+                    activity_type.value,
+                    {
+                        "issue_id": issue.id,
+                        "issue_identifier": issue.identifier,
+                        "limbo_type": limbo_type.value,
+                        "user_id": user_id,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast %s for issue=%s",
+                activity_type.value, issue.id,
+            )
+
     async def _check_ticket_rituals(
         self, issue, user_id: str, is_human_request: bool = False
     ) -> None:
-        """Check if ticket has pending rituals and raise error if so."""
+        """Check if ticket has pending rituals; open intent + limbo + raise."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
@@ -186,20 +311,15 @@ class IssueService:
             issue.project_id, issue.id
         )
 
-        if pending_rituals:
-            for ritual in pending_rituals:
-                if ritual.approval_mode == ApprovalMode.GATE:
-                    await self._create_limbo_record(
-                        issue.id, ritual.id, LimboType.CLOSE, user_id
-                    )
-
-            pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-            raise TicketRitualsError(issue.identifier, pending_info)
+        await self._open_intent_with_limbo(
+            issue, user_id, is_human_request,
+            pending_rituals, LimboType.CLOSE, TicketRitualsError,
+        )
 
     async def _check_claim_rituals(
         self, issue, user_id: str, is_human_request: bool = False
     ) -> None:
-        """Check if ticket has pending claim rituals and raise error if so."""
+        """Check if ticket has pending claim rituals; open intent + limbo + raise."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
@@ -210,15 +330,10 @@ class IssueService:
             issue.project_id, issue.id
         )
 
-        if pending_rituals:
-            for ritual in pending_rituals:
-                if ritual.approval_mode == ApprovalMode.GATE:
-                    await self._create_limbo_record(
-                        issue.id, ritual.id, LimboType.CLAIM, user_id
-                    )
-
-            pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-            raise ClaimRitualsError(issue.identifier, pending_info)
+        await self._open_intent_with_limbo(
+            issue, user_id, is_human_request,
+            pending_rituals, LimboType.CLAIM, ClaimRitualsError,
+        )
 
     async def _deduct_from_sprint_budget(self, issue, user_id: str | None = None) -> None:
         """Deduct issue estimate from the current sprint's budget."""
@@ -257,6 +372,50 @@ class IssueService:
         await execute_raw(
             "UPDATE sprints SET points_spent = points_spent + ? WHERE id = ?",
             [points, current_sprint.id],
+        )
+
+    async def apply_intent_transition(
+        self, issue_id: str, limbo_type_name: str, user_id: str,
+    ) -> None:
+        """Fire the auto-transition for a fully-cleared intent.
+
+        Called by RitualService when the last limbo block on an intent
+        is resolved. Bypasses ritual checks because the gate has already
+        been resolved by the limbo lifecycle. Emits INTENT_CLEARED
+        activity + broadcast as the canonical wake event for the agent's
+        await primitive.
+        """
+        from app.enums import LimboType
+        from app.schemas.issue import IssueUpdate
+
+        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        if issue is None:
+            return
+        try:
+            limbo_type = LimboType[limbo_type_name]
+        except KeyError:
+            return
+
+        if limbo_type == LimboType.CLAIM:
+            new_status = IssueStatus.IN_PROGRESS
+        elif limbo_type == LimboType.CLOSE:
+            new_status = IssueStatus.DONE
+        else:
+            return
+
+        if issue.status == new_status:
+            return
+
+        await self.update(
+            issue,
+            IssueUpdate(status=new_status),
+            user_id=user_id,
+            is_human_request=False,
+            skip_ritual_check=True,
+        )
+
+        await self._emit_intent_event(
+            issue, user_id, limbo_type, ActivityType.INTENT_CLEARED,
         )
 
     async def _create_limbo_record(
@@ -409,9 +568,18 @@ class IssueService:
             ).join("creator").prefetch("labels").first()
 
     async def update(
-        self, issue, issue_in: IssueUpdate, user_id: str | None = None, is_human_request: bool = True
+        self, issue, issue_in: IssueUpdate, user_id: str | None = None,
+        is_human_request: bool = True,
+        skip_ritual_check: bool = False,
     ) -> OxydeIssue:
-        """Update an issue and log activity."""
+        """Update an issue and log activity.
+
+        skip_ritual_check is used by the one-step intent transition: once
+        an intent's limbo has fully cleared (rituals satisfied by
+        attestation/approval), the auto-transition fires by calling this
+        method with skip_ritual_check=True. The ritual check is bypassed
+        because the gate has already been resolved by the limbo lifecycle.
+        """
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids"})
 
         # Track changes for activity log
@@ -462,10 +630,12 @@ class IssueService:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
-                await self._check_claim_rituals(issue, user_id, is_human_request)
+                if not skip_ritual_check:
+                    await self._check_claim_rituals(issue, user_id, is_human_request)
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
-                await self._check_ticket_rituals(issue, user_id, is_human_request)
+                if not skip_ritual_check:
+                    await self._check_ticket_rituals(issue, user_id, is_human_request)
 
             blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
             if new_status in blocked_statuses and old_status != new_status:

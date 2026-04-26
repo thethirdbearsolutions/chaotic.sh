@@ -40,10 +40,14 @@ from app.services.ritual_service import RitualService
 # ---------------------------------------------------------------------------
 
 async def _open_limbo_rows(issue_id: str, limbo_type: LimboType) -> list[OxydeTicketLimbo]:
-    """All unresolved limbo rows for an (issue, type)."""
+    """All unresolved limbo rows for an (issue, type).
+
+    Storage convention is `LimboType.name` (uppercase) — see
+    IssueService._create_limbo_record.
+    """
     rows = await OxydeTicketLimbo.objects.filter(
         issue_id=issue_id,
-        limbo_type=limbo_type.value,
+        limbo_type=limbo_type.name,
         cleared_at=None,
     ).all()
     return rows
@@ -112,7 +116,7 @@ class TestIntentOpenCreatesLimboForAllModes:
 
         rows = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLAIM.value,
+            limbo_type=LimboType.CLAIM.name,
         ).all()
         assert len(rows) == 1, (
             "AUTO mode is pass-through but must still leave a limbo row as "
@@ -304,7 +308,7 @@ class TestAutoPassThroughCreatesAuditRow:
 
         all_rows = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLAIM.value,
+            limbo_type=LimboType.CLAIM.name,
         ).all()
         assert len(all_rows) == 1, (
             "AUTO attest must leave a limbo row for audit, even though "

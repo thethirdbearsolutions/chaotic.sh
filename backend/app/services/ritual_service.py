@@ -642,7 +642,36 @@ class RitualService:
                 sprint_id,
             )
 
+        # Broadcast sprint attest. Sprint-level events were silent before;
+        # without this, frontends and the agent await primitive can't see
+        # them.
+        await self._broadcast_sprint_event(
+            ritual, sprint_id, "ritual_attested",
+            {"ritual_id": ritual.id, "ritual_name": ritual.name,
+             "sprint_id": sprint_id, "attestation_id": attestation.id},
+        )
+
         return attestation
+
+    async def _broadcast_sprint_event(
+        self, ritual: OxydeRitual, sprint_id: str,
+        event_type: str, payload: dict,
+    ) -> None:
+        """Broadcast a sprint-level attestation event. Best-effort."""
+        try:
+            from app.oxyde_models.project import OxydeProject as _OP
+            from app.websocket import broadcast_attestation_event
+            project = await _OP.objects.get_or_none(id=ritual.project_id)
+            if project is None:
+                return
+            await broadcast_attestation_event(
+                project.team_id, event_type, payload,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast sprint event %s for ritual=%s sprint=%s",
+                event_type, ritual.id, sprint_id,
+            )
 
     async def attest_for_issue(
         self,
@@ -720,7 +749,57 @@ class RitualService:
                 return existing
             raise
 
+        # AUTO attestation is also approval — it clears limbo (and may fire
+        # the one-step auto-transition if it's the last block). If there's
+        # no existing limbo (standalone attest with no prior intent
+        # expression), ensure one exists so the state-machine event has an
+        # audit row, then clear it.
+        if ritual.approval_mode == ApprovalMode.AUTO:
+            try:
+                await self._ensure_and_clear_limbo_for_attest(
+                    ritual, issue_id, user_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clear ticket limbo after AUTO attest "
+                    "ritual=%s issue=%s", ritual_id, issue_id,
+                )
+
         return attestation
+
+    async def _ensure_and_clear_limbo_for_attest(
+        self, ritual: OxydeRitual, issue_id: str, user_id: str,
+    ) -> None:
+        """For AUTO attestations: guarantee a limbo audit row exists for
+        the (ritual, issue) intent type, then clear it. Covers both
+        normal flow (limbo opened by intent expression) and standalone
+        attest (no prior intent — audit row created here).
+        """
+        if ritual.trigger == RitualTrigger.TICKET_CLAIM:
+            limbo_type = LimboType.CLAIM
+        elif ritual.trigger == RitualTrigger.TICKET_CLOSE:
+            limbo_type = LimboType.CLOSE
+        else:
+            return
+
+        existing = await OxydeTicketLimbo.objects.filter(
+            ritual_id=ritual.id,
+            issue_id=issue_id,
+            cleared_at=None,
+        ).first()
+        if existing is None:
+            try:
+                await OxydeTicketLimbo.objects.create(
+                    issue_id=issue_id,
+                    ritual_id=ritual.id,
+                    limbo_type=limbo_type.name,
+                    requested_by_id=user_id,
+                )
+            except IntegrityError:
+                # Concurrent intent open; the existing row will be
+                # cleared by the call below.
+                pass
+        await self._clear_ticket_limbo(ritual.id, issue_id, user_id)
 
     async def complete_gate_ritual_for_issue(
         self,
@@ -832,7 +911,7 @@ class RitualService:
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
         """Approve a sprint-level REVIEW ritual attestation."""
-        await self._validate_approve_mode_and_pending(
+        ritual = await self._validate_approve_mode_and_pending(
             attestation, expected_trigger=RitualTrigger.EVERY_SPRINT,
         )
 
@@ -841,6 +920,13 @@ class RitualService:
         await attestation.save(update_fields={"approved_by", "approved_at"})
 
         await self._maybe_clear_limbo(attestation.sprint_id)
+
+        await self._broadcast_sprint_event(
+            ritual, attestation.sprint_id, "ritual_approved",
+            {"ritual_id": ritual.id, "ritual_name": ritual.name,
+             "sprint_id": attestation.sprint_id,
+             "attestation_id": attestation.id},
+        )
 
         return attestation
 
@@ -865,6 +951,44 @@ class RitualService:
         attestation.approved_at = datetime.now(timezone.utc)
         await attestation.save(update_fields={"approved_by", "approved_at"})
 
+        # Emit RITUAL_APPROVED before clearing limbo: the approval is the
+        # primary event; intent_cleared (if any) is downstream.
+        try:
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue_id,
+                user_id=approver_id,
+                activity_type=ActivityType.RITUAL_APPROVED,
+                field_name=ritual.name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write RITUAL_APPROVED activity for issue=%s",
+                issue_id,
+            )
+
+        try:
+            from app.websocket import broadcast_attestation_event
+            issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+            project = None
+            if issue is not None:
+                from app.oxyde_models.project import OxydeProject as _OP
+                project = await _OP.objects.get_or_none(id=issue.project_id)
+            if project is not None:
+                await broadcast_attestation_event(
+                    project.team_id,
+                    "ritual_approved",
+                    {
+                        "ritual_id": ritual_id,
+                        "ritual_name": ritual.name,
+                        "issue_id": issue_id,
+                        "attestation_id": attestation.id,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast ritual_approved for issue=%s", issue_id,
+            )
+
         try:
             await self._clear_ticket_limbo(ritual_id, issue_id, approver_id)
         except Exception:
@@ -878,17 +1002,47 @@ class RitualService:
     async def _clear_ticket_limbo(
         self, ritual_id: str, issue_id: str, cleared_by_id: str
     ) -> None:
-        """Clear all limbo records for a ritual/issue combo."""
+        """Clear limbo rows for a (ritual, issue) and, if that resolves
+        the last block on an intent, fire the one-step auto-transition.
+        """
         limbo_records = await OxydeTicketLimbo.objects.filter(
             ritual_id=ritual_id,
             issue_id=issue_id,
             cleared_at=None,
         ).all()
+        if not limbo_records:
+            return
+
+        cleared_types = {row.limbo_type for row in limbo_records}
         now = datetime.now(timezone.utc)
         for limbo in limbo_records:
             limbo.cleared_at = now
             limbo.cleared_by_id = cleared_by_id
             await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+
+        # For each intent type whose blocks we just touched, check if any
+        # blocks remain. If none, the intent is fully resolved — fire the
+        # auto-transition. This is the one-step semantic: the agent's
+        # original intent is honored without a re-attempt.
+        for limbo_type_name in cleared_types:
+            remaining = await OxydeTicketLimbo.objects.filter(
+                issue_id=issue_id,
+                limbo_type=limbo_type_name,
+                cleared_at=None,
+            ).all()
+            if remaining:
+                continue
+            # Lazy import to avoid circular IssueService <-> RitualService.
+            from app.services.issue_service import IssueService
+            try:
+                await IssueService().apply_intent_transition(
+                    issue_id, limbo_type_name, cleared_by_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Auto-transition failed for issue=%s limbo_type=%s",
+                    issue_id, limbo_type_name,
+                )
 
     async def _cleanup_orphaned_ticket_limbo(self, project_id: str) -> int:
         """Clear orphaned ticket limbo records where attestation already exists."""
@@ -986,6 +1140,12 @@ class RitualService:
                 "Failed to check/clear limbo for sprint=%s after gate completion",
                 sprint_id,
             )
+
+        await self._broadcast_sprint_event(
+            ritual, sprint_id, "ritual_completed",
+            {"ritual_id": ritual_id, "ritual_name": ritual.name,
+             "sprint_id": sprint_id, "attestation_id": attestation.id},
+        )
 
         return attestation
 
