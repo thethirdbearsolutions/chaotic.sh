@@ -335,7 +335,9 @@ async def force_clear_ticket_limbo(
     current_user: CurrentUser,
 ):
     """Force-clear ticket-level limbo for a specific issue (admin only)."""
-    from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+    from app.oxyde_models.issue import (
+        OxydeIssue, OxydeTicketLimbo, OxydeTicketLimboBlocker,
+    )
 
     issue_service = IssueService()
     team_service = TeamService()
@@ -375,6 +377,16 @@ async def force_clear_ticket_limbo(
 
     now = datetime.now(timezone.utc)
     for limbo in limbo_records:
+        # Resolve any unresolved blockers under this intent so the
+        # audit trail records the force-clear action against each
+        # blocking ritual.
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=limbo.id, resolved_at=None,
+        ).all()
+        for blocker in blockers:
+            blocker.resolved_at = now
+            blocker.resolved_by_id = current_user.id
+            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
         limbo.cleared_at = now
         limbo.cleared_by_id = current_user.id
         await limbo.save(update_fields={"cleared_at", "cleared_by_id"})

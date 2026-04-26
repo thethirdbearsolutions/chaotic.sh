@@ -19,6 +19,7 @@ from app.oxyde_models.issue import (
     OxydeIssueRelation,
     OxydeIssueLabel,
     OxydeTicketLimbo,
+    OxydeTicketLimboBlocker,
     OxydeBudgetTransaction,
 )
 from app.oxyde_models.ritual import (
@@ -47,6 +48,7 @@ __all__ = [
     "OxydeIssueRelation",
     "OxydeIssueLabel",
     "OxydeTicketLimbo",
+    "OxydeTicketLimboBlocker",
     "OxydeBudgetTransaction",
     "OxydeRitual",
     "OxydeRitualGroup",

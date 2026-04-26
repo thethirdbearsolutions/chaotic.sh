@@ -278,7 +278,6 @@ CREATE TABLE IF NOT EXISTS issue_relations (
 CREATE TABLE IF NOT EXISTS ticket_limbo (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
     limbo_type VARCHAR(5) NOT NULL,
     requested_by_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     requested_at DATETIME NOT NULL,
@@ -288,6 +287,16 @@ CREATE TABLE IF NOT EXISTS ticket_limbo (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_open_intent
     ON ticket_limbo (issue_id, limbo_type)
     WHERE cleared_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ticket_limbo_blockers (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    limbo_id VARCHAR(36) NOT NULL REFERENCES ticket_limbo(id) ON DELETE CASCADE,
+    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
+    resolved_at DATETIME,
+    resolved_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_blocker
+    ON ticket_limbo_blockers (limbo_id, ritual_id);
 
 CREATE TABLE IF NOT EXISTS ritual_attestations (
     id VARCHAR(36) NOT NULL PRIMARY KEY,

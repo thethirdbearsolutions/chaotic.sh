@@ -146,24 +146,39 @@ class TestIntentOpenCreatesLimboForAllModes:
         )
 
     @pytest.mark.asyncio
-    async def test_multiple_pending_rituals_create_one_limbo_row_each(
+    async def test_multiple_pending_rituals_create_one_intent_with_blockers(
         self, db, test_issue, test_user, make_ritual
     ):
-        # Three rituals, three modes — all must create limbo.
-        await make_ritual(
+        # Three rituals, three modes. The unified model creates ONE
+        # intent row with three blocker rows (one per pending ritual).
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
+        r_auto = await make_ritual(
             name="r_auto", trigger=RitualTrigger.TICKET_CLAIM, approval_mode=ApprovalMode.AUTO,
         )
-        await make_ritual(
+        r_review = await make_ritual(
             name="r_review", trigger=RitualTrigger.TICKET_CLAIM, approval_mode=ApprovalMode.REVIEW,
         )
-        await make_ritual(
+        r_gate = await make_ritual(
             name="r_gate", trigger=RitualTrigger.TICKET_CLAIM, approval_mode=ApprovalMode.GATE,
         )
         with pytest.raises(ClaimRitualsError):
             await _try_claim(test_issue, test_user.id)
 
-        rows = await _open_limbo_rows(test_issue.id, LimboType.CLAIM)
-        assert len(rows) == 3, "Each pending ritual gets its own limbo block."
+        intents = await _open_limbo_rows(test_issue.id, LimboType.CLAIM)
+        assert len(intents) == 1, (
+            "Exclusive intent lock: exactly one open intent per "
+            "(issue, type) regardless of how many rituals block it."
+        )
+
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=intents[0].id, resolved_at=None,
+        ).all()
+        assert len(blockers) == 3, (
+            "Each pending ritual gets its own blocker row under the "
+            "single intent."
+        )
+        assert {b.ritual_id for b in blockers} == {r_auto.id, r_review.id, r_gate.id}
 
 
 # ---------------------------------------------------------------------------

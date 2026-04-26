@@ -58,11 +58,23 @@ class TestRequiredUniqueConstraintsPresent:
     * ritual_attestations(ritual_id, sprint_id) — sprint attestations
     * ritual_attestations(ritual_id, issue_id)  — issue attestations
     * ticket_limbo(issue_id, limbo_type) WHERE cleared_at IS NULL
-      — exclusive intent lock
-
-    Today none of these exist — finding #15 and the new exclusive-lock
-    requirement.
+      — exclusive intent lock (one open intent per issue+type)
+    * ticket_limbo_blockers(limbo_id, ritual_id) — one blocker row
+      per ritual under a given intent
     """
+
+    def test_ticket_limbo_blocker_unique_per_ritual(self):
+        """Each (intent, ritual) pair appears at most once as a blocker."""
+        schema = _load_conftest_schema()
+        pattern = re.compile(
+            r"UNIQUE\s+INDEX[^(]*\(\s*[\"']?limbo_id[\"']?\s*,"
+            r"\s*[\"']?ritual_id[\"']?\s*\)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert pattern.search(schema), (
+            "Test schema must declare UNIQUE(limbo_id, ritual_id) on "
+            "ticket_limbo_blockers to prevent duplicate blocker rows."
+        )
 
     def test_ritual_attestations_unique_on_ritual_and_issue(self):
         schema = _load_conftest_schema()

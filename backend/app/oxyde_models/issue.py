@@ -97,11 +97,19 @@ class OxydeIssueLabel(OxydeModel):
 
 
 class OxydeTicketLimbo(OxydeModel):
-    """Tracks tickets blocked by GATE rituals."""
+    """One row per open intent on a ticket.
+
+    Under the unified intent+limbo model, a single limbo row
+    represents the user's intent to claim or close a ticket. The
+    rituals blocking that intent live in the child
+    `ticket_limbo_blockers` table — one blocker row per pending
+    ritual. The intent is fully resolved when all of its blockers
+    have `resolved_at` set; at that point `cleared_at` is stamped on
+    the parent and the one-step auto-transition fires.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field()
-    ritual_id: str = Field()
     limbo_type: str = Field()
     requested_by_id: str = Field()
     requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -111,6 +119,25 @@ class OxydeTicketLimbo(OxydeModel):
     class Meta:
         is_table = True
         table_name = "ticket_limbo"
+
+
+class OxydeTicketLimboBlocker(OxydeModel):
+    """One row per ritual blocking an intent.
+
+    Lives under a parent `OxydeTicketLimbo`. Resolved (attested or
+    approved) blockers carry `resolved_at` / `resolved_by_id`. When
+    every blocker for a limbo is resolved, the parent intent fires.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    limbo_id: str = Field()
+    ritual_id: str = Field()
+    resolved_at: datetime | None = Field(default=None)
+    resolved_by_id: str | None = Field(default=None)
+
+    class Meta:
+        is_table = True
+        table_name = "ticket_limbo_blockers"
 
 
 class OxydeBudgetTransaction(OxydeModel):

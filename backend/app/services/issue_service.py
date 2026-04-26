@@ -18,6 +18,7 @@ from app.oxyde_models.issue import (
     OxydeIssueRelation,
     OxydeIssueLabel,
     OxydeTicketLimbo,
+    OxydeTicketLimboBlocker,
     OxydeBudgetTransaction,
 )
 from app.oxyde_models.label import OxydeLabel
@@ -231,30 +232,68 @@ class IssueService:
         limbo_type: "LimboType",
         error_class: type,
     ) -> None:
-        """Generalized intent-open: enforce exclusive lock, create limbo
-        rows for ALL pending rituals (not just GATE), then raise the
-        appropriate ClaimRitualsError / TicketRitualsError so the caller
-        knows which rituals to attest.
+        """Generalized intent-open under the unified intent+limbo model.
 
-        AUTO-mode rituals get a limbo row that's cleared in the same
-        transaction by the AUTO attestation pathway when it runs — for
-        non-attested AUTO rituals, the intent itself records the gap.
+        Wraps the open in a transaction so concurrent claimants
+        serialize: the partial UNIQUE on `ticket_limbo(issue_id,
+        limbo_type) WHERE cleared_at IS NULL` plus `BEGIN IMMEDIATE`
+        (SQLite) means the second writer to commit gets an
+        IntegrityError, then re-checks the lock and raises
+        IntentInFlightError. This is the race-safe counterpart to the
+        select-then-act check in `_enforce_exclusive_intent_lock`,
+        which is sufficient for sequential calls.
+
+        For each pending ritual, inserts a child blocker row pointing
+        at the parent intent. INTENT_OPENED activity + broadcast fires
+        once per intent (not per blocker).
         """
         if not pending_rituals:
             return
 
-        existing_lock = await self._enforce_exclusive_intent_lock(
-            issue.id, limbo_type, user_id,
-        )
-
-        if existing_lock is None:
-            for ritual in pending_rituals:
-                await self._create_limbo_record(
-                    issue.id, ritual.id, limbo_type, user_id,
-                )
-            await self._emit_intent_event(
-                issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
+        async with atomic():
+            existing_lock = await self._enforce_exclusive_intent_lock(
+                issue.id, limbo_type, user_id,
             )
+
+            if existing_lock is None:
+                try:
+                    intent = await OxydeTicketLimbo.objects.create(
+                        issue_id=issue.id,
+                        limbo_type=limbo_type.name,
+                        requested_by_id=user_id,
+                    )
+                except IntegrityError:
+                    # Lost the race. Re-check who owns the intent and
+                    # raise IntentInFlightError if it's a different
+                    # principal — the canonical "second claimant"
+                    # outcome. If it's us (idempotent re-issue), fall
+                    # through to the normal blocked path.
+                    intent = await self._enforce_exclusive_intent_lock(
+                        issue.id, limbo_type, user_id,
+                    )
+                    if intent is None:
+                        # Race resolved by the other writer clearing
+                        # the intent before we re-checked. Treat as no
+                        # active intent; nothing more to do here.
+                        pending_info = [
+                            {"name": r.name, "prompt": r.prompt}
+                            for r in pending_rituals
+                        ]
+                        raise error_class(issue.identifier, pending_info)
+                else:
+                    for ritual in pending_rituals:
+                        await OxydeTicketLimboBlocker.objects.create(
+                            limbo_id=intent.id,
+                            ritual_id=ritual.id,
+                        )
+                    await self._emit_intent_event(
+                        issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
+                    )
+            else:
+                # Same principal re-attempting — the intent already
+                # records their pending rituals. Don't re-emit
+                # INTENT_OPENED.
+                intent = existing_lock
 
         pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
         raise error_class(issue.identifier, pending_info)
@@ -425,28 +464,6 @@ class IssueService:
         await self._emit_intent_event(
             issue, user_id, limbo_type, ActivityType.INTENT_CLEARED,
         )
-
-    async def _create_limbo_record(
-        self, issue_id: str, ritual_id: str, limbo_type, user_id: str
-    ):
-        """Create a limbo record for a ticket blocked by a GATE ritual."""
-        try:
-            limbo = await OxydeTicketLimbo.objects.create(
-                issue_id=issue_id,
-                ritual_id=ritual_id,
-                limbo_type=limbo_type.name,  # .name: OxydeTicketLimbo.limbo_type is str, not DbEnum
-                requested_by_id=user_id,
-            )
-            return limbo
-        except IntegrityError:
-            # Race condition — existing record
-            existing = await OxydeTicketLimbo.objects.filter(
-                issue_id=issue_id,
-                ritual_id=ritual_id,
-                limbo_type=limbo_type.name,  # .name for filter
-                cleared_at=None,
-            ).first()
-            return existing
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""
