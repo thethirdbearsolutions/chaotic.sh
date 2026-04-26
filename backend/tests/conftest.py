@@ -545,3 +545,153 @@ async def test_label(db, test_team):
         description="Bug label",
     )
     return label
+
+
+@pytest_asyncio.fixture
+async def agent_user(db, test_team):
+    """Agent user on test_team (owner role for unrestricted access)."""
+    from app.oxyde_models.user import OxydeUser
+    from app.oxyde_models.team import OxydeTeamMember
+
+    user = await OxydeUser.objects.create(
+        email="agent@example.com",
+        hashed_password=get_password_hash("testpassword123"),
+        name="Agent User",
+        is_agent=True,
+    )
+    await OxydeTeamMember.objects.create(
+        team_id=test_team.id,
+        user_id=user.id,
+        role=TeamRole.OWNER,
+    )
+    return user
+
+
+@pytest_asyncio.fixture
+async def agent_headers(agent_user):
+    """Auth headers for agent user."""
+    token = create_access_token(data={"sub": agent_user.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def make_ritual(db, test_project):
+    """Factory for creating rituals with sensible defaults.
+
+    Usage:
+        ritual = await make_ritual(approval_mode=ApprovalMode.GATE)
+        ritual = await make_ritual(
+            trigger=RitualTrigger.TICKET_CLAIM,
+            approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
+        )
+    """
+    from app.oxyde_models.ritual import OxydeRitual
+    from app.enums import RitualTrigger, ApprovalMode
+
+    counter = {"n": 0}
+
+    async def _make(
+        name: str | None = None,
+        prompt: str = "Did you do the thing?",
+        trigger: "RitualTrigger" = RitualTrigger.TICKET_CLOSE,
+        approval_mode: "ApprovalMode" = ApprovalMode.AUTO,
+        note_required: bool = True,
+        conditions: str | None = None,
+        is_active: bool = True,
+    ):
+        counter["n"] += 1
+        return await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name=name or f"ritual_{counter['n']}",
+            prompt=prompt,
+            trigger=trigger,
+            approval_mode=approval_mode,
+            note_required=note_required,
+            conditions=conditions,
+            is_active=is_active,
+        )
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def auto_close_ritual(make_ritual):
+    """AUTO-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="auto_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.AUTO,
+    )
+
+
+@pytest_asyncio.fixture
+async def review_close_ritual(make_ritual):
+    """REVIEW-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="review_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+
+@pytest_asyncio.fixture
+async def gate_close_ritual(make_ritual):
+    """GATE-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="gate_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.GATE,
+    )
+
+
+@pytest_asyncio.fixture
+async def auto_claim_ritual(make_ritual):
+    """AUTO-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="auto_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.AUTO,
+    )
+
+
+@pytest_asyncio.fixture
+async def review_claim_ritual(make_ritual):
+    """REVIEW-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="review_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+
+@pytest_asyncio.fixture
+async def gate_claim_ritual(make_ritual):
+    """GATE-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="gate_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.GATE,
+    )
+
+
+@pytest_asyncio.fixture
+async def captured_broadcasts(monkeypatch):
+    """Capture all WebSocket broadcasts as a list of (team_id, message) tuples.
+
+    Tests assert against this list to verify state transitions emit the
+    expected events without depending on a real WebSocket connection.
+    """
+    captured: list[tuple[str, dict]] = []
+
+    async def _capture(team_id: str, message: dict):
+        captured.append((team_id, message))
+
+    monkeypatch.setattr("app.websocket.manager.broadcast_to_team", _capture)
+    return captured

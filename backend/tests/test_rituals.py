@@ -1209,11 +1209,14 @@ class TestTicketCloseRituals:
         with pytest.raises(ValueError, match="Issue .* not found"):
             await service.complete_gate_ritual_for_issue(ritual, "00000000-0000-0000-0000-000000000000", test_user.id)
 
-    async def test_attest_ticket_close_on_done_issue_fails(self, db, test_project, test_user):
-        """Test that TICKET_CLOSE attestation fails for already-done issues."""
+    async def test_attest_ticket_close_on_done_issue_succeeds(self, db, test_project, test_user):
+        """Attesting TICKET_CLOSE on a done issue is allowed (retroactive
+        record-keeping). The actual gate fires at status transition, not
+        at attest time — so attestation in any status is purely audit.
+        Flipped from -fails on the ritual-coherence-refactor branch.
+        """
         from app.enums import IssueStatus
 
-        # Create an issue that's already done
         done_issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier="TST-99",
@@ -1229,14 +1232,18 @@ class TestTicketCloseRituals:
             prompt="Check before close",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="issue is already done"):
-            await service.attest_for_issue(ritual, done_issue.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, done_issue.id, test_user.id)
+        assert attestation is not None
+        assert attestation.issue_id == done_issue.id
 
-    async def test_attest_ticket_close_on_canceled_issue_fails(self, db, test_project, test_user):
-        """Test that TICKET_CLOSE attestation fails for canceled issues."""
+    async def test_attest_ticket_close_on_canceled_issue_succeeds(self, db, test_project, test_user):
+        """Attesting TICKET_CLOSE on a canceled issue is allowed
+        (retroactive record-keeping). Flipped from -fails.
+        """
         from app.enums import IssueStatus
 
         canceled_issue = await OxydeIssue.objects.create(
@@ -1254,11 +1261,13 @@ class TestTicketCloseRituals:
             prompt="Check before close",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="issue is already canceled"):
-            await service.attest_for_issue(ritual, canceled_issue.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, canceled_issue.id, test_user.id)
+        assert attestation is not None
+        assert attestation.issue_id == canceled_issue.id
 
     async def test_attest_ticket_close_on_in_progress_works(self, db, test_project, test_user):
         """Test that TICKET_CLOSE attestation works for in-progress issues."""
@@ -1286,8 +1295,12 @@ class TestTicketCloseRituals:
         assert attestation is not None
         assert attestation.issue_id == in_progress_issue.id
 
-    async def test_attest_ticket_claim_on_in_progress_fails(self, db, test_project, test_user):
-        """Test that TICKET_CLAIM attestation fails for in-progress issues."""
+    async def test_attest_ticket_claim_on_in_progress_succeeds(self, db, test_project, test_user):
+        """Attesting TICKET_CLAIM on an already-claimed issue is allowed
+        (retroactive record-keeping; symmetric with TICKET_CLOSE on done).
+        The gate fires at the claim transition itself; attestation is
+        decoupled. Flipped from -fails.
+        """
         from app.enums import IssueStatus
 
         in_progress_issue = await OxydeIssue.objects.create(
@@ -1305,14 +1318,18 @@ class TestTicketCloseRituals:
             prompt="Check before claim",
             trigger=RitualTrigger.TICKET_CLAIM,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="issue is in_progress.*only for unclaimed issues"):
-            await service.attest_for_issue(ritual, in_progress_issue.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, in_progress_issue.id, test_user.id)
+        assert attestation is not None
+        assert attestation.issue_id == in_progress_issue.id
 
-    async def test_attest_ticket_claim_on_done_fails(self, db, test_project, test_user):
-        """Test that TICKET_CLAIM attestation fails for done issues."""
+    async def test_attest_ticket_claim_on_done_succeeds(self, db, test_project, test_user):
+        """Attesting TICKET_CLAIM on a done issue is allowed (retroactive
+        record-keeping). Flipped from -fails.
+        """
         from app.enums import IssueStatus
 
         done_issue = await OxydeIssue.objects.create(
@@ -1330,11 +1347,13 @@ class TestTicketCloseRituals:
             prompt="Check before claim",
             trigger=RitualTrigger.TICKET_CLAIM,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="issue is done.*only for unclaimed issues"):
-            await service.attest_for_issue(ritual, done_issue.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, done_issue.id, test_user.id)
+        assert attestation is not None
+        assert attestation.issue_id == done_issue.id
 
     async def test_attest_ticket_claim_on_backlog_works(self, db, test_project, test_user):
         """Test that TICKET_CLAIM attestation works for backlog issues."""
@@ -4339,14 +4358,18 @@ class TestRitualAPIEdgeCases:
         assert response.status_code == 400
         assert "does not belong to this project" in response.json()["detail"]
 
-    async def test_complete_gate_ritual_api_note_not_required(self, client, auth_headers, test_project, db):
-        """Test completing GATE ritual succeeds without note (GATE mode skips note_required)."""
+    async def test_complete_gate_ritual_api_note_required_enforced(self, client, auth_headers, test_project, db):
+        """GATE complete must enforce note_required, like attest does.
+        Note_required and approval_mode are orthogonal: GATE means
+        'human must perform,' note_required means 'you must explain.'
+        Flipped from the prior test that locked in the bypass.
+        """
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="test",
             prompt="Test",
             approval_mode=ApprovalMode.GATE,
-            note_required=True,  # This is ignored for GATE mode
+            note_required=True,
         )
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
@@ -4360,8 +4383,8 @@ class TestRitualAPIEdgeCases:
             headers=auth_headers,
             json={},
         )
-        # GATE mode rituals don't require notes - human approval is the attestation
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert "note" in response.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -4563,15 +4586,17 @@ class TestTicketRitualAPIEdgeCases:
         assert response.status_code == 400
         assert "not a GATE mode ritual" in response.json()["detail"]
 
-    async def test_complete_gate_ritual_for_issue_api_note_not_required(self, client, auth_headers, test_project, test_issue, db):
-        """Test completing GATE ticket ritual succeeds without note (GATE mode skips note_required)."""
+    async def test_complete_gate_ritual_for_issue_api_note_required_enforced(self, client, auth_headers, test_project, test_issue, db):
+        """Ticket-level GATE complete must enforce note_required.
+        Flipped from the prior test that locked in the bypass.
+        """
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="test",
             prompt="Test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
-            note_required=True,  # This is ignored for GATE mode
+            note_required=True,
         )
 
         response = await client.post(
@@ -4579,8 +4604,8 @@ class TestTicketRitualAPIEdgeCases:
             headers=auth_headers,
             json={},
         )
-        # GATE mode rituals don't require notes - human approval is the attestation
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert "note" in response.json()["detail"].lower()
 
     async def test_approve_issue_attestation_api_ritual_not_found(self, client, auth_headers, test_issue):
         """Test approving attestation for non-existent ritual."""
@@ -5393,8 +5418,11 @@ class TestGetIssuesWithPendingApprovals:
 class TestGateCompletionEdgeCases:
     """Tests for complete_gate_ritual_for_issue edge cases (CHT-885)."""
 
-    async def test_rejects_done_issue_for_ticket_close(self, db, test_project, test_user):
-        """TICKET_CLOSE rituals cannot be completed for already-done issues."""
+    async def test_allows_done_issue_for_ticket_close(self, db, test_project, test_user):
+        """GATE TICKET_CLOSE complete is allowed on done issues for
+        retroactive record-keeping. The gate fires at the close
+        transition; complete is decoupled. Flipped from -rejects.
+        """
         from app.enums import IssueStatus
         service = RitualService()
 
@@ -5404,6 +5432,7 @@ class TestGateCompletionEdgeCases:
             prompt="Gate",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         test_project.issue_count += 1
@@ -5416,15 +5445,17 @@ class TestGateCompletionEdgeCases:
             creator_id=test_user.id,
         )
 
-        with pytest.raises(ValueError, match="already done"):
-            await service.complete_gate_ritual_for_issue(
-                ritual=ritual,
-                issue_id=done_issue.id,
-                user_id=test_user.id,
-            )
+        attestation = await service.complete_gate_ritual_for_issue(
+            ritual=ritual,
+            issue_id=done_issue.id,
+            user_id=test_user.id,
+        )
+        assert attestation is not None
 
-    async def test_rejects_in_progress_issue_for_ticket_claim(self, db, test_project, test_user):
-        """TICKET_CLAIM rituals cannot be completed for in-progress issues."""
+    async def test_allows_in_progress_issue_for_ticket_claim(self, db, test_project, test_user):
+        """GATE TICKET_CLAIM complete is allowed on in-progress issues
+        for retroactive record-keeping. Flipped from -rejects.
+        """
         from app.enums import IssueStatus
         service = RitualService()
 
@@ -5434,6 +5465,7 @@ class TestGateCompletionEdgeCases:
             prompt="Gate",
             trigger=RitualTrigger.TICKET_CLAIM,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         test_project.issue_count += 1
@@ -5446,12 +5478,12 @@ class TestGateCompletionEdgeCases:
             creator_id=test_user.id,
         )
 
-        with pytest.raises(ValueError, match="TICKET_CLAIM"):
-            await service.complete_gate_ritual_for_issue(
-                ritual=ritual,
-                issue_id=in_progress_issue.id,
-                user_id=test_user.id,
-            )
+        attestation = await service.complete_gate_ritual_for_issue(
+            ritual=ritual,
+            issue_id=in_progress_issue.id,
+            user_id=test_user.id,
+        )
+        assert attestation is not None
 
     async def test_rejects_wrong_trigger_type(self, db, test_project, test_issue, test_user):
         """EVERY_SPRINT trigger rituals cannot use complete_gate_ritual_for_issue."""
