@@ -98,8 +98,16 @@ class TestIntentOpenCreatesLimboForAllModes:
             "Without it, the agent's intent is invisible to overseers and "
             "ungating cannot trigger one-step auto-transition."
         )
-        assert rows[0].ritual_id == review_claim_ritual.id
         assert rows[0].requested_by_id == test_user.id
+
+        # ritual_id moved from OxydeTicketLimbo to OxydeTicketLimboBlocker
+        # in the unified intent + blockers model.
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=rows[0].id, resolved_at=None,
+        ).all()
+        assert len(blockers) == 1
+        assert blockers[0].ritual_id == review_claim_ritual.id
 
     @pytest.mark.asyncio
     async def test_claim_with_pending_auto_ritual_creates_limbo(

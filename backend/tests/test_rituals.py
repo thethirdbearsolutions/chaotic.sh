@@ -2992,7 +2992,6 @@ class TestTicketLimbo:
         # Check limbo record was created
         limbo_records = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
-            ritual_id=ritual.id,
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
@@ -3043,7 +3042,6 @@ class TestTicketLimbo:
         # Check limbo record was created
         limbo_records = await OxydeTicketLimbo.objects.filter(
             issue_id=issue.id,
-            ritual_id=ritual.id,
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
@@ -3083,10 +3081,10 @@ class TestTicketLimbo:
         # Manually create a limbo record (simulating blocked close)
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
         limbo_id = limbo.id
 
         # Complete the GATE ritual
@@ -3142,10 +3140,10 @@ class TestTicketLimbo:
         # Create limbo record only for issue_in_limbo
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue_in_limbo.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # Get pending gates
         ritual_service = RitualService()
@@ -3847,10 +3845,10 @@ class TestPendingGatesAPI:
         # Create limbo for the issue
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         response = await client.get(
             f"/api/rituals/pending-gates?project_id={test_project.id}",
@@ -4965,10 +4963,10 @@ class TestPendingGatesAPISuccessPaths:
         # Create a ticket limbo record
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         response = await client.get(
             f"/api/rituals/pending-gates?project_id={test_project.id}",
@@ -5038,10 +5036,10 @@ class TestOrphanedLimboCleanup:
         # Create a limbo record (simulating a blocked close attempt)
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # Simulate an approved attestation existing (as if _clear_ticket_limbo failed)
         attestation = await OxydeRitualAttestation.objects.create(
@@ -5102,10 +5100,10 @@ class TestOrphanedLimboCleanup:
         # Create a limbo record
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # NO attestation exists - limbo should remain
 
@@ -5152,10 +5150,10 @@ class TestOrphanedLimboCleanup:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # Create an attestation that is NOT yet approved
         attestation = await OxydeRitualAttestation.objects.create(
@@ -5206,10 +5204,10 @@ class TestOrphanedLimboCleanup:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            ritual_id=ritual.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # Mock cleanup to raise an exception
         with patch(
@@ -5261,11 +5259,11 @@ class TestGetIssuesWithPendingApprovals:
 
         # Create a limbo record
         limbo = await OxydeTicketLimbo.objects.create(
-            ritual_id=ritual.id,
             issue_id=test_issue.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         result = await service.get_issues_with_pending_approvals(test_project.id)
         assert len(result) == 1
@@ -5350,11 +5348,11 @@ class TestGetIssuesWithPendingApprovals:
         )
 
         limbo = await OxydeTicketLimbo.objects.create(
-            ritual_id=gate_ritual.id,
             issue_id=test_issue.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=gate_ritual.id)
 
         # REVIEW ritual
         review_ritual = await OxydeRitual.objects.create(
@@ -5579,11 +5577,11 @@ class TestCleanupOrphanedTicketLimbo:
 
         # Create limbo record (simulating failed clear)
         limbo = await OxydeTicketLimbo.objects.create(
-            ritual_id=ritual.id,
             issue_id=test_issue.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         # Create approved attestation
         attestation = await OxydeRitualAttestation.objects.create(
@@ -5615,11 +5613,11 @@ class TestCleanupOrphanedTicketLimbo:
         )
 
         limbo = await OxydeTicketLimbo.objects.create(
-            ritual_id=ritual.id,
             issue_id=test_issue.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
         assert cleared == 0
@@ -5654,11 +5652,11 @@ class TestCleanupOrphanedTicketLimbo:
             )
 
             limbo = await OxydeTicketLimbo.objects.create(
-                ritual_id=ritual.id,
                 issue_id=issue.id,
                 limbo_type=LimboType.CLOSE,
                 requested_by_id=test_user.id,
             )
+            await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
             limbos.append(limbo)
 
             attestation = await OxydeRitualAttestation.objects.create(
@@ -5691,13 +5689,13 @@ class TestCleanupOrphanedTicketLimbo:
         )
 
         limbo = await OxydeTicketLimbo.objects.create(
-            ritual_id=ritual.id,
             issue_id=test_issue.id,
             limbo_type=LimboType.CLOSE,
             requested_by_id=test_user.id,
             cleared_at=datetime.now(timezone.utc),
             cleared_by_id=test_user.id,
         )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
 
         cleared = await service._cleanup_orphaned_ticket_limbo(test_project.id)
         assert cleared == 0

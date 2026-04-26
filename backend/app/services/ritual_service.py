@@ -1077,6 +1077,12 @@ class RitualService:
         the last unresolved blocker on the parent intent, mark the
         intent cleared and fire the one-step auto-transition.
 
+        Scoped by `ritual.trigger`: a TICKET_CLAIM ritual can only
+        resolve blockers under CLAIM intents; a TICKET_CLOSE ritual can
+        only resolve blockers under CLOSE intents. Without this scope,
+        a single attest could collapse both a CLOSE and a CLAIM intent
+        if they happened to share the gating ritual.
+
         fire_transition=False is used by callers that want pure
         blocker resolution without triggering the status update —
         notably the standalone-attest path where the user never
@@ -1084,12 +1090,28 @@ class RitualService:
         """
         from app.oxyde_models.issue import OxydeTicketLimboBlocker
 
-        # Find every unresolved blocker for this (ritual, issue) across
-        # all open intents on the issue. In normal flow there's exactly
-        # one, but multi-intent scenarios (e.g. CLOSE intent followed by
-        # CLAIM intent on a re-opened ticket) could produce more.
+        # Look up the ritual to determine which limbo_type its blockers
+        # may legitimately resolve. EVERY_SPRINT rituals don't touch
+        # ticket-level limbo at all.
+        ritual = await OxydeRitual.objects.get_or_none(id=ritual_id)
+        if ritual is None:
+            return
+        if ritual.trigger == RitualTrigger.TICKET_CLAIM:
+            expected_limbo_type = LimboType.CLAIM.name
+        elif ritual.trigger == RitualTrigger.TICKET_CLOSE:
+            expected_limbo_type = LimboType.CLOSE.name
+        else:
+            return
+
+        # Find unresolved blockers for this ritual under open intents
+        # of the matching type. Multi-intent scenarios on the same
+        # issue (e.g. CLOSE intent followed by CLAIM intent on a
+        # re-opened ticket) stay isolated because we filter by
+        # `expected_limbo_type`.
         open_intents = await OxydeTicketLimbo.objects.filter(
-            issue_id=issue_id, cleared_at=None,
+            issue_id=issue_id,
+            limbo_type=expected_limbo_type,
+            cleared_at=None,
         ).all()
         if not open_intents:
             return
@@ -1198,7 +1220,11 @@ class RitualService:
                 continue
             intent = intent_by_id[limbo_id]
             intent.cleared_at = now
-            intent.cleared_by_id = "system"
+            # Cleared by background orphan-cleanup, not a specific
+            # user. NULL avoids the FK violation that would arise
+            # under PRAGMA foreign_keys = ON; downstream displays
+            # should treat NULL cleared_by_id as "system-cleared".
+            intent.cleared_by_id = None
             await intent.save(update_fields={"cleared_at", "cleared_by_id"})
 
         if cleared_count:

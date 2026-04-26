@@ -250,6 +250,12 @@ class IssueService:
         if not pending_rituals:
             return
 
+        # Capture whether we should broadcast INTENT_OPENED after the
+        # transaction commits. Broadcasts must NOT be emitted inside
+        # `atomic()` because subscribers would see events for state
+        # that hasn't yet committed (or never commits on rollback).
+        broadcast_intent_opened = False
+
         async with atomic():
             existing_lock = await self._enforce_exclusive_intent_lock(
                 issue.id, limbo_type, user_id,
@@ -286,25 +292,55 @@ class IssueService:
                             limbo_id=intent.id,
                             ritual_id=ritual.id,
                         )
-                    await self._emit_intent_event(
+                    await self._record_intent_activity(
                         issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
                     )
+                    broadcast_intent_opened = True
             else:
-                # Same principal re-attempting — the intent already
-                # records their pending rituals. Don't re-emit
-                # INTENT_OPENED.
+                # Same principal re-attempting. Pending rituals may
+                # have grown since the original attempt (admin added a
+                # new TICKET_CLAIM ritual to the project) — in which
+                # case those new rituals must show up as blockers
+                # under the existing intent, otherwise auto-transition
+                # would fire past them. INSERT OR IGNORE is idempotent
+                # against the UNIQUE(limbo_id, ritual_id).
                 intent = existing_lock
+                existing_blocker_rituals = {
+                    b.ritual_id for b in await OxydeTicketLimboBlocker.objects.filter(
+                        limbo_id=intent.id,
+                    ).all()
+                }
+                for ritual in pending_rituals:
+                    if ritual.id in existing_blocker_rituals:
+                        continue
+                    try:
+                        await OxydeTicketLimboBlocker.objects.create(
+                            limbo_id=intent.id,
+                            ritual_id=ritual.id,
+                        )
+                    except IntegrityError:
+                        pass
+                # Don't re-emit INTENT_OPENED on a same-principal
+                # re-issue — only the initial open is the canonical
+                # event.
+
+        # Atomic block exited successfully — safe to broadcast.
+        if broadcast_intent_opened:
+            await self._broadcast_intent_event(
+                issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
+            )
 
         pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
         raise error_class(issue.identifier, pending_info)
 
-    async def _emit_intent_event(
+    async def _record_intent_activity(
         self, issue, user_id: str, limbo_type: "LimboType",
         activity_type: "ActivityType",
     ) -> None:
-        """Write an OxydeIssueActivity row + broadcast to the team. Used
-        for INTENT_OPENED and INTENT_CLEARED. Best-effort: failures are
-        logged but do not abort the surrounding operation.
+        """Write the OxydeIssueActivity row for an intent event. This
+        is the transactional half of intent observability — safe to
+        call from inside `async with atomic():` because everything
+        here is part of the surrounding transaction.
 
         The intent type goes in `new_value` rather than `field_name`:
         `field_name` is by convention an issue column name (status,
@@ -324,6 +360,16 @@ class IssueService:
                 activity_type.value, issue.id,
             )
 
+    async def _broadcast_intent_event(
+        self, issue, user_id: str, limbo_type: "LimboType",
+        activity_type: "ActivityType",
+    ) -> None:
+        """Fire the WebSocket broadcast for an intent event. This is
+        the non-transactional half — must run AFTER any surrounding
+        `atomic()` block commits, otherwise subscribers receive
+        events for state that hasn't been persisted (and may never be
+        persisted if the transaction rolls back).
+        """
         try:
             from app.websocket import broadcast_activity_event
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
@@ -343,6 +389,18 @@ class IssueService:
                 "Failed to broadcast %s for issue=%s",
                 activity_type.value, issue.id,
             )
+
+    async def _emit_intent_event(
+        self, issue, user_id: str, limbo_type: "LimboType",
+        activity_type: "ActivityType",
+    ) -> None:
+        """Convenience wrapper for callers NOT in a transaction.
+        Writes activity + broadcasts. Inside-atomic call sites should
+        use `_record_intent_activity` and call `_broadcast_intent_event`
+        after the transaction commits.
+        """
+        await self._record_intent_activity(issue, user_id, limbo_type, activity_type)
+        await self._broadcast_intent_event(issue, user_id, limbo_type, activity_type)
 
     async def _check_ticket_rituals(
         self, issue, user_id: str, is_human_request: bool = False

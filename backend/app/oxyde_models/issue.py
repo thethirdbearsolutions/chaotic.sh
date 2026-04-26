@@ -127,13 +127,21 @@ class OxydeTicketLimboBlocker(OxydeModel):
     Lives under a parent `OxydeTicketLimbo`. Resolved (attested or
     approved) blockers carry `resolved_at` / `resolved_by_id`. When
     every blocker for a limbo is resolved, the parent intent fires.
+
+    db_on_delete annotations match the SQL constraints in migration
+    0005:
+    * limbo_id: parent intent deletion cascades blockers.
+    * ritual_id: ritual deletion cascades blockers (no orphans
+      pointing at deleted rituals).
+    * resolved_by_id: user deletion sets the field NULL so audit
+      trails survive principal removal.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    limbo_id: str = Field()
-    ritual_id: str = Field()
+    limbo_id: str = Field(db_on_delete="CASCADE")
+    ritual_id: str = Field(db_on_delete="CASCADE")
     resolved_at: datetime | None = Field(default=None)
-    resolved_by_id: str | None = Field(default=None)
+    resolved_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
 
     class Meta:
         is_table = True
