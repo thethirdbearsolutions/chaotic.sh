@@ -835,6 +835,15 @@ class IssueService:
             await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(related_issue_id=issue.id).delete()
+            # Explicit blocker cleanup: schema cascades only fire under
+            # PRAGMA foreign_keys = ON (Oxyde default is OFF), so we
+            # delete blockers first to avoid orphan accumulation.
+            limbos = await OxydeTicketLimbo.objects.filter(issue_id=issue.id).all()
+            limbo_ids = [l.id for l in limbos]
+            if limbo_ids:
+                await OxydeTicketLimboBlocker.objects.filter(
+                    limbo_id__in=limbo_ids
+                ).delete()
             await OxydeTicketLimbo.objects.filter(issue_id=issue.id).delete()
             await issue.delete()
 

@@ -4,7 +4,7 @@ import logging
 import random
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError
+from oxyde import IntegrityError, atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
@@ -808,6 +808,13 @@ class RitualService:
         Standalone attest MUST NOT trigger the one-step auto-transition:
         the user never expressed intent. We detect "no prior intent"
         and pass fire_transition=False through `_clear_ticket_limbo`.
+
+        Wrapped in `async with atomic():` so a concurrent claim/close
+        attempt cannot steal the intent slot between our SELECT and
+        INSERT. If a real intent appears mid-flight, the IntegrityError
+        on our INSERT triggers an in-transaction re-check; we treat
+        the resulting state as "had_prior_intent" so the caller's
+        legitimate auto-transition can fire.
         """
         from app.oxyde_models.issue import OxydeTicketLimboBlocker
 
@@ -818,51 +825,65 @@ class RitualService:
         else:
             return
 
-        # Is there an existing open intent of this type that already has
-        # a blocker for our ritual? If so, we're in normal flow —
-        # resolving that blocker should fire the transition.
-        existing_intent = await OxydeTicketLimbo.objects.filter(
-            issue_id=issue_id,
-            limbo_type=limbo_type.name,
-            cleared_at=None,
-        ).first()
-
         had_prior_intent = False
-        if existing_intent is not None:
-            existing_blocker = await OxydeTicketLimboBlocker.objects.filter(
-                limbo_id=existing_intent.id,
-                ritual_id=ritual.id,
-                resolved_at=None,
+        async with atomic():
+            existing_intent = await OxydeTicketLimbo.objects.filter(
+                issue_id=issue_id,
+                limbo_type=limbo_type.name,
+                cleared_at=None,
             ).first()
-            had_prior_intent = existing_blocker is not None
-            if existing_blocker is None:
-                # Intent exists but for a different blocker set; add
-                # ours so the audit log records this attestation.
+
+            if existing_intent is not None:
+                # An intent already exists. Whether it was opened by us
+                # or by a concurrent legitimate claim/close attempt,
+                # we treat this as a real intent for transition purposes.
+                had_prior_intent = True
+                existing_blocker = await OxydeTicketLimboBlocker.objects.filter(
+                    limbo_id=existing_intent.id,
+                    ritual_id=ritual.id,
+                ).first()
+                if existing_blocker is None:
+                    try:
+                        await OxydeTicketLimboBlocker.objects.create(
+                            limbo_id=existing_intent.id,
+                            ritual_id=ritual.id,
+                        )
+                    except IntegrityError:
+                        pass
+            else:
+                # No intent yet — try to create an audit-only one. If
+                # we lose the race to a real claim/close attempt, the
+                # intent we'd see on re-check is real, so flip the flag.
                 try:
+                    audit_intent = await OxydeTicketLimbo.objects.create(
+                        issue_id=issue_id,
+                        limbo_type=limbo_type.name,
+                        requested_by_id=user_id,
+                    )
                     await OxydeTicketLimboBlocker.objects.create(
-                        limbo_id=existing_intent.id,
+                        limbo_id=audit_intent.id,
                         ritual_id=ritual.id,
                     )
                 except IntegrityError:
-                    pass
-        else:
-            # No open intent. Create an audit-only intent + blocker pair.
-            try:
-                audit_intent = await OxydeTicketLimbo.objects.create(
-                    issue_id=issue_id,
-                    limbo_type=limbo_type.name,
-                    requested_by_id=user_id,
-                )
-                await OxydeTicketLimboBlocker.objects.create(
-                    limbo_id=audit_intent.id,
-                    ritual_id=ritual.id,
-                )
-            except IntegrityError:
-                # Lost a race — another writer just opened the intent.
-                # That writer has their own blockers; we don't know if
-                # ours overlaps, so try to fall through with
-                # fire_transition=False.
-                pass
+                    rechecked = await OxydeTicketLimbo.objects.filter(
+                        issue_id=issue_id,
+                        limbo_type=limbo_type.name,
+                        cleared_at=None,
+                    ).first()
+                    if rechecked is not None:
+                        had_prior_intent = True
+                        existing_blocker = await OxydeTicketLimboBlocker.objects.filter(
+                            limbo_id=rechecked.id,
+                            ritual_id=ritual.id,
+                        ).first()
+                        if existing_blocker is None:
+                            try:
+                                await OxydeTicketLimboBlocker.objects.create(
+                                    limbo_id=rechecked.id,
+                                    ritual_id=ritual.id,
+                                )
+                            except IntegrityError:
+                                pass
 
         await self._clear_ticket_limbo(
             ritual.id, issue_id, user_id, fire_transition=had_prior_intent,
@@ -1431,30 +1452,42 @@ class RitualService:
             project_id=project_id, is_active=True
         ).all()}
 
-        # Get uncleared limbo records and their unresolved blockers.
+        # Get uncleared limbo records and their unresolved blockers,
+        # batched to keep this O(constant) DB round-trips regardless of
+        # the number of issues / blockers in the project.
         from app.oxyde_models.issue import OxydeTicketLimboBlocker
 
+        all_intents = await OxydeTicketLimbo.objects.filter(
+            issue_id__in=list(active_issues), cleared_at=None,
+        ).all()
+        if not all_intents:
+            return []
+
+        intent_ids = [i.id for i in all_intents]
+        all_blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id__in=intent_ids, resolved_at=None,
+        ).all()
+        if not all_blockers:
+            return []
+
+        user_ids = list({i.requested_by_id for i in all_intents})
+        users = {
+            u.id: u
+            for u in await OxydeUser.objects.filter(id__in=user_ids).all()
+        }
+        intent_by_id = {i.id: i for i in all_intents}
+
         results = []
-        for issue_id in active_issues:
-            limbo_records = await OxydeTicketLimbo.objects.filter(
-                issue_id=issue_id, cleared_at=None,
-            ).all()
-            for limbo in limbo_records:
-                # Each open intent may have multiple blocking rituals;
-                # surface one tuple per (limbo, blocker_ritual) so
-                # callers see every pending ritual.
-                blockers = await OxydeTicketLimboBlocker.objects.filter(
-                    limbo_id=limbo.id, resolved_at=None,
-                ).all()
-                for blocker in blockers:
-                    if blocker.ritual_id not in active_rituals:
-                        continue
-                    issue = active_issues[issue_id]
-                    ritual = active_rituals[blocker.ritual_id]
-                    requested_by = await OxydeUser.objects.get_or_none(
-                        id=limbo.requested_by_id
-                    )
-                    results.append((limbo, issue, ritual, requested_by))
+        for blocker in all_blockers:
+            if blocker.ritual_id not in active_rituals:
+                continue
+            intent = intent_by_id[blocker.limbo_id]
+            issue = active_issues.get(intent.issue_id)
+            if issue is None:
+                continue
+            ritual = active_rituals[blocker.ritual_id]
+            requested_by = users.get(intent.requested_by_id)
+            results.append((intent, issue, ritual, requested_by))
 
         return results
 

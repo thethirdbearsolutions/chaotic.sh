@@ -25,7 +25,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.enums import ApprovalMode, RitualTrigger
+from app.enums import ApprovalMode, RitualTrigger, ActivityType, LimboType
 from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 
@@ -375,7 +375,11 @@ async def force_clear_ticket_limbo(
             detail="Issue has no pending ticket limbo",
         )
 
+    from app.oxyde_models.issue import OxydeIssueActivity
+    from app.websocket import broadcast_activity_event
+
     now = datetime.now(timezone.utc)
+    canceled_payloads = []
     for limbo in limbo_records:
         # Resolve any unresolved blockers under this intent so the
         # audit trail records the force-clear action against each
@@ -390,6 +394,43 @@ async def force_clear_ticket_limbo(
         limbo.cleared_at = now
         limbo.cleared_by_id = current_user.id
         await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+
+        # Force-clear is "scrub" semantics: emit INTENT_CANCELED rather
+        # than firing the auto-transition. The user must re-attempt the
+        # claim/close, but the await primitive can wake on the cancel
+        # so they know the intent was administratively voided.
+        try:
+            limbo_type_value = LimboType[limbo.limbo_type].value
+        except KeyError:
+            limbo_type_value = limbo.limbo_type
+        try:
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue_id,
+                user_id=current_user.id,
+                activity_type=ActivityType.INTENT_CANCELED,
+                new_value=limbo_type_value,
+            )
+        except Exception:
+            pass
+        canceled_payloads.append({
+            "issue_id": issue_id,
+            "issue_identifier": issue.identifier,
+            "limbo_type": limbo_type_value,
+            "user_id": current_user.id,
+            "intent_initiator_id": limbo.requested_by_id,
+        })
+
+    # Broadcast outside the per-row loop and outside any transaction;
+    # one event per canceled intent.
+    for payload in canceled_payloads:
+        try:
+            await broadcast_activity_event(
+                project.team_id,
+                ActivityType.INTENT_CANCELED.value,
+                payload,
+            )
+        except Exception:
+            pass
 
     return {
         "message": f"Cleared {len(limbo_records)} ticket limbo record(s)",
