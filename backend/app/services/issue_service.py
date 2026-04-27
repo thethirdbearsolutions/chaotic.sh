@@ -828,16 +828,27 @@ class IssueService:
         return [(c, issue_map.get(c.issue_id)) for c in comments]
 
     async def delete(self, issue) -> None:
-        """Delete an issue."""
+        """Delete an issue.
+
+        Schema cascades only fire under PRAGMA foreign_keys = ON, which
+        Oxyde defaults OFF — so every child table needs an explicit
+        delete here. (Open question on the broader codebase: do other
+        delete() methods have the same gap? Tracking as a follow-up.)
+        """
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
         async with atomic():
             await OxydeIssueComment.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueActivity.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(related_issue_id=issue.id).delete()
-            # Explicit blocker cleanup: schema cascades only fire under
-            # PRAGMA foreign_keys = ON (Oxyde default is OFF), so we
-            # delete blockers first to avoid orphan accumulation.
+            # Ritual attestations on this issue. Without explicit
+            # cleanup, orphan attestations accumulate pointing at a
+            # deleted issue.
+            await OxydeRitualAttestation.objects.filter(issue_id=issue.id).delete()
+            # Limbo intents + blockers. Blockers go first so we don't
+            # leave dangling rows when the parent table is cleared.
             limbos = await OxydeTicketLimbo.objects.filter(issue_id=issue.id).all()
             limbo_ids = [l.id for l in limbos]
             if limbo_ids:

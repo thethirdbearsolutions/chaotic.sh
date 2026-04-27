@@ -106,15 +106,19 @@ class OxydeTicketLimbo(OxydeModel):
     ritual. The intent is fully resolved when all of its blockers
     have `resolved_at` set; at that point `cleared_at` is stamped on
     the parent and the one-step auto-transition fires.
+
+    db_on_delete annotations match the SQL constraints in migration
+    0005's CREATE statement so `oxyde makemigrations` doesn't generate
+    spurious schema-drift diffs.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    issue_id: str = Field()
+    issue_id: str = Field(db_on_delete="CASCADE")
     limbo_type: str = Field()
-    requested_by_id: str = Field()
+    requested_by_id: str = Field(db_on_delete="CASCADE")
     requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cleared_at: datetime | None = Field(default=None)
-    cleared_by_id: str | None = Field(default=None)
+    cleared_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
 
     class Meta:
         is_table = True

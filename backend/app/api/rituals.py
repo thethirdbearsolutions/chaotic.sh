@@ -377,48 +377,48 @@ async def force_clear_ticket_limbo(
 
     from app.oxyde_models.issue import OxydeIssueActivity
     from app.websocket import broadcast_activity_event
+    from oxyde import atomic
 
     now = datetime.now(timezone.utc)
     canceled_payloads = []
-    for limbo in limbo_records:
-        # Resolve any unresolved blockers under this intent so the
-        # audit trail records the force-clear action against each
-        # blocking ritual.
-        blockers = await OxydeTicketLimboBlocker.objects.filter(
-            limbo_id=limbo.id, resolved_at=None,
-        ).all()
-        for blocker in blockers:
-            blocker.resolved_at = now
-            blocker.resolved_by_id = current_user.id
-            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
-        limbo.cleared_at = now
-        limbo.cleared_by_id = current_user.id
-        await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+    # All-or-nothing: clear blockers, parent intents, AND audit rows in
+    # a single transaction. A mid-loop failure (DB error, FK violation,
+    # etc.) rolls everything back so the admin can retry without
+    # leaving a half-canceled state.
+    async with atomic():
+        for limbo in limbo_records:
+            blockers = await OxydeTicketLimboBlocker.objects.filter(
+                limbo_id=limbo.id, resolved_at=None,
+            ).all()
+            for blocker in blockers:
+                blocker.resolved_at = now
+                blocker.resolved_by_id = current_user.id
+                await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+            limbo.cleared_at = now
+            limbo.cleared_by_id = current_user.id
+            await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
 
-        # Force-clear is "scrub" semantics: emit INTENT_CANCELED rather
-        # than firing the auto-transition. The user must re-attempt the
-        # claim/close, but the await primitive can wake on the cancel
-        # so they know the intent was administratively voided.
-        try:
-            limbo_type_value = LimboType[limbo.limbo_type].value
-        except KeyError:
-            limbo_type_value = limbo.limbo_type
-        try:
+            # Force-clear is "scrub" semantics: emit INTENT_CANCELED
+            # rather than firing the auto-transition. The user must
+            # re-attempt the claim/close, but the await primitive can
+            # wake on the cancel.
+            try:
+                limbo_type_value = LimboType[limbo.limbo_type].value
+            except KeyError:
+                limbo_type_value = limbo.limbo_type
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=current_user.id,
                 activity_type=ActivityType.INTENT_CANCELED,
                 new_value=limbo_type_value,
             )
-        except Exception:
-            pass
-        canceled_payloads.append({
-            "issue_id": issue_id,
-            "issue_identifier": issue.identifier,
-            "limbo_type": limbo_type_value,
-            "user_id": current_user.id,
-            "intent_initiator_id": limbo.requested_by_id,
-        })
+            canceled_payloads.append({
+                "issue_id": issue_id,
+                "issue_identifier": issue.identifier,
+                "limbo_type": limbo_type_value,
+                "user_id": current_user.id,
+                "intent_initiator_id": limbo.requested_by_id,
+            })
 
     # Broadcast outside the per-row loop and outside any transaction;
     # one event per canceled intent.

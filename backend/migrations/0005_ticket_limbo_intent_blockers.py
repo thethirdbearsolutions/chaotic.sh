@@ -39,6 +39,24 @@ depends_on = "0004_ritual_intent_unique_indexes"
 
 def upgrade(ctx):
     """Apply migration."""
+    # The 12-step rebuild (https://www.sqlite.org/lang_altertable.html)
+    # requires foreign_keys=OFF during the table swap so the DROP of the
+    # old `ticket_limbo` doesn't fail the FK check from blockers, AND
+    # so SQLite rewrites cross-table FK references against the renamed
+    # table without leaving stale ones behind.
+    #
+    # We toggle here and run `foreign_key_check` after the rebuild to
+    # surface any orphaned references that may have been created by
+    # earlier (foreign_keys=OFF default) operations. The original
+    # PRAGMA value is restored at the end so callers that enabled it
+    # for prod safety see consistent behavior post-migration.
+    prev_fk = ctx.execute("PRAGMA foreign_keys")
+    try:
+        prev_fk_value = list(prev_fk)[0][0] if prev_fk is not None else 0
+    except (TypeError, IndexError):
+        prev_fk_value = 0
+    ctx.execute("PRAGMA foreign_keys = OFF")
+
     # 1. Create blockers table.
     ctx.execute("""
         CREATE TABLE IF NOT EXISTS ticket_limbo_blockers (
@@ -134,6 +152,24 @@ def upgrade(ctx):
         ON ticket_limbo (issue_id, limbo_type)
         WHERE cleared_at IS NULL
     """)
+
+    # Validate FK integrity post-rebuild and restore the original
+    # foreign_keys PRAGMA value. `foreign_key_check` returns rows for
+    # any remaining violations; if we get any back, surface them as a
+    # migration failure so an operator can investigate rather than
+    # silently shipping orphaned data.
+    violations = ctx.execute("PRAGMA foreign_key_check")
+    try:
+        violation_rows = list(violations) if violations is not None else []
+    except TypeError:
+        violation_rows = []
+    if violation_rows:
+        raise RuntimeError(
+            "Migration 0005 found FK violations after rebuild: "
+            f"{violation_rows!r}. Investigate before re-running."
+        )
+    if prev_fk_value:
+        ctx.execute("PRAGMA foreign_keys = ON")
 
 
 def downgrade(ctx):
