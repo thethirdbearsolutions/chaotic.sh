@@ -129,3 +129,45 @@ ADR-0003 design and dismissed: it's neither as ergonomic as
 `show --raw > file; edit; update --body @file` (which uses primitives
 already on the table here) nor as powerful as the workspace it tried to
 substitute for.
+
+## Open concerns (deferred)
+
+After a clean-slate review of this ADR by a fresh reviewer (no prior
+context), two critiques surfaced that are *not* yet addressed and that
+warrant ferment before the larger pieces of this design ship. The
+narrow `--body @path` / `--body -` slice avoids both — see "Status"
+note below.
+
+**1. The `dump` temptation.** Even with no daemon, `chaotic dump`
+writes ordinary markdown files that look writable. Agents that
+discover `dump` will eventually try editing dumped files and expect
+the changes to propagate. They won't — `dump` is read-only — and the
+failure is silent (the agent's edit just sits on disk). ADR-0003 was
+rejected partly for the silent-data-loss surface a write-side
+filesystem creates; a read-only dump reintroduces ~80% of the
+temptation with 0% of the guardrails. Concrete unaddressed mitigations:
+`chmod -w` on dumped files, a "this file does not push" banner inside
+each file, naming (`dump` → `snapshot` or `export` to imply
+non-restorability), or simply not shipping `dump` until we have a
+clear story.
+
+**2. `dump` and `chaotic await` pull in opposite directions.** `await`
+is designed to keep the agent on the live edge — block until the
+server moves, react to fresh state. `dump` anchors the agent to a
+point-in-time snapshot. The sci-fi doc claims they compose ("dump,
+work, await, refresh dump") but the composition is shallow: an agent
+that harvests context from a dump and then makes plans against it is
+reasoning about a world that no longer exists. CLI commands will
+surface the divergence as runtime errors, but the *planning* horizon
+gets corrupted silently.
+
+**Status note.** The four-piece bundle in this ADR is not committed
+to in full. The narrow `--body @path` / `--body -` slice is being
+shipped as a small standalone change because it has neither
+problem above (no on-disk surface, no staleness window). The other
+three pieces (`dump`, `show --raw`, file-as-positional create)
+remain Proposed pending: signal from real use that the harvest pain
+justifies the temptation surface; resolution of how dumped files
+should warn against editing; and consideration of whether a unified
+`chaotic content` noun family (export / show / apply) is the better
+shape than three independent additions.
