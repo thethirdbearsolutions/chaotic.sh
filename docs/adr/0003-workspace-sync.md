@@ -1,7 +1,15 @@
 # ADR-0003: Filesystem workspace for chaotic content
 
-* **Status**: Proposed
+* **Status**: Superseded by [ADR-0004](0004-cli-content-io.md)
 * **Date**: 2026-05-11
+
+> Superseded after a sci-fi review surfaced four serious problems with
+> the workspace design: VISION misalignment (server-side rules become
+> invisible 412s instead of CLI errors agents can adapt to), two write
+> paths with no precedence rule, Git-shaped vocabulary colliding with
+> existing `chaotic status`, and silent watcher-death breaking the
+> "no edit lost" guarantee. See ADR-0004 Context for the full
+> reasoning. This ADR is retained as design history.
 
 ## Context
 

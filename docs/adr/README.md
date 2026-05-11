@@ -32,4 +32,5 @@ What we rejected and why. The most useful section for future readers.
 
 * [ADR-0001](0001-ritual-gates-intent-blockers.md): Ritual gates — intent + blockers state machine
 * [ADR-0002](0002-service-layer-enforcement.md): Service-layer enforcement as the security boundary
-* [ADR-0003](0003-workspace-sync.md): Filesystem workspace for chaotic content
+* [ADR-0003](0003-workspace-sync.md): Filesystem workspace for chaotic content *(superseded by ADR-0004)*
+* [ADR-0004](0004-cli-content-io.md): Ergonomic multi-line content in the CLI
