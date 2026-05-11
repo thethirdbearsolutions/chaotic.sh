@@ -85,25 +85,72 @@ class TestEventScopeMatching:
         scope = {"ritual_name": "code-review"}
         # Legacy RITUAL_ATTESTED puts name in field_name.
         assert await_cmd._event_matches_scope(
-            {"field_name": "code-review", "new_value": None}, scope,
+            {"activity_type": "ritual_attested",
+             "field_name": "code-review", "new_value": None},
+            scope,
         )
-        # RITUAL_APPROVED + intent events put name/limbo_type in new_value.
+        # RITUAL_APPROVED puts the ritual name in new_value.
         assert await_cmd._event_matches_scope(
-            {"field_name": "status", "new_value": "code-review"}, scope,
+            {"activity_type": "ritual_approved",
+             "field_name": "status", "new_value": "code-review"},
+            scope,
         )
         # Mismatch on both is rejected.
         assert not await_cmd._event_matches_scope(
-            {"field_name": "other", "new_value": "other"}, scope,
+            {"activity_type": "ritual_attested",
+             "field_name": "other", "new_value": "other"},
+            scope,
         )
 
     def test_ritual_ticket_id_restricts_to_issue(self):
         scope = {"ritual_name": "x", "ritual_ticket_id": "iss_1"}
         assert await_cmd._event_matches_scope(
-            {"field_name": "x", "issue_id": "iss_1"}, scope,
+            {"activity_type": "ritual_attested",
+             "field_name": "x", "issue_id": "iss_1"},
+            scope,
         )
         assert not await_cmd._event_matches_scope(
-            {"field_name": "x", "issue_id": "iss_2"}, scope,
+            {"activity_type": "ritual_attested",
+             "field_name": "x", "issue_id": "iss_2"},
+            scope,
         )
+
+    def test_intent_events_rejected_without_ticket_scope(self):
+        # Intent events don't carry a ritual name (the intent covers all
+        # claim/close-blocking rituals on the issue). Under
+        # `await ritual NAME` without --ticket, we can't soundly
+        # attribute an intent event to a named ritual, so we skip them.
+        scope = {"ritual_name": "code-review"}
+        for activity_type in ("intent_opened", "intent_cleared", "intent_canceled"):
+            assert not await_cmd._event_matches_scope(
+                {"activity_type": activity_type,
+                 "issue_id": "iss_1",
+                 "field_name": None,
+                 "new_value": "close"},
+                scope,
+            ), f"{activity_type} should not match ritual-name-only scope"
+
+    def test_intent_events_match_when_ticket_scope_present(self):
+        # With --ticket (ritual_ticket_id), intent events are accepted
+        # if the event's issue matches. The activity_type filter is
+        # what gates the lifecycle event.
+        scope = {"ritual_name": "code-review", "ritual_ticket_id": "iss_1"}
+        for activity_type in ("intent_opened", "intent_cleared", "intent_canceled"):
+            assert await_cmd._event_matches_scope(
+                {"activity_type": activity_type,
+                 "issue_id": "iss_1",
+                 "field_name": None,
+                 "new_value": "close"},
+                scope,
+            ), f"{activity_type} should match when ticket scope is present"
+            # Wrong issue is still rejected.
+            assert not await_cmd._event_matches_scope(
+                {"activity_type": activity_type,
+                 "issue_id": "iss_2",
+                 "field_name": None,
+                 "new_value": "close"},
+                scope,
+            )
 
 
 class TestEventTypeFiltering:
@@ -123,6 +170,54 @@ class TestEventTypeFiltering:
         assert not await_cmd._event_matches_type(
             {"activity_type": "status_changed"}, wire,
         )
+
+
+# ---------------------------------------------------------------------------
+# Transient error classification
+# ---------------------------------------------------------------------------
+
+
+class TestIsTransient:
+    def test_connect_error_is_transient(self):
+        import httpx
+        assert await_cmd._is_transient(httpx.ConnectError("boom"))
+
+    def test_timeout_is_transient(self):
+        import httpx
+        assert await_cmd._is_transient(httpx.TimeoutException("boom"))
+
+    def test_apierror_without_status_code_is_transient(self):
+        # The non-server-response form of APIError (e.g. local failure
+        # before a status code is known). Treat as transient so a wait
+        # doesn't die on a momentary blip.
+        assert await_cmd._is_transient(await_cmd.APIError("network blip"))
+
+    def test_apierror_429_is_transient(self):
+        assert await_cmd._is_transient(
+            await_cmd.APIError("rate limited", status_code=429),
+        )
+
+    def test_apierror_5xx_is_transient(self):
+        for code in (500, 502, 503, 504):
+            assert await_cmd._is_transient(
+                await_cmd.APIError("server err", status_code=code),
+            ), code
+
+    def test_apierror_4xx_not_transient(self):
+        # Auth/perm failures won't self-heal — kill the wait fast.
+        for code in (400, 401, 403, 404, 422):
+            assert not await_cmd._is_transient(
+                await_cmd.APIError("client err", status_code=code),
+            ), code
+
+    def test_apierror_evaluation_does_not_raise(self):
+        # Regression guard against the bug where APIError.status_code
+        # didn't exist and `_is_transient` blew up with AttributeError
+        # on every server error, killing all retries.
+        try:
+            await_cmd._is_transient(await_cmd.APIError("boom"))
+        except AttributeError as exc:
+            pytest.fail(f"_is_transient must not raise AttributeError: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +447,112 @@ class TestCommandTree:
         for sub in ("issue", "issues", "doc", "docs", "project",
                     "sprint", "team", "ritual", "rituals"):
             assert sub in result.output
+
+    def test_issues_subcommand_rejects_assignee_flag(self):
+        # `--assignee` used to be accepted-but-ignored; that silent
+        # no-op was misleading harness authors. The flag is removed
+        # until we wire up real assignee filtering — Click should
+        # surface a "No such option" error (exit 2).
+        from click.testing import CliRunner
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        runner = CliRunner()
+        result = runner.invoke(
+            root, ["await", "issues", "--assignee", "me", "--timeout", "1s"],
+        )
+        assert result.exit_code != 0
+        assert "assignee" in (result.output or "").lower() or \
+               "assignee" in str(result.exception or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# _run_wait: principal resolution failure must fail fast
+# ---------------------------------------------------------------------------
+
+
+class TestPrincipalResolutionFailFast:
+    def test_run_wait_fails_when_whoami_raises_and_include_self_off(
+        self, monkeypatch,
+    ):
+        # Without a resolvable principal id and --include-self OFF, the
+        # implementation cannot enforce the documented "default OFF"
+        # filter. Silently flipping the default would self-trigger the
+        # exact wake loop the default was designed to prevent — so we
+        # fail fast instead.
+        def boom():
+            raise await_cmd.APIError("unauthorized", status_code=401)
+
+        monkeypatch.setattr(await_cmd, "_resolve_principal_id", boom)
+
+        with pytest.raises(SystemExit) as excinfo:
+            await_cmd._run_wait(
+                team_id="team_x",
+                project_id=None,
+                scope={},
+                type_spec=None,
+                include_self=False,
+                timeout_spec="1s",
+                json_mode=False,
+                until_cmd=None,
+            )
+        assert excinfo.value.code == 1
+
+    def test_run_wait_fails_when_whoami_returns_no_id_and_include_self_off(
+        self, monkeypatch,
+    ):
+        # Server responded but didn't include an id field. Same risk:
+        # we can't enforce the default OFF filter. Fail fast.
+        monkeypatch.setattr(await_cmd, "_resolve_principal_id", lambda: None)
+
+        with pytest.raises(SystemExit) as excinfo:
+            await_cmd._run_wait(
+                team_id="team_x",
+                project_id=None,
+                scope={},
+                type_spec=None,
+                include_self=False,
+                timeout_spec="1s",
+                json_mode=False,
+                until_cmd=None,
+            )
+        assert excinfo.value.code == 1
+
+    def test_run_wait_does_not_call_whoami_when_include_self_on(
+        self, monkeypatch,
+    ):
+        # When --include-self is ON, we don't need the principal id, so
+        # a failing whoami must NOT abort the wait.
+        def boom():
+            raise AssertionError("must not be called when include_self=True")
+
+        monkeypatch.setattr(await_cmd, "_resolve_principal_id", boom)
+
+        # We expect _run_wait to fall through to _poll. Stub the poll
+        # to return None (timeout) so the test doesn't hit real IO.
+        monkeypatch.setattr(await_cmd, "_poll", lambda *a, **kw: None)
+        # Patch the client lookup to a no-op fetcher.
+        monkeypatch.setattr(
+            await_cmd, "_client",
+            lambda: type("X", (), {
+                "get_team_activities": lambda self, **kw: [],
+            })(),
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            await_cmd._run_wait(
+                team_id="team_x",
+                project_id=None,
+                scope={},
+                type_spec=None,
+                include_self=True,  # opt in
+                timeout_spec="1s",
+                json_mode=False,
+                until_cmd=None,
+            )
+        # _poll returned None → timeout exit.
+        assert excinfo.value.code == 124

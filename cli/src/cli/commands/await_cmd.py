@@ -164,6 +164,16 @@ def _parse_event_dt(value) -> datetime | None:
     return None
 
 
+INTENT_ACTIVITY_TYPES = frozenset({
+    "intent_opened", "intent_cleared", "intent_canceled",
+})
+"""Activity types where the row records a ticket-level intent state
+change rather than a specific ritual event. Intent events store the
+limbo type ("claim"/"close") in `new_value` — they do NOT carry a
+ritual name, because one intent covers ALL pending claim-blocking
+(or close-blocking) rituals on the ticket simultaneously."""
+
+
 def _event_matches_type(event: dict, wire_filter: set[str] | None) -> bool:
     if wire_filter is None:
         return True
@@ -192,12 +202,25 @@ def _event_matches_scope(event: dict, scope: dict) -> bool:
     if "document_id" in scope and event.get("document_id") != scope["document_id"]:
         return False
     if "ritual_name" in scope:
-        # Ritual events store the ritual name in `field_name` (legacy
-        # RITUAL_ATTESTED) or `new_value` (RITUAL_APPROVED + intent
-        # events). Match either.
         rn = scope["ritual_name"]
-        if event.get("field_name") != rn and event.get("new_value") != rn:
-            return False
+        activity_type = event.get("activity_type")
+        if activity_type in INTENT_ACTIVITY_TYPES:
+            # Intent events don't carry a ritual name (see
+            # INTENT_ACTIVITY_TYPES). To still wake on them from
+            # `await ritual NAME`, the caller must scope the wait to a
+            # specific ticket via --ticket — the intent is then bound
+            # at least to the right issue, and the activity_type filter
+            # picks the right lifecycle event. Without --ticket we
+            # can't soundly attribute an intent event to a named
+            # ritual and the event is skipped.
+            if "ritual_ticket_id" not in scope:
+                return False
+            # ritual_ticket_id is enforced below.
+        else:
+            # RITUAL_ATTESTED stores the ritual name in `field_name`;
+            # RITUAL_APPROVED stores it in `new_value`. Match either.
+            if event.get("field_name") != rn and event.get("new_value") != rn:
+                return False
     if "ritual_ticket_id" in scope:
         # When --ticket is provided, restrict to events on that issue.
         if event.get("issue_id") != scope["ritual_ticket_id"]:
@@ -427,16 +450,13 @@ def _common_options(f):
 
 
 def _resolve_principal_id() -> str | None:
-    """Best-effort lookup of the current user's id for --include-self
-    filtering. Failure to resolve is logged to stderr but doesn't
-    abort the wait.
+    """Look up the current user's id for --include-self filtering. May
+    return None when the server responds but doesn't include an id;
+    network/auth failures propagate so the caller can fail fast (a
+    silent fallback would invert the documented `--include-self`
+    default OFF and risk self-triggered wake loops).
     """
-    try:
-        me = _client().get_me()
-    except Exception as exc:  # noqa: BLE001
-        _stderr(f"await: could not resolve self ({type(exc).__name__}); "
-                "--include-self default may be ineffective")
-        return None
+    me = _client().get_me()
     return (me or {}).get("id")
 
 
@@ -483,7 +503,27 @@ def _run_wait(
         _stderr(f"await: {exc.message}")
         raise SystemExit(2) from exc
 
-    exclude_self_for = None if include_self else _resolve_principal_id()
+    if include_self:
+        exclude_self_for = None
+    else:
+        try:
+            exclude_self_for = _resolve_principal_id()
+        except Exception as exc:  # noqa: BLE001
+            _stderr(
+                "await: cannot resolve current user "
+                f"({type(exc).__name__}: {exc}). --include-self defaults "
+                "OFF; without a principal id the filter would silently "
+                "wake on the agent's own activity. Pass --include-self "
+                "to opt in, or fix authentication and retry."
+            )
+            raise SystemExit(1) from exc
+        if exclude_self_for is None:
+            _stderr(
+                "await: current user has no id field in /users/me. "
+                "--include-self defaults OFF but cannot be enforced without "
+                "a principal id. Pass --include-self to opt in."
+            )
+            raise SystemExit(1)
     watermark = _now_utc()
 
     def fetch():
@@ -562,7 +602,7 @@ def register(cli):
             issue = _client().get_issue_by_identifier(identifier)
         except APIError as exc:
             _stderr(f"await: {exc}")
-            raise SystemExit(1 if (exc.status_code or 0) >= 500 else 2) from exc
+            raise SystemExit(1) from exc
         team_id = issue.get("team_id") or _require_current_team()
         project_id = issue.get("project_id")
         scope = {"issue_id": issue["id"]}
@@ -576,24 +616,14 @@ def register(cli):
     @await_.command("issues")
     @click.option("--project", "project_override", default=None,
                   help="Project key to scope to (defaults to current project).")
-    @click.option("--assignee", default=None,
-                  help="Filter to events where the issue's assignee matches "
-                       "this value (`me`, name, or id). Best-effort client-side.")
     @_common_options
-    def await_issues(project_override, assignee, type_spec, include_self,
+    def await_issues(project_override, type_spec, include_self,
                      timeout_spec, json_mode, until_cmd):
         """Wait on any issue in the (current or specified) project."""
         team_id = _require_current_team()
         project_id = project_override or _require_current_project()
-        scope: dict = {}
-        if assignee is not None:
-            # Stash for client-side filtering; the team feed doesn't
-            # support assignee filtering server-side. Note: matching
-            # requires looking up the issue per event, which we skip
-            # for MVP — assignee is documented as best-effort.
-            scope["_assignee_hint"] = assignee
         _run_wait(
-            team_id=team_id, project_id=project_id, scope=scope,
+            team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
             timeout_spec=timeout_spec, json_mode=json_mode,
             until_cmd=until_cmd,
@@ -685,7 +715,7 @@ def register(cli):
                 issue = _client().get_issue_by_identifier(ticket_identifier)
             except APIError as exc:
                 _stderr(f"await: {exc}")
-                raise SystemExit(2) from exc
+                raise SystemExit(1) from exc
             scope["ritual_ticket_id"] = issue["id"]
         # Default type filter for rituals if user didn't specify:
         # attested/approved/intent_* events.

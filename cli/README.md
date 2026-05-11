@@ -170,7 +170,6 @@ take collection filters and wait on any matching entity.
 ```bash
 chaotic await issue CHT-1334                  # Specific issue
 chaotic await issues --project CHT            # Any issue in project CHT
-chaotic await issues --assignee me            # Any issue assigned to me
 chaotic await doc D-91                        # Specific document
 chaotic await docs                            # Any document in current team
 chaotic await project CHT                     # Any activity in a project
@@ -186,9 +185,10 @@ chaotic await rituals                         # Any ritual attestation in curren
 
 `await project` wakes on issue activity, document activity, and comments on
 either, within the project. `await team` wakes on anything team-wide.
-Collection filters on plurals (`issues`, `docs`) mirror the filters on the
-corresponding `list` commands: `--project`, `--sprint`, `--assignee`,
-`--author`, `--status`, etc.
+Collection filters on plurals (`issues`, `docs`) are currently limited to
+`--project`. Other filters (`--sprint`, `--assignee`, `--author`,
+`--status`, …) are not yet wired through; combine `--type` with `--until`
+for client-side narrowing in the meantime.
 
 ### Scope resolution
 
@@ -205,8 +205,18 @@ when a required scope is missing.
 | `await project [ID]` | current team (ID optional)        | Defaults to current project         |
 | `await sprint [ID]`  | current project (ID optional)     | Defaults to current sprint          |
 | `await team [ID]`    | auth (ID optional)                | Defaults to current team            |
-| `await ritual NAME`  | current project                   | Ritual names are per-project        |
-| `await rituals`      | current project                   |                                     |
+| `await ritual NAME`  | current project                   | Ritual names are per-project. Pass `--ticket` to also wake on `intent_*` events. |
+| `await rituals`      | current project                   | Wakes on ritual events project-wide, including intent lifecycle. |
+
+`intent_opened` / `intent_cleared` / `intent_canceled` events fire at the
+ticket level — one intent covers every claim-blocking (or close-blocking)
+ritual on the issue at once, so the event doesn't carry a single ritual
+name. Under `await ritual NAME`, intent events are only matched when
+`--ticket` is also given (the wait is then bound to a specific issue;
+the type filter does the rest). Without `--ticket`, intent events are
+silently skipped from `await ritual NAME`. Use `await issue ID --type
+intent_opened,intent_cleared,intent_canceled` or `await rituals` if you
+want to wake on intents regardless of ritual name.
 
 ### Flags
 
