@@ -272,15 +272,33 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
 # Output
 # ---------------------------------------------------------------------------
 
-def _emit_event(event: dict, json_mode: bool) -> None:
-    """Write the wake event to stdout per the CLI contract: exactly
-    one JSON object + `\\n` under --json, or a single human-readable
-    line otherwise.
+_TRANSITION_ACTIVITY_TYPES = frozenset({
+    "status_changed", "priority_changed", "assigned", "unassigned",
+    "labeled", "unlabeled", "moved_to_sprint", "removed_from_sprint",
+    "ritual_attested", "ritual_approved",
+})
+
+
+def _format_event_ts(value) -> str:
+    """Render the event timestamp in a human-readable form. Keeps the
+    full date+time (harness authors who want pretty relative times
+    can post-process the JSON form themselves), but drops microseconds
+    and timezone noise that clutter without informing.
     """
-    if json_mode:
-        sys.stdout.write(json.dumps(event, default=str) + "\n")
-        sys.stdout.flush()
-        return
+    dt = _parse_event_dt(value)
+    if dt is None:
+        return str(value or "")
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _render_event_line(event: dict) -> str:
+    """Build the one-line human-readable summary for non-JSON output.
+
+    Field-extraction is defensive: events may be missing user/title
+    fields depending on the activity type. The line stays scannable
+    even on a partial event — never crashes on a missing key.
+    """
+    ts = _format_event_ts(event.get("created_at"))
     actor = event.get("user_name") or event.get("user_id") or "?"
     activity = event.get("activity_type") or "?"
     target = (
@@ -289,12 +307,44 @@ def _emit_event(event: dict, json_mode: bool) -> None:
         or event.get("document_id")
         or ""
     )
-    ts = event.get("created_at") or ""
-    line = f"[{ts}] {activity} {target} by {actor}"
-    new_value = event.get("new_value")
-    if new_value:
-        line += f" ({new_value})"
-    click.echo(line)
+    title = event.get("issue_title") or event.get("document_title")
+
+    parts: list[str] = []
+    if ts:
+        parts.append(click.style(f"[{ts}]", dim=True))
+    parts.append(click.style(activity, bold=True))
+    if target:
+        parts.append(target)
+    if title:
+        parts.append(click.style(f'"{title}"', dim=True))
+    parts.append(click.style(f"by {actor}", dim=True))
+
+    old_val = event.get("old_value")
+    new_val = event.get("new_value")
+    if activity in _TRANSITION_ACTIVITY_TYPES:
+        # Status/priority/assignment-style transitions: show old → new
+        # when both are present, just → new when not.
+        if old_val and new_val and old_val != new_val:
+            parts.append(click.style(f"{old_val} → {new_val}", fg="cyan"))
+        elif new_val:
+            parts.append(click.style(f"→ {new_val}", fg="cyan"))
+    elif new_val:
+        parts.append(click.style(f"({new_val})", dim=True))
+
+    return " ".join(parts)
+
+
+def _emit_event(event: dict, json_mode: bool) -> None:
+    """Write the wake event to stdout per the CLI contract: exactly
+    one JSON object + `\\n` under --json, or a single human-readable
+    line otherwise. The rendered form is unstable and intended for
+    human eyes; harness scripts use --json.
+    """
+    if json_mode:
+        sys.stdout.write(json.dumps(event, default=str) + "\n")
+        sys.stdout.flush()
+        return
+    click.echo(_render_event_line(event))
 
 
 def _stderr(msg: str) -> None:
@@ -586,17 +636,39 @@ def register(cli):
     # registered under the user-facing name via the `name=` kwarg.
     @cli.group(name="await")
     def await_():
-        """Block until a matching activity arrives, then exit.
+        """Block until activity arrives, then exit with the event.
 
-        See `chaotic await SUBCOMMAND --help` for scope-specific options.
-        Exits 0 on match, 124 on timeout, 130 on SIGINT, 2 on usage error.
+        The agent-harness primitive: park the process here, do other work,
+        and resume when something you care about happens. Exits 0 with the
+        matching event on stdout; 124 on --timeout; 130 on SIGINT.
+
+        \b
+        Singular subcommands target one entity:
+          await issue ID         await doc ID         await ritual NAME
+        Plural subcommands take collection filters:
+          await issues           await docs           await rituals
+        Scope-only subcommands (await project/sprint/team) default to the
+        configured current scope.
+
+        \b
+        Examples:
+          chaotic await issue CHT-1334 --type commented --timeout 8h
+          chaotic await ritual code-review --ticket CHT-1334 --json
+          chaotic await issues --type status_changed \\
+              --until 'jq -e ".new_value == \\"in_review\\""'
+
+        Run `chaotic await SUBCOMMAND --help` for scope-specific options.
         """
 
     @await_.command("issue")
     @click.argument("identifier")
     @_common_options
     def await_issue(identifier, type_spec, include_self, timeout_spec, json_mode, until_cmd):
-        """Wait on a specific issue (e.g. `chaotic await issue CHT-1334`)."""
+        """Wait on a specific issue.
+
+        Example: `chaotic await issue CHT-1334`.
+        For any issue in a project, use `chaotic await issues` instead.
+        """
         # Resolve the issue to confirm access + get its project/team.
         try:
             issue = _client().get_issue_by_identifier(identifier)
@@ -619,7 +691,10 @@ def register(cli):
     @_common_options
     def await_issues(project_override, type_spec, include_self,
                      timeout_spec, json_mode, until_cmd):
-        """Wait on any issue in the (current or specified) project."""
+        """Wait on any issue in the (current or specified) project.
+
+        For a specific issue, use `chaotic await issue ID` instead.
+        """
         team_id = _require_current_team()
         project_id = project_override or _require_current_project()
         _run_wait(
@@ -633,7 +708,10 @@ def register(cli):
     @click.argument("document_id")
     @_common_options
     def await_doc(document_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
-        """Wait on a specific document."""
+        """Wait on a specific document.
+
+        For any document in the team, use `chaotic await docs` instead.
+        """
         team_id = _require_current_team()
         scope = {"document_id": document_id}
         _run_wait(
@@ -646,7 +724,10 @@ def register(cli):
     @await_.command("docs")
     @_common_options
     def await_docs(type_spec, include_self, timeout_spec, json_mode, until_cmd):
-        """Wait on any document in the current team."""
+        """Wait on any document in the current team.
+
+        For a specific document, use `chaotic await doc ID` instead.
+        """
         team_id = _require_current_team()
         _run_wait(
             team_id=team_id, project_id=None, scope={},
@@ -706,7 +787,13 @@ def register(cli):
     @_common_options
     def await_ritual(ritual_name, ticket_identifier, type_spec, include_self,
                      timeout_spec, json_mode, until_cmd):
-        """Wait on a specific ritual's next attestation or approval."""
+        """Wait on a specific ritual's next attestation or approval.
+
+        For any ritual in the current project, use `chaotic await rituals`.
+        Pass `--ticket CHT-123` to also wake on `intent_*` lifecycle
+        events for that issue (intents don't carry a ritual name on
+        their own — see README § Await).
+        """
         team_id = _require_current_team()
         project_id = _require_current_project()
         scope: dict = {"ritual_name": ritual_name}
@@ -731,7 +818,10 @@ def register(cli):
     @await_.command("rituals")
     @_common_options
     def await_rituals(type_spec, include_self, timeout_spec, json_mode, until_cmd):
-        """Wait on any ritual attestation/approval in the current project."""
+        """Wait on any ritual attestation/approval in the current project.
+
+        For a specific ritual, use `chaotic await ritual NAME` instead.
+        """
         team_id = _require_current_team()
         project_id = _require_current_project()
         if type_spec is None:

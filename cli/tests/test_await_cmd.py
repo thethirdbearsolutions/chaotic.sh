@@ -221,6 +221,79 @@ class TestIsTransient:
 
 
 # ---------------------------------------------------------------------------
+# Rendered (non-JSON) output
+# ---------------------------------------------------------------------------
+
+
+def _strip_ansi(s: str) -> str:
+    import re as _re
+    return _re.sub(r"\x1b\[[0-9;]*m", "", s)
+
+
+class TestRenderEventLine:
+    def test_basic_event_renders_all_visible_fields(self):
+        event = {
+            "created_at": "2026-05-11T14:22:07Z",
+            "activity_type": "commented",
+            "user_name": "ali",
+            "issue_identifier": "CHT-1334",
+            "issue_title": "Polling await command",
+        }
+        line = _strip_ansi(await_cmd._render_event_line(event))
+        assert "2026-05-11 14:22:07" in line
+        assert "commented" in line
+        assert "CHT-1334" in line
+        assert '"Polling await command"' in line
+        assert "by ali" in line
+
+    def test_status_change_shows_old_to_new(self):
+        event = {
+            "created_at": "2026-05-11T14:22:07Z",
+            "activity_type": "status_changed",
+            "user_name": "ali",
+            "issue_identifier": "CHT-1334",
+            "old_value": "todo",
+            "new_value": "in_review",
+        }
+        line = _strip_ansi(await_cmd._render_event_line(event))
+        assert "todo → in_review" in line
+
+    def test_status_change_with_only_new_value(self):
+        event = {
+            "created_at": "2026-05-11T14:22:07Z",
+            "activity_type": "status_changed",
+            "user_name": "ali",
+            "issue_identifier": "CHT-1334",
+            "new_value": "done",
+        }
+        line = _strip_ansi(await_cmd._render_event_line(event))
+        assert "→ done" in line
+
+    def test_comment_event_omits_arrow(self):
+        # Non-transition events shouldn't render an arrow even when
+        # new_value is set (e.g. comment text snippets in future).
+        event = {
+            "activity_type": "commented",
+            "user_name": "ali",
+            "issue_identifier": "CHT-1334",
+            "new_value": "looks great",
+        }
+        line = _strip_ansi(await_cmd._render_event_line(event))
+        assert "→" not in line
+        assert "(looks great)" in line
+
+    def test_missing_fields_do_not_crash(self):
+        # Partial event — no user, no target, no timestamp.
+        line = _strip_ansi(await_cmd._render_event_line({}))
+        assert "?" in line  # falls back gracefully
+
+    def test_falls_back_to_user_id_when_no_name(self):
+        event = {"activity_type": "commented", "user_id": "u_42"}
+        line = _strip_ansi(await_cmd._render_event_line(event))
+        assert "by u_42" in line
+
+
+# ---------------------------------------------------------------------------
 # --until predicate contract
 # ---------------------------------------------------------------------------
 
@@ -447,6 +520,57 @@ class TestCommandTree:
         for sub in ("issue", "issues", "doc", "docs", "project",
                     "sprint", "team", "ritual", "rituals"):
             assert sub in result.output
+
+    def test_group_help_includes_warm_examples(self):
+        # The await group's --help is the entry point a confused human
+        # sees first. It should ship concrete examples and the
+        # singular/plural map, not just "see subcommand --help".
+        from click.testing import CliRunner
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        runner = CliRunner()
+        result = runner.invoke(root, ["await", "--help"])
+        assert result.exit_code == 0
+        # Examples block.
+        assert "chaotic await issue CHT-1334" in result.output
+        # Singular/plural map.
+        assert "Singular subcommands" in result.output
+        assert "Plural subcommands" in result.output
+
+    def test_singular_and_plural_subcommands_cross_reference(self):
+        # A user who runs `chaotic await issue --help` should learn
+        # about `await issues` (and vice versa). Same for doc/docs and
+        # ritual/rituals.
+        from click.testing import CliRunner
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        runner = CliRunner()
+
+        pairs = [
+            ("issue", "issues"),
+            ("issues", "issue"),
+            ("doc", "docs"),
+            ("docs", "doc"),
+            ("ritual", "rituals"),
+            ("rituals", "ritual"),
+        ]
+        for cmd, sibling in pairs:
+            result = runner.invoke(root, ["await", cmd, "--help"])
+            assert result.exit_code == 0, f"await {cmd} --help failed"
+            assert f"await {sibling}" in result.output, (
+                f"`chaotic await {cmd} --help` should mention "
+                f"`chaotic await {sibling}`; got:\n{result.output}"
+            )
 
     def test_issues_subcommand_rejects_assignee_flag(self):
         # `--assignee` used to be accepted-but-ignored; that silent
