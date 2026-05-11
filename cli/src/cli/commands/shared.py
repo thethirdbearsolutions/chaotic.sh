@@ -43,6 +43,41 @@ def print_ritual_prompt(prompt):
     console.print(Padding(Markdown(prompt), (0, 0, 0, 6)))
 
 
+# ── Click parameter callbacks ────────────────────────────────────────────────
+
+
+def resolve_content_value(ctx, param, value):
+    """Click callback: resolve a long-text option value via curl-style conventions.
+
+    Resolution rules:
+      ``-``           read stdin to EOF
+      ``@@<rest>``    literal ``@<rest>`` (escape; only the leading ``@@`` is
+                      unescaped, so ``@@@foo`` becomes ``@@foo``)
+      ``@<path>``     read text from file at ``<path>``; missing or unreadable
+                      file raises ``UsageError``
+      anything else   pass through unchanged (including ``None`` and ``""``)
+
+    Stdin is consumed only once per invocation; if multiple options on the same
+    command both pass ``-``, the second sees EOF and gets an empty string.
+    """
+    if value in (None, ""):
+        return value
+    if value == "-":
+        return sys.stdin.read()
+    if value.startswith("@@"):
+        return "@" + value[2:]
+    if value.startswith("@"):
+        path = value[1:]
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except OSError as exc:
+            raise click.UsageError(
+                f"Could not read content from {path!r}: {exc.strerror or exc}"
+            )
+    return value
+
+
 def get_status_color(status: str) -> str:
     """Get Rich color for issue status."""
     return {

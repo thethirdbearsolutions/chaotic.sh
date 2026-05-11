@@ -46,6 +46,38 @@ Check current context (user, team, project):
 chaotic status
 ```
 
+## Long-text values from a file or stdin
+
+Every long-text flag in the CLI (`--description`, `--body`, `--content`,
+`--comment`, `--note`, `--prompt`) accepts curl-style file references:
+
+```bash
+# Read body from a file
+chaotic doc create --project PRJ --title "Report" --body @./report.md
+
+# Read body from stdin (useful with heredocs — no tmp file needed)
+chaotic doc create --project PRJ --title "Report" --body - <<'EOF'
+# Long doc
+
+Body content with `backticks`, $vars, em-dashes — all fine.
+EOF
+
+# Literal "@" prefix (escape with @@)
+chaotic issue comment CHT-11 --note @@alice
+```
+
+Resolution rules:
+
+| Value             | Behavior                                     |
+|-------------------|----------------------------------------------|
+| `-`               | Read stdin to EOF                            |
+| `@/path/to/file`  | Read text from file (UTF-8); error if missing |
+| `@@<rest>`        | Literal `@<rest>` (escape; one level only)   |
+| anything else     | Literal value (existing behavior)            |
+
+Stdin can only be consumed once per command; if multiple flags pass `-`,
+the second sees EOF.
+
 ## Teams
 
 ```bash

@@ -4,7 +4,7 @@ import sys
 import click
 from rich.table import Table
 
-from .shared import _client, console
+from .shared import _client, console, resolve_content_value
 
 
 def _main():
@@ -48,7 +48,7 @@ def register(cli):
     @label.command("create")
     @click.argument("name")
     @click.option("--color", default="#6366f1")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @_main().require_team
     @_main().handle_error
     def label_create(name, color, description):
@@ -61,7 +61,7 @@ def register(cli):
     @click.argument("label_id")
     @click.option("--name", help="New label name")
     @click.option("--color", help="New color (hex, e.g. #ff0000)")
-    @click.option("--description", help="New description")
+    @click.option("--description", help="New description", callback=resolve_content_value)
     @_main().require_team
     @_main().handle_error
     def label_update(label_id, name, color, description):

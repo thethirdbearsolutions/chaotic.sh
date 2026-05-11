@@ -5,7 +5,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console
+from .shared import _client, console, resolve_content_value
 
 
 def _main():
@@ -54,7 +54,7 @@ def register(cli):
     @project.command("create")
     @click.argument("name")
     @click.argument("key")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @click.option("--color", default="#6366f1")
     @click.option("--estimate-scale", default="fibonacci",
                   type=click.Choice(["fibonacci", "linear", "powers_of_2", "tshirt"]),
@@ -132,7 +132,7 @@ def register(cli):
 
     @project.command("update")
     @click.option("--name")
-    @click.option("--description")
+    @click.option("--description", callback=resolve_content_value)
     @click.option("--color")
     @click.option("--estimate-scale",
                   type=click.Choice(["fibonacci", "linear", "powers_of_2", "tshirt"]),
