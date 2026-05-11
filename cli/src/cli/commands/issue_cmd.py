@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, print_ritual_prompt
+from .shared import _client, console, print_ritual_prompt, resolve_content_value
 
 
 def _main():
@@ -338,7 +338,7 @@ def register(cli):
     @issue.command("create")
     @click.argument("title", required=False)
     @click.option("--title", "-t", "title_opt", help="Issue title (alternative to positional argument)")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
@@ -605,7 +605,7 @@ def register(cli):
     @issue.command("update")
     @click.argument("identifier")
     @click.option("--title")
-    @click.option("--description")
+    @click.option("--description", callback=resolve_content_value)
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
     @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
@@ -620,7 +620,7 @@ def register(cli):
     @click.option("--relates-to", "relates_to", multiple=True, help="Add relates-to relation(s) (can be used multiple times)")
     @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
                   help="Auto-attest all pending ticket rituals (requires --note)")
-    @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)")
+    @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
@@ -755,7 +755,7 @@ def register(cli):
     @issue.command("comment")
     @click.argument("identifier")
     @click.argument("content")
-    @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)")
+    @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)", callback=resolve_content_value)
     @click.option("--assign-to", help="Also assign the issue (use 'me', a user ID, or name/email)")
     @_main().require_auth
     @_main().handle_error
@@ -962,7 +962,7 @@ def register(cli):
     @issue.command("assign")
     @click.argument("identifier")
     @click.argument("assignee", required=False)
-    @click.option("--comment", "comment_text", help="Also add a comment to the issue")
+    @click.option("--comment", "comment_text", help="Also add a comment to the issue", callback=resolve_content_value)
     @_main().require_auth
     @_main().handle_error
     def issue_assign(identifier, assignee, comment_text):

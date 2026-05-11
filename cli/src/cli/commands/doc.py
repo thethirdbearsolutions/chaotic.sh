@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, get_status_color
+from .shared import _client, console, get_status_color, resolve_content_value
 
 
 def _main():
@@ -76,7 +76,7 @@ def register(cli):
     @doc.command("create")
     @click.argument("title_words", nargs=-1)
     @click.option("--title", "title_opt", help="Document title (alternative to positional argument)")
-    @click.option("--content", "--body", "--description", default="")
+    @click.option("--content", "--body", "--description", default="", callback=resolve_content_value)
     @click.option("--icon", default="")
     @click.option("--project", help="Project to attach doc to (ID, key, or name). Omit for global/team-wide.")
     @click.option("--sprint", help="Sprint to attach doc to (ID, name, or 'current')")
@@ -246,7 +246,7 @@ def register(cli):
     @doc.command("update")
     @click.argument("document_id")
     @click.option("--title")
-    @click.option("--content")
+    @click.option("--content", callback=resolve_content_value)
     @click.option("--icon")
     @click.option("--project", help="Move to project (ID, key, or name)")
     @click.option("--sprint", help="Attach to sprint (name, 'current', 'next', or ID)")

@@ -5,7 +5,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, print_sprint_panel
+from .shared import _client, console, print_sprint_panel, resolve_content_value
 
 
 def _main():
@@ -25,7 +25,7 @@ def register(cli):
     @click.argument("name", required=False)
     @click.option("--budget", type=int, hidden=True)
     @click.option("--no-budget", is_flag=True, hidden=True)
-    @click.option("--description", hidden=True)
+    @click.option("--description", hidden=True, callback=resolve_content_value)
     @_main().json_option
     @_main().require_project
     @_main().handle_error
@@ -219,7 +219,7 @@ def register(cli):
     @sprint.command("update")
     @click.argument("sprint_id", required=False)
     @click.option("--name", help="Sprint name")
-    @click.option("--description", help="Sprint description")
+    @click.option("--description", help="Sprint description", callback=resolve_content_value)
     @click.option("--budget", type=int, help="Point budget for the sprint")
     @click.option("--no-budget", is_flag=True, help="Remove budget limit (unlimited)")
     @_main().require_auth
