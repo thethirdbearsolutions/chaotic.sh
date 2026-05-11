@@ -4,7 +4,7 @@ import logging
 import random
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError
+from oxyde import IntegrityError, atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
@@ -20,6 +20,7 @@ from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
 from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.user import OxydeUser
 
 
 class RitualService:
@@ -27,6 +28,127 @@ class RitualService:
 
     def __init__(self, db=None):
         self.db = db  # Kept for API compat during transition; not used by Oxyde
+
+    # ------------------------------------------------------------------
+    # Service-layer validation helpers. These run regardless of caller
+    # (HTTP API, internal task, future webhook) so the API layer is not
+    # the only enforcement boundary.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_note(ritual: "OxydeRitual", note: str | None) -> None:
+        """Reject empty/whitespace-only notes when the ritual requires one.
+        Applies to all attestation/completion paths, not just attest.
+        """
+        if ritual.note_required and not (note and note.strip()):
+            raise ValueError(
+                f"Ritual '{ritual.name}' requires a note. "
+                f"Prompt: {ritual.prompt}"
+            )
+
+    async def _validate_not_agent_for_gate(
+        self, ritual: "OxydeRitual", user_id: str
+    ) -> None:
+        """GATE rituals can only be performed by humans. The is_agent
+        check lives at the service layer so internal callers (background
+        tasks, future webhooks) can't bypass the human-only invariant.
+        """
+        if ritual.approval_mode != ApprovalMode.GATE:
+            return
+        user = await OxydeUser.objects.get_or_none(id=user_id)
+        if user is not None and user.is_agent:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is GATE mode and requires a human. "
+                f"Agents cannot attest or complete GATE rituals."
+            )
+
+    async def _validate_conditions_match(
+        self, ritual: "OxydeRitual", issue: "OxydeIssue"
+    ) -> None:
+        """Re-evaluate ritual conditions against the issue at attest time.
+        Listing-time selection is advisory; this is enforcement.
+        """
+        if not ritual.conditions:
+            return
+        # _evaluate_conditions is a sync method that returns bool; do NOT await.
+        if not self._evaluate_conditions(ritual, issue):
+            raise ValueError(
+                f"Ritual '{ritual.name}' conditions do not match issue "
+                f"{issue.identifier}; cannot attest."
+            )
+
+    async def _validate_group_selection(
+        self, ritual: "OxydeRitual", issue_id: str, issue: "OxydeIssue | None" = None,
+    ) -> None:
+        """For RANDOM_ONE/ROUND_ROBIN groups, only the selected ritual
+        may be attested.
+
+        Mirrors the listing logic in `_apply_group_selection` exactly:
+        same set of siblings (`group=ritual.group_id`, `is_active=True`,
+        and — for the RANDOM_ONE path — the same `_evaluate_conditions`
+        filter the listing applies). Without this mirroring, the seeded
+        random pick can diverge between listing and validate, causing
+        the service to reject the very ritual the listing offered.
+        """
+        if not ritual.group_id:
+            return
+        group = await OxydeRitualGroup.objects.get_or_none(id=ritual.group_id)
+        if group is None:
+            return
+        if group.selection_mode == SelectionMode.PERCENTAGE:
+            # Independent rolls per ritual; selection is per-ritual, not per-group.
+            return
+
+        siblings = await OxydeRitual.objects.filter(
+            group=group, is_active=True,
+        ).all()
+        if not siblings:
+            return
+
+        if group.selection_mode == SelectionMode.RANDOM_ONE:
+            # Listing filters by _evaluate_conditions. To match, fetch
+            # the issue (with labels prefetched, since conditions can
+            # reference labels) and apply the same filter here.
+            if issue is None:
+                issue = await OxydeIssue.objects.prefetch("labels").filter(
+                    id=issue_id,
+                ).first()
+            if issue is not None:
+                siblings = [s for s in siblings if self._evaluate_conditions(s, issue)]
+            if not siblings:
+                # Listing would have produced nothing — nothing to
+                # validate against. Allow the attestation through to
+                # avoid false rejection on a degenerate group.
+                return
+            picked = self._select_random_one(siblings, seed=issue_id)
+            if picked is not None and picked.id != ritual.id:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' is not the selected ritual in "
+                    f"group '{group.name}' for this issue; choose '"
+                    f"{picked.name}' instead."
+                )
+            return
+
+        if group.selection_mode == SelectionMode.ROUND_ROBIN:
+            # Listing returns sorted_rituals[(i+1) % N] where i is the
+            # index of last_selected_ritual_id (or 0 if unset). Mirror
+            # that here so we accept the same ritual the listing
+            # presented. Without this match, once a single advance has
+            # fired (e.g. via a sprint-context call sharing the group),
+            # validate rejects the very ritual the listing offers.
+            sorted_rituals = sorted(siblings, key=lambda r: r.created_at)
+            current_index = 0
+            if group.last_selected_ritual_id:
+                for i, r in enumerate(sorted_rituals):
+                    if r.id == group.last_selected_ritual_id:
+                        current_index = (i + 1) % len(sorted_rituals)
+                        break
+            picked = sorted_rituals[current_index]
+            if picked.id != ritual.id:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' is not the selected ritual in "
+                    f"group '{group.name}'; choose '{picked.name}' instead."
+                )
 
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
         """Create a new ritual for a project."""
@@ -528,11 +650,13 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
+        await self._validate_not_agent_for_gate(ritual, user_id)
         if ritual.approval_mode == ApprovalMode.GATE:
             raise ValueError(
-                f"Ritual '{ritual.name}' requires human completion (gate mode). "
-                "Use the web UI to complete this ritual."
+                f"Ritual '{ritual.name}' is GATE mode. "
+                "Use complete_gate_ritual to perform it."
             )
+        self._validate_note(ritual, note)
 
         ritual_id = ritual.id
 
@@ -569,7 +693,36 @@ class RitualService:
                 sprint_id,
             )
 
+        # Broadcast sprint attest. Sprint-level events were silent before;
+        # without this, frontends and the agent await primitive can't see
+        # them.
+        await self._broadcast_sprint_event(
+            ritual, sprint_id, "ritual_attested",
+            {"ritual_id": ritual.id, "ritual_name": ritual.name,
+             "sprint_id": sprint_id, "attestation_id": attestation.id},
+        )
+
         return attestation
+
+    async def _broadcast_sprint_event(
+        self, ritual: OxydeRitual, sprint_id: str,
+        event_type: str, payload: dict,
+    ) -> None:
+        """Broadcast a sprint-level attestation event. Best-effort."""
+        try:
+            from app.oxyde_models.project import OxydeProject as _OP
+            from app.websocket import broadcast_attestation_event
+            project = await _OP.objects.get_or_none(id=ritual.project_id)
+            if project is None:
+                return
+            await broadcast_attestation_event(
+                project.team_id, event_type, payload,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast sprint event %s for ritual=%s sprint=%s",
+                event_type, ritual.id, sprint_id,
+            )
 
     async def attest_for_issue(
         self,
@@ -587,7 +740,10 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
-        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        # Prefetch labels so _validate_conditions_match can evaluate
+        # `labels__contains` / `labels__eq` rules without silently
+        # treating issue.labels as empty.
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
         if not issue:
             raise ValueError(f"Issue '{issue_id}' not found")
         if ritual.project_id != issue.project_id:
@@ -595,27 +751,23 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = issue.status.value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
-                raise ValueError(
-                    f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue_status_str}. "
-                    "TICKET_CLOSE rituals are for issues being closed, not already closed."
-                )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
-                raise ValueError(
-                    f"Cannot attest '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue_status_str}. "
-                    "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
-                )
-
+        # Attest is decoupled from the gate: the gate fires at the actual
+        # status transition (in IssueService), so attestation is allowed
+        # in any status — including retroactive record-keeping after the
+        # transition already occurred. The trigger names express intent
+        # (which rituals to list when), not enforcement at attest time.
+        await self._validate_not_agent_for_gate(ritual, user_id)
         if ritual.approval_mode == ApprovalMode.GATE:
+            # Humans use complete_gate_ritual_for_issue, which both attests
+            # and approves in one step. Direct attest on a GATE ritual is
+            # the wrong entry point — route the caller to the right path.
             raise ValueError(
-                f"Ritual '{ritual.name}' requires human completion (gate mode). "
-                "Use the web UI to complete this ritual."
+                f"Ritual '{ritual.name}' is GATE mode. "
+                "Use complete_gate_ritual_for_issue to perform it."
             )
+        self._validate_note(ritual, note)
+        await self._validate_conditions_match(ritual, issue)
+        await self._validate_group_selection(ritual, issue_id)
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -651,7 +803,157 @@ class RitualService:
                 return existing
             raise
 
+        # AUTO attestation is also approval — it clears limbo (and may fire
+        # the one-step auto-transition if it's the last block). If there's
+        # no existing limbo (standalone attest with no prior intent
+        # expression), ensure one exists so the state-machine event has an
+        # audit row, then clear it.
+        if ritual.approval_mode == ApprovalMode.AUTO:
+            try:
+                await self._ensure_and_clear_limbo_for_attest(
+                    ritual, issue_id, user_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clear ticket limbo after AUTO attest "
+                    "ritual=%s issue=%s", ritual_id, issue_id,
+                )
+
         return attestation
+
+    async def _ensure_and_clear_limbo_for_attest(
+        self, ritual: OxydeRitual, issue_id: str, user_id: str,
+    ) -> None:
+        """For AUTO attestations: guarantee a blocker audit row exists
+        for this (ritual, issue) under an intent of the right type,
+        then resolve it. Covers both normal flow (intent opened by
+        status update) and standalone attest (no prior intent — a
+        single-blocker audit-only intent is created here).
+
+        Standalone attest MUST NOT trigger the one-step auto-transition:
+        the user never expressed intent. We detect "no prior intent"
+        and pass fire_transition=False through `_clear_ticket_limbo`.
+
+        Wrapped in `async with atomic():` so a concurrent claim/close
+        attempt cannot steal the intent slot between our SELECT and
+        INSERT. If a real intent appears mid-flight, the IntegrityError
+        on our INSERT triggers an in-transaction re-check; we treat
+        the resulting state as "had_prior_intent" so the caller's
+        legitimate auto-transition can fire.
+        """
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
+        if ritual.trigger == RitualTrigger.TICKET_CLAIM:
+            limbo_type = LimboType.CLAIM
+        elif ritual.trigger == RitualTrigger.TICKET_CLOSE:
+            limbo_type = LimboType.CLOSE
+        else:
+            return
+
+        # Decision rule for had_prior_intent:
+        #   * had_prior_intent = True  iff a blocker for OUR ritual was
+        #     already registered under an open intent at attest time.
+        #     That's the only definitive signal that someone else
+        #     EXPRESSED intent involving this ritual (via the
+        #     status-update path in _open_intent_with_limbo).
+        #   * had_prior_intent = False otherwise — including when an
+        #     audit-only intent (or another user's intent for a
+        #     different ritual) happens to be open. Standalone attests
+        #     don't fire transitions through other people's intents.
+        had_prior_intent = False
+
+        # Whole audit lifecycle inside one atomic block: create the
+        # audit intent, attach our blocker, immediately resolve and
+        # close. By commit time the audit intent is already cleared and
+        # invisible to any future SELECT … cleared_at IS NULL — so it
+        # can't lock out a legitimate claim/close, and it can't be
+        # mistaken for a real intent by a concurrent peer attest.
+        now = datetime.now(timezone.utc)
+        async with atomic():
+            existing_intent = await OxydeTicketLimbo.objects.filter(
+                issue_id=issue_id,
+                limbo_type=limbo_type.name,
+                cleared_at=None,
+            ).first()
+
+            if existing_intent is not None:
+                # Real or peer-audit intent. Only flip
+                # had_prior_intent if our ritual was already a blocker
+                # under this intent — that proves an
+                # _open_intent_with_limbo path put it there. Otherwise
+                # treat as audit (peer's intent doesn't grant ours).
+                existing_blocker = await OxydeTicketLimboBlocker.objects.filter(
+                    limbo_id=existing_intent.id,
+                    ritual_id=ritual.id,
+                ).first()
+                had_prior_intent = existing_blocker is not None and existing_blocker.resolved_at is None
+                if existing_blocker is None:
+                    try:
+                        new_blocker = await OxydeTicketLimboBlocker.objects.create(
+                            limbo_id=existing_intent.id,
+                            ritual_id=ritual.id,
+                        )
+                        # If we joined a peer's intent, resolve our
+                        # blocker right here so we don't leave the
+                        # peer's intent dangling on our ritual.
+                        new_blocker.resolved_at = now
+                        new_blocker.resolved_by_id = user_id
+                        await new_blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+                    except IntegrityError:
+                        pass
+                elif existing_blocker.resolved_at is None and not had_prior_intent:
+                    # Existing blocker but already resolved? Shouldn't
+                    # happen given the filter above, but defensive.
+                    pass
+            else:
+                # No intent open. Create audit intent + blocker, both
+                # immediately resolved/cleared so they never expose an
+                # exclusive-lock window or mislead a peer.
+                try:
+                    audit_intent = await OxydeTicketLimbo.objects.create(
+                        issue_id=issue_id,
+                        limbo_type=limbo_type.name,
+                        requested_by_id=user_id,
+                    )
+                    audit_blocker = await OxydeTicketLimboBlocker.objects.create(
+                        limbo_id=audit_intent.id,
+                        ritual_id=ritual.id,
+                    )
+                    audit_blocker.resolved_at = now
+                    audit_blocker.resolved_by_id = user_id
+                    await audit_blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+                    audit_intent.cleared_at = now
+                    audit_intent.cleared_by_id = user_id
+                    await audit_intent.save(update_fields={"cleared_at", "cleared_by_id"})
+                except IntegrityError:
+                    # A real claim/close just opened in another tx
+                    # before our INSERT could land. Re-check inside
+                    # this transaction — if its blocker for our
+                    # ritual is already there, we've genuinely racing
+                    # past a real intent and should fire.
+                    rechecked = await OxydeTicketLimbo.objects.filter(
+                        issue_id=issue_id,
+                        limbo_type=limbo_type.name,
+                        cleared_at=None,
+                    ).first()
+                    if rechecked is not None:
+                        rechecked_blocker = await OxydeTicketLimboBlocker.objects.filter(
+                            limbo_id=rechecked.id,
+                            ritual_id=ritual.id,
+                        ).first()
+                        had_prior_intent = (
+                            rechecked_blocker is not None
+                            and rechecked_blocker.resolved_at is None
+                        )
+
+        # Outside the atomic: if a real prior intent existed, fire the
+        # one-step auto-transition through _clear_ticket_limbo (which
+        # may emit broadcasts via apply_intent_transition). The audit
+        # path needs no further work — it's already closed.
+        if had_prior_intent:
+            await self._clear_ticket_limbo(
+                ritual, issue_id, user_id, fire_transition=True,
+            )
 
     async def complete_gate_ritual_for_issue(
         self,
@@ -669,7 +971,8 @@ class RitualService:
                 f"This ritual has trigger={ritual.trigger.value}."
             )
 
-        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        # Prefetch labels (see attest_for_issue for rationale).
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
         if not issue:
             raise ValueError(f"Issue '{issue_id}' not found")
         if ritual.project_id != issue.project_id:
@@ -677,21 +980,16 @@ class RitualService:
                 f"Ritual '{ritual.name}' does not belong to the same project as the issue"
             )
 
-        issue_status_str = issue.status.value if issue.status else issue.status
-        if ritual.trigger == RitualTrigger.TICKET_CLOSE:
-            if issue_status_str in (IssueStatus.DONE.value, IssueStatus.CANCELED.value):
-                raise ValueError(
-                    f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is already {issue_status_str}. "
-                    "TICKET_CLOSE rituals are for issues being closed, not already closed."
-                )
-        elif ritual.trigger == RitualTrigger.TICKET_CLAIM:
-            if issue_status_str not in (IssueStatus.BACKLOG.value, IssueStatus.TODO.value):
-                raise ValueError(
-                    f"Cannot complete '{ritual.name}' for issue {issue.identifier}: "
-                    f"issue is {issue_status_str}. "
-                    "TICKET_CLAIM rituals are only for unclaimed issues (backlog/todo)."
-                )
+        # Decoupled from the status gate (same reasoning as attest_for_issue).
+        if ritual.approval_mode != ApprovalMode.GATE:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is not a GATE ritual. "
+                "Use attest_for_issue instead."
+            )
+        await self._validate_not_agent_for_gate(ritual, user_id)
+        self._validate_note(ritual, note)
+        await self._validate_conditions_match(ritual, issue)
+        await self._validate_group_selection(ritual, issue_id)
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -725,7 +1023,7 @@ class RitualService:
             raise
 
         try:
-            await self._clear_ticket_limbo(ritual_id, issue_id, user_id)
+            await self._clear_ticket_limbo(ritual, issue_id, user_id)
         except Exception:
             logger.exception(
                 "Failed to clear ticket limbo for ritual=%s issue=%s",
@@ -734,22 +1032,73 @@ class RitualService:
 
         return attestation
 
+    async def _validate_approve_mode_and_pending(
+        self, attestation: OxydeRitualAttestation, expected_trigger: "RitualTrigger | None" = None,
+    ) -> "OxydeRitual":
+        """Service-layer guards for approve(): the attestation's ritual
+        must be REVIEW mode (AUTO is auto-approved at write; GATE is
+        approved-on-attestation), the attestation must not already be
+        approved, and the trigger must match the call site (sprint vs
+        issue).
+        """
+        if attestation.approved_at is not None:
+            raise ValueError(
+                "Attestation is already approved; cannot approve again."
+            )
+        ritual = await OxydeRitual.objects.get_or_none(id=attestation.ritual_id)
+        if ritual is None:
+            raise ValueError(
+                f"Attestation references missing ritual {attestation.ritual_id}."
+            )
+        if ritual.approval_mode != ApprovalMode.REVIEW:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is {ritual.approval_mode.value} mode; "
+                "only REVIEW attestations require explicit approval."
+            )
+        if expected_trigger is not None and ritual.trigger != expected_trigger:
+            raise ValueError(
+                f"Ritual '{ritual.name}' has trigger={ritual.trigger.value}; "
+                f"this approve path requires trigger={expected_trigger.value}."
+            )
+        return ritual
+
     async def approve(
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
-        """Approve a ritual attestation (for REVIEW/GATE modes)."""
+        """Approve a sprint-level REVIEW ritual attestation."""
+        ritual = await self._validate_approve_mode_and_pending(
+            attestation, expected_trigger=RitualTrigger.EVERY_SPRINT,
+        )
+
         attestation.approved_by = approver_id
         attestation.approved_at = datetime.now(timezone.utc)
         await attestation.save(update_fields={"approved_by", "approved_at"})
 
         await self._maybe_clear_limbo(attestation.sprint_id)
 
+        await self._broadcast_sprint_event(
+            ritual, attestation.sprint_id, "ritual_approved",
+            {"ritual_id": ritual.id, "ritual_name": ritual.name,
+             "sprint_id": attestation.sprint_id,
+             "attestation_id": attestation.id},
+        )
+
         return attestation
 
     async def approve_for_issue(
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
-        """Approve a ticket-close ritual attestation (for REVIEW mode)."""
+        """Approve a ticket-level REVIEW ritual attestation."""
+        # Either ticket-level trigger is acceptable here; we allow both.
+        ritual = await self._validate_approve_mode_and_pending(attestation)
+        if ritual.trigger not in (
+            RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM,
+        ):
+            raise ValueError(
+                f"Ritual '{ritual.name}' has trigger={ritual.trigger.value}; "
+                "ticket-level approve requires TICKET_CLOSE or TICKET_CLAIM."
+            )
+
         ritual_id = attestation.ritual_id
         issue_id = attestation.issue_id
 
@@ -757,8 +1106,48 @@ class RitualService:
         attestation.approved_at = datetime.now(timezone.utc)
         await attestation.save(update_fields={"approved_by", "approved_at"})
 
+        # Emit RITUAL_APPROVED before clearing limbo: the approval is the
+        # primary event; intent_cleared (if any) is downstream. The
+        # ritual name goes in new_value, not field_name (field_name is
+        # by convention an issue column name).
         try:
-            await self._clear_ticket_limbo(ritual_id, issue_id, approver_id)
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue_id,
+                user_id=approver_id,
+                activity_type=ActivityType.RITUAL_APPROVED,
+                new_value=ritual.name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write RITUAL_APPROVED activity for issue=%s",
+                issue_id,
+            )
+
+        try:
+            from app.websocket import broadcast_attestation_event
+            issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+            project = None
+            if issue is not None:
+                from app.oxyde_models.project import OxydeProject as _OP
+                project = await _OP.objects.get_or_none(id=issue.project_id)
+            if project is not None:
+                await broadcast_attestation_event(
+                    project.team_id,
+                    "ritual_approved",
+                    {
+                        "ritual_id": ritual_id,
+                        "ritual_name": ritual.name,
+                        "issue_id": issue_id,
+                        "attestation_id": attestation.id,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast ritual_approved for issue=%s", issue_id,
+            )
+
+        try:
+            await self._clear_ticket_limbo(ritual, issue_id, approver_id)
         except Exception:
             logger.exception(
                 "Failed to clear ticket limbo for ritual=%s issue=%s",
@@ -768,59 +1157,173 @@ class RitualService:
         return attestation
 
     async def _clear_ticket_limbo(
-        self, ritual_id: str, issue_id: str, cleared_by_id: str
+        self, ritual: "OxydeRitual", issue_id: str, cleared_by_id: str,
+        fire_transition: bool = True,
     ) -> None:
-        """Clear all limbo records for a ritual/issue combo."""
-        limbo_records = await OxydeTicketLimbo.objects.filter(
-            ritual_id=ritual_id,
+        """Resolve the blocker for a (ritual, issue) intent. If that was
+        the last unresolved blocker on the parent intent, mark the
+        intent cleared and fire the one-step auto-transition.
+
+        Takes the ritual object directly (callers always have it in
+        scope) to avoid an extra DB round-trip and to surface
+        post-deletion races as a logged warning rather than a silent
+        no-op.
+
+        Scoped by `ritual.trigger`: a TICKET_CLAIM ritual can only
+        resolve blockers under CLAIM intents; a TICKET_CLOSE ritual can
+        only resolve blockers under CLOSE intents. Without this scope,
+        a single attest could collapse both a CLOSE and a CLAIM intent
+        if they happened to share the gating ritual.
+
+        fire_transition=False is used by callers that want pure
+        blocker resolution without triggering the status update —
+        notably the standalone-attest path where the user never
+        expressed intent.
+        """
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
+        if ritual is None:
+            logger.warning(
+                "_clear_ticket_limbo invoked with None ritual for issue=%s",
+                issue_id,
+            )
+            return
+        ritual_id = ritual.id
+
+        if ritual.trigger == RitualTrigger.TICKET_CLAIM:
+            expected_limbo_type = LimboType.CLAIM.name
+        elif ritual.trigger == RitualTrigger.TICKET_CLOSE:
+            expected_limbo_type = LimboType.CLOSE.name
+        else:
+            return
+
+        # Find unresolved blockers for this ritual under open intents
+        # of the matching type. Multi-intent scenarios on the same
+        # issue (e.g. CLOSE intent followed by CLAIM intent on a
+        # re-opened ticket) stay isolated because we filter by
+        # `expected_limbo_type`.
+        open_intents = await OxydeTicketLimbo.objects.filter(
             issue_id=issue_id,
+            limbo_type=expected_limbo_type,
             cleared_at=None,
         ).all()
+        if not open_intents:
+            return
+
+        intent_ids = [i.id for i in open_intents]
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id__in=intent_ids,
+            ritual_id=ritual_id,
+            resolved_at=None,
+        ).all()
+        if not blockers:
+            return
+
         now = datetime.now(timezone.utc)
-        for limbo in limbo_records:
-            limbo.cleared_at = now
-            limbo.cleared_by_id = cleared_by_id
-            await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+        affected_intent_ids = set()
+        for blocker in blockers:
+            blocker.resolved_at = now
+            blocker.resolved_by_id = cleared_by_id
+            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+            affected_intent_ids.add(blocker.limbo_id)
+
+        # For each intent we just touched a blocker on, check if any
+        # blockers remain. If none, the intent is fully resolved.
+        intents_by_id = {i.id: i for i in open_intents}
+        for limbo_id in affected_intent_ids:
+            remaining = await OxydeTicketLimboBlocker.objects.filter(
+                limbo_id=limbo_id, resolved_at=None,
+            ).all()
+            if remaining:
+                continue
+            intent = intents_by_id[limbo_id]
+            intent.cleared_at = now
+            intent.cleared_by_id = cleared_by_id
+            await intent.save(update_fields={"cleared_at", "cleared_by_id"})
+
+            if not fire_transition:
+                continue
+            # Lazy import to avoid circular IssueService <-> RitualService.
+            from app.services.issue_service import IssueService
+            try:
+                await IssueService().apply_intent_transition(
+                    issue_id, intent.limbo_type, cleared_by_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Auto-transition failed for issue=%s limbo_type=%s",
+                    issue_id, intent.limbo_type,
+                )
 
     async def _cleanup_orphaned_ticket_limbo(self, project_id: str) -> int:
-        """Clear orphaned ticket limbo records where attestation already exists."""
-        # Get all issues in this project
+        """Resolve orphaned blockers whose ritual is already attested
+        and approved. Closes the parent intent if all blockers under it
+        end up resolved. This recovers from cases where an attestation
+        landed without going through `_clear_ticket_limbo` (e.g. a
+        rollback or pre-refactor data).
+        """
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
         issues = await OxydeIssue.objects.filter(project_id=project_id).all()
         issue_ids = [i.id for i in issues]
-
         if not issue_ids:
             return 0
 
-        # Get all uncleared limbo records for these issues in one query
-        all_limbo = await OxydeTicketLimbo.objects.filter(
+        open_intents = await OxydeTicketLimbo.objects.filter(
             issue_id__in=issue_ids, cleared_at=None,
         ).all()
-
-        if not all_limbo:
+        if not open_intents:
             return 0
 
-        # Batch-fetch all relevant attestations in one query per unique (ritual, issue) pair
-        limbo_keys = {(l.ritual_id, l.issue_id) for l in all_limbo}
-        ritual_ids = list({k[0] for k in limbo_keys})
-        limbo_issue_ids = list({k[1] for k in limbo_keys})
+        intent_ids = [i.id for i in open_intents]
+        unresolved_blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id__in=intent_ids, resolved_at=None,
+        ).all()
+        if not unresolved_blockers:
+            return 0
+
+        intent_by_id = {i.id: i for i in open_intents}
+        # For each unresolved blocker, look up an approved attestation
+        # for that (ritual, issue) and resolve the blocker if found.
+        ritual_ids = list({b.ritual_id for b in unresolved_blockers})
+        issue_lookup = list({intent_by_id[b.limbo_id].issue_id for b in unresolved_blockers})
         attestations = await OxydeRitualAttestation.objects.filter(
-            ritual_id__in=ritual_ids, issue_id__in=limbo_issue_ids,
+            ritual_id__in=ritual_ids, issue_id__in=issue_lookup,
         ).all()
         att_map = {(a.ritual_id, a.issue_id): a for a in attestations}
 
         cleared_count = 0
         now = datetime.now(timezone.utc)
-        for limbo in all_limbo:
-            attestation = att_map.get((limbo.ritual_id, limbo.issue_id))
+        affected_intents = set()
+        for blocker in unresolved_blockers:
+            intent = intent_by_id[blocker.limbo_id]
+            attestation = att_map.get((blocker.ritual_id, intent.issue_id))
             if attestation and attestation.approved_at is not None:
-                limbo.cleared_at = now
-                limbo.cleared_by_id = attestation.approved_by
-                await limbo.save(update_fields={"cleared_at", "cleared_by_id"})
+                blocker.resolved_at = now
+                blocker.resolved_by_id = attestation.approved_by
+                await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
                 cleared_count += 1
+                affected_intents.add(intent.id)
+
+        # Close any intents whose blockers are now all resolved.
+        for limbo_id in affected_intents:
+            remaining = await OxydeTicketLimboBlocker.objects.filter(
+                limbo_id=limbo_id, resolved_at=None,
+            ).all()
+            if remaining:
+                continue
+            intent = intent_by_id[limbo_id]
+            intent.cleared_at = now
+            # Cleared by background orphan-cleanup, not a specific
+            # user. NULL avoids the FK violation that would arise
+            # under PRAGMA foreign_keys = ON; downstream displays
+            # should treat NULL cleared_by_id as "system-cleared".
+            intent.cleared_by_id = None
+            await intent.save(update_fields={"cleared_at", "cleared_by_id"})
 
         if cleared_count:
             logger.info(
-                "Cleaned up %d orphaned ticket limbo records for project=%s",
+                "Cleaned up %d orphaned ticket limbo blockers for project=%s",
                 cleared_count, project_id,
             )
 
@@ -840,6 +1343,13 @@ class RitualService:
                 f"Only rituals with trigger=EVERY_SPRINT can be completed for sprints. "
                 f"This ritual has trigger={ritual.trigger.value}."
             )
+        if ritual.approval_mode != ApprovalMode.GATE:
+            raise ValueError(
+                f"Ritual '{ritual.name}' is not a GATE ritual. "
+                "Use attest instead."
+            )
+        await self._validate_not_agent_for_gate(ritual, user_id)
+        self._validate_note(ritual, note)
 
         ritual_id = ritual.id
 
@@ -871,6 +1381,12 @@ class RitualService:
                 "Failed to check/clear limbo for sprint=%s after gate completion",
                 sprint_id,
             )
+
+        await self._broadcast_sprint_event(
+            ritual, sprint_id, "ritual_completed",
+            {"ritual_id": ritual_id, "ritual_name": ritual.name,
+             "sprint_id": sprint_id, "attestation_id": attestation.id},
+        )
 
         return attestation
 
@@ -1004,24 +1520,55 @@ class RitualService:
         if not active_issues:
             return []
 
-        # Get active rituals for this project
+        # Function name and caller (`get_issues_with_pending_approvals`,
+        # which hardcodes `approval_mode: "gate"` on every emitted
+        # payload) require GATE-only scoping. Pre-refactor only GATE
+        # rituals created limbo rows so the filter was implicit;
+        # post-refactor AUTO and REVIEW intents also create blockers,
+        # so the filter must be explicit here to avoid mislabeling
+        # REVIEW (and transient AUTO) blockers as GATE in the API.
         active_rituals = {r.id: r for r in await OxydeRitual.objects.filter(
-            project_id=project_id, is_active=True
+            project_id=project_id,
+            is_active=True,
+            approval_mode=ApprovalMode.GATE,
         ).all()}
 
-        # Get uncleared limbo records
+        # Get uncleared limbo records and their unresolved blockers,
+        # batched to keep this O(constant) DB round-trips regardless of
+        # the number of issues / blockers in the project.
+        from app.oxyde_models.issue import OxydeTicketLimboBlocker
+
+        all_intents = await OxydeTicketLimbo.objects.filter(
+            issue_id__in=list(active_issues), cleared_at=None,
+        ).all()
+        if not all_intents:
+            return []
+
+        intent_ids = [i.id for i in all_intents]
+        all_blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id__in=intent_ids, resolved_at=None,
+        ).all()
+        if not all_blockers:
+            return []
+
+        user_ids = list({i.requested_by_id for i in all_intents})
+        users = {
+            u.id: u
+            for u in await OxydeUser.objects.filter(id__in=user_ids).all()
+        }
+        intent_by_id = {i.id: i for i in all_intents}
+
         results = []
-        for issue_id in active_issues:
-            limbo_records = await OxydeTicketLimbo.objects.filter(
-                issue_id=issue_id, cleared_at=None,
-            ).all()
-            for limbo in limbo_records:
-                if limbo.ritual_id not in active_rituals:
-                    continue
-                issue = active_issues[issue_id]
-                ritual = active_rituals[limbo.ritual_id]
-                requested_by = await OxydeUser.objects.get_or_none(id=limbo.requested_by_id)
-                results.append((limbo, issue, ritual, requested_by))
+        for blocker in all_blockers:
+            if blocker.ritual_id not in active_rituals:
+                continue
+            intent = intent_by_id[blocker.limbo_id]
+            issue = active_issues.get(intent.issue_id)
+            if issue is None:
+                continue
+            ritual = active_rituals[blocker.ritual_id]
+            requested_by = users.get(intent.requested_by_id)
+            results.append((intent, issue, ritual, requested_by))
 
         return results
 

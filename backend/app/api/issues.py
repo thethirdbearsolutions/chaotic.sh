@@ -29,6 +29,7 @@ from app.services.issue_service import (
     SprintInLimboError,
     TicketRitualsError,
     ClaimRitualsError,
+    IntentInFlightError,
     EstimateRequiredError,
 )
 from app.services.project_service import ProjectService
@@ -253,6 +254,16 @@ async def create_issue(
                 "message": "Cannot create issue as in_progress - ticket has pending claim rituals.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
+            },
+        )
+    except IntentInFlightError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "intent_type": e.intent_type,
+                "initiator_user_id": e.initiator_user_id,
             },
         )
 
@@ -796,6 +807,16 @@ async def update_issue(
                 "message": "Ticket has pending claim rituals. Complete them before claiming.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
+            },
+        )
+    except IntentInFlightError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "intent_type": e.intent_type,
+                "initiator_user_id": e.initiator_user_id,
             },
         )
 

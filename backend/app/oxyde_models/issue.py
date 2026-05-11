@@ -97,20 +97,59 @@ class OxydeIssueLabel(OxydeModel):
 
 
 class OxydeTicketLimbo(OxydeModel):
-    """Tracks tickets blocked by GATE rituals."""
+    """One row per open intent on a ticket.
+
+    Under the unified intent+limbo model, a single limbo row
+    represents the user's intent to claim or close a ticket. The
+    rituals blocking that intent live in the child
+    `ticket_limbo_blockers` table — one blocker row per pending
+    ritual. The intent is fully resolved when all of its blockers
+    have `resolved_at` set; at that point `cleared_at` is stamped on
+    the parent and the one-step auto-transition fires.
+
+    db_on_delete annotations match the SQL constraints in migration
+    0005's CREATE statement so `oxyde makemigrations` doesn't generate
+    spurious schema-drift diffs.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
-    issue_id: str = Field()
-    ritual_id: str = Field()
+    issue_id: str = Field(db_on_delete="CASCADE")
     limbo_type: str = Field()
-    requested_by_id: str = Field()
+    requested_by_id: str = Field(db_on_delete="CASCADE")
     requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cleared_at: datetime | None = Field(default=None)
-    cleared_by_id: str | None = Field(default=None)
+    cleared_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
 
     class Meta:
         is_table = True
         table_name = "ticket_limbo"
+
+
+class OxydeTicketLimboBlocker(OxydeModel):
+    """One row per ritual blocking an intent.
+
+    Lives under a parent `OxydeTicketLimbo`. Resolved (attested or
+    approved) blockers carry `resolved_at` / `resolved_by_id`. When
+    every blocker for a limbo is resolved, the parent intent fires.
+
+    db_on_delete annotations match the SQL constraints in migration
+    0005:
+    * limbo_id: parent intent deletion cascades blockers.
+    * ritual_id: ritual deletion cascades blockers (no orphans
+      pointing at deleted rituals).
+    * resolved_by_id: user deletion sets the field NULL so audit
+      trails survive principal removal.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    limbo_id: str = Field(db_on_delete="CASCADE")
+    ritual_id: str = Field(db_on_delete="CASCADE")
+    resolved_at: datetime | None = Field(default=None)
+    resolved_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
+
+    class Meta:
+        is_table = True
+        table_name = "ticket_limbo_blockers"
 
 
 class OxydeBudgetTransaction(OxydeModel):

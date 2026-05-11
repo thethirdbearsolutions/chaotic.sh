@@ -278,13 +278,25 @@ CREATE TABLE IF NOT EXISTS issue_relations (
 CREATE TABLE IF NOT EXISTS ticket_limbo (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
     limbo_type VARCHAR(5) NOT NULL,
     requested_by_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     requested_at DATETIME NOT NULL,
     cleared_at DATETIME,
     cleared_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_open_intent
+    ON ticket_limbo (issue_id, limbo_type)
+    WHERE cleared_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ticket_limbo_blockers (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    limbo_id VARCHAR(36) NOT NULL REFERENCES ticket_limbo(id) ON DELETE CASCADE,
+    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
+    resolved_at DATETIME,
+    resolved_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_blocker
+    ON ticket_limbo_blockers (limbo_id, ritual_id);
 
 CREATE TABLE IF NOT EXISTS ritual_attestations (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -297,6 +309,12 @@ CREATE TABLE IF NOT EXISTS ritual_attestations (
     approved_by VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
     approved_at DATETIME
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_issue
+    ON ritual_attestations (ritual_id, issue_id)
+    WHERE issue_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_sprint
+    ON ritual_attestations (ritual_id, sprint_id)
+    WHERE sprint_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS oxyde_migrations (
     id INTEGER PRIMARY KEY,
@@ -545,3 +563,153 @@ async def test_label(db, test_team):
         description="Bug label",
     )
     return label
+
+
+@pytest_asyncio.fixture
+async def agent_user(db, test_team):
+    """Agent user on test_team (owner role for unrestricted access)."""
+    from app.oxyde_models.user import OxydeUser
+    from app.oxyde_models.team import OxydeTeamMember
+
+    user = await OxydeUser.objects.create(
+        email="agent@example.com",
+        hashed_password=get_password_hash("testpassword123"),
+        name="Agent User",
+        is_agent=True,
+    )
+    await OxydeTeamMember.objects.create(
+        team_id=test_team.id,
+        user_id=user.id,
+        role=TeamRole.OWNER,
+    )
+    return user
+
+
+@pytest_asyncio.fixture
+async def agent_headers(agent_user):
+    """Auth headers for agent user."""
+    token = create_access_token(data={"sub": agent_user.id})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def make_ritual(db, test_project):
+    """Factory for creating rituals with sensible defaults.
+
+    Usage:
+        ritual = await make_ritual(approval_mode=ApprovalMode.GATE)
+        ritual = await make_ritual(
+            trigger=RitualTrigger.TICKET_CLAIM,
+            approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
+        )
+    """
+    from app.oxyde_models.ritual import OxydeRitual
+    from app.enums import RitualTrigger, ApprovalMode
+
+    counter = {"n": 0}
+
+    async def _make(
+        name: str | None = None,
+        prompt: str = "Did you do the thing?",
+        trigger: "RitualTrigger" = RitualTrigger.TICKET_CLOSE,
+        approval_mode: "ApprovalMode" = ApprovalMode.AUTO,
+        note_required: bool = True,
+        conditions: str | None = None,
+        is_active: bool = True,
+    ):
+        counter["n"] += 1
+        return await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name=name or f"ritual_{counter['n']}",
+            prompt=prompt,
+            trigger=trigger,
+            approval_mode=approval_mode,
+            note_required=note_required,
+            conditions=conditions,
+            is_active=is_active,
+        )
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def auto_close_ritual(make_ritual):
+    """AUTO-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="auto_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.AUTO,
+    )
+
+
+@pytest_asyncio.fixture
+async def review_close_ritual(make_ritual):
+    """REVIEW-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="review_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+
+@pytest_asyncio.fixture
+async def gate_close_ritual(make_ritual):
+    """GATE-mode TICKET_CLOSE ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="gate_close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.GATE,
+    )
+
+
+@pytest_asyncio.fixture
+async def auto_claim_ritual(make_ritual):
+    """AUTO-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="auto_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.AUTO,
+    )
+
+
+@pytest_asyncio.fixture
+async def review_claim_ritual(make_ritual):
+    """REVIEW-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="review_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+
+@pytest_asyncio.fixture
+async def gate_claim_ritual(make_ritual):
+    """GATE-mode TICKET_CLAIM ritual."""
+    from app.enums import RitualTrigger, ApprovalMode
+    return await make_ritual(
+        name="gate_claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.GATE,
+    )
+
+
+@pytest_asyncio.fixture
+async def captured_broadcasts(monkeypatch):
+    """Capture all WebSocket broadcasts as a list of (team_id, message) tuples.
+
+    Tests assert against this list to verify state transitions emit the
+    expected events without depending on a real WebSocket connection.
+    """
+    captured: list[tuple[str, dict]] = []
+
+    async def _capture(team_id: str, message: dict):
+        captured.append((team_id, message))
+
+    monkeypatch.setattr("app.websocket.manager.broadcast_to_team", _capture)
+    return captured
