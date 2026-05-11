@@ -190,6 +190,15 @@ Collection filters on plurals (`issues`, `docs`) are currently limited to
 `--status`, …) are not yet wired through; combine `--type` with `--until`
 for client-side narrowing in the meantime.
 
+**`await sprint` MVP limitation:** `await sprint [ID]` does NOT filter to
+just the sprint — the backend feed doesn't carry per-sprint scope, and
+the CLI doesn't fetch each event's parent issue to check its `sprint_id`.
+It currently wakes on any activity in the sprint's parent project. To
+narrow to sprint-specific signals, combine with `--type
+moved_to_sprint,removed_from_sprint`, or with `--until` checking the
+event's `sprint_name` field. True sprint scoping will land when the
+backend gains a sprint-aware activity endpoint.
+
 ### Scope resolution
 
 Each subcommand inherits the auth/team/project requirement of its
@@ -203,7 +212,7 @@ when a required scope is missing.
 | `await doc ID`       | current team                      | Doc IDs are team-local              |
 | `await docs`         | current team                      | Mirrors `doc list`                  |
 | `await project [ID]` | current team (ID optional)        | Defaults to current project         |
-| `await sprint [ID]`  | current project (ID optional)     | Defaults to current sprint          |
+| `await sprint [ID]`  | current project (ID optional)     | MVP scopes to the sprint's project, not to the sprint itself. See note below. |
 | `await team [ID]`    | auth (ID optional)                | Defaults to current team            |
 | `await ritual NAME`  | current project                   | Ritual names are per-project. Pass `--ticket` to also wake on `intent_*` events. |
 | `await rituals`      | current project                   | Wakes on ritual events project-wide, including intent lifecycle. |

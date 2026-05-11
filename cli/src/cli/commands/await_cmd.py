@@ -754,12 +754,19 @@ def register(cli):
     @click.argument("sprint_id", required=False)
     @_common_options
     def await_sprint(sprint_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
-        """Wait on any activity in a sprint (defaults to current sprint)."""
+        """Wait on activity in the project that hosts a sprint.
+
+        MVP limitation: sprint-level filtering is not yet wired up.
+        This wakes on any activity in the sprint's parent project,
+        which is a superset of true sprint activity. Combine with
+        `--type moved_to_sprint,removed_from_sprint` or `--until` to
+        narrow to sprint-specific signals.
+        """
         team_id = _require_current_team()
         project_id = _require_current_project()
-        # Sprint scope is enforced client-side via the moved_to_sprint
-        # signal; the team feed doesn't filter by sprint server-side.
-        # For MVP we scope by project and document the limitation.
+        # The team feed doesn't filter by sprint server-side, and we
+        # don't fetch each event's issue to check its sprint_id (heavy
+        # + racy). Scope by project for MVP; documented above.
         _run_wait(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
