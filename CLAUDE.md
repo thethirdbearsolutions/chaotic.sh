@@ -132,6 +132,7 @@ New databases are automatically created on first startup via `apply_migrations()
 
 ### Important Notes
 
-- **Always backup before migrations**: `cp chaotic.db chaotic.backup.db`
+- **Always backup before migrations**: `cp ~/.chaotic/data/chaotic.db ~/.chaotic/data/chaotic.backup.db` (or use `chaotic system backup` against a managed install)
 - Review generated migrations with `oxyde sqlmigrate <name>` before applying
 - Check migration status with `oxyde showmigrations`
+- When pointing Oxyde at a non-default DB (e.g. the production data dir), export `DATABASE_URL` first — `oxyde_config.py` honors it.
