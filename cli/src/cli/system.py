@@ -30,7 +30,7 @@ def _confirm_action(prompt: str, **kwargs) -> bool:
     ctx = click.get_current_context(silent=True)
     if ctx and ctx.obj and ctx.obj.get('yes'):
         return True
-    return _confirm_action(prompt, **kwargs)
+    return click.confirm(prompt, **kwargs)
 
 
 def validate_repo_url(url: str) -> bool:
