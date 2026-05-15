@@ -1272,12 +1272,35 @@ class IssueService:
     async def create_relation(
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
-        """Create a relationship between two issues."""
-        return await OxydeIssueRelation.objects.create(
+        """Create a relationship between two issues, idempotently.
+
+        The (issue_id, related_issue_id) pair has a UNIQUE constraint, and
+        common CLI flows (e.g. `issue update --blocked-by X` re-run against
+        an issue already blocked by X) call this with duplicates. Treat a
+        pre-existing pair as a no-op and return the existing row instead
+        of surfacing an IntegrityError as a 500.
+        """
+        existing = await OxydeIssueRelation.objects.filter(
             issue_id=issue_id,
             related_issue_id=relation_in.related_issue_id,
-            relation_type=relation_in.relation_type,
-        )
+        ).first()
+        if existing is not None:
+            return existing
+        try:
+            return await OxydeIssueRelation.objects.create(
+                issue_id=issue_id,
+                related_issue_id=relation_in.related_issue_id,
+                relation_type=relation_in.relation_type,
+            )
+        except IntegrityError:
+            # Lost a race with a concurrent insert of the same pair.
+            existing = await OxydeIssueRelation.objects.filter(
+                issue_id=issue_id,
+                related_issue_id=relation_in.related_issue_id,
+            ).first()
+            if existing is not None:
+                return existing
+            raise
 
     async def get_relation_by_id(self, relation_id: str) -> OxydeIssueRelation | None:
         """Get relation by ID."""
