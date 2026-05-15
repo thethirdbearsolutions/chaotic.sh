@@ -8,8 +8,8 @@
 
 set -euo pipefail
 
-DB_PATH="${CHAOTIC_DB_PATH:-/root/.chaotic/data/chaotic.db}"
-BACKUP_DIR="${CHAOTIC_BACKUP_DIR:-/root/.chaotic/backups}"
+DB_PATH="${CHAOTIC_DB_PATH:-${HOME}/.chaotic/data/chaotic.db}"
+BACKUP_DIR="${CHAOTIC_BACKUP_DIR:-${HOME}/.chaotic/backups}"
 LOGFILE="${BACKUP_DIR}/backup.log"
 
 mkdir -p "$BACKUP_DIR"
