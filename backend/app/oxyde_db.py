@@ -1,6 +1,8 @@
 """Oxyde ORM database configuration."""
 import os
 import typing
+import uuid
+from datetime import datetime, timezone
 from oxyde import AsyncDatabase
 from app.config import get_settings
 
@@ -54,7 +56,8 @@ def _patch_objects_create_to_apply_default_factory() -> None:
     def _model_for_manager(manager) -> type | None:
         # QueryManager is generic; the model class lives on one of a handful
         # of attributes depending on Oxyde version, or in the typing args.
-        for attr in ("model", "model_cls", "_model", "_model_cls", "cls", "_cls"):
+        # `model_class` is the attribute Oxyde itself reads from in mutation.py.
+        for attr in ("model_class", "model", "model_cls", "_model", "_model_cls", "cls", "_cls"):
             candidate = getattr(manager, attr, None)
             if candidate is not None and hasattr(candidate, "model_fields"):
                 return candidate
@@ -69,6 +72,54 @@ def _patch_objects_create_to_apply_default_factory() -> None:
                 return args[0]
         return None
 
+    def _default_for_field(name: str, info) -> tuple[bool, object]:
+        """Return (have_default, value) for a missing field.
+
+        Oxyde's `Field(default_factory=..., db_pk=True)` strips the
+        `default_factory` off Pydantic's FieldInfo and consumes it
+        internally — but only for PK fields. Non-PK defaulted columns
+        (created_at, updated_at, joined_at, …) and PK columns whose
+        Oxyde-side generator doesn't actually run for a given call path
+        end up with NULL in the row Oxyde sends to SQLite. We compensate
+        with several fallbacks so every shape of declared default still
+        produces a value.
+        """
+        # Skip list-typed fields — they're m2m relations
+        # (e.g. `labels: list[OxydeLabel] = Field(default_factory=list, db_m2m=True)`),
+        # which Oxyde's create() doesn't accept as kwargs.
+        ann = getattr(info, "annotation", None)
+        if typing.get_origin(ann) is list:
+            return False, None
+
+        # 1. Standard Pydantic default_factory.
+        factory = getattr(info, "default_factory", None)
+        if factory is not None:
+            return True, factory()
+
+        # 2. Oxyde may stash default_factory inside json_schema_extra.
+        extra = getattr(info, "json_schema_extra", None) or {}
+        if isinstance(extra, dict):
+            extra_factory = extra.get("default_factory")
+            if callable(extra_factory):
+                return True, extra_factory()
+
+        # 3. PK string fields: generate UUID. Oxyde's own PK-default path
+        #    doesn't always fire (we've observed `id` arrive as NULL in
+        #    the INSERT row), and SQLite happily accepts NULL into a TEXT
+        #    NOT NULL PK column — the failure surfaces later as a
+        #    Pydantic ValidationError on the returned row.
+        is_pk = isinstance(extra, dict) and bool(extra.get("db_pk"))
+        if is_pk and ann is str:
+            return True, str(uuid.uuid4())
+
+        # 4. Datetime fields: default to now(). Covers created_at /
+        #    updated_at / joined_at / attested_at / requested_at and any
+        #    future timestamp added with default_factory.
+        if ann is datetime:
+            return True, datetime.now(timezone.utc)
+
+        return False, None
+
     async def _create_with_default_factory(self, **kwargs):
         model_cls = _model_for_manager(self)
         if model_cls is not None:
@@ -76,15 +127,9 @@ def _patch_objects_create_to_apply_default_factory() -> None:
                 for name, info in model_cls.model_fields.items():
                     if name in kwargs:
                         continue
-                    factory = getattr(info, "default_factory", None)
-                    if factory is None:
-                        continue
-                    # Skip list-typed fields — they're m2m relations
-                    # (e.g. `labels: list[OxydeLabel] = Field(default_factory=list, db_m2m=True)`),
-                    # which Oxyde's create() doesn't accept as kwargs.
-                    if typing.get_origin(getattr(info, "annotation", None)) is list:
-                        continue
-                    kwargs[name] = factory()
+                    have, value = _default_for_field(name, info)
+                    if have:
+                        kwargs[name] = value
             except Exception:
                 # Defensive: never block a create if introspection fails.
                 pass
