@@ -24,10 +24,17 @@ class UserService:
 
     async def create(self, user_in: UserCreate) -> OxydeUser:
         """Create a new user."""
+        # Pass timestamps explicitly: the installed Oxyde version doesn't
+        # apply `default_factory` defaults on objects.create(), so the
+        # NOT NULL constraints on users.created_at / users.updated_at
+        # blow up the INSERT otherwise.
+        now = datetime.now(timezone.utc)
         user = await OxydeUser.objects.create(
             email=user_in.email,
             hashed_password=get_password_hash(user_in.password),
             name=user_in.name,
+            created_at=now,
+            updated_at=now,
         )
         await user.refresh()
         return user
