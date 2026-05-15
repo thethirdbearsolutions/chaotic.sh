@@ -1,6 +1,14 @@
 """Application configuration."""
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+
+# Default DB lives next to the backend package so `just serve` from any cwd
+# resolves to the same file. Production installs override via DATABASE_URL.
+_DEFAULT_DB_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "chaotic.db")
+)
 
 
 class Settings(BaseSettings):
@@ -11,7 +19,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database
-    database_url: str = "sqlite+aiosqlite:///./chaotic.db"
+    database_url: str = f"sqlite+aiosqlite:///{_DEFAULT_DB_PATH}"
 
     # Security
     secret_key: str = "change-me-in-production-use-openssl-rand-hex-32"
