@@ -110,7 +110,7 @@ class TestRequireProject:
              patch('cli.main.get_current_team', return_value='team-123'), \
              patch('cli.main.get_current_project', return_value=None):
             from cli.main import cli
-            result = cli_runner.invoke(cli, ['issue', 'list'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code != 0
         assert 'No project selected' in result.output
@@ -122,7 +122,7 @@ class TestRequireProject:
              patch('cli.main.get_current_team', return_value=None), \
              patch('cli.main.get_current_project', return_value=None):
             from cli.main import cli
-            result = cli_runner.invoke(cli, ['issue', 'list'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code != 0
         assert 'Not authenticated' in result.output
@@ -134,7 +134,7 @@ class TestRequireProject:
              patch('cli.main.get_current_team', return_value=None), \
              patch('cli.main.get_current_project', return_value=None):
             from cli.main import cli
-            result = cli_runner.invoke(cli, ['issue', 'list'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code != 0
         assert 'No team selected' in result.output

@@ -103,7 +103,7 @@ class TestEpicList:
 
         client.get_issues = MagicMock(return_value=[mock_epic])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-50' in result.output
@@ -120,7 +120,7 @@ class TestEpicList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'No epics found' in result.output
@@ -132,7 +132,7 @@ class TestEpicList:
         client.get_issues = MagicMock(return_value=[mock_epic])
         client.get_sub_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-50' in result.output
@@ -144,7 +144,7 @@ class TestEpicList:
         client.get_issues = MagicMock(return_value=[mock_epic])
         client.get_sub_issues = MagicMock(return_value=[{"id": "s1", "status": "done"}])
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--json'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -155,7 +155,7 @@ class TestEpicList:
         """epic list rejects invalid status values."""
         from cli.main import cli
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'invalid'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'invalid', '--limit', '50'])
 
         assert result.exit_code != 0
         assert 'Invalid status' in result.output
@@ -167,7 +167,7 @@ class TestEpicList:
         client.get_issues = MagicMock(return_value=[mock_epic])
         client.get_sub_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'in_progress'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'in_progress', '--limit', '50'])
 
         assert result.exit_code == 0
         call_kwargs = client.get_issues.call_args

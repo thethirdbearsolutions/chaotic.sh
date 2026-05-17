@@ -50,7 +50,7 @@ class TestIssueList:
             {"id": "sprint-1", "name": "Sprint 45"},
         ])
 
-        result = cli_runner.invoke(cli, ['issue', 'list'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -63,7 +63,7 @@ class TestIssueList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'list'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'No issues found' in result.output
@@ -74,7 +74,7 @@ class TestIssueList:
 
         client.get_issues = MagicMock(return_value=sample_issues)
 
-        result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -85,7 +85,7 @@ class TestIssueList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'list', '--status', 'in_progress'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--status', 'in_progress', '--limit', '50'])
 
         assert result.exit_code == 0
         call_kwargs = client.get_issues.call_args[1]
@@ -95,7 +95,7 @@ class TestIssueList:
         """issue list --status invalid shows error."""
         from cli.main import cli
 
-        result = cli_runner.invoke(cli, ['issue', 'list', '--status', 'invalid'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--status', 'invalid', '--limit', '50'])
 
         assert result.exit_code != 0
 
@@ -106,7 +106,7 @@ class TestIssueList:
         client.get_issues = MagicMock(return_value=[])
 
         with patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-1'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--sprint', 'current'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--sprint', 'current', '--limit', '50'])
 
         assert result.exit_code == 0
 
@@ -116,7 +116,7 @@ class TestIssueList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'list', '--search', 'bug fix'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--search', 'bug fix', '--limit', '50'])
 
         assert result.exit_code == 0
         call_kwargs = client.get_issues.call_args[1]
@@ -145,7 +145,7 @@ class TestIssueList:
         result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '2'])
 
         assert result.exit_code == 0
-        assert 'results may be truncated' in result.output
+        assert 'More results likely' in result.output
         assert '--skip 2' in result.output
 
     def test_list_no_truncation_warning_under_limit(self, cli_runner):
@@ -170,7 +170,7 @@ class TestIssueList:
         client.get_issues = MagicMock(return_value=sample_issues)
         client.get_sprints = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'list'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'chaotic issue search' in result.output
@@ -181,7 +181,7 @@ class TestIssueList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'list', '--skip', '50'])
+        result = cli_runner.invoke(cli, ['issue', 'list', '--skip', '50', '--limit', '50'])
 
         assert result.exit_code == 0
         call_kwargs = client.get_issues.call_args[1]
@@ -211,7 +211,7 @@ class TestIssueMine:
         client.get_issues = MagicMock(return_value=sample_issues)
         client.get_sprint = MagicMock(return_value={"name": "Sprint 45"})
 
-        result = cli_runner.invoke(cli, ['issue', 'mine'])
+        result = cli_runner.invoke(cli, ['issue', 'mine', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -226,7 +226,7 @@ class TestIssueMine:
         client.get_me = MagicMock(return_value={"id": "user-1"})
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'mine'])
+        result = cli_runner.invoke(cli, ['issue', 'mine', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'No issues assigned' in result.output
@@ -238,7 +238,7 @@ class TestIssueMine:
         client.get_me = MagicMock(return_value={"id": "user-1"})
         client.get_issues = MagicMock(return_value=sample_issues)
 
-        result = cli_runner.invoke(cli, ['issue', 'mine', '--json'])
+        result = cli_runner.invoke(cli, ['issue', 'mine', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -253,7 +253,7 @@ class TestIssueSearch:
 
         client.search_issues = MagicMock(return_value=sample_issues)
 
-        result = cli_runner.invoke(cli, ['issue', 'search', 'test query'])
+        result = cli_runner.invoke(cli, ['issue', 'search', 'test query', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -264,7 +264,7 @@ class TestIssueSearch:
 
         client.search_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['issue', 'search', 'nonexistent'])
+        result = cli_runner.invoke(cli, ['issue', 'search', 'nonexistent', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'No issues found' in result.output
@@ -275,7 +275,7 @@ class TestIssueSearch:
 
         client.search_issues = MagicMock(return_value=sample_issues)
 
-        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--all'])
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--all', '--limit', '50'])
 
         assert result.exit_code == 0
         # project_id should be None when --all is used
@@ -288,7 +288,7 @@ class TestIssueSearch:
 
         client.search_issues = MagicMock(return_value=sample_issues)
 
-        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--json'])
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -325,7 +325,7 @@ class TestIssueSearch:
             "priority": "medium", "project_key": "CHT",
         }])
 
-        result = cli_runner.invoke(cli, ['issue', 'search', 'query'])
+        result = cli_runner.invoke(cli, ['issue', 'search', 'query', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'truncated' not in result.output

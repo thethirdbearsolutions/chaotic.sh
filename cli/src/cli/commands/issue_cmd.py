@@ -72,7 +72,7 @@ def register(cli):
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
     @click.option("--assignee", help="Filter by assignee ('me', a name, or user ID)")
     @click.option("--search", help="Search in title, description, and identifier.")
-    @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required). Use --skip to paginate.")
     @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
     @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
@@ -153,17 +153,27 @@ def register(cli):
 
         console.print(table)
 
-        # Truncation warning (CHT-946) + pagination hint (CHT-950)
-        if len(issues) >= limit:
-            next_skip = (skip or 0) + limit
-            console.print(f"\n[yellow]Showing {limit} issues (results may be truncated). Use --skip {next_skip} to see next page, or --limit to adjust.[/yellow]")
+        # Always show pagination state so callers (especially agents) can't miss it.
+        shown = len(issues)
+        start = (skip or 0) + 1
+        end = (skip or 0) + shown
+        next_skip = (skip or 0) + limit
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing issues {start}–{end} (limit={limit}, skip={skip or 0}). "
+                f"More results likely — use --skip {next_skip} -n {limit} for the next page, or raise -n.[/yellow]"
+            )
+        else:
+            console.print(
+                f"\n[dim]Showing issues {start}–{end} of {end} total matches (limit={limit}, skip={skip or 0}). End of results.[/dim]"
+            )
 
         # Search tip (CHT-949)
         console.print("\n[dim]Tip: Use 'chaotic issue search <query>' to search by title, description, or identifier.[/dim]")
 
     @issue.command("mine")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
-    @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
     @_main().json_option
@@ -224,11 +234,21 @@ def register(cli):
 
         console.print(table)
 
+        shown = len(issues)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} issues (limit={limit}, results may be truncated). Raise -n to see more.[/yellow]"
+            )
+        else:
+            console.print(
+                f"\n[dim]Showing {shown} issue(s) (limit={limit}). End of results.[/dim]"
+            )
+
     @issue.command("search")
     @click.argument("query")
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False), help="Filter by status")
     @click.option("--all", "-a", "search_all", is_flag=True, help="Search all projects (ignore current project context)")
-    @click.option("--limit", "-n", type=int, default=50, help="Maximum number of results (default: 50)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
@@ -270,9 +290,15 @@ def register(cli):
 
         console.print(table)
 
-        # Truncation warning for search results (CHT-948)
-        if len(issues) >= limit:
-            console.print(f"\n[yellow]Showing {limit} results (may be truncated). Use --limit to see more.[/yellow]")
+        shown = len(issues)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} results (limit={limit}, may be truncated). Raise -n to see more.[/yellow]"
+            )
+        else:
+            console.print(
+                f"\n[dim]Showing {shown} result(s) (limit={limit}). End of results.[/dim]"
+            )
 
     @issue.command("create")
     @click.argument("title", required=False)
@@ -1124,7 +1150,7 @@ def register(cli):
     cli.add_command(issue, name="ticket")
 
     @cli.command("activity")
-    @click.option("--limit", "-n", type=int, default=20, help="Number of activities to show (default: 20)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
@@ -1176,8 +1202,14 @@ def register(cli):
 
         console.print(table)
 
+        shown = len(activities)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} activities (limit={limit}, may be truncated). Raise -n to see more.[/yellow]"
+            )
+
     @cli.command("comments")
-    @click.option("--limit", "-n", type=int, default=20, help="Number of comments to show (default: 20)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
@@ -1218,5 +1250,11 @@ def register(cli):
             table.add_row(date, source, by, content)
 
         console.print(table)
+
+        shown = len(comments)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} comments (limit={limit}, may be truncated). Raise -n to see more.[/yellow]"
+            )
 
     return issue

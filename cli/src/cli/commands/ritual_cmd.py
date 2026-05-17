@@ -727,7 +727,7 @@ def register(cli):
                 console.print("Run `chaotic ritual list` to continue.")
 
     @ritual.command("history")
-    @click.option("--limit", "-n", type=int, default=20, help="Number of entries to show (default: 20)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @_main().require_project
     @_main().handle_error
     def ritual_history(limit):
@@ -784,6 +784,12 @@ def register(cli):
             )
 
         console.print(table)
+
+        shown = len(entries)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} entries (limit={limit}, may be truncated). Raise -n to see more.[/yellow]"
+            )
 
     @ritual.command("force-clear")
     @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")

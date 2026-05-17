@@ -19,7 +19,7 @@ class TestRitualHistory:
         client.get_ritual_history = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['ritual', 'history'])
+            result = cli_runner.invoke(cli, ['ritual', 'history', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'No attestation history found' in result.output
@@ -47,7 +47,7 @@ class TestRitualHistory:
         ])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['ritual', 'history'])
+            result = cli_runner.invoke(cli, ['ritual', 'history', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'sprint-re' in result.output  # rich may truncate long names
@@ -78,7 +78,7 @@ class TestRitualHistory:
         ])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['ritual', 'history'])
+            result = cli_runner.invoke(cli, ['ritual', 'history', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'Pending' in result.output
@@ -119,7 +119,7 @@ class TestRitualHistory:
         ])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['ritual', 'history'])
+            result = cli_runner.invoke(cli, ['ritual', 'history', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'Auto' in result.output

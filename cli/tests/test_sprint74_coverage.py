@@ -31,7 +31,7 @@ class TestActivityCommand:
             },
         ])
 
-        result = cli_runner.invoke(cli, ['activity'])
+        result = cli_runner.invoke(cli, ['activity', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
@@ -43,7 +43,7 @@ class TestActivityCommand:
 
         client.get_team_activities = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['activity'])
+        result = cli_runner.invoke(cli, ['activity', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'No recent activity' in result.output
@@ -54,7 +54,7 @@ class TestActivityCommand:
         activities = [{"id": "act-1", "activity_type": "comment"}]
         client.get_team_activities = MagicMock(return_value=activities)
 
-        result = cli_runner.invoke(cli, ['activity', '--json'])
+        result = cli_runner.invoke(cli, ['activity', '--json', '--limit', '20'])
 
         assert result.exit_code == 0
         assert '"activity_type"' in result.output
@@ -88,7 +88,7 @@ class TestActivityCommand:
             },
         ])
 
-        result = cli_runner.invoke(cli, ['activity'])
+        result = cli_runner.invoke(cli, ['activity', '--limit', '20'])
 
         assert result.exit_code == 0
         assert 'Sprint Report' in result.output
@@ -104,7 +104,7 @@ class TestIssueListAssigneeFilter:
         client.get_sprints = MagicMock(return_value=[])
 
         with patch('cli.main.resolve_assignee_id', return_value='user-123'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--assignee', 'me'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--assignee', 'me', '--limit', '50'])
 
         assert result.exit_code == 0
         # Check assignee_id was passed to get_issues

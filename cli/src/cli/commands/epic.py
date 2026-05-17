@@ -83,7 +83,7 @@ def register(cli):
 
     @epic.command("list")
     @click.option("--status", help="Filter by status (backlog, todo, in_progress, in_review, done, canceled). Comma-separated for multiple.")
-    @click.option("--limit", "-n", type=int, default=50, help="Maximum number of epics to show (default: 50)")
+    @click.option("--limit", "-n", type=int, required=True, help="Page size (required).")
     @_main().json_option
     @_main().require_project
     @_main().handle_error
@@ -135,6 +135,12 @@ def register(cli):
             )
 
         console.print(table)
+
+        shown = len(epics)
+        if shown >= limit:
+            console.print(
+                f"\n[yellow]Showing {shown} epics (limit={limit}, may be truncated). Raise -n to see more.[/yellow]"
+            )
 
     @epic.command("show")
     @click.argument("identifier")

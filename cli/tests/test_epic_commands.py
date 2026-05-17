@@ -200,7 +200,7 @@ class TestEpicList:
             },
         ])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'CHT-50' in result.output
@@ -212,7 +212,7 @@ class TestEpicList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'No epics found' in result.output
@@ -232,7 +232,7 @@ class TestEpicList:
         ])
         client.get_sub_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--limit', '50'])
 
         assert result.exit_code == 0
 
@@ -242,7 +242,7 @@ class TestEpicList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'in_progress'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'in_progress', '--limit', '50'])
 
         assert result.exit_code == 0
         call_kwargs = client.get_issues.call_args[1]
@@ -254,7 +254,7 @@ class TestEpicList:
 
         client.get_issues = MagicMock(return_value=[])
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'invalid'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--status', 'invalid', '--limit', '50'])
 
         assert result.exit_code != 0
 
@@ -273,7 +273,7 @@ class TestEpicList:
         ])
         client.get_sub_issues = MagicMock(return_value=[{"status": "done"}])
 
-        result = cli_runner.invoke(cli, ['epic', 'list', '--json'])
+        result = cli_runner.invoke(cli, ['epic', 'list', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         assert 'sub_issues' in result.output

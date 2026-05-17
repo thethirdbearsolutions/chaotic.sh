@@ -29,7 +29,7 @@ class TestJsonAfterSubcommand:
         client.get_sprints = MagicMock(return_value=[])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--limit', '50'])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -82,7 +82,7 @@ class TestJsonErrorHandling:
         ])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent', '--limit', '50'])
 
         assert result.exit_code == 1
         data = json.loads(result.output)
@@ -94,7 +94,7 @@ class TestJsonErrorHandling:
         from cli.main import cli
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--status', 'invalid_status'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--status', 'invalid_status', '--limit', '50'])
 
         assert result.exit_code == 1
         data = json.loads(result.output)
@@ -110,7 +110,7 @@ class TestJsonErrorHandling:
         ])
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
-            result = cli_runner.invoke(cli, ['issue', 'list', '--sprint', 'nonexistent'])
+            result = cli_runner.invoke(cli, ['issue', 'list', '--sprint', 'nonexistent', '--limit', '50'])
 
         assert result.exit_code == 1
         assert 'not found' in result.output.lower()
