@@ -74,6 +74,7 @@ import {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
+    getExcludedLabels,
     populateLabelFilter,
     syncFiltersToUrl,
     loadFiltersFromUrl,
@@ -131,6 +132,10 @@ describe('issues-view', () => {
             </div>
             <div id="label-filter-dropdown" class="multi-select-dropdown">
                 <span class="multi-select-label">All Labels</span>
+                <div class="multi-select-options hidden"></div>
+            </div>
+            <div id="exclude-label-filter-dropdown" class="multi-select-dropdown">
+                <span class="multi-select-label">Exclude Labels</span>
                 <div class="multi-select-options hidden"></div>
             </div>
             <select id="project-filter">
@@ -220,6 +225,32 @@ describe('issues-view', () => {
     describe('getSelectedLabels', () => {
         it('returns empty array when no labels checked', () => {
             expect(getSelectedLabels()).toEqual([]);
+        });
+    });
+
+    describe('getExcludedLabels', () => {
+        it('returns empty array when no labels checked', () => {
+            expect(getExcludedLabels()).toEqual([]);
+        });
+
+        it('returns checked label IDs from the exclude dropdown', () => {
+            const dropdown = document.getElementById('exclude-label-filter-dropdown');
+            dropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option"><input type="checkbox" value="lbl-a" checked></label>
+                <label class="multi-select-option"><input type="checkbox" value="lbl-b"></label>
+                <label class="multi-select-option"><input type="checkbox" value="lbl-c" checked></label>
+            `;
+            expect(getExcludedLabels().sort()).toEqual(['lbl-a', 'lbl-c']);
+        });
+
+        it('is independent from include labels', () => {
+            // Check an include label
+            document.getElementById('label-filter-dropdown')
+                .querySelector('.multi-select-options').innerHTML =
+                '<label class="multi-select-option"><input type="checkbox" value="lbl-a" checked></label>';
+            // Excludes empty
+            expect(getSelectedLabels()).toEqual(['lbl-a']);
+            expect(getExcludedLabels()).toEqual([]);
         });
     });
 
@@ -442,6 +473,18 @@ describe('issues-view', () => {
             expect(localStorage.getItem('chaotic_issues_filters_null')).toBeNull();
             getCurrentTeam.mockReturnValue({ id: 'team-1' });
         });
+
+        it('serializes excluded labels as exclude_label= params', () => {
+            document.getElementById('exclude-label-filter-dropdown')
+                .querySelector('.multi-select-options').innerHTML = `
+                    <label class="multi-select-option"><input type="checkbox" value="lbl-x" checked></label>
+                    <label class="multi-select-option"><input type="checkbox" value="lbl-y" checked></label>
+                `;
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toContain('exclude_label=lbl-x');
+            expect(url).toContain('exclude_label=lbl-y');
+        });
     });
 
     // ========================================
@@ -475,6 +518,29 @@ describe('issues-view', () => {
             loadFiltersFromUrl();
 
             expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
+        });
+
+        it('applies exclude_label filters from URL', () => {
+            // Pre-populate the exclude dropdown with the relevant options so
+            // loadFiltersFromUrl can flip the checkboxes on.
+            document.getElementById('exclude-label-filter-dropdown')
+                .querySelector('.multi-select-options').innerHTML = `
+                    <label class="multi-select-option"><input type="checkbox" value="lbl-x"></label>
+                    <label class="multi-select-option"><input type="checkbox" value="lbl-y"></label>
+                    <label class="multi-select-option"><input type="checkbox" value="lbl-z"></label>
+                `;
+
+            Object.defineProperty(window, 'location', {
+                value: { search: '?exclude_label=lbl-x&exclude_label=lbl-z', pathname: '/issues', href: 'http://localhost/issues' },
+                writable: true,
+                configurable: true,
+            });
+
+            loadFiltersFromUrl();
+
+            expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-x"]').checked).toBe(true);
+            expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-y"]').checked).toBe(false);
+            expect(document.querySelector('#exclude-label-filter-dropdown input[value="lbl-z"]').checked).toBe(true);
         });
 
         it('falls back to team-scoped localStorage when URL has no params (CHT-1042)', () => {
