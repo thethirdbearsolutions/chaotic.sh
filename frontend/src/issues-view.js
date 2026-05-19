@@ -36,12 +36,14 @@ import {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
+    getExcludedLabels,
     getGroupByValue,
     syncFiltersToUrl,
     loadFiltersFromUrl as _loadFiltersFromUrl,
     updateStatusFilterLabel,
     updatePriorityFilterLabel,
     updateLabelFilterLabel,
+    updateExcludeLabelFilterLabel,
     populateLabelFilter,
     CLOSED_STATUSES,
 } from './issues-filter.js';
@@ -61,6 +63,7 @@ export {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
+    getExcludedLabels,
     getGroupByValue,
     getFilterCategoryCount,
     getTotalFilterCount,
@@ -70,6 +73,7 @@ export {
     updateStatusFilterLabel,
     updatePriorityFilterLabel,
     updateLabelFilterLabel,
+    updateExcludeLabelFilterLabel,
     populateLabelFilter,
 } from './issues-filter.js';
 
@@ -113,7 +117,10 @@ subscribe((key) => {
         // Clear label checkboxes after repopulation so DOM state is consistent
         const labelDropdown = document.getElementById('label-filter-dropdown');
         labelDropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+        const excludeLabelDropdown = document.getElementById('exclude-label-filter-dropdown');
+        excludeLabelDropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
         updateLabelFilterLabel();
+        updateExcludeLabelFilterLabel();
         filterIssues();
         updateFilterChips();
         updateFilterCountBadge();
@@ -174,6 +181,19 @@ export function clearLabelFilter() {
     const dropdown = document.getElementById('label-filter-dropdown');
     dropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     updateLabelFilter();
+}
+
+export function updateExcludeLabelFilter() {
+    updateExcludeLabelFilterLabel();
+    filterIssues();
+    updateFilterChips();
+    updateFilterCountBadge();
+}
+
+export function clearExcludeLabelFilter() {
+    const dropdown = document.getElementById('exclude-label-filter-dropdown');
+    dropdown?.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateExcludeLabelFilter();
 }
 
 // ========================================
@@ -266,6 +286,14 @@ export async function loadIssues() {
             issues = issues.filter(issue => {
                 if (!issue.labels || issue.labels.length === 0) return false;
                 return issue.labels.some(label => selectedLabels.includes(label.id));
+            });
+        }
+
+        const excludedLabels = getExcludedLabels();
+        if (excludedLabels.length > 0) {
+            issues = issues.filter(issue => {
+                if (!issue.labels || issue.labels.length === 0) return true;
+                return !issue.labels.some(label => excludedLabels.includes(label.id));
             });
         }
 
@@ -480,6 +508,7 @@ export function clearAllFilters() {
     if (searchInput) searchInput.value = '';
 
     clearLabelFilter();
+    clearExcludeLabelFilter();
     filterIssues();
     updateFilterChips();
     updateFilterCountBadge();
@@ -492,6 +521,8 @@ export function clearAllFilters() {
 registerActions({
     'update-label-filter': () => updateLabelFilter(),
     'clear-label-filter': () => clearLabelFilter(),
+    'update-exclude-label-filter': () => updateExcludeLabelFilter(),
+    'clear-exclude-label-filter': () => clearExcludeLabelFilter(),
     'show-filter-category': (_event, dataset) => showFilterCategoryOptions(dataset.category),
     'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
     'clear-project-filter': () => clearProjectFilter(),

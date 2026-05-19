@@ -189,7 +189,7 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/issues?project_id={project_id}", data)
 
-    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None) -> list:
+    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None) -> list:
         params = {}
         if project_id:
             params["project_id"] = project_id
@@ -232,6 +232,22 @@ class Client:
             label_values = [l.strip() for l in label.split(",")]
             label_params = "&".join([f"label={quote(l)}" for l in label_values])
             query = f"{query}&{label_params}" if query else label_params
+
+        # Exclude filters — comma-separated, repeated query params.
+        def _append_multi(key, raw):
+            nonlocal query
+            if not raw:
+                return
+            values = [v.strip() for v in raw.split(",") if v.strip()]
+            joined = "&".join([f"{key}={quote(v)}" for v in values])
+            if joined:
+                query = f"{query}&{joined}" if query else joined
+
+        _append_multi("exclude_label", exclude_label)
+        _append_multi("exclude_status", exclude_status)
+        _append_multi("exclude_priority", exclude_priority)
+        _append_multi("exclude_assignee_id", exclude_assignee_id)
+        _append_multi("exclude_issue_type", exclude_issue_type)
 
         return self._request("GET", f"/issues?{query}")
 

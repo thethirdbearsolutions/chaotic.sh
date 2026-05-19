@@ -294,6 +294,11 @@ async def list_issues(
     priorities: list[IssuePriority] | None = Query(None, alias="priority"),
     issue_type: IssueType | None = Query(None, alias="issue_type"),
     labels: list[str] | None = Query(None, alias="label"),
+    exclude_labels: list[str] | None = Query(None, alias="exclude_label"),
+    exclude_statuses: list[IssueStatus] | None = Query(None, alias="exclude_status"),
+    exclude_priorities: list[IssuePriority] | None = Query(None, alias="exclude_priority"),
+    exclude_issue_types: list[IssueType] | None = Query(None, alias="exclude_issue_type"),
+    exclude_assignee_ids: list[str] | None = Query(None, alias="exclude_assignee_id"),
     search: str | None = Query(None, min_length=1, max_length=200),
     sort_by: str | None = Query(None, pattern="^(created|updated|priority|status|title|estimate|random)$"),
     order: str | None = Query(None, pattern="^(asc|desc)$"),
@@ -301,6 +306,12 @@ async def list_issues(
     limit: int = 1000,
 ):
     """List issues with filters. Pass multiple status/priority/label values to filter by multiple values.
+
+    Exclude filters (``exclude_label``, ``exclude_status``, ``exclude_priority``,
+    ``exclude_issue_type``, ``exclude_assignee_id``) remove matching issues
+    from the result. For labels, an issue is excluded if it carries any of
+    the named labels. Use ``exclude_assignee_id=unassigned`` to hide
+    issues with no assignee.
 
     All filter parameters work consistently whether querying by project_id or team_id.
     """
@@ -332,6 +343,11 @@ async def list_issues(
             sort_by=sort_by,
             order=order,
             label_names=labels,
+            exclude_label_names=exclude_labels,
+            exclude_statuses=exclude_statuses,
+            exclude_priorities=exclude_priorities,
+            exclude_assignee_ids=exclude_assignee_ids,
+            exclude_issue_types=exclude_issue_types,
         )
     elif team_id:
         has_access = await check_user_team_access(current_user, team_id)
@@ -353,6 +369,11 @@ async def list_issues(
             sort_by=sort_by,
             order=order,
             label_names=labels,
+            exclude_label_names=exclude_labels,
+            exclude_statuses=exclude_statuses,
+            exclude_priorities=exclude_priorities,
+            exclude_assignee_ids=exclude_assignee_ids,
+            exclude_issue_types=exclude_issue_types,
         )
     elif sprint_id:
         # Sprint-only query: check access via sprint -> project -> team

@@ -874,8 +874,18 @@ class IssueService:
         sort_by: str | None = None,
         order: str | None = None,
         label_names: list[str] | None = None,
+        exclude_label_names: list[str] | None = None,
+        exclude_statuses: list | None = None,
+        exclude_priorities: list | None = None,
+        exclude_assignee_ids: list[str] | None = None,
+        exclude_issue_types: list | None = None,
     ) -> list[OxydeIssue]:
-        """Unified issue listing with all filter options."""
+        """Unified issue listing with all filter options.
+
+        Exclude filters (``exclude_*``) remove matching issues from the
+        result set. For ``exclude_label_names``, an issue is removed if
+        it carries *any* of the given labels (case-insensitive).
+        """
         if not project_id and not team_id:
             raise ValueError("Must provide either project_id or team_id")
 
@@ -939,6 +949,46 @@ class IssueService:
                     "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
                 )
                 params.append(label_name)
+
+        if exclude_statuses:
+            status_vals = [s.name for s in exclude_statuses]
+            placeholders = ",".join("?" for _ in status_vals)
+            conditions.append(f"i.status NOT IN ({placeholders})")
+            params.extend(status_vals)
+
+        if exclude_priorities:
+            priority_vals = [p.name for p in exclude_priorities]
+            placeholders = ",".join("?" for _ in priority_vals)
+            conditions.append(f"i.priority NOT IN ({placeholders})")
+            params.extend(priority_vals)
+
+        if exclude_issue_types:
+            type_vals = [t.name for t in exclude_issue_types]
+            placeholders = ",".join("?" for _ in type_vals)
+            conditions.append(f"i.issue_type NOT IN ({placeholders})")
+            params.extend(type_vals)
+
+        if exclude_assignee_ids:
+            real_ids = [a for a in exclude_assignee_ids if a != "unassigned"]
+            exclude_unassigned = "unassigned" in exclude_assignee_ids
+            if real_ids:
+                placeholders = ",".join("?" for _ in real_ids)
+                # NOT IN treats NULLs as unknown, so unassigned rows survive
+                conditions.append(
+                    f"(i.assignee_id IS NULL OR i.assignee_id NOT IN ({placeholders}))"
+                )
+                params.extend(real_ids)
+            if exclude_unassigned:
+                conditions.append("i.assignee_id IS NOT NULL")
+
+        if exclude_label_names:
+            # Single NOT-IN subquery handles "issue has any of these labels"
+            placeholders = ",".join("?" for _ in exclude_label_names)
+            conditions.append(
+                "i.id NOT IN (SELECT il.issue_id FROM issue_labels il "
+                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
+            )
+            params.extend(name.lower() for name in exclude_label_names)
 
         # Build query
         if team_id and not project_id:
