@@ -183,6 +183,9 @@ export function showFilterCategoryOptions(category) {
         case 'labels':
             renderLabelOptions(container);
             break;
+        case 'exclude_labels':
+            renderExcludeLabelOptions(container);
+            break;
     }
 }
 
@@ -415,6 +418,41 @@ function renderLabelOptions(container) {
             html += `
                 <label class="filter-option">
                     <input type="checkbox" value="${escapeAttr(cb.value)}" ${selected.includes(cb.value) ? 'checked' : ''} data-action="toggle-label-option" data-filter-value="${escapeAttr(cb.value)}">
+                    <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(color)};"></span>
+                    <span class="filter-option-label">${escapeHtml(name)}</span>
+                </label>
+            `;
+        });
+    }
+
+    container.innerHTML = html;
+}
+
+function renderExcludeLabelOptions(container) {
+    const selected = getExcludedLabels();
+    const excludeDropdown = document.getElementById('exclude-label-filter-dropdown');
+    const labelCheckboxes = excludeDropdown?.querySelectorAll('.multi-select-option input[type="checkbox"]') || [];
+
+    let html = `
+        <div class="filter-options-header">
+            <span class="filter-options-title">Exclude Labels</span>
+            ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-exclude-label-filter-new">Clear</button>' : ''}
+        </div>
+    `;
+
+    if (labelCheckboxes.length === 0) {
+        html += '<div class="filter-options-empty">No labels available</div>';
+    } else {
+        labelCheckboxes.forEach(cb => {
+            const labelEl = cb.closest('label');
+            const nameEl = labelEl?.querySelector('.label-name');
+            const badgeEl = labelEl?.querySelector('.label-badge');
+            const name = nameEl?.textContent || 'Label';
+            const color = badgeEl?.style.background || '#6366f1';
+
+            html += `
+                <label class="filter-option">
+                    <input type="checkbox" value="${escapeAttr(cb.value)}" ${selected.includes(cb.value) ? 'checked' : ''} data-action="toggle-exclude-label-option" data-filter-value="${escapeAttr(cb.value)}">
                     <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(color)};"></span>
                     <span class="filter-option-label">${escapeHtml(name)}</span>
                 </label>
