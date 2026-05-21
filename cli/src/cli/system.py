@@ -690,26 +690,36 @@ def rebuild_frontend() -> tuple[bool, str]:
     older UI than the code on disk implies. Rebuilding as part of the upgrade
     closes that gap.
 
-    Best-effort: if npm is unavailable, skip with a message rather than failing
-    the upgrade. The committed bundle (if up to date) will still be served.
+    Uses `npm ci`, not `npm install`. `ci` reproducibly installs from
+    package-lock.json (wiping any stale node_modules) and refuses to mutate
+    the committed lockfile. That's the deploy-shaped install we want —
+    `npm install` would silently rewrite the lockfile, and combined with
+    a node_modules existence-guard would never reinstall after an upstream
+    lockfile bump, reproducing the exact silent-skew bug this function
+    exists to prevent (just at the deps layer instead of the bundle layer).
+
+    Best-effort: if node/npm is unavailable, skip with a message rather
+    than failing the upgrade. The committed bundle (if up to date) will
+    still be served.
 
     Returns (success, message).
     """
-    if shutil.which("npm") is None:
-        return True, "skipped (npm not on PATH)"
+    if shutil.which("npm") is None or shutil.which("node") is None:
+        return True, "skipped (node/npm not on PATH; serving committed bundle)"
     frontend_dir = PROJECT_DIR / "frontend"
-    if not frontend_dir.exists():
-        return True, "skipped (no frontend directory)"
+    if not (frontend_dir / "package.json").exists():
+        return True, "skipped (no frontend/package.json)"
     try:
-        if not (frontend_dir / "node_modules").exists():
-            run_command(["npm", "install"], cwd=frontend_dir, timeout=300)
+        # `npm ci` is idempotent and the only safe way to ensure
+        # node_modules matches the committed lockfile on disk.
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600)
         run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180)
         return True, "rebuilt"
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()
-        return False, f"npm build failed: {stderr[:200]}"
+        return False, f"npm ci/build failed: {stderr[:200]}"
     except subprocess.TimeoutExpired:
-        return False, "npm install/build timed out"
+        return False, "npm ci/build timed out"
 
 
 # CLI Command Group
