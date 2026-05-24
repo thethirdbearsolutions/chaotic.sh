@@ -228,6 +228,14 @@ export class ApiClient {
         return this.request('DELETE', `/issues/${issueId}`);
     }
 
+    async getIssueDescriptionRevisions(issueId) {
+        return this.request('GET', `/issues/${issueId}/description-revisions`);
+    }
+
+    async getIssueDescriptionRevision(issueId, version) {
+        return this.request('GET', `/issues/${issueId}/description-revisions/${version}`);
+    }
+
     // Comments
     async createComment(issueId, content) {
         return this.request('POST', `/issues/${issueId}/comments`, { content });
@@ -412,6 +420,14 @@ export class ApiClient {
 
     async deleteDocument(documentId) {
         return this.request('DELETE', `/documents/${documentId}`);
+    }
+
+    async getDocumentRevisions(documentId) {
+        return this.request('GET', `/documents/${documentId}/revisions`);
+    }
+
+    async getDocumentRevision(documentId, version) {
+        return this.request('GET', `/documents/${documentId}/revisions/${version}`);
     }
 
     // Document-Issue Links
