@@ -581,6 +581,7 @@ async def list_document_revisions(
     limit: int = 100,
 ):
     """List revision history for a document, newest first."""
+    limit = min(limit, 10000)
     document_service = DocumentService()
 
     document = await document_service.get_by_id(document_id)

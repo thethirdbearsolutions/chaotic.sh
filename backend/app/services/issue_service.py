@@ -785,14 +785,28 @@ class IssueService:
         issue: OxydeIssue,
         author_id: str | None,
     ) -> OxydeIssueDescriptionRevision:
-        """Append a description-revision snapshot for the issue."""
-        version = await self._next_description_revision_version(issue.id)
-        return await OxydeIssueDescriptionRevision.objects.create(
-            issue_id=issue.id,
-            version=version,
-            description=issue.description,
-            author_id=author_id,
-        )
+        """Append a description-revision snapshot for the issue.
+
+        Retries on UNIQUE-constraint races (same rationale as
+        DocumentService._snapshot_revision). The IssueService.create
+        path is already wrapped in its own retry loop on a separate
+        identifier-race, so this snapshot also benefits from that
+        outer loop on create — the retry here covers the update path
+        where there is no outer loop.
+        """
+        last_error = None
+        for _ in range(5):
+            try:
+                version = await self._next_description_revision_version(issue.id)
+                return await OxydeIssueDescriptionRevision.objects.create(
+                    issue_id=issue.id,
+                    version=version,
+                    description=issue.description,
+                    author_id=author_id,
+                )
+            except IntegrityError as e:
+                last_error = e
+        raise last_error
 
     async def list_description_revisions(
         self, issue_id: str, skip: int = 0, limit: int = 100

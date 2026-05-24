@@ -1149,3 +1149,105 @@ class TestDocumentRevisions:
             f"/api/documents/{doc_id}/revisions", headers=auth_headers2,
         )
         assert resp.status_code == 403
+
+    async def test_revisions_cascade_on_document_delete(
+        self, client, auth_headers, test_team, db,
+    ):
+        """Deleting a document removes its revision rows."""
+        from app.oxyde_models.document import OxydeDocumentRevision
+
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Doomed", "content": "v1"},
+        )
+        doc_id = create_resp.json()["id"]
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v2"},
+        )
+        assert await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).count() == 2
+
+        delete_resp = await client.delete(
+            f"/api/documents/{doc_id}", headers=auth_headers,
+        )
+        assert delete_resp.status_code == 204
+        assert await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).count() == 0
+
+    async def test_revision_records_editor_attribution(
+        self, client, auth_headers, auth_headers2, test_team, test_user, test_user2, db,
+    ):
+        """The revision's author_id is the user who made the edit, not the doc author."""
+        # Make test_user2 a team member so they can edit.
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+        await OxydeTeamMember.objects.create(
+            team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+        )
+
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Shared", "content": "by user1"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        # user2 edits.
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers2,
+            json={"content": "by user2"},
+        )
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        by_version = {r["version"]: r for r in revs}
+        assert by_version[1]["author_id"] == test_user.id
+        assert by_version[2]["author_id"] == test_user2.id
+
+    async def test_revision_with_deleted_author_returns_null_name(
+        self, client, auth_headers, test_team, db,
+    ):
+        """If the author was deleted, author_name is None (not 500)."""
+        from app.oxyde_models.document import OxydeDocumentRevision
+
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "T", "content": "C"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        # Null out the revision's author (simulates ON DELETE SET NULL).
+        await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).update(author_id=None)
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()[0]["author_name"] is None
+
+    async def test_revisions_limit_capped(
+        self, client, auth_headers, test_team,
+    ):
+        """A wildly-large limit gets clamped, not blindly issued to the DB."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "T", "content": "C"},
+        )
+        doc_id = create_resp.json()["id"]
+        # The cap is 10_000; requesting absurd values should still
+        # succeed and return whatever exists.
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions?limit=99999999",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200

@@ -36,10 +36,15 @@ const ADAPTERS = {
   },
 };
 
-// Module-scoped state for the currently-open viewer. Reset each time
-// the modal closes via the data-action="close-revision-viewer" path
-// (or any other close trigger that fires closeModal()).
+// Module-scoped state for the currently-open viewer. Reset on each
+// new showRevisionHistory() invocation; the shared modal close path
+// (Escape, X button, overlay click) bypasses us, so we don't try to
+// hook it — we just discard the stale state lazily on next open.
 let state = null;
+// Monotonically incrementing token: every showRevisionHistory() call
+// claims a new value, and async closures bail if the token has
+// advanced. Defends against a fast double-click on the menu item.
+let stateToken = 0;
 
 /**
  * Entry point: load the revision list and render the viewer modal.
@@ -53,6 +58,11 @@ export async function showRevisionHistory(entityType, entityId) {
     return;
   }
 
+  // Reserve a token before any await. If a later call bumps the token
+  // while we're loading, our writes to `state` are aborted.
+  const token = ++stateToken;
+  state = null; // discard previous viewer's cache before showing loading
+
   let revisions;
   try {
     revisions = await adapter.fetchList(entityId);
@@ -60,8 +70,10 @@ export async function showRevisionHistory(entityType, entityId) {
     showApiError(e);
     return;
   }
+  if (token !== stateToken) return;
 
   state = {
+    token,
     entityType,
     entityId,
     adapter,
@@ -78,9 +90,10 @@ export async function showRevisionHistory(entityType, entityId) {
   if (state.viewVersion != null) {
     try {
       const snap = await adapter.fetchOne(entityId, state.viewVersion);
+      if (token !== stateToken) return;
       state.cache.set(state.viewVersion, snap);
     } catch (e) {
-      showApiError(e);
+      if (token === stateToken) showApiError(e);
     }
   }
 
@@ -200,11 +213,23 @@ function renderComparePanel() {
     return '<p class="text-muted">Loading…</p>';
   }
 
-  // Diff on the body field. We don't diff titles separately — when a
-  // title changes the user can see it via View mode on either version.
   const fromBody = fromSnap[state.adapter.bodyField] || '';
   const toBody = toSnap[state.adapter.bodyField] || '';
   const diffHtml = renderUnifiedDiff(fromBody, toBody);
+
+  // Snapshots also carry `title` (for docs). If the title changed
+  // between the two versions, surface it explicitly — the body diff
+  // would otherwise show "No changes" on a pure rename, which reads
+  // as "nothing happened" rather than "the title moved."
+  let titleBanner = '';
+  if ('title' in fromSnap && fromSnap.title !== toSnap.title) {
+    titleBanner = `
+      <div class="revision-title-change">
+        Title: <span class="diff-del">${escapeHtml(fromSnap.title || '')}</span>
+        &rarr; <span class="diff-add">${escapeHtml(toSnap.title || '')}</span>
+      </div>
+    `;
+  }
 
   return `
     <div class="revision-panel-header">
@@ -212,6 +237,7 @@ function renderComparePanel() {
         Comparing <strong>v${fromV}</strong> &rarr; <strong>v${toV}</strong>
       </div>
     </div>
+    ${titleBanner}
     ${diffHtml}
   `;
 }
@@ -305,42 +331,48 @@ function pushOp(ops, type, line) {
 
 async function selectRevision(version) {
   if (!state) return;
+  // Capture the token + state at entry. If another viewer opens
+  // mid-fetch, the token check short-circuits before we touch the
+  // new viewer's state.
+  const myToken = state.token;
+  const myState = state;
   // Make sure the snapshot is cached before we re-render.
-  if (!state.cache.has(version)) {
+  if (!myState.cache.has(version)) {
     try {
-      const snap = await state.adapter.fetchOne(state.entityId, version);
-      state.cache.set(version, snap);
+      const snap = await myState.adapter.fetchOne(myState.entityId, version);
+      if (state !== myState || stateToken !== myToken) return;
+      myState.cache.set(version, snap);
     } catch (e) {
-      showApiError(e);
+      if (state === myState && stateToken === myToken) showApiError(e);
       return;
     }
   }
 
-  if (state.mode === 'view') {
-    state.viewVersion = version;
+  if (myState.mode === 'view') {
+    myState.viewVersion = version;
   } else {
     // Compare mode: first click sets `from`, second click sets `to`,
     // subsequent clicks reassign `to` so the user can drag a range
     // around without exiting compare mode.
-    if (state.compareFromVersion == null) {
-      state.compareFromVersion = version;
-    } else if (state.compareToVersion == null && version !== state.compareFromVersion) {
+    if (myState.compareFromVersion == null) {
+      myState.compareFromVersion = version;
+    } else if (myState.compareToVersion == null && version !== myState.compareFromVersion) {
       // Order versions: smaller version is "from", larger is "to"
       // so the diff direction matches chronology.
-      if (version < state.compareFromVersion) {
-        state.compareToVersion = state.compareFromVersion;
-        state.compareFromVersion = version;
+      if (version < myState.compareFromVersion) {
+        myState.compareToVersion = myState.compareFromVersion;
+        myState.compareFromVersion = version;
       } else {
-        state.compareToVersion = version;
+        myState.compareToVersion = version;
       }
     } else {
       // Both set — replace the "to" with the new pick (treat it as
       // the user adjusting the right side of the comparison).
-      if (version < state.compareFromVersion) {
-        state.compareToVersion = state.compareFromVersion;
-        state.compareFromVersion = version;
-      } else if (version !== state.compareFromVersion) {
-        state.compareToVersion = version;
+      if (version < myState.compareFromVersion) {
+        myState.compareToVersion = myState.compareFromVersion;
+        myState.compareFromVersion = version;
+      } else if (version !== myState.compareFromVersion) {
+        myState.compareToVersion = version;
       }
     }
   }
@@ -349,33 +381,42 @@ async function selectRevision(version) {
 
 function toggleCompare() {
   if (!state) return;
-  if (state.mode === 'view') {
-    state.mode = 'compare';
+  const myToken = state.token;
+  const myState = state;
+  if (myState.mode === 'view') {
+    myState.mode = 'compare';
     // Seed compare with the currently-viewed version on the right and
     // its immediate predecessor on the left, when possible. Common
     // case: "show me what changed in the latest edit."
-    const viewing = state.viewVersion;
-    const idx = state.revisions.findIndex((r) => r.version === viewing);
-    if (idx >= 0 && idx + 1 < state.revisions.length) {
-      const prev = state.revisions[idx + 1].version; // older than current
-      state.compareFromVersion = prev;
-      state.compareToVersion = viewing;
+    const viewing = myState.viewVersion;
+    const idx = myState.revisions.findIndex((r) => r.version === viewing);
+    if (idx >= 0 && idx + 1 < myState.revisions.length) {
+      const prev = myState.revisions[idx + 1].version; // older than current
+      myState.compareFromVersion = prev;
+      myState.compareToVersion = viewing;
     } else {
-      state.compareFromVersion = viewing;
-      state.compareToVersion = null;
+      myState.compareFromVersion = viewing;
+      myState.compareToVersion = null;
     }
     // Best-effort preload so the first render isn't a loading flash.
-    const toLoad = [state.compareFromVersion, state.compareToVersion].filter(
-      (v) => v != null && !state.cache.has(v),
+    // If a preload fails we surface it — the alternative is a frozen
+    // "Loading…" with no signal to the user that anything went wrong.
+    let firstError = null;
+    const toLoad = [myState.compareFromVersion, myState.compareToVersion].filter(
+      (v) => v != null && !myState.cache.has(v),
     );
-    Promise.all(toLoad.map((v) => state.adapter.fetchOne(state.entityId, v).then((snap) => {
-      state.cache.set(v, snap);
-    }).catch(() => { /* swallow; renderComparePanel will show loading */ })))
-      .then(() => renderViewer());
+    Promise.all(toLoad.map((v) => myState.adapter.fetchOne(myState.entityId, v).then((snap) => {
+      if (state === myState && stateToken === myToken) myState.cache.set(v, snap);
+    }).catch((e) => { if (!firstError) firstError = e; })))
+      .then(() => {
+        if (state !== myState || stateToken !== myToken) return;
+        if (firstError) showApiError(firstError);
+        renderViewer();
+      });
   } else {
-    state.mode = 'view';
-    state.compareFromVersion = null;
-    state.compareToVersion = null;
+    myState.mode = 'view';
+    myState.compareFromVersion = null;
+    myState.compareToVersion = null;
   }
   renderViewer();
 }

@@ -3,7 +3,7 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
-from oxyde import atomic, execute_raw
+from oxyde import atomic, execute_raw, IntegrityError
 from app.oxyde_models.document import (
     OxydeDocument,
     OxydeDocumentComment,
@@ -68,15 +68,29 @@ class DocumentService:
         document: OxydeDocument,
         author_id: str | None,
     ) -> OxydeDocumentRevision:
-        """Append a revision row capturing the document's current title/content."""
-        version = await self._next_revision_version(document.id)
-        return await OxydeDocumentRevision.objects.create(
-            document_id=document.id,
-            version=version,
-            title=document.title,
-            content=document.content,
-            author_id=author_id,
-        )
+        """Append a revision row capturing the document's current title/content.
+
+        Two concurrent writers can both read `MAX(version)=N` and both
+        attempt to INSERT `version=N+1`; the UNIQUE (document_id,
+        version) index serializes them and the loser raises
+        IntegrityError. We retry a handful of times — each retry
+        re-reads MAX and picks the next slot, which converges fast
+        because the winner has already committed.
+        """
+        last_error = None
+        for _ in range(5):
+            try:
+                version = await self._next_revision_version(document.id)
+                return await OxydeDocumentRevision.objects.create(
+                    document_id=document.id,
+                    version=version,
+                    title=document.title,
+                    content=document.content,
+                    author_id=author_id,
+                )
+            except IntegrityError as e:
+                last_error = e
+        raise last_error
 
     async def create(
         self, document_in: DocumentCreate, team_id: str, author_id: str

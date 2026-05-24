@@ -1061,6 +1061,7 @@ async def list_description_revisions(
     limit: int = 100,
 ):
     """List description revisions for an issue, newest first."""
+    limit = min(limit, 10000)
     issue_service = IssueService()
     project_service = ProjectService()
 

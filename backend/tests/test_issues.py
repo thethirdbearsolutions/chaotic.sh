@@ -3754,3 +3754,110 @@ async def test_description_revisions_require_project_access(
         headers=auth_headers2,
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_cascade_on_issue_delete(
+    client, auth_headers, test_project, db
+):
+    """Deleting an issue removes its description-revision rows."""
+    from app.oxyde_models.issue import OxydeIssueDescriptionRevision
+
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Doomed", "description": "v1"},
+    )
+    issue_id = create_resp.json()["id"]
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v2"},
+    )
+    assert await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).count() == 2
+
+    delete_resp = await client.delete(
+        f"/api/issues/{issue_id}", headers=auth_headers,
+    )
+    assert delete_resp.status_code == 204
+    assert await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_description_revision_records_editor_attribution(
+    client, auth_headers, auth_headers2, test_project, test_team, test_user, test_user2, db
+):
+    """The revision's author_id is the user who made the edit."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+    await OxydeTeamMember.objects.create(
+        team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+    )
+
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Shared", "description": "by user1"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers2,
+        json={"description": "by user2"},
+    )
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    by_version = {r["version"]: r for r in revs}
+    assert by_version[1]["author_id"] == test_user.id
+    assert by_version[2]["author_id"] == test_user2.id
+
+
+@pytest.mark.asyncio
+async def test_description_revision_with_deleted_author_returns_null_name(
+    client, auth_headers, test_project, db
+):
+    """If the author was deleted, author_name is None (not 500)."""
+    from app.oxyde_models.issue import OxydeIssueDescriptionRevision
+
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "T", "description": "D"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).update(author_id=None)
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()[0]["author_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_limit_capped(
+    client, auth_headers, test_project
+):
+    """A wildly-large limit gets clamped."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "T", "description": "D"},
+    )
+    issue_id = create_resp.json()["id"]
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions?limit=99999999",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200

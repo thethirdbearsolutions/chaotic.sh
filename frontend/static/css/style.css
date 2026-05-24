@@ -7978,6 +7978,21 @@ input[type="checkbox"] {
     font-size: 1.2em;
 }
 
+.revision-title-change {
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: var(--font-sm);
+}
+
+.revision-title-change .diff-del,
+.revision-title-change .diff-add {
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
 .revision-diff {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: var(--font-sm);
