@@ -249,6 +249,16 @@ CREATE TABLE IF NOT EXISTS document_revisions (
     UNIQUE (document_id, version)
 );
 
+CREATE TABLE IF NOT EXISTS issue_description_revisions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    description TEXT,
+    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE (issue_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS issue_activities (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,

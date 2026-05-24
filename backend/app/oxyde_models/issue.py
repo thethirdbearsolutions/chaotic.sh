@@ -152,6 +152,27 @@ class OxydeTicketLimboBlocker(OxydeModel):
         table_name = "ticket_limbo_blockers"
 
 
+class OxydeIssueDescriptionRevision(OxydeModel):
+    """Immutable snapshot of an issue's description at a point in time.
+
+    A new row is appended every time an issue update changes description.
+    Version numbers are monotonically increasing per issue; v1 is the
+    initial state at creation (even if the description was empty —
+    "I started with nothing" is useful history).
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    issue_id: str = Field(db_index=True)
+    version: int = Field()
+    description: str | None = Field(default=None)
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        is_table = True
+        table_name = "issue_description_revisions"
+
+
 class OxydeBudgetTransaction(OxydeModel):
     """Records effort spent when issues are completed."""
 

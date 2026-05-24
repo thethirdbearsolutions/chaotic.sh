@@ -3616,3 +3616,141 @@ async def test_list_issues_exclude_combined_with_include(
     # chore and plain are status=backlog by default
     assert labeled_issues["chore"].id in ids
     assert labeled_issues["plain"].id in ids
+
+
+# =========================================================================
+# Issue description revisions
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_create_writes_initial_description_revision(
+    client, auth_headers, test_project
+):
+    """Creating an issue via the API writes a v1 description revision."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Versioned", "description": "Initial body"},
+    )
+    assert create_resp.status_code == 201
+    issue_id = create_resp.json()["id"]
+
+    list_resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )
+    assert list_resp.status_code == 200
+    revs = list_resp.json()
+    assert len(revs) == 1
+    assert revs[0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_description_update_appends_revision(
+    client, auth_headers, test_project
+):
+    """Each description edit appends a new revision row."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Evolving", "description": "v1 body"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v2 body"},
+    )
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v3 body"},
+    )
+
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    assert [r["version"] for r in revs] == [3, 2, 1]
+
+    v1 = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions/1",
+        headers=auth_headers,
+    )).json()
+    v3 = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions/3",
+        headers=auth_headers,
+    )).json()
+    assert v1["description"] == "v1 body"
+    assert v3["description"] == "v3 body"
+
+
+@pytest.mark.asyncio
+async def test_non_description_update_does_not_snapshot(
+    client, auth_headers, test_project
+):
+    """Patches that don't touch description don't bump the version."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Stable", "description": "Body", "priority": "low"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    # Change title and priority — neither should snapshot.
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"title": "Renamed", "priority": "high"},
+    )
+    # Re-PATCHing the same description shouldn't snapshot either.
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "Body"},
+    )
+
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    assert len(revs) == 1
+    assert revs[0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_description_revision_get_404(client, auth_headers, test_project):
+    """Requesting a non-existent version returns 404."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "x", "description": "y"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions/99",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_require_project_access(
+    client, auth_headers, auth_headers2, test_project
+):
+    """A non-project-member can't read description revisions."""
+    create_resp = await client.post(
+        f"/api/issues?project_id={test_project.id}",
+        headers=auth_headers,
+        json={"title": "Private", "description": "Secret"},
+    )
+    issue_id = create_resp.json()["id"]
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers2,
+    )
+    assert resp.status_code == 403
