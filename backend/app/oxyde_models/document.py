@@ -81,3 +81,25 @@ class OxydeDocumentLabel(OxydeModel):
     class Meta:
         is_table = True
         table_name = "document_labels"
+
+
+class OxydeDocumentRevision(OxydeModel):
+    """Immutable snapshot of a document's title+content at a point in time.
+
+    A new row is appended every time a document update changes title or
+    content. Version numbers are monotonically increasing per document;
+    v1 is the initial state at creation. Diffing is computed by callers
+    from the stored snapshots.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    document_id: str = Field(db_index=True)
+    version: int = Field()
+    title: str = Field()
+    content: str | None = Field(default=None)
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        is_table = True
+        table_name = "document_revisions"

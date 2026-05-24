@@ -1015,3 +1015,137 @@ async def test_document_service_add_label_idempotent(db, test_document):
     await service.add_label(test_document.id, label.id)
     # Add again — should be a no-op
     await service.add_label(test_document.id, label.id)
+
+
+@pytest.mark.asyncio
+class TestDocumentRevisions:
+    """Tests for document revision history."""
+
+    async def test_create_writes_initial_revision(self, client, auth_headers, test_team):
+        """Creating a document via the API writes a v1 revision."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Versioned Doc", "content": "Initial body"},
+        )
+        assert create_resp.status_code == 201
+        doc_id = create_resp.json()["id"]
+
+        list_resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )
+        assert list_resp.status_code == 200
+        revs = list_resp.json()
+        assert len(revs) == 1
+        assert revs[0]["version"] == 1
+        assert revs[0]["title"] == "Versioned Doc"
+
+    async def test_update_content_appends_revision(self, client, auth_headers, test_team):
+        """Each content edit appends a new revision row."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Evolving", "content": "v1 body"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v2 body"},
+        )
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v3 body"},
+        )
+
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert [r["version"] for r in revs] == [3, 2, 1]
+
+        v1 = (await client.get(
+            f"/api/documents/{doc_id}/revisions/1", headers=auth_headers,
+        )).json()
+        v3 = (await client.get(
+            f"/api/documents/{doc_id}/revisions/3", headers=auth_headers,
+        )).json()
+        assert v1["content"] == "v1 body"
+        assert v3["content"] == "v3 body"
+
+    async def test_update_unchanged_body_no_new_revision(self, client, auth_headers, test_team):
+        """Patches that don't touch title/content don't bump the version."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Stable", "content": "Body", "icon": "📘"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"icon": "📕"},
+        )
+        # Re-PATCHing the same content shouldn't snapshot either.
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "Body"},
+        )
+
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert len(revs) == 1
+        assert revs[0]["version"] == 1
+
+    async def test_title_change_alone_bumps_revision(self, client, auth_headers, test_team):
+        """Title-only edits get snapshotted (we capture title too)."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Old", "content": "Body"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"title": "New"},
+        )
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert [r["title"] for r in revs] == ["New", "Old"]
+
+    async def test_get_revision_not_found(self, client, auth_headers, test_team):
+        """Requesting a non-existent version returns 404."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "x", "content": "y"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions/99", headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_revision_access_requires_team_membership(
+        self, client, auth_headers2, test_team, auth_headers,
+    ):
+        """A non-team-member can't read a doc's revisions."""
+        create_resp = await client.post(
+            f"/api/documents?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"title": "Private", "content": "Secret"},
+        )
+        doc_id = create_resp.json()["id"]
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers2,
+        )
+        assert resp.status_code == 403
