@@ -300,6 +300,32 @@ class TestIsTransient:
         except AttributeError as exc:
             pytest.fail(f"_is_transient must not raise AttributeError: {exc}")
 
+    def test_network_family_is_transient(self):
+        import httpx
+        for exc in (
+            httpx.ReadError("boom"),
+            httpx.WriteError("boom"),
+            httpx.CloseError("boom"),
+            httpx.RemoteProtocolError("boom"),
+            httpx.ProxyError("boom"),
+            httpx.ReadTimeout("boom"),
+            httpx.ConnectTimeout("boom"),
+        ):
+            assert await_cmd._is_transient(exc), type(exc).__name__
+
+    def test_misconfiguration_is_not_transient(self):
+        # A typo'd API URL must fail loud at startup, not silently
+        # back off for hours and exit 124.
+        import httpx
+        for exc in (
+            httpx.UnsupportedProtocol("no scheme"),
+            httpx.InvalidURL("garbage"),
+            httpx.DecodingError("bad body"),
+            httpx.TooManyRedirects("loop"),
+            ValueError("not httpx at all"),
+        ):
+            assert not await_cmd._is_transient(exc), type(exc).__name__
+
 
 # ---------------------------------------------------------------------------
 # Rendered (non-JSON) output
@@ -575,6 +601,41 @@ class TestPollingLoop:
         # First call returns the event; loop exits immediately.
         assert result["id"] == "e1"
         assert call_count["n"] == 1
+
+    def test_transient_error_retries_and_recovers(self, monkeypatch, capsys):
+        import httpx
+        monkeypatch.setattr(await_cmd, "_BACKOFF_SCHEDULE", (0.01, 0.02))
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        later = watermark + timedelta(seconds=10)
+        calls = {"n": 0}
+
+        def fetch(skip, limit):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ConnectError("blip")
+            return [_event("e1", later, activity_type="commented")]
+
+        result = await_cmd._poll(
+            fetch, watermark=watermark, scope={}, type_filter=None,
+            exclude_self_for=None, until_cmd=None,
+            timeout_secs=5, interval_secs=0.01,
+        )
+        assert result["id"] == "e1"
+        assert calls["n"] == 2
+        assert "retrying" in capsys.readouterr().err
+
+    def test_non_transient_error_propagates(self):
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        def fetch(skip, limit):
+            raise await_cmd.APIError("forbidden", status_code=403)
+
+        with pytest.raises(await_cmd.APIError):
+            await_cmd._poll(
+                fetch, watermark=watermark, scope={}, type_filter=None,
+                exclude_self_for=None, until_cmd=None,
+                timeout_secs=5, interval_secs=0.01,
+            )
 
     def test_event_at_exact_watermark_is_candidate(self):
         # Servers that truncate created_at to the second can stamp an

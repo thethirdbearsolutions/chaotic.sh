@@ -35,6 +35,7 @@ Implementation overview
 """
 import json
 import os
+import random
 import re
 import signal
 import subprocess
@@ -399,15 +400,22 @@ def _raise_terminated(signum, frame):
 
 _BACKOFF_SCHEDULE = (1, 2, 4, 8, 16, 30)
 
+_TRANSIENT_HTTPX_ERRORS = (
+    httpx.TimeoutException,
+    httpx.NetworkError,  # ConnectError, ReadError, WriteError, CloseError
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+)
+"""Explicit allowlist. Everything else httpx raises — InvalidURL,
+UnsupportedProtocol, DecodingError, TooManyRedirects — is
+misconfiguration or a broken server contract: fail loud at startup
+instead of silently backing off for hours."""
+
 
 def _is_transient(exc: Exception) -> bool:
-    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
-        return True
     if isinstance(exc, APIError):
         return exc.status_code is None or exc.status_code in (429,) or exc.status_code >= 500
-    if isinstance(exc, httpx.HTTPError):
-        return True
-    return False
+    return isinstance(exc, _TRANSIENT_HTTPX_ERRORS)
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +514,10 @@ def _poll(
             activities = _fetch_new_pages(fetch_page, floor)
         except Exception as exc:  # noqa: BLE001 - we re-classify below
             if _is_transient(exc):
-                wait = _BACKOFF_SCHEDULE[min(backoff_idx, len(_BACKOFF_SCHEDULE) - 1)]
+                base = _BACKOFF_SCHEDULE[min(backoff_idx, len(_BACKOFF_SCHEDULE) - 1)]
+                # ±25% jitter so concurrent waiters don't synchronize
+                # their retries against a struggling backend.
+                wait = base * random.uniform(0.75, 1.25)
                 backoff_idx += 1
                 if deadline is not None:
                     wait = min(wait, max(0.0, deadline - time.time()))
@@ -519,7 +530,10 @@ def _poll(
                 continue
             raise
 
-        backoff_idx = 0
+        # Decay instead of reset: a flapping backend (one good response
+        # per minute) keeps an elevated cadence rather than getting
+        # hammered back at full speed after every lucky fetch.
+        backoff_idx = max(0, backoff_idx - 1)
 
         # Activities arrive newest-first; sort oldest-first so we wake
         # on the chronologically earliest matching event.
