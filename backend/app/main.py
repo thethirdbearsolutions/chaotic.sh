@@ -107,8 +107,25 @@ async def root(request: Request):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint.
+
+    Beyond process liveness (this endpoint responding at all), does a
+    trivial DB round-trip so a broken/unmigrated database surfaces here
+    instead of only 500ing on the first real request (e.g. signup) --
+    see the seeded lifespan/migration bug this closes. Additive only:
+    `status` stays "healthy" for callers that only check that key/value
+    (cli/src/cli/system.py::health_check polls this for HTTP 200); `db`
+    and `version` are new.
+    """
+    from app.oxyde_models.user import OxydeUser
+
+    try:
+        await OxydeUser.objects.count()
+        db_status = "ok"
+    except Exception:
+        db_status = "error"
+
+    return {"status": "healthy", "db": db_status, "version": app.version}
 
 
 @app.websocket("/ws")

@@ -462,17 +462,22 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
-def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
-    """Poll the server health endpoint until it responds or timeout."""
-    import urllib.request
-    import urllib.error
-
+def _health_url(port: int, host: str = "localhost") -> str:
+    """Build the /health URL, normalizing wildcard binds and IPv6 hosts."""
     # Use localhost for wildcard binds (0.0.0.0/::) since they accept loopback
     check_host = "localhost" if host in ("0.0.0.0", "::") else host
     # Bracket IPv6 addresses for URL formatting
     if ":" in check_host and not check_host.startswith("["):
         check_host = f"[{check_host}]"
-    url = f"http://{check_host}:{port}/health"
+    return f"http://{check_host}:{port}/health"
+
+
+def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
+    """Poll the server health endpoint until it responds or timeout."""
+    import urllib.request
+    import urllib.error
+
+    url = _health_url(port, host)
     start = time.time()
 
     while time.time() - start < timeout:
@@ -485,6 +490,28 @@ def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
         time.sleep(1)
 
     return False
+
+
+def get_health(port: int, host: str = "localhost", timeout: int = 3) -> dict | None:
+    """Single GET against /health -- unlike health_check(), does not poll
+    or retry. Returns the parsed JSON body (status/db/version), or None if
+    the server didn't respond at all (network error, non-200, bad JSON).
+
+    Used by `chaotic system status` to distinguish process-alive (which
+    is_service_running() already checks) from app-actually-works.
+    """
+    import json
+    import urllib.request
+    import urllib.error
+
+    url = _health_url(port, host)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status == 200:
+                return json.loads(response.read().decode())
+    except (urllib.error.URLError, TimeoutError, ConnectionRefusedError, ValueError):
+        pass
+    return None
 
 
 def get_backup_path(timestamp: str | None = None) -> Path:
@@ -968,6 +995,16 @@ def system_status():
         console.print()
         console.print("Run 'chaotic system start' to start the server.")
         return
+
+    # Process is alive per is_service_running() above -- that's not the same
+    # as the app actually working (e.g. an unmigrated DB). Hit /health too.
+    health = get_health(port, host=host)
+    if health is None:
+        console.print("  Health:   [red]unreachable[/red] (process is running but /health did not respond)")
+    elif health.get("db") == "error":
+        console.print("  Health:   [yellow]degraded[/yellow] (db: error -- check 'chaotic system logs')")
+    else:
+        console.print(f"  Health:   [green]ok[/green] (db: {health.get('db', 'unknown')})")
 
     # Try to get version from git
     try:
