@@ -430,9 +430,11 @@ function initSidebarNav() {
     const createBtn = document.querySelector('.sidebar-create-btn');
     if (createBtn) createBtn.addEventListener('click', () => showCreateIssueModal());
 
-    // Navigation items — use data-view attribute
+    // Navigation items — use data-view attribute (CHT-1183: real hrefs;
+    // let modified clicks fall through to the browser for new-tab behavior)
     document.querySelectorAll('.sidebar-nav .nav-item[data-view]').forEach(item => {
         item.addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigateTo(item.dataset.view);
         });

@@ -568,8 +568,8 @@ describe('initSidebarNav DOM bindings', () => {
             <div class="team-selector"></div>
             <button class="sidebar-create-btn"></button>
             <nav class="sidebar-nav">
-                <a class="nav-item" data-view="issues" href="#">Issues</a>
-                <a class="nav-item" data-view="board" href="#">Board</a>
+                <a class="nav-item" data-view="issues" href="/issues">Issues</a>
+                <a class="nav-item" data-view="board" href="/board">Board</a>
             </nav>
             <div class="user-menu"></div>
             <div class="sidebar-backdrop"></div>
@@ -597,6 +597,55 @@ describe('initSidebarNav DOM bindings', () => {
     it('nav items call navigateTo with view', () => {
         container.querySelector('[data-view="issues"]').click();
         expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    // CHT-1183: real hrefs on nav items; modified clicks fall through to the browser
+    it('plain nav click prevents default so SPA routing handles it', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    it('cmd-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('ctrl-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('shift-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="board"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('alt-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="board"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('middle-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 1 });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
     });
 
     it('user menu click toggles dropdown', () => {
