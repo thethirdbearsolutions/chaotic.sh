@@ -1,7 +1,7 @@
 [run]
 source = app
 branch = True
-concurrency = greenlet, thread
+concurrency = thread
 omit =
     */tests/*
     */__pycache__/*
