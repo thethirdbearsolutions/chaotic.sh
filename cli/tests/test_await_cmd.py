@@ -907,6 +907,43 @@ class TestCommandTree:
                 f"`chaotic await {sibling}`; got:\n{result.output}"
             )
 
+    def test_ritual_help_names_its_default_type_filter(self):
+        # The auto-applied default filter used to be invisible magic;
+        # --help must disclose it, in text that matches the constant
+        # actually applied.
+        from click.testing import CliRunner
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        runner = CliRunner()
+
+        for cmd in ("ritual", "rituals"):
+            result = runner.invoke(root, ["await", cmd, "--help"])
+            assert result.exit_code == 0
+            assert await_cmd._RITUAL_DEFAULT_TYPES in result.output, (
+                f"`await {cmd} --help` should disclose the default "
+                f"--type filter; got:\n{result.output}"
+            )
+
+    def test_ritual_help_does_not_point_at_readme(self):
+        # "see README" in --help is the universal 'I gave up
+        # explaining' tell; the help should carry its own explanation.
+        from click.testing import CliRunner
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        runner = CliRunner()
+        result = runner.invoke(root, ["await", "ritual", "--help"])
+        assert "README" not in result.output
+
     def test_issues_subcommand_rejects_assignee_flag(self):
         # `--assignee` used to be accepted-but-ignored; that silent
         # no-op was misleading harness authors. The flag is removed

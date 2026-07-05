@@ -88,6 +88,12 @@ TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
 """Logical token → list of backend wire values to match. `any` is handled
 specially (empty filter)."""
 
+_RITUAL_DEFAULT_TYPES = (
+    "attested,approved,intent_opened,intent_cleared,intent_canceled"
+)
+"""Default --type filter for `await ritual` / `await rituals`. Also
+spelled out literally in those subcommands' docstrings — keep in sync."""
+
 
 def _resolve_type_filter(spec: str | None) -> set[str] | None:
     """Translate a `--type` argument into a set of wire values. Returns
@@ -986,9 +992,13 @@ def register(cli):
         """Wait on a specific ritual's next attestation or approval.
 
         For any ritual in the current project, use `chaotic await rituals`.
-        Pass `--ticket CHT-123` to also wake on `intent_*` lifecycle
-        events for that issue (intents don't carry a ritual name on
-        their own — see README § Await).
+        Intents are issue-level, not ritual-level, so `--ticket CHT-123`
+        is how you bind the wait to a specific issue's `intent_*`
+        lifecycle events.
+
+        \b
+        Default --type filter:
+          attested,approved,intent_opened,intent_cleared,intent_canceled
         """
         team_id = _require_current_team()
         project_id = _require_current_project()
@@ -1003,7 +1013,7 @@ def register(cli):
         # Default type filter for rituals if user didn't specify:
         # attested/approved/intent_* events.
         if type_spec is None:
-            type_spec = "attested,approved,intent_opened,intent_cleared,intent_canceled"
+            type_spec = _RITUAL_DEFAULT_TYPES
         _await_event(
             team_id=team_id, project_id=project_id, scope=scope,
             type_spec=type_spec, include_self=include_self,
@@ -1017,11 +1027,15 @@ def register(cli):
         """Wait on any ritual attestation/approval in the current project.
 
         For a specific ritual, use `chaotic await ritual NAME` instead.
+
+        \b
+        Default --type filter:
+          attested,approved,intent_opened,intent_cleared,intent_canceled
         """
         team_id = _require_current_team()
         project_id = _require_current_project()
         if type_spec is None:
-            type_spec = "attested,approved,intent_opened,intent_cleared,intent_canceled"
+            type_spec = _RITUAL_DEFAULT_TYPES
         _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,

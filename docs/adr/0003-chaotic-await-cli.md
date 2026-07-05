@@ -57,6 +57,13 @@ existing team feed). The CLI contract is **transport-agnostic** so a
 later WebSocket implementation can swap underneath without changing
 the user surface.
 
+To be precise: transport-agnosticism is a property of the *contract*
+(flags, exit codes, output shape), not a code seam. There is no
+`Transport` abstraction in the implementation — a WebSocket version
+replaces the polling internals of `_poll` wholesale. Deliberate: an
+abstraction serving a single implementation is speculation, and the
+public contract is the only thing a swap must preserve.
+
 ### Logical type-token vocabulary
 
 `--type` accepts CLI-stable logical names (`commented`, `attested`,
@@ -96,8 +103,12 @@ piped to stdin. This deliberately:
   event" (a normal non-zero exit). Without this, a missing `jq`
   binary would cause silent forever-polling.
 
-Predicate timeout is intentionally NOT in the MVP; if a wedged
-predicate becomes a problem in practice, add `--until-timeout` later.
+A configurable `--until-timeout` flag is NOT in the MVP, but a single
+predicate run is hard-capped at 30 seconds (killed and treated as a
+broken predicate, exit 1). A wedged predicate would otherwise block
+the poll loop indefinitely, out of reach of the outer `--timeout`,
+which is only checked between fetches. Add the flag later if 30s
+proves wrong for someone.
 
 ### Single-shot by design
 
@@ -130,12 +141,15 @@ output is one human-readable line and is documented as **unstable**
 
 ### Retry policy
 
-Transient errors (`httpx.ConnectError`, `TimeoutException`, HTTP
-5xx, 429) trigger silent exponential backoff (1/2/4/8/16/30s cap),
-retried indefinitely while the configured `--timeout` (if any) has
-not expired. A 2-second VPN blip shouldn't kill a multi-hour wait.
-Non-transient errors (401/403/404 on the initial scope lookup) exit
-1 with a clear stderr message — auth/perm issues won't self-heal.
+Transient errors (network/timeout family, HTTP 5xx, 429) trigger
+exponential backoff (1/2/4/8/16/30s cap, ±25% jitter so concurrent
+waiters don't synchronize), retried indefinitely while the configured
+`--timeout` (if any) has not expired. A 2-second VPN blip shouldn't
+kill a multi-hour wait. The transient set is an explicit allowlist:
+misconfiguration (bad URL, unsupported scheme, decode errors) and
+auth/perm failures (401/403/404) fail loud with exit 1 — they won't
+self-heal, and hours of silent backoff would be the worst UX for a
+typo.
 
 ## Alternatives considered
 
@@ -168,10 +182,23 @@ Non-transient errors (401/403/404 on the initial scope lookup) exit
   a state re-fetch catches the agent up. Add later if the gap shows
   up.
 
+### Scaling ceiling: the poll storm
+
+Single-shot polling is sized for the current reality (a handful of
+concurrent agents). At ~50 agents each polling every 5s, that's
+~10 RPS of near-identical team-feed queries — not catastrophic, but
+wasteful, and the fix (a shared per-host poller or server-side push
+fanning out to N waiters) breaks the fork-and-forget process model.
+The deliberate call: ship single-shot now, and when the poll storm
+materializes, add a daemon (`chaotic awaitd`) and make `chaotic
+await` a thin client to it. Harness-facing contract stays identical.
+
 ## Status & follow-ups
 
 * Implementation: PR #183.
 * Backend events the CLI consumes: PR #178 / ADR-0001.
 * Known limitations documented in `cli/README.md` § Await § "Notes
   for harness authors": no `--follow`, no resume after crash, no
-  `--until` predicate timeout.
+  configurable `--until` predicate timeout (fixed 30s ceiling).
+* Future: `chaotic awaitd` shared poller if concurrent-waiter volume
+  makes per-process polling expensive (see "Scaling ceiling").
