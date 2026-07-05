@@ -2,10 +2,11 @@
 from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi import Request
 import os
 
@@ -64,6 +65,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Sanitize 422 request-validation error bodies.
+
+    FastAPI's default handler serializes pydantic's `.errors()` verbatim,
+    which includes an `input` key holding the raw submitted value -- for
+    UserCreate.password (min_length=8) that puts a user's plaintext
+    password in the 422 response body, and from there into CLI stdout,
+    shell history, and any agent harness logging raw output. Strip every
+    error down to just `loc`+`msg`; nothing else is safe to echo back.
+    """
+    sanitized = [
+        {"loc": list(err.get("loc", ())), "msg": err.get("msg", "")}
+        for err in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": sanitized})
 
 # API routes
 app.include_router(api_router, prefix="/api")
