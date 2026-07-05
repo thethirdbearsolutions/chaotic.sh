@@ -21,7 +21,17 @@ function getTooltip() {
     tooltipEl = document.createElement('div');
     tooltipEl.className = 'quote-tooltip';
     tooltipEl.setAttribute('role', 'button');
+    tooltipEl.setAttribute('tabindex', '0');
+    tooltipEl.setAttribute('aria-label', 'Quote selection in comment');
     tooltipEl.textContent = 'Quote';
+    // Keyboard activation (CHT-1175)
+    tooltipEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            quoteSelectionIntoComment();
+        }
+    });
     tooltipEl.addEventListener('mousedown', (e) => {
         // Prevent mousedown from clearing the selection
         e.preventDefault();
@@ -219,4 +229,4 @@ export function setupQuoteComment({ signal } = {}) {
 }
 
 // Exported for testing
-export { getQuotableSelection, formatAsBlockquote, hideTooltip, isInQuotableArea };
+export { getQuotableSelection, formatAsBlockquote, hideTooltip, isInQuotableArea, getTooltip };

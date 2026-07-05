@@ -7885,4 +7885,9 @@ input[type="checkbox"] {
     color: white;
 }
 
+.quote-tooltip:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
 

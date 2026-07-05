@@ -29,6 +29,7 @@ import {
     formatAsBlockquote,
     getQuotableSelection,
     hideTooltip,
+    getTooltip,
 } from './quote-comment.js';
 
 describe('quote-comment module', () => {
@@ -187,6 +188,65 @@ describe('quote-comment module', () => {
             window.getSelection().addRange(range);
 
             expect(getQuotableSelection()).toBeNull();
+        });
+    });
+
+    // CHT-1175: keyboard accessibility
+    describe('tooltip keyboard accessibility', () => {
+        function selectDescriptionText() {
+            const container = document.querySelector('.description-content');
+            const range = document.createRange();
+            range.setStart(container.firstChild, 0);
+            range.setEnd(container.firstChild, 4);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+
+        it('tooltip is focusable via tabindex', () => {
+            const tip = getTooltip();
+            expect(tip.getAttribute('tabindex')).toBe('0');
+        });
+
+        it('tooltip has role=button and an aria-label', () => {
+            const tip = getTooltip();
+            expect(tip.getAttribute('role')).toBe('button');
+            expect(tip.getAttribute('aria-label')).toBe('Quote selection in comment');
+        });
+
+        it('Enter on tooltip inserts the quote', () => {
+            selectDescriptionText();
+            const tip = getTooltip();
+            tip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+            const textarea = document.getElementById('new-comment');
+            expect(textarea.value).toBe('> Some\n\n');
+        });
+
+        it('Space on tooltip inserts the quote', () => {
+            selectDescriptionText();
+            const tip = getTooltip();
+            tip.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+
+            const textarea = document.getElementById('new-comment');
+            expect(textarea.value).toBe('> Some\n\n');
+        });
+
+        it('Enter prevents default so the page does not scroll or submit', () => {
+            selectDescriptionText();
+            const tip = getTooltip();
+            const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+            tip.dispatchEvent(event);
+            expect(event.defaultPrevented).toBe(true);
+        });
+
+        it('other keys on tooltip do not insert a quote', () => {
+            selectDescriptionText();
+            const tip = getTooltip();
+            tip.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+
+            const textarea = document.getElementById('new-comment');
+            expect(textarea.value).toBe('');
         });
     });
 });
