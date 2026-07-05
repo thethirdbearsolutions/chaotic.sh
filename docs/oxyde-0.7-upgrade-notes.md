@@ -108,25 +108,61 @@ oxyde 0.3.1** — models and the migration chain were already out of sync
 (what `chaotic system upgrade` runs) is unaffected. Do not run
 `makemigrations` expecting a no-op; that cleanup is a separate chore.
 
+## Post-review changes (oppositional review on PR #197)
+
+1. **`create(instance=...)` guard + `bulk_create` coverage** — the defaults
+   patch injected kwargs unconditionally, which made `create(instance=...)`
+   (the call `Model.save()`'s insert path makes) raise
+   `ManagerError("either 'instance' or field values, not both")`. Now the
+   instance path re-validates a full `model_dump()` so every field counts as
+   "set" under exclude_unset INSERT serialization (defaults still land, no
+   kwarg injection), and `bulk_create` gets the same treatment for both dict
+   payloads and instances. Pinned by `tests/test_oxyde_create_defaults.py`
+   (7 tests, all paths).
+2. **Datetime normalization migration** —
+   `migrations/0006_normalize_datetime_format.py` rewrites all 40 datetime
+   columns across 22 tables to the naive space-separated form 0.7.1 writes,
+   eliminating the mixed-format ordering hazard permanently. Empirical note:
+   real 0.3.1-era rows in our DBs use `2026-02-19 18:17:39.823056+00:00`
+   (space separator + offset), not the `T` separator the review predicted —
+   with that shape, cross-time ORDER BY was already byte-correct and only
+   exact-microsecond ties misordered. The migration handles `T`-separated
+   and `Z`-suffixed variants anyway (other historical writers may have left
+   them). Rehearsed on a fresh copy of the real 0.3.1-era dev DB: applied
+   cleanly after 0002–0005, zero nonconforming values remained across all 40
+   columns, server boots, old and new rows sort uniformly. Tests:
+   `tests/test_datetime_normalization_migration.py` (5 tests: every variant,
+   NULL passthrough, conforming no-op, bytewise==chronological, column-list
+   drift check).
+3. **Version cap** — `oxyde>=0.7.1,<0.8`. The monkeypatches are welded to
+   0.7 internals and `chaotic system upgrade` re-resolves deps on user
+   machines; 0.8 must be vetted like this PR was before it's allowed in.
+
+Suite after review fixes: **42 failed, 1094 passed** — failure set still
+byte-identical to the 0.3.1 baseline (the +12 passes are the new tests above).
+
 ## Open risks for production deploys
 
-- **Datetime storage format changes on write**: 0.3.1 stored
-  `2026-02-05T12:00:00+00:00` (ISO, offset); 0.7.1 stores
-  `2026-02-05 12:00:00` (naive). Existing rows keep the old format; new/updated
-  rows get the new one. Pydantic parses both and `DateTimeUTC` normalizes to
-  aware-UTC, but any raw-SQL string comparison/sorting on datetime columns
-  across the format boundary is suspect. Chaotic's raw-SQL datetime uses go
-  through `ensure_utc`, which handles both.
-- **FK enforcement is real now**: 0.7's SQLite pool enforces foreign keys;
-  0.3.1 did not. Production data with dangling FKs (deleted users referenced
-  by api_keys etc.) will start throwing IntegrityError on writes that touch
-  them. The rehearsal DB was clean; a production install with years of
-  0.3.1-era writes may not be.
+- ~~Datetime storage format mix~~ — resolved by migration 0006 (above).
+- **FK enforcement semantics**: 0.7's SQLite pool enforces `PRAGMA
+  foreign_keys`; 0.3.1 did not. Per the PR review's audit, production DDL
+  (migrations 0001–0005) declares very few FK constraints — two clauses in
+  0001 (document_issues) plus 0005's ticket_limbo tables — so mass
+  IntegrityError on legacy dangling rows is unlikely. The real change:
+  declared `ON DELETE CASCADE`/`SET NULL` clauses now actually fire (latent
+  today; rituals are only soft-deleted). Separately, the test schema
+  (`tests/conftest.py` `_SCHEMA_SQL`) declares ~55 FK clauses production
+  doesn't have — pre-existing test/prod schema skew that FK enforcement
+  makes behavior-relevant. Ticket fodder alongside the makemigrations skew.
 - **`update()` return-type change**: any future code (or plugins) written
   against 0.3.1 examples that inspects the return of queryset `.update()`
   gets an int now. Chaotic's two call sites discard it.
 - **get_or_create/update_or_create now swallow IntegrityError into a re-fetch** —
   behavior improvement, but different failure surface under concurrent writes.
-- The dev/test monkeypatches in `app/oxyde_db.py` remain load-bearing (defaults
-  injection). If oxyde later fixes exclude_unset INSERT semantics or adds
-  db-side defaults support, revisit.
+- The monkeypatches in `app/oxyde_db.py` remain load-bearing (defaults
+  injection for create/bulk_create). Version-capped to <0.8; re-vet on any
+  oxyde bump, and revisit if upstream changes INSERT serialization semantics.
+- **WAL + bare-file backup** (pre-existing, flagged by review): `chaotic
+  system upgrade`'s backup copies the DB file without its `-wal` sidecar; a
+  backup taken while the server is live can miss committed transactions.
+  Should use `VACUUM INTO` or the sqlite3 backup API. Not this PR's scope.
