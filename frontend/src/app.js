@@ -19,7 +19,9 @@ import {
     updatePriorityFilter,
     clearPriorityFilter,
     clearLabelFilter,
+    clearExcludeLabelFilter,
     updateLabelFilterLabel,
+    updateExcludeLabelFilterLabel,
     populateLabelFilter,
     loadFiltersFromUrl,
     toggleFilterMenu,
@@ -186,6 +188,17 @@ registerViews({
                     updateLabelFilterLabel();
                 }
             }
+            const excludeLabelIds = urlParams.getAll('exclude_label');
+            if (excludeLabelIds.length > 0) {
+                const dropdown = document.getElementById('exclude-label-filter-dropdown');
+                if (dropdown) {
+                    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+                    checkboxes.forEach(cb => {
+                        cb.checked = excludeLabelIds.includes(cb.value);
+                    });
+                    updateExcludeLabelFilterLabel();
+                }
+            }
         });
         // Update sprint filter based on selected project, then load issues
         updateSprintFilter().then(() => {
@@ -331,6 +344,8 @@ function initIssuesView() {
             btn.addEventListener('click', () => toggleMultiSelect('priority-filter-dropdown'));
         } else if (wrapper?.querySelector('#label-filter-dropdown')) {
             btn.addEventListener('click', () => toggleMultiSelect('label-filter-dropdown'));
+        } else if (wrapper?.querySelector('#exclude-label-filter-dropdown')) {
+            btn.addEventListener('click', () => toggleMultiSelect('exclude-label-filter-dropdown'));
         }
     });
 
@@ -359,6 +374,13 @@ function initIssuesView() {
     if (labelDropdown) {
         const clearBtn = labelDropdown.querySelector('.btn-small');
         if (clearBtn) clearBtn.addEventListener('click', () => clearLabelFilter());
+    }
+
+    // Exclude-label filter clear button
+    const excludeLabelDropdown = document.getElementById('exclude-label-filter-dropdown');
+    if (excludeLabelDropdown) {
+        const clearBtn = excludeLabelDropdown.querySelector('.btn-small');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearExcludeLabelFilter());
     }
 
     // Simple select filters

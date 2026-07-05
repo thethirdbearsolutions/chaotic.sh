@@ -874,8 +874,18 @@ class IssueService:
         sort_by: str | None = None,
         order: str | None = None,
         label_names: list[str] | None = None,
+        exclude_label_names: list[str] | None = None,
+        exclude_statuses: list | None = None,
+        exclude_priorities: list | None = None,
+        exclude_assignee_ids: list[str] | None = None,
+        exclude_issue_types: list | None = None,
     ) -> list[OxydeIssue]:
-        """Unified issue listing with all filter options."""
+        """Unified issue listing with all filter options.
+
+        Exclude filters (``exclude_*``) remove matching issues from the
+        result set. For ``exclude_label_names``, an issue is removed if
+        it carries *any* of the given labels (case-insensitive).
+        """
         if not project_id and not team_id:
             raise ValueError("Must provide either project_id or team_id")
 
@@ -939,6 +949,46 @@ class IssueService:
                     "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
                 )
                 params.append(label_name)
+
+        if exclude_statuses:
+            status_vals = [s.name for s in exclude_statuses]
+            placeholders = ",".join("?" for _ in status_vals)
+            conditions.append(f"i.status NOT IN ({placeholders})")
+            params.extend(status_vals)
+
+        if exclude_priorities:
+            priority_vals = [p.name for p in exclude_priorities]
+            placeholders = ",".join("?" for _ in priority_vals)
+            conditions.append(f"i.priority NOT IN ({placeholders})")
+            params.extend(priority_vals)
+
+        if exclude_issue_types:
+            type_vals = [t.name for t in exclude_issue_types]
+            placeholders = ",".join("?" for _ in type_vals)
+            conditions.append(f"i.issue_type NOT IN ({placeholders})")
+            params.extend(type_vals)
+
+        if exclude_assignee_ids:
+            real_ids = [a for a in exclude_assignee_ids if a != "unassigned"]
+            exclude_unassigned = "unassigned" in exclude_assignee_ids
+            if real_ids:
+                placeholders = ",".join("?" for _ in real_ids)
+                # NOT IN treats NULLs as unknown, so unassigned rows survive
+                conditions.append(
+                    f"(i.assignee_id IS NULL OR i.assignee_id NOT IN ({placeholders}))"
+                )
+                params.extend(real_ids)
+            if exclude_unassigned:
+                conditions.append("i.assignee_id IS NOT NULL")
+
+        if exclude_label_names:
+            # Single NOT-IN subquery handles "issue has any of these labels"
+            placeholders = ",".join("?" for _ in exclude_label_names)
+            conditions.append(
+                "i.id NOT IN (SELECT il.issue_id FROM issue_labels il "
+                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
+            )
+            params.extend(name.lower() for name in exclude_label_names)
 
         # Build query
         if team_id and not project_id:
@@ -1272,12 +1322,35 @@ class IssueService:
     async def create_relation(
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
-        """Create a relationship between two issues."""
-        return await OxydeIssueRelation.objects.create(
+        """Create a relationship between two issues, idempotently.
+
+        The (issue_id, related_issue_id) pair has a UNIQUE constraint, and
+        common CLI flows (e.g. `issue update --blocked-by X` re-run against
+        an issue already blocked by X) call this with duplicates. Treat a
+        pre-existing pair as a no-op and return the existing row instead
+        of surfacing an IntegrityError as a 500.
+        """
+        existing = await OxydeIssueRelation.objects.filter(
             issue_id=issue_id,
             related_issue_id=relation_in.related_issue_id,
-            relation_type=relation_in.relation_type,
-        )
+        ).first()
+        if existing is not None:
+            return existing
+        try:
+            return await OxydeIssueRelation.objects.create(
+                issue_id=issue_id,
+                related_issue_id=relation_in.related_issue_id,
+                relation_type=relation_in.relation_type,
+            )
+        except IntegrityError:
+            # Lost a race with a concurrent insert of the same pair.
+            existing = await OxydeIssueRelation.objects.filter(
+                issue_id=issue_id,
+                related_issue_id=relation_in.related_issue_id,
+            ).first()
+            if existing is not None:
+                return existing
+            raise
 
     async def get_relation_by_id(self, relation_id: str) -> OxydeIssueRelation | None:
         """Get relation by ID."""

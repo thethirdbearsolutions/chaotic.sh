@@ -15,6 +15,7 @@ import {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
+    getExcludedLabels,
     getFilterCategoryCount,
     getTotalFilterCount,
     FILTER_CATEGORIES,
@@ -588,6 +589,23 @@ export function updateFilterChips() {
             label: 'Labels',
             value: labelNames,
             clearAction: 'clear-label-filter-new'
+        });
+    }
+
+    // Excluded labels chip
+    const excluded = getExcludedLabels();
+    if (excluded.length > 0) {
+        const dropdown = document.getElementById('exclude-label-filter-dropdown');
+        const names = excluded.map(id => {
+            const cb = dropdown?.querySelector(`input[value="${id}"]`);
+            const nameEl = cb?.closest('label')?.querySelector('.label-name');
+            return nameEl?.textContent || 'Label';
+        }).join(', ');
+        chips.push({
+            category: 'labels',
+            label: 'Excluded labels',
+            value: names,
+            clearAction: 'clear-exclude-label-filter'
         });
     }
 

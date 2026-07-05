@@ -70,6 +70,11 @@ def register(cli):
     @click.option("--no-sprint", "no_sprint", is_flag=True, help="Show only issues not assigned to any sprint")
     @click.option("--epic", "--parent", help="Filter by epic/parent issue (e.g., CHT-12)")
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
+    @click.option("--exclude-label", "exclude_label", help="Exclude issues that have any of these labels. Comma-separated for multiple.")
+    @click.option("--exclude-status", "exclude_status", help="Exclude issues with these statuses. Comma-separated for multiple.")
+    @click.option("--exclude-priority", "exclude_priority", help="Exclude issues with these priorities. Comma-separated for multiple.")
+    @click.option("--exclude-type", "exclude_issue_type", help="Exclude issues with these types. Comma-separated for multiple.")
+    @click.option("--exclude-assignee", "exclude_assignee", help="Exclude issues assigned to this user ('me', a name, user ID, or 'unassigned'). Comma-separated for multiple.")
     @click.option("--assignee", help="Filter by assignee ('me', a name, or user ID)")
     @click.option("--search", help="Search in title, description, and identifier.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
@@ -79,29 +84,50 @@ def register(cli):
     @_main().json_option
     @_main().require_project
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, assignee, search, limit, skip, sort_by, order):
+    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, limit, skip, sort_by, order):
         """List issues in current project."""
         m = _main()
         # Validate status values if provided (CHT-502)
+        valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
         if status:
-            valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
             statuses = [s.strip().lower() for s in status.split(",")]
             for s in statuses:
                 if s not in valid_statuses:
                     raise click.BadParameter(f"Invalid status: {s}. Must be one of: {', '.join(valid_statuses)}")
+        if exclude_status:
+            for s in (v.strip().lower() for v in exclude_status.split(",")):
+                if s and s not in valid_statuses:
+                    raise click.BadParameter(f"Invalid status: {s}. Must be one of: {', '.join(valid_statuses)}")
 
         # Validate priority values if provided
+        valid_priorities = ["urgent", "high", "medium", "low", "no_priority"]
         if priority:
-            valid_priorities = ["urgent", "high", "medium", "low", "no_priority"]
             priorities = [p.strip().lower() for p in priority.split(",")]
             for p in priorities:
                 if p not in valid_priorities:
+                    raise click.BadParameter(f"Invalid priority: {p}. Must be one of: {', '.join(valid_priorities)}")
+        if exclude_priority:
+            for p in (v.strip().lower() for v in exclude_priority.split(",")):
+                if p and p not in valid_priorities:
                     raise click.BadParameter(f"Invalid priority: {p}. Must be one of: {', '.join(valid_priorities)}")
 
         # Resolve assignee filter
         assignee_id = None
         if assignee:
             assignee_id = m.resolve_assignee_id(assignee)
+
+        # Resolve exclude_assignee — accepts comma-separated names / 'me' / 'unassigned' / IDs
+        exclude_assignee_id = None
+        if exclude_assignee:
+            resolved = []
+            for token in (v.strip() for v in exclude_assignee.split(",")):
+                if not token:
+                    continue
+                if token.lower() == "unassigned":
+                    resolved.append("unassigned")
+                else:
+                    resolved.append(m.resolve_assignee_id(token))
+            exclude_assignee_id = ",".join(resolved) if resolved else None
 
         project_id = m.get_current_project()
         parent_id = None
@@ -116,7 +142,16 @@ def register(cli):
             sprint_id = m.resolve_sprint_id(sprint, project_id)
         else:
             sprint_id = None
-        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search, skip=skip or None, assignee_id=assignee_id)
+        issues = _client().get_issues(
+            project_id=project_id, status=status, priority=priority,
+            sprint_id=sprint_id, limit=limit, parent_id=parent_id,
+            sort_by=sort_by, order=order, label=label, search=search,
+            skip=skip or None, assignee_id=assignee_id,
+            exclude_label=exclude_label, exclude_status=exclude_status,
+            exclude_priority=exclude_priority,
+            exclude_issue_type=exclude_issue_type,
+            exclude_assignee_id=exclude_assignee_id,
+        )
 
         # JSON output mode (CHT-170)
         if m.is_json_output():

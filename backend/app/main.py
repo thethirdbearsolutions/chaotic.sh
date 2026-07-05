@@ -83,7 +83,7 @@ templates = Jinja2Templates(directory=os.path.join(FRONTEND_DIR, "templates"))
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     """Serve the main page."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/health")
@@ -146,8 +146,7 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Callback URL must be localhost")
 
-    return templates.TemplateResponse("cli-auth.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "cli-auth.html", {
         "callback": callback,
         "state": state
     })
@@ -156,7 +155,7 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa_fallback(request: Request, full_path: str):
     """Serve the SPA for all non-API routes."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 if __name__ == "__main__":

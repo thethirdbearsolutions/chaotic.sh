@@ -57,9 +57,9 @@ test-cov: cov-backend
 install-cli:
     uv tool install --editable cli --reinstall
 
-# Run database migrations (supports DATABASE_PATH env var for external db)
+# Run database migrations (set DATABASE_URL to target a non-default DB)
 migrate:
-    cd backend && sqlite3 ${DATABASE_PATH:-chaotic.db} < scripts/add_rituals.sql
+    cd backend && uv run oxyde migrate
 
 # Install frontend dependencies
 fe-install:

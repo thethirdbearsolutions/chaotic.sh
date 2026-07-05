@@ -30,7 +30,7 @@ def _confirm_action(prompt: str, **kwargs) -> bool:
     ctx = click.get_current_context(silent=True)
     if ctx and ctx.obj and ctx.obj.get('yes'):
         return True
-    return _confirm_action(prompt, **kwargs)
+    return click.confirm(prompt, **kwargs)
 
 
 def validate_repo_url(url: str) -> bool:
@@ -149,6 +149,7 @@ def run_command(
     capture: bool = True,
     check: bool = True,
     timeout: int = 60,
+    env: dict | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a shell command with optional output capture.
 
@@ -158,6 +159,7 @@ def run_command(
         capture: Whether to capture stdout/stderr
         check: Whether to raise on non-zero exit
         timeout: Maximum seconds to wait (default 60, None for no timeout)
+        env: Optional environment overrides (defaults to parent env)
 
     Raises:
         subprocess.TimeoutExpired: If command exceeds timeout
@@ -169,6 +171,7 @@ def run_command(
         text=True,
         check=check,
         timeout=timeout,
+        env=env,
     )
 
 
@@ -624,6 +627,12 @@ def reinstall_cli() -> tuple[bool, str]:
 def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
     """Run pending database migrations using Oxyde. Returns (success, message)."""
     backend_dir = PROJECT_DIR / "backend"
+    # Point Oxyde at the same database file the running server opens
+    # (set by the systemd unit / launchd plist). Without this, oxyde_config.py
+    # would default to backend/chaotic.db while the server reads
+    # ~/.chaotic/data/chaotic.db, and migrations would land in the wrong DB.
+    migration_env = dict(os.environ)
+    migration_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{DATABASE_PATH}"
     try:
         # Sync dependencies first (may download packages)
         run_command(["just", "sync"], cwd=PROJECT_DIR, timeout=300)
@@ -640,6 +649,7 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
                 ["uv", "run", "oxyde", "migrate", "0001_initial", "--fake"],
                 cwd=backend_dir,
                 timeout=30,
+                env=migration_env,
             )
 
         # Run Oxyde migrations
@@ -647,6 +657,7 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
             ["uv", "run", "oxyde", "migrate"],
             cwd=backend_dir,
             timeout=120,
+            env=migration_env,
         )
         return True, "Migrations applied"
     except subprocess.TimeoutExpired:
