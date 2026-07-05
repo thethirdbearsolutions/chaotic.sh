@@ -1,5 +1,7 @@
 """E2E contract tests: Rituals, ritual groups, limbo, and attestations."""
 import pytest
+import httpx
+from conftest import TEST_BASE_URL
 from cli.client import APIError
 
 
@@ -161,8 +163,19 @@ class TestLimboAndGates:
         status = api_client.get_limbo_status(test_project["id"])
         assert isinstance(status, dict)
 
-    def test_get_pending_gates(self, api_client, test_project):
-        gates = api_client.get_pending_gates(test_project["id"])
+    def test_get_pending_gates(self, api_client, test_project, auth_token):
+        # CHT-1219: cli.client.Client.get_pending_gates was deliberately
+        # removed (commit 8c0831e, "remove unused get_pending_gates client
+        # method") once `chaotic status` moved to get_pending_approvals.
+        # The backend endpoint is still live, so hit it directly with raw
+        # httpx to keep contract coverage on GET /rituals/pending-gates.
+        resp = httpx.get(
+            f"{TEST_BASE_URL}/rituals/pending-gates?project_id={test_project['id']}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        gates = resp.json()
         assert isinstance(gates, list)
 
     def test_force_clear_limbo_not_in_limbo(self, api_client, test_project):
