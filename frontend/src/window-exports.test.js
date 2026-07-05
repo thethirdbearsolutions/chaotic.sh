@@ -117,4 +117,19 @@ describe('Window Exports', () => {
 
     expect(violations).toEqual([]);
   });
+
+  // CHT-1212: the hidden #issue-type-filter <select> must declare every issue
+  // type the Filter popover offers (issues-render.js renderTypeOptions), or
+  // assigning .value to a missing type silently resets it to "" (DOM spec).
+  it('#issue-type-filter select declares an option for every issue type the popover offers', () => {
+    const htmlContent = fs.readFileSync(templatePath, 'utf-8');
+    const selectMatch = htmlContent.match(/<select id="issue-type-filter">([\s\S]*?)<\/select>/);
+    expect(selectMatch, '#issue-type-filter select not found in index.html').not.toBeNull();
+
+    const optionValues = Array.from(selectMatch[1].matchAll(/<option value="([^"]*)">/g)).map(m => m[1]);
+
+    // Must match backend/app/enums.py IssueType and issues-render.js's renderTypeOptions list
+    const expectedTypes = ['', 'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
+    expect(optionValues).toEqual(expectedTypes);
+  });
 });
