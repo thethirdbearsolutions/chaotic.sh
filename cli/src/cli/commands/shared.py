@@ -12,25 +12,37 @@ import click
 from rich.console import Console
 
 
-class _JsonAwareConsole(Console):
-    """Rich Console that redirects ordinary chatter to stderr while --json
-    mode is active (CHT-1222), so no command's status lines/tables/panels
-    can leak onto the single-JSON-value stdout contract.
+class _JsonAwareConsole:
+    """Proxy that redirects ``.print()`` to stderr while --json mode is
+    active (CHT-1222), so no command's status lines/tables/panels can leak
+    onto the single-JSON-value stdout contract.
 
     This is the ONE place that decision is made: individual command call
     sites keep calling plain ``console.print(...)`` and get stdout-purity
     under --json for free, without gating each call behind an
     ``is_json_output()`` check. Structured JSON payloads never go through
     this console — they're written directly via ``cli.main.output_json``
-    (a plain ``click.echo`` to stdout) — so this override can never
-    suppress the actual JSON output, only the human-readable chatter
-    around it.
+    (a plain ``click.echo`` to stdout) — so this proxy can never suppress
+    the actual JSON output, only the human-readable chatter around it.
+
+    Rich's ``Console.print()`` has no per-call ``file=`` override (the
+    file is bound at Console construction), so this holds two real
+    Console instances — one bound to stdout, one to stderr — and picks
+    per call. ``.print`` is the only Console method any command in this
+    codebase calls (confirmed via grep); everything else falls through to
+    the stdout console via ``__getattr__`` as a defensive fallback.
     """
 
+    def __init__(self):
+        self._stdout_console = Console()
+        self._stderr_console = Console(stderr=True)
+
     def print(self, *args, **kwargs):
-        if "file" not in kwargs and _is_json_output():
-            kwargs["file"] = sys.stderr
-        super().print(*args, **kwargs)
+        target = self._stderr_console if _is_json_output() else self._stdout_console
+        target.print(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._stdout_console, name)
 
 
 console = _JsonAwareConsole()

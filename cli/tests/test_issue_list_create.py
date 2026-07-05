@@ -3,6 +3,7 @@
 These are the major untested issue commands that make up the largest
 coverage gaps in main.py.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -397,6 +398,65 @@ class TestIssueCreate:
 
         assert result.exit_code == 0
         assert 'CHT-200' in result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-200'
+
+    def test_create_json_stdout_is_pure_single_json_value(self, cli_runner):
+        """stdout must be exactly one JSON value under --json (CHT-1222):
+        the human-readable "Issue created" status line must not leak onto
+        stdout alongside the JSON payload."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={
+            "id": "new-id",
+            "identifier": "CHT-200",
+            "title": "JSON Issue",
+        })
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'JSON Issue', '--json'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)  # raises if stdout isn't pure JSON
+        assert data['identifier'] == 'CHT-200'
+        assert 'created' in result.stderr.lower()
+
+    def test_create_json_includes_blocked_by_and_relates_to_relations(self, cli_runner):
+        """issue create --json used to silently discard --blocked-by/
+        --relates-to (early return before the relation-creation loop);
+        the relations must now actually be created AND reported in the
+        JSON output (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={
+            "id": "new-id", "identifier": "CHT-200", "title": "JSON Issue",
+        })
+
+        def fake_get_issue_by_identifier(identifier):
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue_by_identifier)
+        client.create_relation = MagicMock(side_effect=lambda a, b, t: {
+            "id": f"rel-{a}-{b}", "relation_type": t,
+        })
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'create', 'JSON Issue',
+            '--blocked-by', 'CHT-1', '--relates-to', 'CHT-2', '--json',
+        ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-200'
+
+        # The relations were actually created against the API, not skipped.
+        assert client.create_relation.call_count == 2
+        blocks_call = client.create_relation.call_args_list[0]
+        assert blocks_call.args == ("id-CHT-1", "new-id", "blocks")
+        relates_call = client.create_relation.call_args_list[1]
+        assert relates_call.args == ("new-id", "id-CHT-2", "relates_to")
+
+        # And surfaced in the JSON payload so a caller can see what happened.
+        assert len(data['relations_created']) == 2
 
     def test_create_with_parent(self, cli_runner):
         """issue create --parent creates sub-issue."""

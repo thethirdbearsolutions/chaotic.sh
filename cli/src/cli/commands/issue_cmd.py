@@ -400,10 +400,6 @@ def register(cli):
                 data["sprint_id"] = m.resolve_sprint_id(sprint, project_id)
         result = _client().create_issue(project_id, title, **data)
 
-        if m.is_json_output():
-            m.output_json(result)
-            return
-
         if parent:
             console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
         elif epic:
@@ -411,15 +407,25 @@ def register(cli):
         else:
             console.print(f"[green]Issue created: {result['identifier']} - {result['title']}[/green]")
 
-        # Create relations if specified
+        # Create relations if specified. Must run unconditionally, before
+        # any --json return, or --json silently drops --blocked-by/--relates-to
+        # entirely (CHT-1222).
+        relations_created = []
         for blocker_id in blocked_by:
             blocker = _client().get_issue_by_identifier(blocker_id)
-            _client().create_relation(blocker["id"], result["id"], "blocks")
+            relation = _client().create_relation(blocker["id"], result["id"], "blocks")
+            relations_created.append(relation)
             console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
         for related_id in relates_to:
             related = _client().get_issue_by_identifier(related_id)
-            _client().create_relation(result["id"], related["id"], "relates_to")
+            relation = _client().create_relation(result["id"], related["id"], "relates_to")
+            relations_created.append(relation)
             console.print(f"[dim]  Related to {related_id}[/dim]")
+
+        if m.is_json_output():
+            if relations_created:
+                result["relations_created"] = relations_created
+            m.output_json(result)
 
     @issue.command("show")
     @click.argument("identifiers", nargs=-1)
