@@ -900,6 +900,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
     console.print(f"  [dim]{service_path}[/dim]")
 
     # Start service
+    started_ok = False
     if not no_start:
         # Check if port is already in use
         if is_port_in_use(port, host):
@@ -918,6 +919,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
             console.print("Waiting for health check...", end=" ")
             if health_check(port, host=host):
                 console.print("[green]OK[/green]")
+                started_ok = True
             else:
                 console.print("[yellow]TIMEOUT[/yellow]")
                 console.print("Server may still be starting. Check 'chaotic system status'.")
@@ -928,7 +930,10 @@ def system_install(git_version, host, port, no_start, repo, yes):
     set_api_url(local_url)
 
     console.print()
-    console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
+    if started_ok:
+        console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
+    else:
+        console.print("[bold]Installed.[/bold] Run 'chaotic system start' when ready.")
     console.print("CLI configured to use local server.")
     console.print()
     console.print("[bold]Next steps:[/bold]")
