@@ -2,7 +2,7 @@
 
 No mocks anywhere in the request chain. The CLI's client.py makes real HTTP
 calls to a real FastAPI server running in a background thread, backed by a
-file-based SQLite database.
+file-based SQLite database managed by the Oxyde ORM.
 
 This is the contract test suite for the oxyde ORM port.
 """
@@ -20,9 +20,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 # Set environment BEFORE any app imports
 _db_dir = tempfile.mkdtemp()
 _db_path = os.path.join(_db_dir, "e2e_test.db")
+_MIGRATIONS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', 'backend', 'migrations')
+)
 os.environ["DEBUG"] = "false"
 os.environ["SECRET_KEY"] = "e2e-test-secret-key-not-for-production"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
+# Single connection so per-connection PRAGMAs (foreign_keys) in the
+# between-test reset apply deterministically (same pin as backend/tests).
+os.environ["OXYDE_MAX_CONNECTIONS"] = "1"
 
 import pytest
 from unittest.mock import patch
@@ -30,9 +36,8 @@ import httpx
 import uvicorn
 
 from app.main import app
-from app.database import Base, engine, async_session_maker, get_db
 from app.utils.security import get_password_hash, create_access_token
-from app.models import User
+from app.oxyde_models.user import OxydeUser
 from cli.client import Client, APIError
 
 
@@ -45,6 +50,24 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+# --- Database bootstrap ---
+
+async def _create_schema():
+    """Apply real Oxyde migrations against the e2e temp DB before the server
+    starts, mirroring how a production deploy runs `oxyde migrate` ahead of
+    `uvicorn`. The app's own lifespan (init_oxyde) reconnects to the same
+    file once the server is up.
+    """
+    from oxyde import AsyncDatabase, disconnect_all
+    from oxyde.migrations.executor import apply_migrations
+
+    db = AsyncDatabase(f"sqlite:///{_db_path}", overwrite=True)
+    await db.connect()
+    import app.oxyde_models  # noqa: F401 -- register models before migrating
+    await apply_migrations(migrations_dir=_MIGRATIONS_DIR)
+    await disconnect_all()
 
 
 # --- Server ---
@@ -84,9 +107,10 @@ class _Server:
 def test_server():
     """Start the FastAPI server for the entire test session.
 
-    The server uses the app's own database engine (pointed at our temp file).
-    The lifespan handler creates tables via init_db().
+    Schema is created via real Oxyde migrations before the server starts;
+    the app's own lifespan (init_oxyde) then connects to that same file.
     """
+    _run_async(_create_schema())
     server = _Server()
     server.start()
     yield server
@@ -98,21 +122,20 @@ def test_server():
 def reset_db_between_tests():
     """Delete all data between tests for isolation."""
     yield
+
     async def _clear_data():
-        from sqlalchemy import text
-        async with engine.begin() as conn:
-            # Disable FK checks, delete all data, re-enable
-            await conn.execute(text("PRAGMA foreign_keys = OFF"))
-            tables = await conn.run_sync(
-                lambda sync_conn: Base.metadata.sorted_tables
-            )
-            for table in reversed(tables):
-                await conn.execute(table.delete())
-            await conn.execute(text("PRAGMA foreign_keys = ON"))
-        # Also perform a write via Oxyde to keep its connection pool in sync
-        # with the SQLAlchemy-driven cleanup (dual-ORM visibility workaround).
-        from app.oxyde_models.user import OxydeUser
-        await OxydeUser.objects.filter(id="__noop__").delete()
+        from oxyde import execute_raw
+        rows = await execute_raw(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' AND name != 'oxyde_migrations'"
+        )
+        await execute_raw("PRAGMA foreign_keys = OFF")
+        try:
+            for row in rows:
+                await execute_raw(f'DELETE FROM "{row["name"]}"')
+        finally:
+            await execute_raw("PRAGMA foreign_keys = ON")
+
     _run_async(_clear_data())
 
 
@@ -120,16 +143,11 @@ def reset_db_between_tests():
 
 async def _create_user_in_db(email, name, password="testpassword123"):
     """Create a user directly in DB (needed to bootstrap auth tokens)."""
-    async with async_session_maker() as session:
-        user = User(
-            email=email,
-            hashed_password=get_password_hash(password),
-            name=name,
-        )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-        return user
+    return await OxydeUser.objects.create(
+        email=email,
+        hashed_password=get_password_hash(password),
+        name=name,
+    )
 
 
 # --- Fixtures ---

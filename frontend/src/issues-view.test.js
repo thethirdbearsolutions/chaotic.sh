@@ -34,6 +34,8 @@ vi.mock('./teams.js', () => ({
 // Mock sprints.js
 vi.mock('./sprints.js', () => ({
     ensureSprintCacheForIssues: vi.fn(),
+    getCachedCurrentSprintId: vi.fn(() => undefined),
+    setCachedCurrentSprintId: vi.fn(),
 }));
 
 // Mock issue-list.js
@@ -66,6 +68,7 @@ import { api } from './api.js';
 import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
+import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 
@@ -102,6 +105,10 @@ import {
     getGroupByValue,
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
+    setProjectFilter,
+    setTypeFilter,
+    setAssigneeFilter,
+    setSprintFilter,
 } from './issues-view.js';
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
@@ -486,6 +493,31 @@ describe('issues-view', () => {
             expect(dropdown.classList.contains('show-options')).toBe(false);
         });
 
+        // CHT-1212: pane switches dropped keyboard focus into the void
+        describe('focus management on pane switch (CHT-1212)', () => {
+            it('show-filter-category focuses the back button in the newly rendered options pane', () => {
+                issuesViewActions['show-filter-category'](null, { category: 'status' });
+                const back = document.querySelector('#filter-menu-options .filter-options-back');
+                expect(document.activeElement).toBe(back);
+            });
+
+            it('filter-menu-back focuses the active category row', () => {
+                getActiveFilterCategory.mockReturnValue('priority');
+                issuesViewActions['show-filter-category'](null, { category: 'priority' });
+                issuesViewActions['filter-menu-back']();
+                const active = document.querySelector('#filter-menu-categories .filter-menu-category.active');
+                expect(document.activeElement).toBe(active);
+                expect(active.textContent).toContain('Priority');
+            });
+
+            it('filter-menu-back falls back to the first category row when none is active', () => {
+                getActiveFilterCategory.mockReturnValue(undefined);
+                issuesViewActions['filter-menu-back']();
+                const first = document.querySelector('#filter-menu-categories .filter-menu-category');
+                expect(document.activeElement).toBe(first);
+            });
+        });
+
         it('showFilterCategories re-renders the category list', () => {
             document.getElementById('filter-menu-categories').innerHTML = '';
             showFilterCategories();
@@ -559,6 +591,30 @@ describe('issues-view', () => {
             const url = replaceStateSpy.mock.calls[0][2];
             expect(url).toContain('exclude_label=lbl-x');
             expect(url).toContain('exclude_label=lbl-y');
+        });
+
+        // CHT-1212: Sort wasn't part of shareable/persisted filter state, unlike Group-by
+        it('persists a non-default sort choice as sort=', () => {
+            document.getElementById('sort-by-select').value = 'priority-desc';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toContain('sort=priority-desc');
+        });
+
+        it('omits sort= when the default (created-desc) is selected', () => {
+            document.getElementById('sort-by-select').value = 'created-desc';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).not.toContain('sort=');
+        });
+
+        it('persists sort alongside groupBy', () => {
+            document.getElementById('sort-by-select').value = 'priority-asc';
+            document.getElementById('group-by-select').value = 'priority';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toContain('sort=priority-asc');
+            expect(url).toContain('groupBy=priority');
         });
     });
 
@@ -695,6 +751,32 @@ describe('issues-view', () => {
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
+        it('applies sort filter from URL (CHT-1212)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '?sort=priority-asc', pathname: '/issues', href: 'http://localhost/issues?sort=priority-asc' },
+                writable: true,
+                configurable: true,
+            });
+
+            loadFiltersFromUrl();
+
+            expect(document.getElementById('sort-by-select').value).toBe('priority-asc');
+        });
+
+        it('a bare sort= param alone still counts as a filter param, skipping localStorage fallback (CHT-1212)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '?sort=title-desc', pathname: '/issues', href: 'http://localhost/issues?sort=title-desc' },
+                writable: true,
+                configurable: true,
+            });
+            localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-9');
+
+            loadFiltersFromUrl();
+
+            expect(setCurrentProject).not.toHaveBeenCalledWith('proj-9');
+            localStorage.removeItem('chaotic_issues_filters_team-1');
+        });
+
         it('does not fall back to localStorage when no team (CHT-1042)', () => {
             Object.defineProperty(window, 'location', {
                 value: { search: '', pathname: '/issues', href: 'http://localhost/issues' },
@@ -745,6 +827,35 @@ describe('issues-view', () => {
 
             const container = document.getElementById('filter-chips-row');
             expect(container.innerHTML).toContain('Clear all');
+        });
+
+        // CHT-1212: Excluded Labels chip was wired inconsistently with its
+        // sibling Labels chip (different clearAction, inconsistent casing)
+        describe('Excluded Labels chip (CHT-1212)', () => {
+            beforeEach(() => {
+                document.getElementById('exclude-label-filter-dropdown')
+                    .querySelector('.multi-select-options').innerHTML = `
+                        <label class="multi-select-option">
+                            <input type="checkbox" value="lbl-x" checked>
+                            <span class="label-badge"><span class="label-name">Wontfix</span></span>
+                        </label>
+                    `;
+            });
+
+            it('renders "Excluded Labels" in Title Case, matching the Labels chip', () => {
+                updateFilterChips();
+                const container = document.getElementById('filter-chips-row');
+                expect(container.innerHTML).toContain('Excluded Labels');
+                expect(container.innerHTML).not.toContain('Excluded labels');
+            });
+
+            it('wires the × to clear-exclude-label-filter-new, matching the Labels chip pattern', () => {
+                updateFilterChips();
+                const container = document.getElementById('filter-chips-row');
+                const removeBtn = Array.from(container.querySelectorAll('.filter-chip-remove'))
+                    .find(btn => btn.closest('.filter-chip').textContent.includes('Excluded Labels'));
+                expect(removeBtn.dataset.action).toBe('clear-exclude-label-filter-new');
+            });
         });
     });
 
@@ -921,23 +1032,154 @@ describe('issues-view', () => {
             expect(api.getIssues).not.toHaveBeenCalled();
         });
 
-        it('filters issues by labels client-side', async () => {
-            // Set up label checkboxes
+        // CHT-1212: label/exclude-label filters are sent to the server
+        // (which matches by name) instead of over-fetching and filtering
+        // client-side against a hard 1000-row page.
+        it('resolves selected label ids to names and sends them as params.label', async () => {
             const labelDropdown = document.getElementById('label-filter-dropdown');
             labelDropdown.querySelector('.multi-select-options').innerHTML = `
-                <label class="multi-select-option"><input type="checkbox" value="label-1" checked></label>
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug'] })
+            );
+        });
+
+        // The multi-select UI is OR-of-labels; the server default (all) is
+        // the CLI's documented AND contract — the UI must opt into `any`.
+        it('sends label_match=any alongside params.label', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug'], label_match: 'any' })
+            );
+        });
+
+        it('omits label_match when no labels are selected', async () => {
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label_match: expect.anything() })
+            );
+        });
+
+        // CHT-1212 review nit: a label id must not be interpolated raw into
+        // querySelector — quotes/backslashes are escaped for the quoted
+        // attribute selector, and the resolution runs inside the try/catch.
+        it('handles a label id containing selector metacharacters without throwing', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" checked>
+                    <span class="label-badge"><span class="label-name">Weird</span></span>
+                </label>
+            `;
+            labelDropdown.querySelector('input').setAttribute('value', 'we"ird]id');
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Weird'] })
+            );
+        });
+
+        it('resolves selected exclude-label ids to names and sends them as params.exclude_label', async () => {
+            const excludeDropdown = document.getElementById('exclude-label-filter-dropdown');
+            excludeDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-2" checked>
+                    <span class="label-badge"><span class="label-name">Wontfix</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ exclude_label: ['Wontfix'] })
+            );
+        });
+
+        it('resolves multiple selected labels to multiple names', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-2" checked>
+                    <span class="label-badge"><span class="label-name">Urgent</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug', 'Urgent'] })
+            );
+        });
+
+        it('stores whatever the server returns without re-filtering by label client-side', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
             `;
 
             const mockIssues = [
-                { id: 'i-1', project_id: 'p-1', labels: [{ id: 'label-1' }] },
-                { id: 'i-2', project_id: 'p-1', labels: [{ id: 'label-2' }] },
-                { id: 'i-3', project_id: 'p-1', labels: [] },
+                { id: 'i-1', project_id: 'p-1', labels: [{ id: 'label-1', name: 'Bug' }] },
+                { id: 'i-2', project_id: 'p-1', labels: [{ id: 'label-1', name: 'Bug' }] },
             ];
             api.getIssues.mockResolvedValue(mockIssues);
             await loadIssues();
 
-            // Only issue with label-1 should be stored
-            expect(setIssues).toHaveBeenCalledWith([mockIssues[0]]);
+            expect(setIssues).toHaveBeenCalledWith(mockIssues);
+        });
+
+        it('omits params.label when a selected label id has no resolvable name', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            // Checkbox with no .label-name sibling — can't resolve a name
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option"><input type="checkbox" value="label-1" checked></label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label: expect.anything() })
+            );
+        });
+
+        it('omits params.label/exclude_label entirely when nothing is selected', async () => {
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label: expect.anything(), exclude_label: expect.anything() })
+            );
         });
 
         it('shows error toast on API failure', async () => {
@@ -946,12 +1188,105 @@ describe('issues-view', () => {
             expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
+        // CHT-1212: sub-2-char search used to silently no-op even though the
+        // backend only requires min_length=1
+        it('includes a 1-character search query in params', async () => {
+            document.getElementById('issue-search').value = 'b';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ search: 'b' })
+            );
+        });
+
+        it('includes a 2+ character search query in params', async () => {
+            document.getElementById('issue-search').value = 'bug';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ search: 'bug' })
+            );
+        });
+
+        it('omits search from params when the query is empty', async () => {
+            document.getElementById('issue-search').value = '';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ search: expect.anything() })
+            );
+        });
+
         it('loads team issues when no project selected', async () => {
             getCurrentProject.mockReturnValue(null);
             getProjects.mockReturnValue([{ id: 'p-1' }]);
             api.getTeamIssues.mockResolvedValue([]);
             await loadIssues();
             expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', expect.any(Object));
+        });
+
+        // CHT-1212: "Current Sprint" filter used to re-fetch sprints from
+        // the server on every loadIssues() call (including every debounced
+        // search keystroke) just to resolve "current" -> a sprint id.
+        describe('Current Sprint filter caching (CHT-1212)', () => {
+            beforeEach(() => {
+                const sprintFilter = document.getElementById('sprint-filter');
+                sprintFilter.innerHTML += '<option value="current">Current Sprint</option>';
+                sprintFilter.value = 'current';
+                api.getIssues.mockResolvedValue([]);
+            });
+
+            it('reuses a cached current-sprint id without calling api.getSprints', async () => {
+                getCachedCurrentSprintId.mockReturnValue('sprint-active-1');
+
+                await loadIssues();
+
+                expect(api.getSprints).not.toHaveBeenCalled();
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.objectContaining({ sprint_id: 'sprint-active-1' })
+                );
+            });
+
+            it('does not call api.getSprints when the cache says there is no active sprint (cached null)', async () => {
+                getCachedCurrentSprintId.mockReturnValue(null);
+
+                await loadIssues();
+
+                expect(api.getSprints).not.toHaveBeenCalled();
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.not.objectContaining({ sprint_id: expect.anything() })
+                );
+            });
+
+            it('falls back to fetching sprints when not yet cached, then caches the resolved id', async () => {
+                getCachedCurrentSprintId.mockReturnValue(undefined);
+                api.getSprints.mockResolvedValue([
+                    { id: 'sprint-active-1', status: 'active' },
+                    { id: 'sprint-done-1', status: 'completed' },
+                ]);
+
+                await loadIssues();
+
+                expect(api.getSprints).toHaveBeenCalledWith('p-1');
+                expect(setCachedCurrentSprintId).toHaveBeenCalledWith('p-1', 'sprint-active-1');
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.objectContaining({ sprint_id: 'sprint-active-1' })
+                );
+            });
+
+            it('caches undefined (no active sprint) when a fetch resolves with none active', async () => {
+                getCachedCurrentSprintId.mockReturnValue(undefined);
+                api.getSprints.mockResolvedValue([
+                    { id: 'sprint-done-1', status: 'completed' },
+                ]);
+
+                await loadIssues();
+
+                expect(setCachedCurrentSprintId).toHaveBeenCalledWith('p-1', undefined);
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.not.objectContaining({ sprint_id: expect.anything() })
+                );
+            });
         });
     });
 
@@ -1037,6 +1372,38 @@ describe('issues-view', () => {
         it('updates group-by select value', () => {
             setGroupBy('status');
             expect(document.getElementById('group-by-select').value).toBe('status');
+        });
+    });
+
+    // ========================================
+    // Single-select filter categories auto-close the popover (CHT-1212)
+    // ========================================
+
+    describe('single-select filter auto-close (CHT-1212)', () => {
+        beforeEach(() => {
+            getProjects.mockReturnValue([]);
+            document.getElementById('filter-menu-dropdown').classList.remove('hidden');
+            document.getElementById('display-menu-dropdown').classList.remove('hidden');
+        });
+
+        it('setProjectFilter closes the filter menu, matching Display-menu behavior', () => {
+            setProjectFilter('proj-1');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setTypeFilter closes the filter menu', () => {
+            setTypeFilter('bug');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setAssigneeFilter closes the filter menu', () => {
+            setAssigneeFilter('me');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setSprintFilter closes the filter menu', () => {
+            setSprintFilter('sprint-1');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
         });
     });
 
@@ -1141,6 +1508,27 @@ describe('issues-view', () => {
             expect(sprintFilter.innerHTML).toContain('Sprint 1');
             expect(sprintFilter.innerHTML).toContain('Sprint 2');
             expect(sprintFilter.innerHTML).toContain('Current Sprint');
+        });
+
+        // CHT-1212: updateSprintFilter() is the write-side of the
+        // current-sprint-id cache loadIssues() reads from
+        it('caches the resolved active-sprint id', async () => {
+            getCurrentProject.mockReturnValue('proj-1');
+            api.getSprints.mockResolvedValue([
+                { id: 's-1', name: 'Sprint 1', status: 'active' },
+                { id: 's-2', name: 'Sprint 2', status: 'completed' },
+            ]);
+            await updateSprintFilter();
+            expect(setCachedCurrentSprintId).toHaveBeenCalledWith('proj-1', 's-1');
+        });
+
+        it('caches undefined when no sprint is active', async () => {
+            getCurrentProject.mockReturnValue('proj-1');
+            api.getSprints.mockResolvedValue([
+                { id: 's-2', name: 'Sprint 2', status: 'completed' },
+            ]);
+            await updateSprintFilter();
+            expect(setCachedCurrentSprintId).toHaveBeenCalledWith('proj-1', undefined);
         });
     });
 

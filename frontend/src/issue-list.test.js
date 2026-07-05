@@ -60,6 +60,8 @@ import {
     getPriorityIcon,
     getStatusIcon,
     sumEstimates,
+    highlightSearchMatch,
+    getDescriptionSnippet,
 } from './issue-list.js';
 
 import { getIssues } from './state.js';
@@ -340,6 +342,118 @@ describe('issue-list', () => {
 
             expect(html).toContain('3pt');
             expect(html).toContain('estimate-badge');
+        });
+
+        // CHT-1212: search results gave no indication when the match was
+        // only in the (hidden) description
+        describe('search match indication (CHT-1212)', () => {
+            it('renders plain escaped title when there is no search query', () => {
+                document.getElementById('issue-search').value = '';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('search-match');
+                expect(html).toContain('Fix login bug');
+            });
+
+            it('highlights the matched substring in the title', () => {
+                document.getElementById('issue-search').value = 'login';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).toContain('<mark class="search-match">login</mark>');
+            });
+
+            it('shows a description snippet when the title does not match but the description does', () => {
+                document.getElementById('issue-search').value = 'oauth';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Turns out the OAuth callback drops the state param.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).toContain('issue-search-snippet');
+                expect(html).toContain('<mark class="search-match">OAuth</mark>');
+            });
+
+            it('does not show a description snippet when the title already matches', () => {
+                document.getElementById('issue-search').value = 'login';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Some unrelated description mentioning login too.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('issue-search-snippet');
+            });
+
+            it('does not show a snippet when neither title nor description match (e.g. identifier-only match)', () => {
+                document.getElementById('issue-search').value = 'test-1';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Nothing relevant here.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('issue-search-snippet');
+            });
+        });
+    });
+
+    describe('highlightSearchMatch', () => {
+        it('returns escaped text unchanged when there is no query', () => {
+            expect(highlightSearchMatch('Fix login bug', '')).toBe('Fix login bug');
+        });
+
+        it('returns empty string for falsy text', () => {
+            expect(highlightSearchMatch('', 'login')).toBe('');
+            expect(highlightSearchMatch(null, 'login')).toBe('');
+        });
+
+        it('wraps the first case-insensitive match in <mark>', () => {
+            expect(highlightSearchMatch('Fix Login bug', 'login'))
+                .toBe('Fix <mark class="search-match">Login</mark> bug');
+        });
+
+        it('returns escaped text unchanged when there is no match', () => {
+            expect(highlightSearchMatch('Fix login bug', 'zzz')).toBe('Fix login bug');
+        });
+    });
+
+    describe('getDescriptionSnippet', () => {
+        it('returns null when there is no match', () => {
+            expect(getDescriptionSnippet('Nothing relevant here.', 'zzz')).toBeNull();
+        });
+
+        it('returns null for missing description or query', () => {
+            expect(getDescriptionSnippet('', 'login')).toBeNull();
+            expect(getDescriptionSnippet('Some text', '')).toBeNull();
+        });
+
+        it('highlights the match within the excerpt', () => {
+            const snippet = getDescriptionSnippet('Turns out the OAuth callback drops the state param.', 'oauth');
+            expect(snippet).toContain('<mark class="search-match">OAuth</mark>');
+        });
+
+        it('prefixes with an ellipsis when the match is not at the start', () => {
+            const description = 'x'.repeat(60) + 'oauth' + 'y'.repeat(60);
+            const snippet = getDescriptionSnippet(description, 'oauth', 10);
+            expect(snippet.startsWith('…')).toBe(true);
+            expect(snippet.endsWith('…')).toBe(true);
+        });
+
+        it('does not prefix with an ellipsis when the match is near the start', () => {
+            const snippet = getDescriptionSnippet('oauth callback drops state', 'oauth', 10);
+            expect(snippet.startsWith('…')).toBe(false);
         });
     });
 

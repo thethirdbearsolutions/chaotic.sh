@@ -115,6 +115,7 @@ export function syncFiltersToUrl() {
     const sprint = document.getElementById('sprint-filter')?.value;
     const issueType = document.getElementById('issue-type-filter')?.value;
     const groupBy = document.getElementById('group-by-select')?.value;
+    const sort = document.getElementById('sort-by-select')?.value;
 
     statuses.forEach(s => params.append('status', s));
     priorities.forEach(p => params.append('priority', p));
@@ -125,6 +126,9 @@ export function syncFiltersToUrl() {
     if (sprint) params.set('sprint', sprint);
     if (issueType) params.set('issue_type', issueType);
     if (groupBy) params.set('groupBy', groupBy);
+    // Only persist non-default sort — 'created-desc' is the select's default,
+    // so omitting it keeps the URL/localStorage clean for the common case (CHT-1212)
+    if (sort && sort !== 'created-desc') params.set('sort', sort);
 
     const queryString = params.toString();
     const newUrl = queryString ? `/issues?${queryString}` : '/issues';
@@ -142,7 +146,7 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     let params = new URLSearchParams(window.location.search);
 
     // Fall back to saved filters if URL has no issue-specific filter params (CHT-1042, CHT-1085)
-    const FILTER_KEYS = ['status', 'priority', 'label', 'exclude_label', 'assignee', 'sprint', 'issue_type', 'groupBy', 'project'];
+    const FILTER_KEYS = ['status', 'priority', 'label', 'exclude_label', 'assignee', 'sprint', 'issue_type', 'groupBy', 'sort', 'project'];
     const hasFilterParams = FILTER_KEYS.some(k => params.has(k));
     if (!hasFilterParams) {
         const saved = getIssueFilters(getCurrentTeam()?.id);
@@ -239,6 +243,13 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     if (groupBy) {
         const groupBySelect = document.getElementById('group-by-select');
         if (groupBySelect) groupBySelect.value = groupBy;
+    }
+
+    // Apply sort (CHT-1212)
+    const sort = params.get('sort');
+    if (sort) {
+        const sortSelect = document.getElementById('sort-by-select');
+        if (sortSelect) sortSelect.value = sort;
     }
 }
 

@@ -86,6 +86,131 @@ async def test_list_issues_filter_by_label(
     assert test_issue.id not in result_ids
 
 
+# --- Multi-label match modes (CHT-1212) ---
+#
+# label_match="all" (default) = issue must carry EVERY named label — the
+# CLI's documented `--label a,b` contract. label_match="any" = issue must
+# carry AT LEAST ONE — the web UI's multi-select filter semantics.
+
+@pytest_asyncio.fixture
+async def dual_labeled_issue(db, test_project, test_user, test_label, test_label2):
+    """Create an issue carrying BOTH test labels."""
+    number = await _next_issue_number(test_project)
+    issue = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-{number}",
+        number=number,
+        title="Dual Labeled Issue",
+        description="Has both labels",
+        creator_id=test_user.id,
+    )
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=test_label.id)
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=test_label2.id)
+    return issue
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_default_is_all(
+    db, issue_service, test_team, labeled_issue, dual_labeled_issue,
+    test_label, test_label2, test_issue,
+):
+    """Default (no label_match): only issues carrying ALL named labels match."""
+    results = await issue_service.list_issues(
+        team_id=test_team.id,
+        label_names=[test_label.name, test_label2.name],
+    )
+    result_ids = {r.id for r in results}
+    assert dual_labeled_issue.id in result_ids
+    # Carries only one of the two labels -> excluded under AND
+    assert labeled_issue.id not in result_ids
+    assert test_issue.id not in result_ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_match_all_explicit(
+    db, issue_service, test_team, labeled_issue, dual_labeled_issue,
+    test_label, test_label2,
+):
+    """label_match='all' behaves identically to the default."""
+    results = await issue_service.list_issues(
+        team_id=test_team.id,
+        label_names=[test_label.name, test_label2.name],
+        label_match="all",
+    )
+    result_ids = {r.id for r in results}
+    assert dual_labeled_issue.id in result_ids
+    assert labeled_issue.id not in result_ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_match_any(
+    db, issue_service, test_team, labeled_issue, dual_labeled_issue,
+    test_label, test_label2, test_issue,
+):
+    """label_match='any': issues carrying AT LEAST ONE named label match."""
+    results = await issue_service.list_issues(
+        team_id=test_team.id,
+        label_names=[test_label.name, test_label2.name],
+        label_match="any",
+    )
+    result_ids = {r.id for r in results}
+    assert dual_labeled_issue.id in result_ids
+    # Carries one of the two labels -> included under OR
+    assert labeled_issue.id in result_ids
+    # No labels -> excluded either way
+    assert test_issue.id not in result_ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_single_label_same_under_both_modes(
+    db, issue_service, test_team, labeled_issue, test_label, test_issue,
+):
+    """A single label name yields identical results under all/any."""
+    for mode in ("all", "any"):
+        results = await issue_service.list_issues(
+            team_id=test_team.id,
+            label_names=[test_label.name],
+            label_match=mode,
+        )
+        result_ids = {r.id for r in results}
+        assert labeled_issue.id in result_ids, mode
+        assert test_issue.id not in result_ids, mode
+
+
+@pytest.mark.asyncio
+async def test_list_issues_label_match_any_case_insensitive(
+    db, issue_service, test_team, labeled_issue, test_label,
+):
+    """label_match='any' matches label names case-insensitively, like 'all'."""
+    results = await issue_service.list_issues(
+        team_id=test_team.id,
+        label_names=[test_label.name.upper()],
+        label_match="any",
+    )
+    result_ids = {r.id for r in results}
+    assert labeled_issue.id in result_ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_modes_project_scope(
+    db, issue_service, test_project, labeled_issue, dual_labeled_issue,
+    test_label, test_label2,
+):
+    """Both match modes work identically under project_id scope."""
+    all_results = await issue_service.list_issues(
+        project_id=test_project.id,
+        label_names=[test_label.name, test_label2.name],
+        label_match="all",
+    )
+    any_results = await issue_service.list_issues(
+        project_id=test_project.id,
+        label_names=[test_label.name, test_label2.name],
+        label_match="any",
+    )
+    assert {r.id for r in all_results} == {dual_labeled_issue.id}
+    assert {r.id for r in any_results} == {dual_labeled_issue.id, labeled_issue.id}
+
+
 # --- Issue type filter on list_by_sprint (L858) and shuffle (L864) ---
 
 @pytest.mark.asyncio

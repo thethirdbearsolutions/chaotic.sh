@@ -2126,6 +2126,20 @@ select:focus-visible {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+/* Search match highlighting (CHT-1212) */
+.search-match {
+    background: color-mix(in srgb, var(--accent-color) 30%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.issue-search-snippet {
+    color: var(--text-muted);
+    font-weight: normal;
+    font-size: var(--font-base);
+}
+
 /* Issue row highlighting for status changes */
 .list-item[data-status="done"] {
     opacity: 0.7;

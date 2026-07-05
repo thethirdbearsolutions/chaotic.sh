@@ -26,6 +26,7 @@ import {
     loadFiltersFromUrl,
     toggleFilterMenu,
     toggleDisplayMenu,
+    closeAllFilterMenus,
     initFilterBar,
     updateSprintFilter,
     loadIssues,
@@ -606,6 +607,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     closeDropdowns: () => {
         document.getElementById('team-dropdown').classList.add('hidden');
         document.getElementById('user-dropdown').classList.add('hidden');
+        closeAllFilterMenus();
     },
 }));
 
