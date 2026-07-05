@@ -38,6 +38,7 @@ vi.mock('./sprints.js', () => ({
     loadSprints: vi.fn(),
     viewSprint: vi.fn(),
     getCurrentSprintDetail: vi.fn(() => null),
+    clearCachedCurrentSprintIds: vi.fn(),
 }));
 
 // Mock projects.js
@@ -72,7 +73,7 @@ import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailI
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -332,6 +333,29 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
             expect(loadSprints).not.toHaveBeenCalled();
             expect(viewSprint).not.toHaveBeenCalled();
+        });
+
+        // CHT-1212: a sprint completing/rotating in another client changes
+        // which sprint is "current" — the cached id must be dropped even
+        // when this client is NOT on the sprints view (e.g. sitting on
+        // Issues with the Current Sprint filter active).
+        it('clears the cached current-sprint ids even when on the issues view', () => {
+            getCurrentView.mockReturnValue('issues');
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
+        });
+
+        it('clears the cached current-sprint ids on the sprints view too', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'created', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
+        });
+
+        it('clears the cached current-sprint ids on the my-issues view', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
         });
     });
 

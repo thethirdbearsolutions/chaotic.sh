@@ -90,6 +90,7 @@ import {
     updateSprintCacheForProject,
     getCachedCurrentSprintId,
     setCachedCurrentSprintId,
+    clearCachedCurrentSprintIds,
 } from './sprints.js';
 
 beforeEach(() => {
@@ -196,6 +197,16 @@ describe('current-sprint-id cache', () => {
         setCachedCurrentSprintId('p1', 's1');
         invalidateSprintCache();
         expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+    });
+
+    // CHT-1212 review: called from ws-handlers' handleSprint so remote
+    // sprint changes invalidate this client's cache regardless of view
+    it('clearCachedCurrentSprintIds drops all cached ids', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        setCachedCurrentSprintId('p2', 's2');
+        clearCachedCurrentSprintIds();
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+        expect(getCachedCurrentSprintId('p2')).toBeUndefined();
     });
 });
 

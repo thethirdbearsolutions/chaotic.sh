@@ -10,7 +10,7 @@ import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailI
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -220,6 +220,11 @@ function refreshSprintView() {
 }
 
 function handleSprint() {
+    // Another client completing/rotating a sprint changes which sprint is
+    // "current" — drop the cached ids unconditionally (cheap, safe on any
+    // view) so an Issues view filtering by Current Sprint re-resolves
+    // instead of silently querying the now-completed sprint (CHT-1212).
+    clearCachedCurrentSprintIds();
     if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'my-issues') {

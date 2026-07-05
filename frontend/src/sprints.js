@@ -663,7 +663,7 @@ export async function completeSprint(sprintId) {
         // Completing a sprint can change which sprint is "current" for its
         // project — clear the cached current-sprint id so the next lookup
         // re-resolves instead of pointing at the now-completed sprint (CHT-1212)
-        currentSprintIdByProject = {};
+        clearCachedCurrentSprintIds();
 
         if (result.limbo) {
             showLimboModal(result);
@@ -916,6 +916,16 @@ export function getCachedCurrentSprintId(projectId) {
 
 export function setCachedCurrentSprintId(projectId, sprintId) {
     currentSprintIdByProject[projectId] = sprintId ?? null;
+}
+
+/**
+ * Drop all cached current-sprint ids so the next lookup re-resolves.
+ * Called when any sprint changes — locally (completeSprint) or remotely
+ * (ws-handlers' sprint events), since a sprint completing/rotating in
+ * another client can change which sprint is "current" here too (CHT-1212).
+ */
+export function clearCachedCurrentSprintIds() {
+    currentSprintIdByProject = {};
 }
 
 // ============================================================================
