@@ -216,11 +216,21 @@ def _event_matches_scope(event: dict, scope: dict) -> bool:
             if "ritual_ticket_id" not in scope:
                 return False
             # ritual_ticket_id is enforced below.
-        else:
-            # RITUAL_ATTESTED stores the ritual name in `field_name`;
-            # RITUAL_APPROVED stores it in `new_value`. Match either.
-            if event.get("field_name") != rn and event.get("new_value") != rn:
+        elif activity_type == "ritual_attested":
+            # RITUAL_ATTESTED stores the ritual name in `field_name`
+            # (`new_value` holds the attestation note).
+            if event.get("field_name") != rn:
                 return False
+        elif activity_type == "ritual_approved":
+            # RITUAL_APPROVED stores the ritual name in `new_value`
+            # (`field_name` is by convention an issue column name).
+            if event.get("new_value") != rn:
+                return False
+        else:
+            # Non-ritual events can't be attributed to a named ritual;
+            # matching on field_name/new_value here would false-positive
+            # on e.g. a status named after the ritual.
+            return False
     if "ritual_ticket_id" in scope:
         # When --ticket is provided, restrict to events on that issue.
         if event.get("issue_id") != scope["ritual_ticket_id"]:

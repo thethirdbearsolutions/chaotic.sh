@@ -83,7 +83,7 @@ class TestEventScopeMatching:
 
     def test_ritual_name_matches_field_name_or_new_value(self):
         scope = {"ritual_name": "code-review"}
-        # Legacy RITUAL_ATTESTED puts name in field_name.
+        # RITUAL_ATTESTED puts the ritual name in field_name.
         assert await_cmd._event_matches_scope(
             {"activity_type": "ritual_attested",
              "field_name": "code-review", "new_value": None},
@@ -99,6 +99,41 @@ class TestEventScopeMatching:
         assert not await_cmd._event_matches_scope(
             {"activity_type": "ritual_attested",
              "field_name": "other", "new_value": "other"},
+            scope,
+        )
+
+    def test_ritual_name_match_is_per_activity_type_field(self):
+        scope = {"ritual_name": "code-review"}
+        # ATTESTED must match on field_name only; new_value carries the
+        # attestation note, which could coincidentally equal the name.
+        assert not await_cmd._event_matches_scope(
+            {"activity_type": "ritual_attested",
+             "field_name": "other", "new_value": "code-review"},
+            scope,
+        )
+        # APPROVED must match on new_value only.
+        assert not await_cmd._event_matches_scope(
+            {"activity_type": "ritual_approved",
+             "field_name": "code-review", "new_value": "other"},
+            scope,
+        )
+
+    def test_ritual_scope_rejects_non_ritual_events(self):
+        # A status named like the ritual must NOT wake the ritual wait.
+        scope = {"ritual_name": "code-review"}
+        assert not await_cmd._event_matches_scope(
+            {"activity_type": "status_changed",
+             "field_name": "status", "new_value": "code-review"},
+            scope,
+        )
+        assert not await_cmd._event_matches_scope(
+            {"activity_type": "moved_to_sprint",
+             "field_name": None, "new_value": "code-review"},
+            scope,
+        )
+        assert not await_cmd._event_matches_scope(
+            {"activity_type": "commented",
+             "field_name": "code-review", "new_value": None},
             scope,
         )
 
