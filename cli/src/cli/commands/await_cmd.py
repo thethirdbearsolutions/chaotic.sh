@@ -32,6 +32,13 @@ Implementation overview
   exit 1 (predicate broken).
 * Output: a single JSON object (`--json`) or a one-line rendered
   summary on stdout; all other output goes to stderr.
+
+This module deliberately does NOT use the CLI's standard
+json_option / require_team / handle_error decorator stack: await's
+contract is exit-code-driven (0/1/2/124/130/143) and stderr-only for
+chatter, which the shared error handler (rich-rendered, exit 1 for
+everything) would flatten. The scope helpers below re-implement the
+require-team/project checks with await's exit-code semantics.
 """
 import json
 import os
