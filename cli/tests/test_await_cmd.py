@@ -1055,6 +1055,124 @@ class TestPrincipalResolutionFailFast:
 
 
 # ---------------------------------------------------------------------------
+# Full-command exit-code and output contract (Click runner, mocked client)
+# ---------------------------------------------------------------------------
+
+
+class TestClickExitCodeContract:
+    """The README's exit-code table (0/1/2/124) and the --json output
+    shape, exercised through real Click invocations rather than the
+    internal helpers — so a refactor of the glue can't silently drift
+    the public contract."""
+
+    def _root(self):
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        return root
+
+    def _patch_common(self, monkeypatch, events=None, team="team_1"):
+        monkeypatch.setattr(await_cmd, "_resolve_principal_id", lambda: "me")
+        monkeypatch.setattr(await_cmd, "_main", lambda: type("M", (), {
+            "get_current_team": staticmethod(lambda: team),
+            "get_current_project": staticmethod(lambda: "proj_1"),
+        }))
+        monkeypatch.setattr(await_cmd, "_client", lambda: type("C", (), {
+            "get_team_activities": lambda self, **kw: list(events or []),
+        })())
+
+    def _future_event(self, **extra):
+        soon = datetime.now(timezone.utc) + timedelta(hours=1)
+        return _event("e1", soon, activity_type="commented",
+                      user_id="someone-else", **extra)
+
+    def test_wake_exits_0_with_single_json_object(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch, events=[self._future_event()])
+        runner = CliRunner()
+        result = runner.invoke(
+            self._root(), ["await", "team", "--json"],
+        )
+        assert result.exit_code == 0
+        lines = result.stdout.splitlines()
+        assert len(lines) == 1
+        parsed = json.loads(lines[0])
+        assert parsed["id"] == "e1"
+        assert set(await_cmd._EVENT_SCHEMA_KEYS) <= set(parsed)
+
+    def test_timeout_exits_124(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch, events=[])
+        result = CliRunner().invoke(
+            self._root(), ["await", "team", "--timeout", "1s"],
+        )
+        assert result.exit_code == 124
+
+    def test_missing_team_exits_2(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch, team=None)
+        result = CliRunner().invoke(self._root(), ["await", "team"])
+        assert result.exit_code == 2
+
+    def test_broken_predicate_exits_1(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch, events=[self._future_event()])
+        result = CliRunner().invoke(
+            self._root(),
+            ["await", "team", "--until", "chaotic-no-such-binary-xyz"],
+        )
+        assert result.exit_code == 1
+
+    def test_bad_type_token_exits_2(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch)
+        result = CliRunner().invoke(
+            self._root(), ["await", "team", "--type", "bogus"],
+        )
+        assert result.exit_code == 2
+
+    def test_zero_timeout_exits_2(self, monkeypatch):
+        from click.testing import CliRunner
+
+        self._patch_common(monkeypatch)
+        result = CliRunner().invoke(
+            self._root(), ["await", "team", "--timeout", "0"],
+        )
+        assert result.exit_code == 2
+
+    def test_ritual_default_type_filter_applied(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = {}
+
+        def fake_await_event(**kwargs):
+            captured.update(kwargs)
+            raise SystemExit(124)
+
+        monkeypatch.setattr(await_cmd, "_await_event", fake_await_event)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "t")
+        monkeypatch.setattr(await_cmd, "_require_current_project", lambda: "p")
+
+        CliRunner().invoke(self._root(), ["await", "rituals"])
+        assert captured["type_spec"] == await_cmd._RITUAL_DEFAULT_TYPES
+
+        captured.clear()
+        CliRunner().invoke(
+            self._root(), ["await", "rituals", "--type", "attested"],
+        )
+        assert captured["type_spec"] == "attested"
+
+
+# ---------------------------------------------------------------------------
 # await sprint: positional resolves the sprint's parent project
 # ---------------------------------------------------------------------------
 
