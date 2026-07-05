@@ -134,22 +134,54 @@ def _patch_objects_create_to_apply_default_factory() -> None:
 
         return False, None
 
+    def _fill_defaults(model_cls, data: dict) -> dict:
+        for name, info in model_cls.model_fields.items():
+            if name in data:
+                continue
+            have, value = _default_for_field(name, info)
+            if have:
+                data[name] = value
+        return data
+
+    def _revalidate_full(model_cls, instance):
+        """Rebuild an instance from a full dump so every field counts as
+        \"set\" — oxyde 0.7 serializes INSERTs with exclude_unset, which
+        would otherwise drop Pydantic defaults from the row."""
+        return model_cls.model_validate(instance.model_dump())
+
     async def _create_with_default_factory(self, **kwargs):
         model_cls = _model_for_manager(self)
+        if kwargs.get("instance") is not None:
+            # create(instance=...) forbids extra field kwargs — injecting
+            # defaults here would raise ManagerError. Re-validate instead.
+            if model_cls is not None and isinstance(kwargs["instance"], model_cls):
+                kwargs["instance"] = _revalidate_full(model_cls, kwargs["instance"])
+            return await _original_create(self, **kwargs)
         if model_cls is not None:
             try:
-                for name, info in model_cls.model_fields.items():
-                    if name in kwargs:
-                        continue
-                    have, value = _default_for_field(name, info)
-                    if have:
-                        kwargs[name] = value
+                _fill_defaults(model_cls, kwargs)
             except Exception:
                 # Defensive: never block a create if introspection fails.
                 pass
         return await _original_create(self, **kwargs)
 
+    _original_bulk_create = QueryManager.bulk_create
+
+    async def _bulk_create_with_default_factory(self, objects, **kwargs):
+        # Same exclude_unset problem as create(): dict payloads get defaults
+        # injected, instances get re-validated from a full dump.
+        model_cls = _model_for_manager(self)
+        if model_cls is not None:
+            objects = [
+                _fill_defaults(model_cls, dict(obj)) if isinstance(obj, dict)
+                else _revalidate_full(model_cls, obj) if isinstance(obj, model_cls)
+                else obj
+                for obj in objects
+            ]
+        return await _original_bulk_create(self, objects, **kwargs)
+
     QueryManager.create = _create_with_default_factory
+    QueryManager.bulk_create = _bulk_create_with_default_factory
     QueryManager._chaotic_default_factory_patched = True
 
 
