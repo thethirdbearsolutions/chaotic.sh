@@ -339,6 +339,17 @@ class TestUntilPredicate:
             "exit 0", {"id": "x"},
         ) is True
 
+    def test_wedged_predicate_raises_predicate_broken(self, monkeypatch):
+        # A predicate that outlives the execution ceiling must surface
+        # as PredicateBroken, not hang the poll loop forever.
+        monkeypatch.setattr(await_cmd, "_UNTIL_TIMEOUT_SECS", 0.2)
+        with pytest.raises(await_cmd.PredicateBroken) as exc_info:
+            await_cmd._run_until_predicate("sleep 10", {"id": "x"})
+        assert "did not finish" in str(exc_info.value)
+
+    def test_fast_predicate_unaffected_by_ceiling(self):
+        assert await_cmd._run_until_predicate("true", {"id": "x"}) is True
+
     def test_nonzero_exit_means_keep_polling(self):
         assert await_cmd._run_until_predicate(
             "exit 1", {"id": "x"},

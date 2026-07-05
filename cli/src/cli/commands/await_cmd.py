@@ -244,9 +244,15 @@ def _event_matches_scope(event: dict, scope: dict) -> bool:
 
 class PredicateBroken(Exception):
     """Raised when --until CMD itself failed to execute (binary missing
-    / not executable), as distinct from "predicate rejected this
-    event" (a normal non-zero exit).
+    / not executable / wedged past the execution ceiling), as distinct
+    from "predicate rejected this event" (a normal non-zero exit).
     """
+
+
+_UNTIL_TIMEOUT_SECS = 30.0
+"""Hard ceiling on a single --until predicate run. A wedged predicate
+would otherwise block the poll loop indefinitely — the outer --timeout
+deadline is only checked between fetches, so it can't save you."""
 
 
 def _run_until_predicate(cmd: str, event: dict) -> bool:
@@ -254,7 +260,7 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
     (event matches). Predicate stdout/stderr are discarded so the
     caller's stdout contract is preserved. Exit codes 126/127 raise
     PredicateBroken — the predicate itself is broken, not just
-    rejecting events.
+    rejecting events. So does exceeding _UNTIL_TIMEOUT_SECS.
     """
     payload = (json.dumps(event, default=str) + "\n").encode("utf-8")
     try:
@@ -264,10 +270,17 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=_UNTIL_TIMEOUT_SECS,
         )
     except FileNotFoundError as exc:
         raise PredicateBroken(
             f"--until: shell unavailable to run predicate ({exc})"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PredicateBroken(
+            f"--until: predicate did not finish within "
+            f"{_UNTIL_TIMEOUT_SECS:.0f}s and was killed. Predicates must "
+            "be fast; a wedged predicate would hang the wait forever."
         ) from exc
     if proc.returncode in (126, 127):
         raise PredicateBroken(

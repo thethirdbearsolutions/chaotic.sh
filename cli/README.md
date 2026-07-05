@@ -343,7 +343,10 @@ above.
     specially: `await` exits 1 with a clear error rather than silently
     looping forever on a broken predicate.
 - **Timing:** the predicate runs synchronously on every candidate event.
-  Keep it fast and side-effect-free.
+  Keep it fast and side-effect-free. A single run is killed after 30
+  seconds and treated like a broken predicate (`await` exits 1 with a
+  clear error) — a wedged predicate would otherwise hang the wait
+  forever, out of reach of `--timeout`.
 
 ### Usage patterns
 
