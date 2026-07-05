@@ -8,6 +8,12 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _flat(output: str) -> str:
+    """Collapse Rich's line-wrapping so substring checks aren't sensitive
+    to where a long hint message happens to wrap."""
+    return ' '.join(output.split())
+
+
 @pytest.fixture(autouse=True)
 def mock_dependencies(patched_client, patched_auth, patched_project):
     """Mock client, config, and auth before importing main."""
@@ -31,6 +37,9 @@ class TestStatus:
 
         assert result.exit_code == 0
         assert 'Not logged in' in result.output
+        # CHT-1221: zero auth/team/project -> same "get set up" hint as
+        # bare `chaotic` (main.py's no-subcommand welcome banner).
+        assert 'chaotic quickstart' in _flat(result.output)
 
     def test_status_logged_in(self, cli_runner):
         """status shows user name and email."""
@@ -51,6 +60,8 @@ class TestStatus:
         assert result.exit_code == 0
         assert 'Alice' in result.output
         assert 'alice@test.com' in result.output
+        # CHT-1221: authenticated -> not the zero-state case, no quickstart nag.
+        assert 'chaotic quickstart' not in _flat(result.output)
 
     def test_status_agent_user(self, cli_runner):
         """status shows agent info with parent name."""

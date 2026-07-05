@@ -1045,6 +1045,13 @@ def status():
     else:
         console.print("  [dim]-[/dim] No project selected")
 
+    # CHT-1221: bare `chaotic` already points a zero-state user at quickstart
+    # (main.py's no-subcommand branch) -- `status` gave the same information
+    # with no next step. Match it.
+    if not (get_token() or get_api_key()) and not team_id and not project_id:
+        console.print()
+        console.print("Run [bold cyan]chaotic quickstart[/bold cyan] to get set up.")
+
     # Pending approvals (GATE and REVIEW)
     if project_id:
         try:
