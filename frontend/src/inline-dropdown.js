@@ -237,7 +237,9 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
         // Register keyboard handler for sprint dropdown
         const sprintKeyHandler = (e) => {
             const key = e.key;
-            if (key === 'Escape') {
+            // Escape cancels; Tab moves on — either way the popup shouldn't be
+            // left open. Don't preventDefault Tab so focus still advances. (CHT-1215)
+            if (key === 'Escape' || key === 'Tab') {
                 closeAllDropdowns();
                 document.removeEventListener('keydown', sprintKeyHandler);
                 setDropdownKeyHandler(null);
@@ -293,7 +295,9 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
     // Keyboard shortcut handler
     const keyHandler = (e) => {
         const key = e.key;
-        if (key === 'Escape') {
+        // Escape cancels; Tab moves on — either way the popup shouldn't be
+        // left open. Don't preventDefault Tab so focus still advances. (CHT-1215)
+        if (key === 'Escape' || key === 'Tab') {
             closeAllDropdowns();
             document.removeEventListener('keydown', keyHandler);
             return;
