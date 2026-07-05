@@ -51,6 +51,7 @@ import {
 import {
     renderFilterMenuCategories,
     showFilterCategoryOptions,
+    showFilterCategories,
     closeAllFilterMenus,
     updateFilterChips,
     updateFilterCountBadge,
@@ -84,6 +85,7 @@ export {
     closeAllFilterMenus,
     renderFilterMenuCategories,
     showFilterCategoryOptions,
+    showFilterCategories,
     renderDisplayMenuOptions,
     updateFilterChips,
     updateFilterCountBadge,
@@ -472,6 +474,26 @@ export function clearLabelFilterNew() {
     updateFilterCountBadge();
 }
 
+export function toggleExcludeLabelOption(value, event) {
+    const dropdown = document.getElementById('exclude-label-filter-dropdown');
+    const hiddenCheckbox = dropdown?.querySelector(`input[value="${value}"]`);
+    const newCheckbox = event?.target || document.querySelector(`#filter-menu-options input[value="${value}"]`);
+    if (hiddenCheckbox && newCheckbox) {
+        hiddenCheckbox.checked = newCheckbox.checked;
+        updateExcludeLabelFilter();
+    }
+    renderFilterMenuCategories();
+    showFilterCategoryOptions('exclude_labels');
+}
+
+export function clearExcludeLabelFilterNew() {
+    clearExcludeLabelFilter();
+    renderFilterMenuCategories();
+    showFilterCategoryOptions('exclude_labels');
+    updateFilterChips();
+    updateFilterCountBadge();
+}
+
 export function setSort(value) {
     const sortSelect = document.getElementById('sort-by-select');
     if (sortSelect) {
@@ -523,7 +545,13 @@ registerActions({
     'clear-label-filter': () => clearLabelFilter(),
     'update-exclude-label-filter': () => updateExcludeLabelFilter(),
     'clear-exclude-label-filter': () => clearExcludeLabelFilter(),
-    'show-filter-category': (_event, dataset) => showFilterCategoryOptions(dataset.category),
+    'show-filter-category': (_event, dataset) => {
+        showFilterCategoryOptions(dataset.category);
+        // CHT-1161: mobile shows one pane at a time — entering a category
+        // switches the dropdown to the options pane
+        document.getElementById('filter-menu-dropdown')?.classList.add('show-options');
+    },
+    'filter-menu-back': () => showFilterCategories(),
     'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
     'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),
@@ -539,6 +567,8 @@ registerActions({
     'clear-sprint-filter': () => clearSprintFilter(),
     'clear-label-filter-new': () => clearLabelFilterNew(),
     'toggle-label-option': (event, dataset) => toggleLabelOption(dataset.filterValue, event),
+    'clear-exclude-label-filter-new': () => clearExcludeLabelFilterNew(),
+    'toggle-exclude-label-option': (event, dataset) => toggleExcludeLabelOption(dataset.filterValue, event),
     'set-sort': (_event, dataset) => setSort(dataset.value),
     'set-group-by': (_event, dataset) => setGroupBy(dataset.value),
     'clear-all-filters': () => clearAllFilters(),

@@ -3,7 +3,7 @@ import os
 import typing
 import uuid
 from datetime import datetime, timezone
-from pydantic.fields import PydanticUndefined
+from pydantic_core import PydanticUndefined
 from oxyde import AsyncDatabase
 from app.config import get_settings
 
@@ -97,17 +97,6 @@ def _patch_objects_create_to_apply_default_factory() -> None:
         if factory is not None:
             return True, factory()
 
-        # 1b. Plain non-None defaults (enum defaults, is_active=True, …).
-        #     Oxyde 0.7 dumps INSERT payloads with exclude_unset, so Pydantic
-        #     defaults no longer reach the DB and SQL-level column defaults —
-        #     which can disagree with the model (e.g. rituals.approval_mode
-        #     DEFAULT 'NONE' vs model default AUTO) — win. Passing the default
-        #     as an explicit kwarg restores 0.3.1's exclude_none semantics:
-        #     model defaults are authoritative.
-        default = getattr(info, "default", PydanticUndefined)
-        if default is not PydanticUndefined and default is not None:
-            return True, default
-
         # 2. Oxyde may stash default_factory inside json_schema_extra.
         extra = getattr(info, "json_schema_extra", None) or {}
         if isinstance(extra, dict):
@@ -124,7 +113,19 @@ def _patch_objects_create_to_apply_default_factory() -> None:
         if is_pk and ann is str:
             return True, str(uuid.uuid4())
 
-        # 4. Datetime fields: default to now(). Covers created_at /
+        # 4. Plain `default=` values (enums, bools, floats, None). Oxyde's
+        #    INSERT dump uses exclude_unset=True, so a defaulted-but-unset
+        #    column is omitted from the row entirely: NOT NULL columns with
+        #    no SQL-level default fail (e.g. rituals.trigger), and SQL
+        #    defaults that disagree with the model win (e.g.
+        #    rituals.approval_mode DEFAULT 'NONE' vs model default AUTO).
+        #    Model defaults are authoritative; None is passed explicitly so
+        #    optionals never fall through to the datetime fallback below.
+        default = getattr(info, "default", PydanticUndefined)
+        if default is not PydanticUndefined:
+            return True, default
+
+        # 5. Datetime fields: default to now(). Covers created_at /
         #    updated_at / joined_at / attested_at / requested_at and any
         #    future timestamp added with default_factory. Fields are
         #    annotated DateTimeUTC (Annotated[datetime, ...]) — unwrap.

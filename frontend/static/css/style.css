@@ -7885,4 +7885,66 @@ input[type="checkbox"] {
     color: white;
 }
 
+.quote-tooltip:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
 
+
+
+/* ============================================
+   Filter menu back navigation (CHT-1161)
+   ============================================ */
+
+/* Desktop shows both panes side by side; back button is mobile-only */
+.filter-options-back {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 8px;
+    margin-right: 4px;
+    font-size: var(--font-base);
+    border-radius: var(--radius-md);
+}
+
+.filter-options-back:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.filter-options-back:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    /* One pane at a time: category list first, options after picking one */
+    .filter-menu-dropdown .filter-menu-options {
+        display: none;
+    }
+
+    .filter-menu-dropdown.show-options .filter-menu-options {
+        display: block;
+    }
+
+    .filter-menu-dropdown.show-options .filter-menu-categories {
+        display: none;
+    }
+
+    .filter-options-back {
+        display: inline-flex;
+    }
+
+    .filter-options-header {
+        justify-content: flex-start;
+        gap: 4px;
+    }
+
+    .filter-options-header .filter-options-clear {
+        margin-left: auto;
+    }
+}

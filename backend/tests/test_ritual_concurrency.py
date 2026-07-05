@@ -53,8 +53,8 @@ class TestNoDuplicateAttestationRows:
         )
 
         rows = await OxydeRitualAttestation.objects.filter(
-            ritual=auto_close_ritual,
-            issue=test_issue,
+            ritual_id=auto_close_ritual.id,
+            issue_id=test_issue.id,
         ).all()
         assert len(rows) == 1, (
             f"Concurrent attests must coalesce into one row. Got {len(rows)}. "
@@ -77,8 +77,8 @@ class TestNoDuplicateAttestationRows:
         )
 
         rows = await OxydeRitualAttestation.objects.filter(
-            ritual=ritual,
-            sprint=test_sprint,
+            ritual_id=ritual.id,
+            sprint_id=test_sprint.id,
         ).all()
         assert len(rows) == 1, (
             "Concurrent sprint attests must coalesce. Add "

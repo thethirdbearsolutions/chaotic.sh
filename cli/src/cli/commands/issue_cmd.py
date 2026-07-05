@@ -81,12 +81,16 @@ def register(cli):
     @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
     @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
+    @click.option("--all-projects", "all_projects", is_flag=True, help="List issues across all projects in the team (adds a Project column)")
     @_main().json_option
-    @_main().require_project
+    @_main().require_team
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, limit, skip, sort_by, order):
-        """List issues in current project."""
+    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, limit, skip, sort_by, order, all_projects):
+        """List issues in current project (or team-wide with --all-projects)."""
         m = _main()
+        if not all_projects and not m.get_current_project():
+            console.print("[red]No project selected. Run 'chaotic project use <project_id>' or pass --all-projects.[/red]")
+            raise SystemExit(1)
         # Validate status values if provided (CHT-502)
         valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
         if status:
@@ -129,13 +133,16 @@ def register(cli):
                     resolved.append(m.resolve_assignee_id(token))
             exclude_assignee_id = ",".join(resolved) if resolved else None
 
-        project_id = m.get_current_project()
+        project_id = None if all_projects else m.get_current_project()
+        team_id = m.get_current_team() if all_projects else None
         parent_id = None
         if epic:
             epic_issue = _client().get_issue_by_identifier(epic)
             parent_id = epic_issue["id"]
         if sprint and no_sprint:
             raise click.UsageError("Cannot use both --sprint and --no-sprint")
+        if sprint and all_projects:
+            raise click.UsageError("Cannot use --sprint with --all-projects (sprints are project-scoped)")
         if no_sprint:
             sprint_id = "no_sprint"
         elif sprint:
@@ -143,7 +150,7 @@ def register(cli):
         else:
             sprint_id = None
         issues = _client().get_issues(
-            project_id=project_id, status=status, priority=priority,
+            project_id=project_id, team_id=team_id, status=status, priority=priority,
             sprint_id=sprint_id, limit=limit, parent_id=parent_id,
             sort_by=sort_by, order=order, label=label, search=search,
             skip=skip or None, assignee_id=assignee_id,
@@ -162,13 +169,27 @@ def register(cli):
             console.print("[yellow]No issues found.[/yellow]")
             return
 
-        # Build sprint ID -> name map
-        sprints = _client().get_sprints(project_id)
-        sprint_names = {s["id"]: s["name"] for s in sprints}
+        # Build project/sprint lookup maps
+        project_keys = {}
+        if all_projects:
+            # One projects call for the Project column; sprints are
+            # project-scoped, so fetch once per project that has sprinted
+            # issues (bounded by project count, no per-issue calls)
+            projects = _client().get_projects(team_id)
+            project_keys = {p["id"]: p["key"] for p in projects}
+            sprint_names = {}
+            for pid in {i["project_id"] for i in issues if i.get("sprint_id")}:
+                for s in _client().get_sprints(pid):
+                    sprint_names[s["id"]] = s["name"]
+        else:
+            sprints = _client().get_sprints(project_id)
+            sprint_names = {s["id"]: s["name"] for s in sprints}
 
-        table = Table(title="Issues")
+        table = Table(title="Issues (all projects)" if all_projects else "Issues")
         table.add_column("ID")
         table.add_column("Title")
+        if all_projects:
+            table.add_column("Project")
         table.add_column("Status")
         table.add_column("Priority")
         table.add_column("Type")
@@ -176,15 +197,20 @@ def register(cli):
         table.add_column("Sprint")
 
         for i in issues:
-            table.add_row(
+            row = [
                 i["identifier"],
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
+            ]
+            if all_projects:
+                row.append(project_keys.get(i.get("project_id"), "-"))
+            row.extend([
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
                 str(i.get("estimate") or "-"),
-                sprint_names.get(i.get("sprint_id"), "-")
-            )
+                sprint_names.get(i.get("sprint_id"), "-"),
+            ])
+            table.add_row(*row)
 
         console.print(table)
 

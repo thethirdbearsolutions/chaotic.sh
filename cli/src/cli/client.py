@@ -5,8 +5,16 @@ from cli.config import get_api_url, get_token, get_api_key
 
 
 class APIError(Exception):
-    """API error with message."""
-    pass
+    """API error with message. `status_code` is the HTTP response status
+    when the error originated from a server response, or None when the
+    error is local (network failure, malformed response, etc.). Callers
+    that need to distinguish transient (5xx/429) from non-transient
+    (4xx) failures should branch on `status_code`.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class Client:
@@ -45,18 +53,27 @@ class Client:
             if not response.content or not response.content.strip():
                 if response.is_success:
                     return None
-                raise APIError(f"Server returned {response.status_code} with no body")
+                raise APIError(
+                    f"Server returned {response.status_code} with no body",
+                    status_code=response.status_code,
+                )
 
             try:
                 result = response.json()
             except Exception:
                 if response.is_success:
                     return None
-                raise APIError(f"Server returned {response.status_code} with non-JSON body")
+                raise APIError(
+                    f"Server returned {response.status_code} with non-JSON body",
+                    status_code=response.status_code,
+                )
 
             if not response.is_success:
                 detail = result.get("detail", "Unknown error")
-                raise APIError(self._format_error(detail))
+                raise APIError(
+                    self._format_error(detail),
+                    status_code=response.status_code,
+                )
 
             return result
 
@@ -189,10 +206,12 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/issues?project_id={project_id}", data)
 
-    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None) -> list:
+    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None, team_id: str = None) -> list:
         params = {}
         if project_id:
             params["project_id"] = project_id
+        if team_id:
+            params["team_id"] = team_id
         if sprint_id:
             params["sprint_id"] = sprint_id
         if assignee_id:
@@ -304,8 +323,14 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}/comments/{comment_id}")
 
     # Activities
-    def get_team_activities(self, team_id: str, skip: int = 0, limit: int = 20) -> list:
-        params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
+    def get_team_activities(
+        self, team_id: str, skip: int = 0, limit: int = 20,
+        project_id: str | None = None,
+    ) -> list:
+        query: dict = {"team_id": team_id, "skip": skip, "limit": limit}
+        if project_id is not None:
+            query["project_id"] = project_id
+        params = urlencode(query)
         return self._request("GET", f"/issues/activities?{params}")
 
     # Comments (team-wide)

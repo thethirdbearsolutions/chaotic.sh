@@ -535,6 +535,7 @@ export function renderTicketRituals(issueId) {
 /**
  * View issue by path (identifier or ID)
  * @param {string} identifier - Issue identifier or ID
+ * @returns {Promise<boolean>} true if the issue was found and rendered
  */
 export async function viewIssueByPath(identifier) {
     try {
@@ -547,11 +548,13 @@ export async function viewIssueByPath(identifier) {
         }
         if (issue) {
             await viewIssue(issue.id, false);
-        } else {
-            navigateTo('my-issues', false);
+            return true;
         }
+        navigateTo('my-issues', false);
+        return false;
     } catch {
         navigateTo('my-issues', false);
+        return false;
     }
 }
 
