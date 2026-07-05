@@ -560,6 +560,30 @@ describe('issues-view', () => {
             expect(url).toContain('exclude_label=lbl-x');
             expect(url).toContain('exclude_label=lbl-y');
         });
+
+        // CHT-1212: Sort wasn't part of shareable/persisted filter state, unlike Group-by
+        it('persists a non-default sort choice as sort=', () => {
+            document.getElementById('sort-by-select').value = 'priority-desc';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toContain('sort=priority-desc');
+        });
+
+        it('omits sort= when the default (created-desc) is selected', () => {
+            document.getElementById('sort-by-select').value = 'created-desc';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).not.toContain('sort=');
+        });
+
+        it('persists sort alongside groupBy', () => {
+            document.getElementById('sort-by-select').value = 'priority-asc';
+            document.getElementById('group-by-select').value = 'priority';
+            syncFiltersToUrl();
+            const url = replaceStateSpy.mock.calls[0][2];
+            expect(url).toContain('sort=priority-asc');
+            expect(url).toContain('groupBy=priority');
+        });
     });
 
     // ========================================
@@ -692,6 +716,32 @@ describe('issues-view', () => {
             // 'todo' from localStorage should NOT be applied
             const todoCheckbox = document.querySelector('#status-filter-dropdown input[value="todo"]');
             expect(todoCheckbox.checked).toBe(false);
+            localStorage.removeItem('chaotic_issues_filters_team-1');
+        });
+
+        it('applies sort filter from URL (CHT-1212)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '?sort=priority-asc', pathname: '/issues', href: 'http://localhost/issues?sort=priority-asc' },
+                writable: true,
+                configurable: true,
+            });
+
+            loadFiltersFromUrl();
+
+            expect(document.getElementById('sort-by-select').value).toBe('priority-asc');
+        });
+
+        it('a bare sort= param alone still counts as a filter param, skipping localStorage fallback (CHT-1212)', () => {
+            Object.defineProperty(window, 'location', {
+                value: { search: '?sort=title-desc', pathname: '/issues', href: 'http://localhost/issues?sort=title-desc' },
+                writable: true,
+                configurable: true,
+            });
+            localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-9');
+
+            loadFiltersFromUrl();
+
+            expect(setCurrentProject).not.toHaveBeenCalledWith('proj-9');
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });
 
