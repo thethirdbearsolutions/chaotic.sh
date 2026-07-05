@@ -24,7 +24,7 @@ import {
     subscribe,
 } from './state.js';
 import { getProjects } from './projects.js';
-import { ensureSprintCacheForIssues } from './sprints.js';
+import { ensureSprintCacheForIssues, getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
@@ -202,6 +202,26 @@ export function clearExcludeLabelFilter() {
 // Issue Loading & Search
 // ========================================
 
+// Escape a value for interpolation inside a quoted CSS attribute selector
+// (`[value="..."]`) — backslashes and double quotes are the only
+// metacharacters inside a quoted string (CHT-1212 review).
+function escapeSelectorValue(value) {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Resolve label checkbox ids to their display names via the DOM (the
+ * backend's label/exclude_label filters match by name, not id) — mirrors
+ * the technique updateFilterChips() already uses (CHT-1212).
+ */
+function resolveLabelNames(labelIds, dropdownId) {
+    if (labelIds.length === 0) return [];
+    const dropdown = document.getElementById(dropdownId);
+    return labelIds
+        .map(id => dropdown?.querySelector(`input[value="${escapeSelectorValue(id)}"]`)?.closest('label')?.querySelector('.label-name')?.textContent)
+        .filter(Boolean);
+}
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
     if (!getCurrentTeam()) return;
@@ -250,14 +270,25 @@ export async function loadIssues() {
     if (sprintFilter) {
         if (sprintFilter === 'current') {
             if (projectId) {
-                try {
-                    const sprints = await api.getSprints(projectId);
-                    const currentSprint = sprints.find(s => s.status === 'active');
-                    if (currentSprint) {
-                        params.sprint_id = currentSprint.id;
+                // updateSprintFilter() already resolved and cached this same
+                // lookup moments earlier (and the active sprint essentially
+                // never changes mid-session) — reuse it instead of
+                // re-fetching sprints on every loadIssues() call, including
+                // every 300ms debounced search keystroke (CHT-1212)
+                const cachedId = getCachedCurrentSprintId(projectId);
+                if (cachedId !== undefined) {
+                    if (cachedId) params.sprint_id = cachedId;
+                } else {
+                    try {
+                        const sprints = await api.getSprints(projectId);
+                        const currentSprint = sprints.find(s => s.status === 'active');
+                        setCachedCurrentSprintId(projectId, currentSprint?.id);
+                        if (currentSprint) {
+                            params.sprint_id = currentSprint.id;
+                        }
+                    } catch (e) {
+                        console.error('Failed to resolve current sprint:', e);
                     }
-                } catch (e) {
-                    console.error('Failed to resolve current sprint:', e);
                 }
             }
         } else {
@@ -270,33 +301,36 @@ export async function loadIssues() {
         params.issue_type = issueTypeFilter;
     }
 
-    if (searchQuery && searchQuery.length >= 2) {
+    // Backend's search param only requires min_length=1 (CHT-1212) — a 1-char
+    // query used to silently no-op with no visible explanation.
+    if (searchQuery && searchQuery.length >= 1) {
         params.search = searchQuery;
     }
 
     try {
+        // Label/exclude-label filters are sent to the server (which matches
+        // by name, case-insensitively) instead of over-fetching a 1000-row
+        // page and filtering client-side (CHT-1212) — resolve id -> name via
+        // the DOM the same way updateFilterChips() already does.
+        // label_match=any preserves the multi-select UI's OR semantics; the
+        // server default (all) is the CLI's documented AND contract.
+        const selectedLabelNames = resolveLabelNames(getSelectedLabels(), 'label-filter-dropdown');
+        if (selectedLabelNames.length > 0) {
+            params.label = selectedLabelNames;
+            params.label_match = 'any';
+        }
+
+        const excludedLabelNames = resolveLabelNames(getExcludedLabels(), 'exclude-label-filter-dropdown');
+        if (excludedLabelNames.length > 0) {
+            params.exclude_label = excludedLabelNames;
+        }
+
         let issues;
         if (projectId) {
             params.project_id = projectId;
             issues = await api.getIssues(params);
         } else if (getProjects().length > 0) {
             issues = await api.getTeamIssues(getCurrentTeam().id, params);
-        }
-
-        const selectedLabels = getSelectedLabels();
-        if (selectedLabels.length > 0) {
-            issues = issues.filter(issue => {
-                if (!issue.labels || issue.labels.length === 0) return false;
-                return issue.labels.some(label => selectedLabels.includes(label.id));
-            });
-        }
-
-        const excludedLabels = getExcludedLabels();
-        if (excludedLabels.length > 0) {
-            issues = issues.filter(issue => {
-                if (!issue.labels || issue.labels.length === 0) return true;
-                return !issue.labels.some(label => excludedLabels.includes(label.id));
-            });
         }
 
         setIssues(issues);
@@ -345,6 +379,7 @@ export function setProjectFilter(value) {
     setCurrentProject(value);
     renderFilterMenuCategories();
     showFilterCategoryOptions('project');
+    closeAllFilterMenus();
 }
 
 export function clearProjectFilter() {
@@ -416,6 +451,7 @@ export function setTypeFilter(value) {
     showFilterCategoryOptions('type');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearTypeFilter() {
@@ -432,6 +468,7 @@ export function setAssigneeFilter(value) {
     showFilterCategoryOptions('assignee');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearAssigneeFilter() {
@@ -448,6 +485,7 @@ export function setSprintFilter(value) {
     showFilterCategoryOptions('sprint');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearSprintFilter() {
@@ -550,8 +588,17 @@ registerActions({
         // CHT-1161: mobile shows one pane at a time — entering a category
         // switches the dropdown to the options pane
         document.getElementById('filter-menu-dropdown')?.classList.add('show-options');
+        // CHT-1212: pane switch — move focus into the newly shown options
+        // pane so keyboard/screen-reader users don't lose their place
+        document.querySelector('#filter-menu-options .filter-options-back')?.focus();
     },
-    'filter-menu-back': () => showFilterCategories(),
+    'filter-menu-back': () => {
+        showFilterCategories();
+        // CHT-1212: pane switch — return focus to the category list
+        const container = document.getElementById('filter-menu-categories');
+        const target = container?.querySelector('.filter-menu-category.active') || container?.querySelector('.filter-menu-category');
+        target?.focus();
+    },
     'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
     'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),

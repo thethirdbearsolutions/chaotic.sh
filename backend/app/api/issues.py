@@ -294,6 +294,7 @@ async def list_issues(
     priorities: list[IssuePriority] | None = Query(None, alias="priority"),
     issue_type: IssueType | None = Query(None, alias="issue_type"),
     labels: list[str] | None = Query(None, alias="label"),
+    label_match: str = Query("all", pattern="^(all|any)$"),
     exclude_labels: list[str] | None = Query(None, alias="exclude_label"),
     exclude_statuses: list[IssueStatus] | None = Query(None, alias="exclude_status"),
     exclude_priorities: list[IssuePriority] | None = Query(None, alias="exclude_priority"),
@@ -306,6 +307,11 @@ async def list_issues(
     limit: int = 1000,
 ):
     """List issues with filters. Pass multiple status/priority/label values to filter by multiple values.
+
+    ``label_match`` controls multi-``label`` semantics: ``all`` (default —
+    issue must carry every named label; the CLI's documented contract) or
+    ``any`` (issue must carry at least one; used by the web UI's
+    multi-select filter).
 
     Exclude filters (``exclude_label``, ``exclude_status``, ``exclude_priority``,
     ``exclude_issue_type``, ``exclude_assignee_id``) remove matching issues
@@ -343,6 +349,7 @@ async def list_issues(
             sort_by=sort_by,
             order=order,
             label_names=labels,
+            label_match=label_match,
             exclude_label_names=exclude_labels,
             exclude_statuses=exclude_statuses,
             exclude_priorities=exclude_priorities,
@@ -369,6 +376,7 @@ async def list_issues(
             sort_by=sort_by,
             order=order,
             label_names=labels,
+            label_match=label_match,
             exclude_label_names=exclude_labels,
             exclude_statuses=exclude_statuses,
             exclude_priorities=exclude_priorities,

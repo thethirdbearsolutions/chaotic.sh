@@ -11,6 +11,7 @@ import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } f
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { OPEN_STATUSES } from './constants.js';
+import { setCachedCurrentSprintId } from './sprints.js';
 import {
     getSelectedStatuses,
     getSelectedPriorities,
@@ -148,7 +149,7 @@ export function renderFilterMenuCategories() {
         const isDisabled = cat.key === 'sprint' && !projectId;
         return `
             <div class="filter-menu-category ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
-                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
+                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}" tabindex="-1">
                 <span>${cat.label}</span>
                 ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : ''}
                 <span class="filter-menu-category-arrow">\u2192</span>
@@ -665,9 +666,12 @@ export function updateFilterChips() {
         }).join(', ');
         chips.push({
             category: 'labels',
-            label: 'Excluded labels',
+            label: 'Excluded Labels',
             value: names,
-            clearAction: 'clear-exclude-label-filter'
+            // Match the Labels chip: the "-new" action also re-renders the
+            // popover's option pane, so a still-open Exclude Labels pane
+            // reflects the change instead of going stale (CHT-1212)
+            clearAction: 'clear-exclude-label-filter-new'
         });
     }
 
@@ -740,6 +744,9 @@ export async function updateSprintFilter() {
         if (currentSprint) {
             options += `<option value="current">Current Sprint (${escapeHtml(currentSprint.name)})</option>`;
         }
+        // Cache the resolved id so loadIssues() doesn't re-fetch sprints just
+        // to resolve "current" on every filter/debounced-search reload (CHT-1212)
+        setCachedCurrentSprintId(projectId, currentSprint?.id);
         updateSprintBudgetBar(currentSprint || null);
         sprints.forEach(s => {
             const statusLabel = s.status === 'active' ? ' (Active)' : s.status === 'completed' ? ' (Done)' : '';

@@ -5,7 +5,7 @@
  * registerActions, setCommandPaletteCommands, and wires up keyboard handlers.
  * We test those registrations by capturing what was passed to the mock functions.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Track what was registered via captured mock call args
 let registeredViews = {};
@@ -78,6 +78,7 @@ vi.mock('./issues-view.js', () => ({
     loadFiltersFromUrl: vi.fn(),
     toggleFilterMenu: vi.fn(),
     toggleDisplayMenu: vi.fn(),
+    closeAllFilterMenus: vi.fn(),
     initFilterBar: vi.fn(),
     updateSprintFilter: vi.fn().mockResolvedValue(),
     loadIssues: vi.fn(),
@@ -226,7 +227,7 @@ import { filterMyIssues } from './dashboard.js';
 import {
     toggleMultiSelect, updateStatusFilter, clearStatusFilter,
     updatePriorityFilter, clearPriorityFilter, clearLabelFilter,
-    toggleFilterMenu, toggleDisplayMenu, debounceSearch, filterIssues, updateGroupBy,
+    toggleFilterMenu, toggleDisplayMenu, closeAllFilterMenus, debounceSearch, filterIssues, updateGroupBy,
 } from './issues-view.js';
 import { switchProjectSettingsTab, saveProjectSettingsGeneral, saveProjectSettingsRules, showCreateProjectRitualModal } from './projects.js';
 import { switchRitualsTab } from './rituals-view.js';
@@ -508,6 +509,34 @@ describe('app.js keyboard handler wiring', () => {
         expect(modifierHandlerConfig).toBeDefined();
         expect(modifierHandlerConfig).toHaveProperty('isModalOpen');
         expect(modifierHandlerConfig).toHaveProperty('isCommandPaletteOpen');
+    });
+
+    // CHT-1212: Escape was a no-op on the Filter/Display popovers because
+    // closeDropdowns only ever touched team/user dropdowns.
+    describe('closeDropdowns (CHT-1212)', () => {
+        let container;
+
+        beforeEach(() => {
+            container = document.createElement('div');
+            container.innerHTML = `
+                <div id="team-dropdown"></div>
+                <div id="user-dropdown"></div>
+            `;
+            document.body.appendChild(container);
+        });
+
+        afterEach(() => container.remove());
+
+        it('hides the team and user dropdowns', () => {
+            keyboardHandlerConfig.closeDropdowns();
+            expect(document.getElementById('team-dropdown').classList.contains('hidden')).toBe(true);
+            expect(document.getElementById('user-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('also closes the Filter/Display popovers', () => {
+            keyboardHandlerConfig.closeDropdowns();
+            expect(closeAllFilterMenus).toHaveBeenCalled();
+        });
     });
 
     it('creates list navigation handlers for issues and documents', () => {
