@@ -4,9 +4,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock all dependency modules before importing issue-list
-vi.mock('./state.js', () => ({
-    getIssues: vi.fn(() => []),
-}));
+vi.mock('./state.js', () => {
+    // Stateful stand-in so setSelectedIssueIndex() calls are observable via
+    // getSelectedIssueIndex(), same as the real module (CHT-1215).
+    let _selectedIndex = -1;
+    return {
+        getIssues: vi.fn(() => []),
+        getSelectedIssueIndex: vi.fn(() => _selectedIndex),
+        setSelectedIssueIndex: vi.fn((i) => { _selectedIndex = i; }),
+    };
+});
 
 vi.mock('./assignees.js', () => ({
     getAssigneeById: vi.fn(() => null),
@@ -64,7 +71,7 @@ import {
     getDescriptionSnippet,
 } from './issue-list.js';
 
-import { getIssues } from './state.js';
+import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -100,6 +107,7 @@ describe('issue-list', () => {
         getAssigneeOptionList.mockReturnValue([]);
         getGroupByValue.mockReturnValue('');
         getTotalFilterCount.mockReturnValue(0);
+        setSelectedIssueIndex(-1);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -232,6 +240,88 @@ describe('issue-list', () => {
 
             const lowGroup = list.querySelector('.issue-group[data-group="low"]');
             expect(lowGroup.querySelectorAll('.issue-row')).toHaveLength(1);
+        });
+
+        // CHT-1215: renderIssues() rebuilds #issues-list innerHTML from
+        // scratch on every call (websocket events, inline field edits,
+        // filter changes) — the j/k keyboard-selection highlight and the
+        // tracked selectedIssueIndex used to silently drift apart across
+        // that rebuild.
+        describe('keyboard selection survives a re-render', () => {
+            const issues = [
+                { id: '1', title: 'Issue 1', status: 'todo', priority: 'medium', identifier: 'TEST-1', project_id: 'p1' },
+                { id: '2', title: 'Issue 2', status: 'todo', priority: 'medium', identifier: 'TEST-2', project_id: 'p1' },
+                { id: '3', title: 'Issue 3', status: 'todo', priority: 'medium', identifier: 'TEST-3', project_id: 'p1' },
+            ];
+
+            function selectRowByIssueId(issueId, index) {
+                setSelectedIssueIndex(index);
+                document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+            }
+
+            it('does nothing when no row was previously selected', () => {
+                setTestIssues(issues);
+                renderIssues();
+
+                expect(document.querySelectorAll('.issue-row.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedIssueIndex()).toBe(-1);
+            });
+
+            it('re-applies the highlight at the same index after an in-place re-render', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('2', 1);
+
+                // Simulate a websocket-triggered re-render with the same issues
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
+            it('follows the selected issue by id when the list is reordered', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('2', 1);
+
+                // Issue 2 moves to the front (e.g. re-sorted after an update)
+                setTestIssues([issues[1], issues[0], issues[2]]);
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(0);
+            });
+
+            it('clamps to the new last row when the selected issue is removed', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('3', 2);
+
+                // Issue 3 (last, selected) is removed by a filter change
+                setTestIssues([issues[0], issues[1]]);
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
+            it('resets to -1 when the re-render leaves an empty list', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('1', 0);
+
+                setTestIssues([]);
+                renderIssues();
+
+                expect(document.querySelectorAll('.issue-row.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedIssueIndex()).toBe(-1);
+            });
         });
     });
 

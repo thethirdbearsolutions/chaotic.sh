@@ -3,7 +3,7 @@
  * Extracted from app.js for testability
  */
 
-import { getIssues } from './state.js';
+import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate, isOutOfScale } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -41,6 +41,13 @@ export function renderIssues() {
     const list = document.getElementById('issues-list');
     if (!list) return;
 
+    // CHT-1215: capture the currently keyboard-selected issue's id before the
+    // rebuild below replaces the DOM — the highlight and selectedIssueIndex
+    // otherwise survive independently of each other across a re-render (e.g.
+    // an incoming websocket event, or an inline field edit), so the visible
+    // cursor silently drifts from the tracked index.
+    const selectedIssueId = list.querySelector('.issue-row.keyboard-selected')?.dataset.issueId;
+
     list.classList.add('issue-list-linear');
 
     const issues = getIssues();
@@ -69,6 +76,7 @@ export function renderIssues() {
                 cta: { label: 'Create issue', action: 'showCreateIssueModal' },
             });
         }
+        setSelectedIssueIndex(-1);
         return;
     }
 
@@ -88,6 +96,40 @@ export function renderIssues() {
         // No grouping - render flat list with summary
         list.innerHTML = renderSummaryBar(issues) + issues.map(issue => renderIssueRow(issue)).join('');
     }
+
+    reapplyKeyboardSelection(selectedIssueId);
+}
+
+/**
+ * Re-apply the j/k keyboard-selection highlight after renderIssues() rebuilds
+ * the list's innerHTML from scratch (CHT-1215). Without this, the DOM
+ * highlight disappears on every re-render (websocket events, inline field
+ * edits, filter changes) while the tracked selectedIssueIndex silently drifts
+ * out of sync with what's visible.
+ * @param {string|undefined} selectedIssueId - id of the row that had
+ *   .keyboard-selected before the rebuild, if any
+ */
+function reapplyKeyboardSelection(selectedIssueId) {
+    const prevIndex = getSelectedIssueIndex();
+    if (prevIndex < 0) return;
+
+    const items = document.querySelectorAll('#issues-list .issue-row');
+    if (items.length === 0) {
+        setSelectedIssueIndex(-1);
+        return;
+    }
+
+    // Prefer re-finding the same issue by id (handles reordering/regrouping);
+    // fall back to clamping the old index if that issue is no longer present.
+    let newIndex = selectedIssueId
+        ? Array.prototype.findIndex.call(items, (item) => item.dataset.issueId === selectedIssueId)
+        : -1;
+    if (newIndex < 0) {
+        newIndex = Math.min(prevIndex, items.length - 1);
+    }
+
+    setSelectedIssueIndex(newIndex);
+    items[newIndex].classList.add('keyboard-selected');
 }
 
 function renderGroupedByStatus(list, issues) {
