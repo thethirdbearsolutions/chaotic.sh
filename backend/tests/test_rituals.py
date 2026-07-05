@@ -7,7 +7,7 @@ from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue
 from app.oxyde_models.project import OxydeProject
-from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.enums import RitualTrigger, ApprovalMode, SprintStatus, LimboType
 from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
