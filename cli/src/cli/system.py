@@ -417,13 +417,20 @@ def is_service_running() -> bool:
             )
             if result.returncode != 0:
                 return False
-            # launchctl list <label> outputs "PID\tStatus\tLabel"
-            # PID is "-" when loaded but not running
-            stdout = (result.stdout or "").strip()
-            if not stdout:
-                return False
-            pid_field = stdout.split("\t")[0].strip('"')
-            return pid_field != "-" and pid_field.isdigit()
+            # `launchctl list <label>` returns a plist dict, e.g.:
+            #     {
+            #         "PID" = 12345;
+            #         "LastExitStatus" = 0;
+            #         "Label" = "com.chaotic.server";
+            #         ...
+            #     };
+            # The "PID" key is present (with an integer) when the job is
+            # currently running, and absent when the job is loaded but not
+            # running. The bare `launchctl list` (no label) uses the
+            # "PID\tStatus\tLabel" format with "-" for stopped jobs, but
+            # that format does NOT apply here.
+            stdout = result.stdout or ""
+            return re.search(r'"PID"\s*=\s*\d+\s*;', stdout) is not None
         else:
             return False
     except subprocess.CalledProcessError:
