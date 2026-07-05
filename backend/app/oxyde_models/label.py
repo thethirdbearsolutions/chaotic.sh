@@ -5,10 +5,11 @@ The full Issue/Label port happens in Phase 2.
 """
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from app.utils.datetimes import DateTimeUTC
+from oxyde import Model, Field
 
 
-class OxydeLabel(OxydeModel):
+class OxydeLabel(Model):
     """Label for categorizing issues and documents."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -16,7 +17,7 @@ class OxydeLabel(OxydeModel):
     name: str = Field()
     color: str = Field(default="#6366f1")
     description: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True

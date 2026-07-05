@@ -6,11 +6,11 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 
-from oxyde import OxydeModel
+from oxyde import Model
 from oxyde.queries import Query, QueryManager
 
 
-class OxydeRitualGroup(OxydeModel):
+class OxydeRitualGroup(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -22,7 +22,7 @@ class OxydeRitualGroup(OxydeModel):
     created_at: datetime
     objects: "OxydeRitualGroupManager"
 
-class OxydeRitual(OxydeModel):
+class OxydeRitual(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -43,7 +43,7 @@ class OxydeRitual(OxydeModel):
     group_id: str | None
     objects: "OxydeRitualManager"
 
-class OxydeRitualAttestation(OxydeModel):
+class OxydeRitualAttestation(Model):
     class Meta:
         is_table: bool
         table_name: str

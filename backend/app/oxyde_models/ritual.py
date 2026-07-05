@@ -4,7 +4,8 @@ Phase 2 migration from SQLAlchemy.
 """
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from app.utils.datetimes import DateTimeUTC
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
@@ -12,7 +13,7 @@ from app.enums import RitualTrigger, ApprovalMode, SelectionMode
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeRitualGroup(OxydeModel):
+class OxydeRitualGroup(Model):
     """Group of rituals with selection logic."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -20,7 +21,7 @@ class OxydeRitualGroup(OxydeModel):
     name: str = Field()
     selection_mode: DbEnum(SelectionMode) = Field(default=SelectionMode.RANDOM_ONE)
     last_selected_ritual_id: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def rituals(self) -> list:
@@ -36,7 +37,7 @@ class OxydeRitualGroup(OxydeModel):
         table_name = "ritual_groups"
 
 
-class OxydeRitual(OxydeModel):
+class OxydeRitual(Model):
     """Ritual definition for a project."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -50,8 +51,8 @@ class OxydeRitual(OxydeModel):
     group: OxydeRitualGroup | None = Field(default=None, db_on_delete="SET NULL")
     weight: float = Field(default=1.0)
     percentage: float | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = Field(default=True)
 
     @property
@@ -64,7 +65,7 @@ class OxydeRitual(OxydeModel):
         table_name = "rituals"
 
 
-class OxydeRitualAttestation(OxydeModel):
+class OxydeRitualAttestation(Model):
     """Record of a ritual being attested for a specific sprint or ticket."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -72,10 +73,10 @@ class OxydeRitualAttestation(OxydeModel):
     sprint: OxydeSprint | None = Field(default=None, db_on_delete="CASCADE")
     issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
     attested_by: str | None = Field(default=None)
-    attested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    attested_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     note: str | None = Field(default=None)
     approved_by: str | None = Field(default=None)
-    approved_at: datetime | None = Field(default=None)
+    approved_at: DateTimeUTC | None = Field(default=None)
 
     @property
     def attester(self):

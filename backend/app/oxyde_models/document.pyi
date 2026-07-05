@@ -6,11 +6,11 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 
-from oxyde import OxydeModel
+from oxyde import Model
 from oxyde.queries import Query, QueryManager
 
 
-class OxydeDocument(OxydeModel):
+class OxydeDocument(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -27,7 +27,7 @@ class OxydeDocument(OxydeModel):
     author_id: str | None
     objects: "OxydeDocumentManager"
 
-class OxydeDocumentComment(OxydeModel):
+class OxydeDocumentComment(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -40,7 +40,7 @@ class OxydeDocumentComment(OxydeModel):
     author_id: str | None
     objects: "OxydeDocumentCommentManager"
 
-class OxydeDocumentActivity(OxydeModel):
+class OxydeDocumentActivity(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -56,7 +56,7 @@ class OxydeDocumentActivity(OxydeModel):
     user_id: str | None
     objects: "OxydeDocumentActivityManager"
 
-class OxydeDocumentIssue(OxydeModel):
+class OxydeDocumentIssue(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -65,7 +65,7 @@ class OxydeDocumentIssue(OxydeModel):
     created_at: datetime
     objects: "OxydeDocumentIssueManager"
 
-class OxydeDocumentLabel(OxydeModel):
+class OxydeDocumentLabel(Model):
     class Meta:
         is_table: bool
         table_name: str
