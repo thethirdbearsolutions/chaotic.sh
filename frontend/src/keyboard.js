@@ -16,6 +16,11 @@
  * @param {Function} actions.isModalOpen - Returns true if a modal is currently open
  * @param {Function} actions.focusSearch - Focus the issue search input
  * @param {Function} actions.closeDropdowns - Close any open dropdown menus
+ * @param {Function} [actions.isDetailViewActive] - Returns true if the issue
+ *   detail view is currently showing. Detail view's own hotkey listener is
+ *   registered dynamically per-view (always AFTER this global one), so bare
+ *   'p'/'c' here would otherwise fire first and preempt the documented
+ *   detail-view actions (Priority, focus comment box) with Projects/Create.
  * @returns {Function} The keydown event handler
  */
 export function createKeyboardHandler(actions) {
@@ -81,6 +86,10 @@ export function createKeyboardHandler(actions) {
         // Direct shortcuts
         switch (e.key) {
             case 'c':
+                // CHT-1215: detail view's own 'c' (focus comment box) can never
+                // preempt this via registration order — no-op here instead so
+                // its listener (which runs after this one) gets the keystroke.
+                if (actions.isDetailViewActive?.()) break;
                 e.preventDefault();
                 actions.showCreateIssueModal();
                 break;
@@ -97,6 +106,9 @@ export function createKeyboardHandler(actions) {
                 actions.navigateTo('board');
                 break;
             case 'p':
+                // CHT-1215: same as 'c' above — detail view's 'p' (Priority)
+                // takes precedence over the global Projects shortcut.
+                if (actions.isDetailViewActive?.()) break;
                 e.preventDefault();
                 actions.navigateTo('projects');
                 break;

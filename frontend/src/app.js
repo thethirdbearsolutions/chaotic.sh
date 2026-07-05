@@ -609,6 +609,9 @@ document.addEventListener('keydown', createKeyboardHandler({
         document.getElementById('user-dropdown').classList.add('hidden');
         closeAllFilterMenus();
     },
+    // CHT-1215: lets bare 'p'/'c' defer to the issue detail view's own
+    // Priority/focus-comment-box actions instead of Projects/Create Issue.
+    isDetailViewActive: () => !document.getElementById('issue-detail-view')?.classList.contains('hidden'),
 }));
 
 // ============================================

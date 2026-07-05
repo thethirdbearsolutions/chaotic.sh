@@ -34,6 +34,7 @@ describe('Keyboard Handler', () => {
             isModalOpen: vi.fn().mockReturnValue(false),
             focusSearch: vi.fn(),
             closeDropdowns: vi.fn(),
+            isDetailViewActive: vi.fn().mockReturnValue(false),
         };
         handler = createKeyboardHandler(actions);
     });
@@ -188,6 +189,49 @@ describe('Keyboard Handler', () => {
             handler(event);
             expect(actions.focusSearch).toHaveBeenCalled();
             expect(event.preventDefault).toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1215: layering — detail view's own hotkey listener is registered
+    // dynamically per-view, always AFTER this global handler, so it can never
+    // preempt bare 'p'/'c' here on its own. The global handler must no-op
+    // instead so the (later-firing) detail listener sees an un-preempted key.
+    describe('detail view layering for p/c (CHT-1215)', () => {
+        it('does not navigate to projects on bare p when detail view is active', () => {
+            actions.isDetailViewActive.mockReturnValue(true);
+            const event = makeEvent('p');
+            handler(event);
+            expect(actions.navigateTo).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('does not open create issue modal on bare c when detail view is active', () => {
+            actions.isDetailViewActive.mockReturnValue(true);
+            const event = makeEvent('c');
+            handler(event);
+            expect(actions.showCreateIssueModal).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('still navigates to projects on bare p when detail view is not active', () => {
+            actions.isDetailViewActive.mockReturnValue(false);
+            const event = makeEvent('p');
+            handler(event);
+            expect(actions.navigateTo).toHaveBeenCalledWith('projects');
+        });
+
+        it('still opens create issue modal on bare c when detail view is not active', () => {
+            actions.isDetailViewActive.mockReturnValue(false);
+            const event = makeEvent('c');
+            handler(event);
+            expect(actions.showCreateIssueModal).toHaveBeenCalled();
+        });
+
+        it('falls back to firing normally when isDetailViewActive is not provided', () => {
+            delete actions.isDetailViewActive;
+            const event = makeEvent('p');
+            handler(event);
+            expect(actions.navigateTo).toHaveBeenCalledWith('projects');
         });
     });
 
