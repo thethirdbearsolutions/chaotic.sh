@@ -5,10 +5,20 @@
 
 let currentDropdownKeyHandler = null;
 
+// Shared focusable-element selector for the modal focus trap (CHT-1215),
+// same set sidebar.js already uses for its own trap (CHT-883).
+const MODAL_FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Element that had focus before the modal opened, so closeModal() can give
+// it back (CHT-1215) — every create/edit modal across the app funnels
+// through showModal()/closeModal(), so this is the one place to fix it.
+let modalTriggerElement = null;
+
 /**
  * Show the modal overlay
  */
 export function showModal() {
+  modalTriggerElement = document.activeElement;
   document.getElementById('modal-overlay').classList.remove('hidden');
   // Auto-focus first input after animation
   setTimeout(() => {
@@ -26,7 +36,46 @@ export function closeModal() {
   closeAllDropdowns();
   document.getElementById('modal-overlay').classList.add('hidden');
   document.querySelector('.modal')?.classList.remove('modal-wide');
+
+  // CHT-1215: return focus to whatever opened the modal, instead of leaving
+  // it on document.body (unlike the mobile sidebar, which already does this).
+  if (modalTriggerElement && document.contains(modalTriggerElement) && typeof modalTriggerElement.focus === 'function') {
+    modalTriggerElement.focus();
+  }
+  modalTriggerElement = null;
 }
+
+// Focus trap for the primary modal (CHT-1215), mirroring sidebar.js's
+// pattern (CHT-883): keep Tab from leaving the modal into un-inerted
+// background content while it's open.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+
+  const overlay = document.getElementById('modal-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+
+  const modal = overlay.querySelector('.modal') || overlay;
+  const focusable = modal.querySelectorAll(MODAL_FOCUSABLE_SELECTOR);
+  if (focusable.length === 0) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  // If focus is somehow outside the modal, redirect into it
+  if (!modal.contains(document.activeElement)) {
+    e.preventDefault();
+    first.focus();
+    return;
+  }
+
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+});
 
 /**
  * Check if a modal is currently open

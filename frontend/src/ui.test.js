@@ -50,6 +50,141 @@ describe('closeModal', () => {
   });
 });
 
+// CHT-1215: the primary modal (used by every create/edit flow in the app)
+// had no focus trap and never returned focus to whatever opened it, unlike
+// the mobile sidebar's already-shipped pattern (CHT-883). Mirrors
+// mobile-sidebar.test.js's "Mobile sidebar focus management" suite.
+describe('Modal focus management (CHT-1215)', () => {
+  let triggerBtn;
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <button id="open-modal-btn">Open</button>
+      <div id="modal-overlay" class="modal-overlay hidden">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 id="modal-title">Modal</h3>
+            <button class="modal-close">&times;</button>
+          </div>
+          <div id="modal-content" class="modal-body">
+            <input type="text" id="field-1" />
+            <input type="text" id="field-2" />
+          </div>
+        </div>
+      </div>
+    `;
+    triggerBtn = document.getElementById('open-modal-btn');
+  });
+
+  it('returns focus to whatever triggered the modal when it closes', () => {
+    triggerBtn.focus();
+    showModal();
+    closeModal();
+    expect(document.activeElement).toBe(triggerBtn);
+  });
+
+  it('does not throw if the trigger element was removed from the DOM before close', () => {
+    triggerBtn.focus();
+    showModal();
+    triggerBtn.remove();
+    expect(() => closeModal()).not.toThrow();
+  });
+
+  it('does not move focus if nothing was focused before the modal opened', () => {
+    document.body.focus?.();
+    showModal();
+    // jsdom defaults document.activeElement to <body> — closing shouldn't error
+    expect(() => closeModal()).not.toThrow();
+  });
+
+  it('redirects focus into the modal when Tab is pressed from outside it', () => {
+    showModal();
+    triggerBtn.focus(); // simulate focus still outside (auto-focus timer hasn't landed)
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+
+    expect(document.activeElement).toBe(document.querySelector('.modal-close'));
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('traps focus forward at the last focusable element in the modal', () => {
+    showModal();
+    document.getElementById('field-2').focus();
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+
+    expect(document.activeElement).toBe(document.querySelector('.modal-close'));
+  });
+
+  it('traps focus backward at the first focusable element in the modal', () => {
+    showModal();
+    document.querySelector('.modal-close').focus();
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+
+    expect(document.activeElement).toBe(document.getElementById('field-2'));
+  });
+
+  it('does not trap Tab when the modal is hidden', () => {
+    const input = document.getElementById('field-1');
+    input.focus();
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(input);
+  });
+
+  // Layering: ui.js's modal trap and sidebar.js's mobile-sidebar trap are
+  // both permanent document-level Tab listeners (each guards itself with its
+  // own "am I actually open" check), so only the one whose surface is
+  // actually open should claim the keystroke.
+  describe('composes with the mobile sidebar focus trap (both listeners live)', () => {
+    let toggleSidebar;
+    let closeSidebar;
+
+    beforeEach(async () => {
+      ({ toggleSidebar, closeSidebar } = await import('./sidebar.js'));
+      document.body.classList.remove('sidebar-open');
+      document.body.innerHTML += `
+        <button id="hamburger-btn"></button>
+        <aside class="sidebar"><a href="#">Nav</a></aside>
+      `;
+    });
+
+    afterEach(() => {
+      closeSidebar();
+    });
+
+    it('modal trap governs when only the modal is open', () => {
+      showModal();
+      document.getElementById('field-2').focus();
+
+      const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+
+      expect(document.activeElement).toBe(document.querySelector('.modal-close'));
+    });
+
+    it('sidebar trap governs when only the sidebar is open', () => {
+      toggleSidebar(); // opens, focuses first sidebar link
+      const link = document.querySelector('.sidebar a');
+      expect(document.activeElement).toBe(link);
+
+      const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+
+      // Only one focusable in the sidebar — Tab wraps back to it, not to
+      // anything in the (hidden) modal
+      expect(document.activeElement).toBe(link);
+    });
+  });
+});
+
 describe('showToast', () => {
   beforeEach(() => {
     vi.useFakeTimers();
