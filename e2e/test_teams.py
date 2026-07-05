@@ -97,18 +97,11 @@ class TestInvitations:
         accept_token = create_access_token(data={"sub": accept_user.id})
         invite = api_client.invite_member(test_team["id"], accept_user.email)
         # Token isn't in API response; fetch it from DB
-        from app.database import async_session_maker
-        from app.models.team import TeamInvitation
-        from sqlalchemy import select
+        from app.oxyde_models.team import OxydeTeamInvitation
 
         async def _get_token():
-            async with async_session_maker() as session:
-                result = await session.execute(
-                    select(TeamInvitation.token).where(
-                        TeamInvitation.id == invite["id"]
-                    )
-                )
-                return result.scalar_one()
+            invitation = await OxydeTeamInvitation.objects.get(id=invite["id"])
+            return invitation.token
 
         token = _run_async(_get_token())
 
