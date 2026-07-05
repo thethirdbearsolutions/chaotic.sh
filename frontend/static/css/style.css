@@ -609,11 +609,17 @@ textarea {
     max-width: 150px;
 }
 
-.section-title {
-    margin-top: 2rem;
-    margin-bottom: 1rem;
-    font-size: 1rem;
+.section-header {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.section-header h3 {
+    font-size: var(--font-md);
+    font-weight: 600;
     color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 /* Icons */
@@ -3474,14 +3480,6 @@ input[type="checkbox"] {
     margin-bottom: 12px;
 }
 
-.dashboard-sprint-status .section-header h3 {
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
 .sprint-status-cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -3629,14 +3627,6 @@ input[type="checkbox"] {
 
 .dashboard-activity .section-header {
     margin-bottom: 12px;
-}
-
-.dashboard-activity .section-header h3 {
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 /* Sidebar Properties */
