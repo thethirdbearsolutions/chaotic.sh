@@ -325,6 +325,21 @@ describe('app.js router configuration', () => {
         expect(viewIssueByPath).toHaveBeenCalledWith('CHT-123');
     });
 
+    // CHT-1182: /issues/<id> (plural) redirects to the canonical /issue/<id>
+    it('detailRoute aliases /issues/<id> to /issue/<id>', () => {
+        const result = routerConfig.detailRoute(['issues', 'CHT-123']);
+        expect(result).toBe(true);
+        expect(viewIssueByPath).toHaveBeenCalledWith('CHT-123');
+        expect(window.location.pathname).toBe('/issue/CHT-123');
+        expect(history.state).toEqual({ view: 'issue', identifier: 'CHT-123' });
+    });
+
+    it('detailRoute leaves bare /issues (no id) to standard view routing', () => {
+        const result = routerConfig.detailRoute(['issues']);
+        expect(result).toBe(false);
+        expect(viewIssueByPath).not.toHaveBeenCalled();
+    });
+
     it('configures detailRoute for epic paths', () => {
         const result = routerConfig.detailRoute(['epic', 'epic-1']);
         expect(result).toBe(true);

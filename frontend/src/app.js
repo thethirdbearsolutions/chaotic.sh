@@ -127,6 +127,12 @@ configureRouter({
             viewIssueByPath(parts[1]);
             return true;
         }
+        if (parts[0] === 'issues' && parts[1]) {
+            // CHT-1182: redirect /issues/<id> to the canonical /issue/<id>
+            history.replaceState({ view: 'issue', identifier: parts[1] }, '', `/issue/${parts[1]}`);
+            viewIssueByPath(parts[1]);
+            return true;
+        }
         if (parts[0] === 'document' && parts[1]) {
             viewDocumentByPath(parts[1]);
             return true;
