@@ -248,6 +248,30 @@ def _event_matches_scope(event: dict, scope: dict) -> bool:
     return True
 
 
+_EVENT_SCHEMA_KEYS = (
+    "id", "activity_type", "created_at",
+    "user_id", "user_name", "user_email",
+    "issue_id", "issue_identifier", "issue_title",
+    "document_id", "document_title", "document_icon",
+    "field_name", "old_value", "new_value", "sprint_name",
+)
+"""The README's documented JSON output contract: these keys are always
+present in emitted events (null when not applicable), so
+`jq -e '.document_id'` sees the key on an issue activity too. Extra
+backend fields pass through; harnesses ignore unknown keys."""
+
+
+def _normalize_event(event: dict) -> dict:
+    """Impose the documented schema on a backend activity row: every
+    contract key present (None when the backend omitted it), unknown
+    backend fields passed through after the contract keys."""
+    out = {key: event.get(key) for key in _EVENT_SCHEMA_KEYS}
+    for key, value in event.items():
+        if key not in out:
+            out[key] = value
+    return out
+
+
 # ---------------------------------------------------------------------------
 # --until predicate
 # ---------------------------------------------------------------------------
@@ -272,7 +296,9 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
     PredicateBroken — the predicate itself is broken, not just
     rejecting events. So does exceeding _UNTIL_TIMEOUT_SECS.
     """
-    payload = (json.dumps(event, default=str) + "\n").encode("utf-8")
+    payload = (
+        json.dumps(_normalize_event(event), default=str) + "\n"
+    ).encode("utf-8")
     try:
         proc = subprocess.run(
             ["sh", "-c", cmd],
@@ -374,7 +400,7 @@ def _emit_event(event: dict, json_mode: bool) -> None:
     human eyes; harness scripts use --json.
     """
     if json_mode:
-        sys.stdout.write(json.dumps(event, default=str) + "\n")
+        sys.stdout.write(json.dumps(_normalize_event(event), default=str) + "\n")
         sys.stdout.flush()
         return
     click.echo(_render_event_line(event))

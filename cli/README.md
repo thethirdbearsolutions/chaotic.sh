@@ -326,9 +326,11 @@ only; do not parse it.
 }
 ```
 
-This shape is the CLI-stable contract. If the backend activity schema
-evolves, the CLI will maintain backward compatibility for the fields
-above.
+This shape is the CLI-stable contract, enforced by the CLI itself: the
+documented keys are filled in (with `null`) even if the backend omits
+them. Fields the backend adds beyond this list pass through — harnesses
+should ignore unknown keys. The same normalized shape is what `--until`
+predicates receive on stdin.
 
 ### `--until` contract
 

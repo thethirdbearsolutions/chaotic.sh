@@ -405,6 +405,34 @@ class TestRenderEventLine:
 # ---------------------------------------------------------------------------
 
 
+class TestNormalizeEvent:
+    def test_all_contract_keys_present_even_when_backend_omits(self):
+        out = await_cmd._normalize_event({"id": "e1", "activity_type": "commented"})
+        for key in await_cmd._EVENT_SCHEMA_KEYS:
+            assert key in out, key
+        assert out["id"] == "e1"
+        assert out["document_id"] is None
+        assert out["sprint_name"] is None
+
+    def test_unknown_backend_fields_pass_through(self):
+        out = await_cmd._normalize_event({"id": "e1", "future_field": 7})
+        assert out["future_field"] == 7
+
+    def test_emitted_json_carries_full_contract(self, capsys):
+        await_cmd._emit_event({"id": "e1"}, json_mode=True)
+        line = capsys.readouterr().out
+        assert line.endswith("\n")
+        parsed = json.loads(line)
+        assert set(await_cmd._EVENT_SCHEMA_KEYS) <= set(parsed)
+
+    def test_predicate_stdin_carries_full_contract(self):
+        # `grep document_id` only matches if the normalized key is
+        # present on an event the backend sent without it.
+        assert await_cmd._run_until_predicate(
+            "grep -q document_id", {"id": "e1"},
+        ) is True
+
+
 class TestUntilPredicate:
     def test_zero_exit_means_match(self):
         assert await_cmd._run_until_predicate(
@@ -443,7 +471,9 @@ class TestUntilPredicate:
         cmd = f"cat > {sink}"
         await_cmd._run_until_predicate(cmd, {"id": "evt_42"})
         data = json.loads(sink.read_text())
-        assert data == {"id": "evt_42"}
+        assert data["id"] == "evt_42"
+        # The predicate sees the normalized (contract-complete) shape.
+        assert set(await_cmd._EVENT_SCHEMA_KEYS) <= set(data)
 
     def test_event_not_interpolated_into_command(self, tmp_path):
         # An adversarial event value containing shell metacharacters must
