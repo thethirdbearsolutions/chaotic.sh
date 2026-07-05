@@ -54,10 +54,13 @@ chaotic system install
 Then set up your account:
 
 ```bash
-chaotic auth signup
-chaotic team create
+chaotic auth signup --name "Your Name" --email you@example.com --password "a strong password"
+chaotic team create "My Team" TEAM
 chaotic init
 ```
+
+(Or skip typing out flags and run `chaotic quickstart` instead, which walks
+through account/team/project setup interactively.)
 
 Open http://localhost:24267 for the web UI.
 
