@@ -102,6 +102,10 @@ import {
     getGroupByValue,
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
+    setProjectFilter,
+    setTypeFilter,
+    setAssigneeFilter,
+    setSprintFilter,
 } from './issues-view.js';
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
@@ -1087,6 +1091,38 @@ describe('issues-view', () => {
         it('updates group-by select value', () => {
             setGroupBy('status');
             expect(document.getElementById('group-by-select').value).toBe('status');
+        });
+    });
+
+    // ========================================
+    // Single-select filter categories auto-close the popover (CHT-1212)
+    // ========================================
+
+    describe('single-select filter auto-close (CHT-1212)', () => {
+        beforeEach(() => {
+            getProjects.mockReturnValue([]);
+            document.getElementById('filter-menu-dropdown').classList.remove('hidden');
+            document.getElementById('display-menu-dropdown').classList.remove('hidden');
+        });
+
+        it('setProjectFilter closes the filter menu, matching Display-menu behavior', () => {
+            setProjectFilter('proj-1');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setTypeFilter closes the filter menu', () => {
+            setTypeFilter('bug');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setAssigneeFilter closes the filter menu', () => {
+            setAssigneeFilter('me');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('setSprintFilter closes the filter menu', () => {
+            setSprintFilter('sprint-1');
+            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
         });
     });
 

@@ -345,6 +345,7 @@ export function setProjectFilter(value) {
     setCurrentProject(value);
     renderFilterMenuCategories();
     showFilterCategoryOptions('project');
+    closeAllFilterMenus();
 }
 
 export function clearProjectFilter() {
@@ -416,6 +417,7 @@ export function setTypeFilter(value) {
     showFilterCategoryOptions('type');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearTypeFilter() {
@@ -432,6 +434,7 @@ export function setAssigneeFilter(value) {
     showFilterCategoryOptions('assignee');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearAssigneeFilter() {
@@ -448,6 +451,7 @@ export function setSprintFilter(value) {
     showFilterCategoryOptions('sprint');
     updateFilterChips();
     updateFilterCountBadge();
+    closeAllFilterMenus();
 }
 
 export function clearSprintFilter() {
