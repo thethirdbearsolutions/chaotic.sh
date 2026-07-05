@@ -41,12 +41,92 @@ reading `git diff v0.3.1 v0.7.1` of github.com/mr-fatalyst/oxyde (python layer
 ## Test delta
 
 - Baseline, oxyde 0.3.1 (origin/main): **42 failed, 1082 passed** (pre-existing failures).
-- oxyde 0.7.1, no code changes: **124 failed, 1000 passed** (~82 new failures).
-- After fixes on this branch: see PR description / commits.
+- oxyde 0.7.1, no code changes: **124 failed, 1000 passed** (~82 new failures; ~96 new / 13 baseline-flaky-fixed by set-diff).
+- oxyde 0.7.1 after this branch's fixes: **42 failed, 1082 passed — the failure *set* is
+  byte-identical to the 0.3.1 baseline.** Zero new failures, zero regressions.
+
+Fixes applied (one commit each):
+1. `OxydeModel` → `Model` rename in model modules + stubs (kills DeprecationWarnings).
+2. `DateTimeUTC` annotation on every ORM datetime field — 0.7 binds datetimes as
+   typed SQL timestamps so SQLite round-trips them naive, and create()/save()
+   now re-validate instances from RETURNING rows; the validator re-attaches UTC.
+   (`DateTimeUTC`/`ensure_utc` moved to `app/utils/datetimes.py`; `app.utils`
+   re-exports unchanged.)
+3. Extended the `objects.create()` patch in `app/oxyde_db.py` to pass plain
+   non-None Pydantic defaults as explicit kwargs — 0.7 INSERTs with
+   `exclude_unset`, so model defaults stopped reaching the DB and SQL column
+   defaults won, including `rituals.approval_mode DEFAULT 'NONE'` which has no
+   matching enum member (create() then failed validating its own RETURNING row).
+4. One test assertion: after save(), `invitation.status` is now the coerced
+   enum member (DbEnum's intended semantics), not the raw `'DECLINED'` string.
+5. Test pool pinned to `max_connections=1`: FK-corruption tests bracket writes
+   with `PRAGMA foreign_keys OFF/ON`; 0.7's pool routed the PRAGMA and the
+   write to different connections (and 0.7 actually enforces FKs), making
+   several tests flaky.
 
 (Coverage disabled with `--no-cov` throughout: repo `.coveragerc` references a
 missing greenlet concurrency plugin.)
 
-## Migration rehearsal
+## Migration rehearsal (real database copies, originals untouched)
 
-(filled in below after running against a copied production backup)
+### Scenario A — 0.3.1-era Oxyde database (`backend/chaotic.db`, copied to scratch)
+
+DB state before: `oxyde_migrations` = `0001_initial`,
+`0002_human_rituals_required_default_true` (a migration file that no longer
+exists in `migrations/` — harmless, it's simply not pending).
+
+With oxyde 0.7.1 (`DATABASE_URL=sqlite+aiosqlite:///<copy>`):
+
+- `oxyde showmigrations` — works (its Applied/Pending arithmetic counts the
+  orphaned applied name, cosmetic only).
+- `oxyde migrate` — **applied 0002–0005 cleanly**, including 0005's
+  PRAGMA-heavy table rebuild.
+- Server boot (`uvicorn app.main:app`, `SECRET_KEY` set) — lifespan runs
+  `apply_migrations()`, app starts healthy.
+- End-to-end over HTTP against the migrated copy: `/health`, signup, login,
+  team create, project create, issue create, issue list. Issue list hydrates
+  the `creator` JOIN (`creator_name` populated); enum defaults come back
+  correct (`status: backlog`, `priority: no_priority`); all timestamps
+  tz-aware (`...Z`).
+
+### Scenario B — pre-Oxyde (alembic-era) backup (`chaotic.db.backup.1`, Feb 5)
+
+`oxyde migrate 0001_initial --fake` + `oxyde migrate` fails at the cleanup
+migrations: `no such table: ticket_limbo`. **Verified identical failure under
+oxyde 0.3.1** — this backup predates the schema `--fake-initial` assumes
+(it has no ticket_limbo/ritual_groups/document_* tables), so this is a
+pre-existing limitation of the `--fake-initial` flow for sufficiently old
+databases, not an upgrade regression.
+
+### makemigrations skew (pre-existing, not upgrade-caused)
+
+`oxyde makemigrations --dry-run` reports a 36-operation diff (create
+ticket_limbo_blockers / document_issues, many drop_foreign_key, drop
+ticket_limbo.ritual_id). **The identical 36-op diff is produced on main with
+oxyde 0.3.1** — models and the migration chain were already out of sync
+(0002–0005 are raw-SQL migrations invisible to the replayer). `oxyde migrate`
+(what `chaotic system upgrade` runs) is unaffected. Do not run
+`makemigrations` expecting a no-op; that cleanup is a separate chore.
+
+## Open risks for production deploys
+
+- **Datetime storage format changes on write**: 0.3.1 stored
+  `2026-02-05T12:00:00+00:00` (ISO, offset); 0.7.1 stores
+  `2026-02-05 12:00:00` (naive). Existing rows keep the old format; new/updated
+  rows get the new one. Pydantic parses both and `DateTimeUTC` normalizes to
+  aware-UTC, but any raw-SQL string comparison/sorting on datetime columns
+  across the format boundary is suspect. Chaotic's raw-SQL datetime uses go
+  through `ensure_utc`, which handles both.
+- **FK enforcement is real now**: 0.7's SQLite pool enforces foreign keys;
+  0.3.1 did not. Production data with dangling FKs (deleted users referenced
+  by api_keys etc.) will start throwing IntegrityError on writes that touch
+  them. The rehearsal DB was clean; a production install with years of
+  0.3.1-era writes may not be.
+- **`update()` return-type change**: any future code (or plugins) written
+  against 0.3.1 examples that inspects the return of queryset `.update()`
+  gets an int now. Chaotic's two call sites discard it.
+- **get_or_create/update_or_create now swallow IntegrityError into a re-fetch** —
+  behavior improvement, but different failure surface under concurrent writes.
+- The dev/test monkeypatches in `app/oxyde_db.py` remain load-bearing (defaults
+  injection). If oxyde later fixes exclude_unset INSERT semantics or adds
+  db-side defaults support, revisit.
