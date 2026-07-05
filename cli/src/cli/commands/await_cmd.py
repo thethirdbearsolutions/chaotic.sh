@@ -720,6 +720,33 @@ def _require_current_project() -> str:
     return project_id
 
 
+def _resolve_project_arg(value: str) -> str:
+    """Resolve a project ID/key/name argument to a project ID (CHT-1222).
+
+    `await issues --project`/`await project`'s own help text and README
+    document that this accepts a project *key* (e.g. "CHT"), not just a
+    raw ID — mirror how every other command resolves keys via
+    main.resolve_project_id instead of passing the string straight
+    through as a literal project_id.
+    """
+    m = _main()
+    try:
+        return m.resolve_project_id(value)
+    except click.ClickException as exc:
+        _stderr(f"await: {exc.format_message()}")
+        raise SystemExit(1) from exc
+
+
+def _resolve_team_arg(value: str) -> str:
+    """Resolve a team ID/key/name argument to a team ID (CHT-1222)."""
+    m = _main()
+    try:
+        return m.resolve_team_id(value)
+    except click.ClickException as exc:
+        _stderr(f"await: {exc.format_message()}")
+        raise SystemExit(1) from exc
+
+
 def _await_event(
     *,
     team_id: str,
@@ -885,7 +912,10 @@ def register(cli):
         For a specific issue, use `chaotic await issue ID` instead.
         """
         team_id = _require_current_team()
-        project_id = project_override or _require_current_project()
+        project_id = (
+            _resolve_project_arg(project_override)
+            if project_override else _require_current_project()
+        )
         _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
@@ -931,7 +961,10 @@ def register(cli):
     def await_project(project_id, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any activity in a project (defaults to current project)."""
         team_id = _require_current_team()
-        project_id = project_id or _require_current_project()
+        project_id = (
+            _resolve_project_arg(project_id)
+            if project_id else _require_current_project()
+        )
         _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
@@ -981,7 +1014,10 @@ def register(cli):
     @_common_options
     def await_team(team_id_arg, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any activity on a team (defaults to current team)."""
-        team_id = team_id_arg or _require_current_team()
+        team_id = (
+            _resolve_team_arg(team_id_arg)
+            if team_id_arg else _require_current_team()
+        )
         _await_event(
             team_id=team_id, project_id=None, scope={},
             type_spec=type_spec, include_self=include_self,
