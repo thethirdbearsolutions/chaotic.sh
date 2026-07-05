@@ -59,6 +59,7 @@ export const FILTER_CATEGORIES = [
     { key: 'assignee', label: 'Assignee' },
     { key: 'sprint', label: 'Sprint' },
     { key: 'labels', label: 'Labels' },
+    { key: 'exclude_labels', label: 'Exclude Labels' },
 ];
 
 export const CLOSED_STATUSES = ['done', 'canceled'];
@@ -82,7 +83,9 @@ export function getFilterCategoryCount(category) {
         case 'sprint':
             return document.getElementById('sprint-filter')?.value ? 1 : 0;
         case 'labels':
-            return getSelectedLabels().length + getExcludedLabels().length;
+            return getSelectedLabels().length;
+        case 'exclude_labels':
+            return getExcludedLabels().length;
         default:
             return 0;
     }

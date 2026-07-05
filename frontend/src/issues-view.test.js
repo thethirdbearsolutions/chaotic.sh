@@ -259,13 +259,13 @@ describe('issues-view', () => {
     // ========================================
 
     describe('FILTER_CATEGORIES', () => {
-        it('has 7 categories', () => {
-            expect(FILTER_CATEGORIES).toHaveLength(7);
+        it('has 8 categories', () => {
+            expect(FILTER_CATEGORIES).toHaveLength(8);
         });
 
-        it('includes project, status, priority, type, assignee, sprint, labels', () => {
+        it('includes project, status, priority, type, assignee, sprint, labels, exclude_labels', () => {
             const keys = FILTER_CATEGORIES.map(c => c.key);
-            expect(keys).toEqual(['project', 'status', 'priority', 'type', 'assignee', 'sprint', 'labels']);
+            expect(keys).toEqual(['project', 'status', 'priority', 'type', 'assignee', 'sprint', 'labels', 'exclude_labels']);
         });
     });
 
@@ -404,10 +404,10 @@ describe('issues-view', () => {
     // ========================================
 
     describe('renderFilterMenuCategories', () => {
-        it('renders all 7 categories', () => {
+        it('renders all 8 categories', () => {
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
-            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(7);
+            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(8);
         });
 
         it('marks active category', () => {

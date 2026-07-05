@@ -472,6 +472,26 @@ export function clearLabelFilterNew() {
     updateFilterCountBadge();
 }
 
+export function toggleExcludeLabelOption(value, event) {
+    const dropdown = document.getElementById('exclude-label-filter-dropdown');
+    const hiddenCheckbox = dropdown?.querySelector(`input[value="${value}"]`);
+    const newCheckbox = event?.target || document.querySelector(`#filter-menu-options input[value="${value}"]`);
+    if (hiddenCheckbox && newCheckbox) {
+        hiddenCheckbox.checked = newCheckbox.checked;
+        updateExcludeLabelFilter();
+    }
+    renderFilterMenuCategories();
+    showFilterCategoryOptions('exclude_labels');
+}
+
+export function clearExcludeLabelFilterNew() {
+    clearExcludeLabelFilter();
+    renderFilterMenuCategories();
+    showFilterCategoryOptions('exclude_labels');
+    updateFilterChips();
+    updateFilterCountBadge();
+}
+
 export function setSort(value) {
     const sortSelect = document.getElementById('sort-by-select');
     if (sortSelect) {
@@ -539,6 +559,8 @@ registerActions({
     'clear-sprint-filter': () => clearSprintFilter(),
     'clear-label-filter-new': () => clearLabelFilterNew(),
     'toggle-label-option': (event, dataset) => toggleLabelOption(dataset.filterValue, event),
+    'clear-exclude-label-filter-new': () => clearExcludeLabelFilterNew(),
+    'toggle-exclude-label-option': (event, dataset) => toggleExcludeLabelOption(dataset.filterValue, event),
     'set-sort': (_event, dataset) => setSort(dataset.value),
     'set-group-by': (_event, dataset) => setGroupBy(dataset.value),
     'clear-all-filters': () => clearAllFilters(),
