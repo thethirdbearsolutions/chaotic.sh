@@ -222,6 +222,32 @@ describe('Keyboard Handler', () => {
             expect(actions.navigateTo).toHaveBeenCalledWith('team');
         });
 
+        // CHT-1215: help overlay/command palette advertised these but the switch
+        // never implemented them
+        it('g then e navigates to epics', () => {
+            handler(makeEvent('g'));
+            handler(makeEvent('e'));
+            expect(actions.navigateTo).toHaveBeenCalledWith('epics');
+        });
+
+        it('g then r navigates to rituals', () => {
+            handler(makeEvent('g'));
+            handler(makeEvent('r'));
+            expect(actions.navigateTo).toHaveBeenCalledWith('rituals');
+        });
+
+        it('g then a navigates to approvals', () => {
+            handler(makeEvent('g'));
+            handler(makeEvent('a'));
+            expect(actions.navigateTo).toHaveBeenCalledWith('approvals');
+        });
+
+        it('g then , navigates to settings', () => {
+            handler(makeEvent('g'));
+            handler(makeEvent(','));
+            expect(actions.navigateTo).toHaveBeenCalledWith('settings');
+        });
+
         it('g then unrecognized key does nothing', () => {
             handler(makeEvent('g'));
             handler(makeEvent('z'));
@@ -419,6 +445,29 @@ describe('Modifier Key Handler (Cmd+Enter, Cmd+K)', () => {
             const event = makeEvent('k');
             handler(event);
             expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+
+        // CHT-1215: layering — Cmd+K used to stack the palette on top of an
+        // open modal, and Escape's modal-first priority would then close the
+        // modal underneath instead of the (topmost) palette. Guard at the
+        // source: don't open over a modal at all.
+        it('does not open the command palette when a modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isCommandPaletteOpen.mockReturnValue(false);
+            const event = makeEvent('k', { metaKey: true });
+            handler(event);
+
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.openCommandPalette).not.toHaveBeenCalled();
+        });
+
+        it('still allows closing an already-open command palette when a modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            const event = makeEvent('k', { metaKey: true });
+            handler(event);
+
+            expect(actions.closeCommandPalette).toHaveBeenCalled();
         });
     });
 

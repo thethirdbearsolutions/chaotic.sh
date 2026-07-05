@@ -70,6 +70,10 @@ export function createKeyboardHandler(actions) {
                 case 's': actions.navigateTo('sprints'); break;
                 case 'd': actions.navigateTo('documents'); break;
                 case 't': actions.navigateTo('team'); break;
+                case 'e': actions.navigateTo('epics'); break;
+                case 'r': actions.navigateTo('rituals'); break;
+                case 'a': actions.navigateTo('approvals'); break;
+                case ',': actions.navigateTo('settings'); break;
             }
             return;
         }
@@ -157,7 +161,10 @@ export function createModifierKeyHandler(actions) {
             e.preventDefault();
             if (actions.isCommandPaletteOpen()) {
                 actions.closeCommandPalette();
-            } else {
+            } else if (!actions.isModalOpen()) {
+                // CHT-1215: don't stack the palette on top of an open modal —
+                // Escape's priority (modal > sidebar > dropdowns) would then
+                // close the modal underneath instead of the topmost palette.
                 actions.openCommandPalette();
             }
         }
