@@ -490,6 +490,31 @@ describe('issues-view', () => {
             expect(dropdown.classList.contains('show-options')).toBe(false);
         });
 
+        // CHT-1212: pane switches dropped keyboard focus into the void
+        describe('focus management on pane switch (CHT-1212)', () => {
+            it('show-filter-category focuses the back button in the newly rendered options pane', () => {
+                issuesViewActions['show-filter-category'](null, { category: 'status' });
+                const back = document.querySelector('#filter-menu-options .filter-options-back');
+                expect(document.activeElement).toBe(back);
+            });
+
+            it('filter-menu-back focuses the active category row', () => {
+                getActiveFilterCategory.mockReturnValue('priority');
+                issuesViewActions['show-filter-category'](null, { category: 'priority' });
+                issuesViewActions['filter-menu-back']();
+                const active = document.querySelector('#filter-menu-categories .filter-menu-category.active');
+                expect(document.activeElement).toBe(active);
+                expect(active.textContent).toContain('Priority');
+            });
+
+            it('filter-menu-back falls back to the first category row when none is active', () => {
+                getActiveFilterCategory.mockReturnValue(undefined);
+                issuesViewActions['filter-menu-back']();
+                const first = document.querySelector('#filter-menu-categories .filter-menu-category');
+                expect(document.activeElement).toBe(first);
+            });
+        });
+
         it('showFilterCategories re-renders the category list', () => {
             document.getElementById('filter-menu-categories').innerHTML = '';
             showFilterCategories();

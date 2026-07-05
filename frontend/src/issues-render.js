@@ -148,7 +148,7 @@ export function renderFilterMenuCategories() {
         const isDisabled = cat.key === 'sprint' && !projectId;
         return `
             <div class="filter-menu-category ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
-                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
+                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}" tabindex="-1">
                 <span>${cat.label}</span>
                 ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : ''}
                 <span class="filter-menu-category-arrow">\u2192</span>

@@ -556,8 +556,17 @@ registerActions({
         // CHT-1161: mobile shows one pane at a time — entering a category
         // switches the dropdown to the options pane
         document.getElementById('filter-menu-dropdown')?.classList.add('show-options');
+        // CHT-1212: pane switch — move focus into the newly shown options
+        // pane so keyboard/screen-reader users don't lose their place
+        document.querySelector('#filter-menu-options .filter-options-back')?.focus();
     },
-    'filter-menu-back': () => showFilterCategories(),
+    'filter-menu-back': () => {
+        showFilterCategories();
+        // CHT-1212: pane switch — return focus to the category list
+        const container = document.getElementById('filter-menu-categories');
+        const target = container?.querySelector('.filter-menu-category.active') || container?.querySelector('.filter-menu-category');
+        target?.focus();
+    },
     'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
     'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),
