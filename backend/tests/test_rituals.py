@@ -3169,10 +3169,13 @@ class TestTicketLimbo:
         assert pending[0]["issue_id"] == issue_in_limbo.id
         assert pending[0]["pending_gates"][0]["requested_by_name"] == test_user.name
 
-    async def test_auto_mode_ritual_does_not_create_limbo(
+    async def test_auto_mode_ritual_creates_intent_limbo(
         self, db, test_project, test_issue, test_user
     ):
-        """Test that AUTO mode rituals don't create limbo records (user can complete themselves)."""
+        """AUTO mode rituals create limbo intent rows too. Under the
+        unified intent+blockers model, limbo is the universal record of
+        intent regardless of approval mode (pre-refactor only GATE
+        created limbo)."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
         from app.enums import IssueStatus
@@ -3197,11 +3200,20 @@ class TestTicketLimbo:
         with pytest.raises(ClaimRitualsError):
             await issue_service.update(test_issue, update, test_user.id, is_human_request=True)
 
-        # Check NO limbo record was created
+        # An open CLAIM intent with an unresolved blocker for the ritual
+        # must be recorded.
         limbo_records = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
         ).all()
-        assert len(limbo_records) == 0  # No limbo for AUTO mode
+        assert len(limbo_records) == 1
+        limbo = limbo_records[0]
+        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.cleared_at is None
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=limbo.id,
+        ).all()
+        assert [b.ritual_id for b in blockers] == [ritual.id]
+        assert blockers[0].resolved_at is None
 
 
 # ============================================================================

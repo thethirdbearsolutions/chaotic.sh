@@ -100,7 +100,7 @@ class RitualService:
             return
 
         siblings = await OxydeRitual.objects.filter(
-            group=group, is_active=True,
+            group_id=group.id, is_active=True,
         ).all()
         if not siblings:
             return
@@ -266,10 +266,52 @@ class RitualService:
         # Reload to get fresh data
         return await self.get_by_id(ritual.id, include_inactive=True)
 
-    async def delete(self, ritual: OxydeRitual) -> None:
-        """Soft-delete a ritual by marking it inactive."""
+    async def delete(self, ritual: OxydeRitual, deleted_by_id: str | None = None) -> None:
+        """Soft-delete a ritual by marking it inactive.
+
+        Open intents blocked by this ritual are explicitly released with
+        an audit trail (INTENT_CANCELED), not silently orphaned: the
+        deleted ritual would otherwise vanish from pending lists while
+        the limbo row stayed open forever. Scrub semantics — no
+        auto-transition fires; the user re-attempts.
+        """
         ritual.is_active = False
         await ritual.save(update_fields={"is_active"})
+
+        from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
+
+        now = datetime.now(timezone.utc)
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            ritual_id=ritual.id, resolved_at=None,
+        ).all()
+        for blocker in blockers:
+            intent = await OxydeTicketLimbo.objects.get_or_none(id=blocker.limbo_id)
+            if intent is None or intent.cleared_at is not None:
+                continue
+            blocker.resolved_at = now
+            blocker.resolved_by_id = deleted_by_id
+            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+
+            remaining = await OxydeTicketLimboBlocker.objects.filter(
+                limbo_id=intent.id, resolved_at=None,
+            ).all()
+            if remaining:
+                continue
+            intent.cleared_at = now
+            intent.cleared_by_id = deleted_by_id
+            await intent.save(update_fields={"cleared_at", "cleared_by_id"})
+            try:
+                await OxydeIssueActivity.objects.create(
+                    issue_id=intent.issue_id,
+                    user_id=deleted_by_id or intent.requested_by_id,
+                    activity_type=ActivityType.INTENT_CANCELED,
+                    new_value=f"ritual '{ritual.name}' deleted",
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to write INTENT_CANCELED activity for issue=%s "
+                    "after deleting ritual=%s", intent.issue_id, ritual.id,
+                )
 
     async def list_by_project(self, project_id: str, include_inactive: bool = False) -> list[OxydeRitual]:
         """List all rituals for a project."""
@@ -803,6 +845,29 @@ class RitualService:
                 return existing
             raise
 
+        # Broadcast issue-level attest. Emitted here (not just at the API
+        # layer) so internal callers are observable too — same doctrine as
+        # the other intent-lifecycle events.
+        try:
+            from app.websocket import broadcast_attestation_event
+            from app.oxyde_models.project import OxydeProject as _OP
+            project = await _OP.objects.get_or_none(id=issue.project_id)
+            if project is not None:
+                await broadcast_attestation_event(
+                    project.team_id,
+                    "ritual_attested",
+                    {
+                        "ritual_id": ritual_id,
+                        "ritual_name": ritual_name,
+                        "issue_id": issue_id,
+                        "attestation_id": attestation.id,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast ritual_attested for issue=%s", issue_id,
+            )
+
         # AUTO attestation is also approval — it clears limbo (and may fire
         # the one-step auto-transition if it's the last block). If there's
         # no existing limbo (standalone attest with no prior intent
@@ -1062,6 +1127,28 @@ class RitualService:
             )
         return ritual
 
+    @staticmethod
+    async def _approve_atomic(
+        attestation: OxydeRitualAttestation, approver_id: str
+    ) -> None:
+        """Compare-and-set approval: a single conditional UPDATE guarded
+        by `approved_at IS NULL`. The instance-level check in
+        `_validate_approve_mode_and_pending` is only a fast-path guard —
+        two concurrent approvers both pass it, so the DB write must be
+        the serializer. The loser matches zero rows and gets the same
+        already-approved error.
+        """
+        now = datetime.now(timezone.utc)
+        updated = await OxydeRitualAttestation.objects.filter(
+            id=attestation.id, approved_at=None,
+        ).update(approved_by=approver_id, approved_at=now)
+        if not updated:
+            raise ValueError(
+                "Attestation is already approved; cannot approve again."
+            )
+        attestation.approved_by = approver_id
+        attestation.approved_at = now
+
     async def approve(
         self, attestation: OxydeRitualAttestation, approver_id: str
     ) -> OxydeRitualAttestation:
@@ -1070,9 +1157,7 @@ class RitualService:
             attestation, expected_trigger=RitualTrigger.EVERY_SPRINT,
         )
 
-        attestation.approved_by = approver_id
-        attestation.approved_at = datetime.now(timezone.utc)
-        await attestation.save(update_fields={"approved_by", "approved_at"})
+        await self._approve_atomic(attestation, approver_id)
 
         await self._maybe_clear_limbo(attestation.sprint_id)
 
@@ -1102,9 +1187,7 @@ class RitualService:
         ritual_id = attestation.ritual_id
         issue_id = attestation.issue_id
 
-        attestation.approved_by = approver_id
-        attestation.approved_at = datetime.now(timezone.utc)
-        await attestation.save(update_fields={"approved_by", "approved_at"})
+        await self._approve_atomic(attestation, approver_id)
 
         # Emit RITUAL_APPROVED before clearing limbo: the approval is the
         # primary event; intent_cleared (if any) is downstream. The
@@ -1294,7 +1377,7 @@ class RitualService:
 
         cleared_count = 0
         now = datetime.now(timezone.utc)
-        affected_intents = set()
+        affected_intents: dict[str, str | None] = {}
         for blocker in unresolved_blockers:
             intent = intent_by_id[blocker.limbo_id]
             attestation = att_map.get((blocker.ritual_id, intent.issue_id))
@@ -1303,10 +1386,10 @@ class RitualService:
                 blocker.resolved_by_id = attestation.approved_by
                 await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
                 cleared_count += 1
-                affected_intents.add(intent.id)
+                affected_intents[intent.id] = attestation.approved_by
 
         # Close any intents whose blockers are now all resolved.
-        for limbo_id in affected_intents:
+        for limbo_id, approved_by in affected_intents.items():
             remaining = await OxydeTicketLimboBlocker.objects.filter(
                 limbo_id=limbo_id, resolved_at=None,
             ).all()
@@ -1314,11 +1397,11 @@ class RitualService:
                 continue
             intent = intent_by_id[limbo_id]
             intent.cleared_at = now
-            # Cleared by background orphan-cleanup, not a specific
-            # user. NULL avoids the FK violation that would arise
-            # under PRAGMA foreign_keys = ON; downstream displays
-            # should treat NULL cleared_by_id as "system-cleared".
-            intent.cleared_by_id = None
+            # Attribute the clear to the approver whose attestation
+            # resolved the final blocker — a real user id, so no FK
+            # violation under PRAGMA foreign_keys = ON (unlike the old
+            # literal "system"). NULL only if attribution is unknown.
+            intent.cleared_by_id = approved_by
             await intent.save(update_fields={"cleared_at", "cleared_by_id"})
 
         if cleared_count:

@@ -240,7 +240,7 @@ class TestGroupSelectionEnforcedAtAttest:
             prompt="A",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
-            group=group,
+            group_id=group.id,
             note_required=False,
         )
         r_b = await OxydeRitual.objects.create(
@@ -249,19 +249,24 @@ class TestGroupSelectionEnforcedAtAttest:
             prompt="B",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
-            group=group,
+            group_id=group.id,
             note_required=False,
         )
 
-        # Force r_a to be the "selected" one for this issue (round-robin
-        # last_selected_ritual_id mechanism). The user attempts to attest
-        # r_b — must be rejected.
-        group.last_selected_ritual_id = r_a.id
-        await group.save(update_fields={"last_selected_ritual_id"})
+        # RANDOM_ONE selection is a weighted pick seeded by the issue id
+        # (mirrors _apply_group_selection; last_selected_ritual_id only
+        # drives ROUND_ROBIN). Compute the pick the listing would offer,
+        # then attempt to attest the OTHER ritual — must be rejected.
+        service = RitualService()
+        siblings = await OxydeRitual.objects.filter(
+            group_id=group.id, is_active=True,
+        ).all()
+        picked = service._select_random_one(siblings, seed=test_issue.id)
+        non_selected = r_b if picked.id == r_a.id else r_a
 
         with pytest.raises((ValueError, Exception)) as exc:
-            await RitualService().attest_for_issue(
-                r_b, test_issue.id, test_user.id, note="wrong one"
+            await service.attest_for_issue(
+                non_selected, test_issue.id, test_user.id, note="wrong one"
             )
         msg = str(exc.value).lower()
         assert "group" in msg or "select" in msg or "choose" in msg, (
@@ -288,8 +293,8 @@ class TestSprintApproveEnforcesTrigger:
         # Bypass attest_for_sprint validation by manually creating an
         # attestation with a sprint_id and a TICKET_CLOSE ritual.
         att = await OxydeRitualAttestation.objects.create(
-            ritual=ritual,
-            sprint=test_sprint,
+            ritual_id=ritual.id,
+            sprint_id=test_sprint.id,
             attested_by=test_user.id,
             note="bogus",
         )
@@ -368,9 +373,9 @@ class TestSoftDeleteHandling:
                 is_human_request=False,
             )
 
-        # Soft-delete the ritual.
-        gate_close_ritual.is_active = False
-        await gate_close_ritual.save(update_fields={"is_active"})
+        # Soft-delete the ritual through the service (the enforcement
+        # boundary — internal callers and the API both route here).
+        await RitualService().delete(gate_close_ritual, deleted_by_id=test_user.id)
 
         # The open limbo row must be explicitly cleared with attribution
         # to the deletion event — not silently abandoned.
