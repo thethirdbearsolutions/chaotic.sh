@@ -1148,7 +1148,7 @@ def system_reconfigure(host, port, yes):
         else:
             console.print("[red]Failed to restart server.[/red]")
             console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
-            console.print("Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
+            console.print(f"Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
             raise SystemExit(1)
     else:
         console.print("[dim]Server was not running; skipping restart.[/dim]")
