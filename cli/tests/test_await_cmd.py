@@ -394,6 +394,34 @@ class TestRenderEventLine:
         line = _strip_ansi(await_cmd._render_event_line({}))
         assert "?" in line  # falls back gracefully
 
+    def test_multiline_attestation_note_stays_one_line(self):
+        line = await_cmd._render_event_line({
+            "created_at": "2026-05-11T14:22:07Z",
+            "activity_type": "ritual_attested",
+            "issue_identifier": "CHT-1334",
+            "user_name": "ali",
+            "new_value": "looks great\n\nreviewed the whole diff\ncarefully",
+        })
+        assert "\n" not in _strip_ansi(line)
+
+    def test_long_value_is_truncated(self):
+        long_note = "x" * 500
+        line = _strip_ansi(await_cmd._render_event_line({
+            "created_at": "2026-05-11T14:22:07Z",
+            "activity_type": "ritual_attested",
+            "issue_identifier": "CHT-1334",
+            "user_name": "ali",
+            "new_value": long_note,
+        }))
+        assert long_note not in line
+        assert "…" in line
+
+    def test_summarize_value_short_values_unchanged(self):
+        assert await_cmd._summarize_value("in_review") == "in_review"
+
+    def test_summarize_value_collapses_whitespace(self):
+        assert await_cmd._summarize_value("a\n\n b\tc") == "a b c"
+
     def test_falls_back_to_user_id_when_no_name(self):
         event = {"activity_type": "commented", "user_id": "u_42"}
         line = _strip_ansi(await_cmd._render_event_line(event))

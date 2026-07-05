@@ -350,6 +350,20 @@ def _format_event_ts(value) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+_VALUE_DISPLAY_LIMIT = 60
+
+
+def _summarize_value(value) -> str:
+    """Flatten a field value for the one-line rendered output. Ritual
+    attestations carry the free-text note in new_value — embedded
+    newlines and multi-paragraph notes must not break the single-line
+    invariant."""
+    text = " ".join(str(value).split())
+    if len(text) > _VALUE_DISPLAY_LIMIT:
+        text = text[: _VALUE_DISPLAY_LIMIT - 1] + "…"
+    return text
+
+
 def _render_event_line(event: dict) -> str:
     """Build the one-line human-readable summary for non-JSON output.
 
@@ -384,11 +398,14 @@ def _render_event_line(event: dict) -> str:
         # Status/priority/assignment-style transitions: show old → new
         # when both are present, just → new when not.
         if old_val and new_val and old_val != new_val:
-            parts.append(click.style(f"{old_val} → {new_val}", fg="cyan"))
+            parts.append(click.style(
+                f"{_summarize_value(old_val)} → {_summarize_value(new_val)}",
+                fg="cyan",
+            ))
         elif new_val:
-            parts.append(click.style(f"→ {new_val}", fg="cyan"))
+            parts.append(click.style(f"→ {_summarize_value(new_val)}", fg="cyan"))
     elif new_val:
-        parts.append(click.style(f"({new_val})", dim=True))
+        parts.append(click.style(f"({_summarize_value(new_val)})", dim=True))
 
     return " ".join(parts)
 
