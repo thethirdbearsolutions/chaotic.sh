@@ -141,6 +141,39 @@ oxyde 0.3.1** — models and the migration chain were already out of sync
 Suite after review fixes: **42 failed, 1094 passed** — failure set still
 byte-identical to the 0.3.1 baseline (the +12 passes are the new tests above).
 
+## Post-merge with main (PRs #196/#183/#198/#195)
+
+Merged `origin/main` back into the branch (merge commit, no rebase).
+Conflict in `app/oxyde_db.py` resolved as the union of semantics:
+
+- Kept #196's plain-`default=` application (single branch, ordered after the
+  PK-uuid fallback, **None included** — explicit NULL kwargs keep optionals
+  from ever falling through to the datetime-now fallback). Dropped this
+  branch's duplicate non-None variant.
+- Kept this branch's `create(instance=...)` re-validation guard,
+  `bulk_create` coverage, and the Annotated/DateTimeUTC unwrap in the
+  datetime fallback (main still assumed plain `datetime` annotations).
+
+Added **migration 0007** (`0007_normalize_enum_storage.py`, CHT-1209):
+legacy DbEnum rows storing `.value` ('gate') are rewritten to `.name`
+('GATE') across all 15 DbEnum columns in 10 tables — #196 binds `.name` in
+query filters, which silently missed `.value` rows. Tests:
+`tests/test_enum_normalization_migration.py` (legacy rewrite, no-op rows,
+filter-visibility before/after, exhaustive value sweep, model drift check).
+
+Suite after the merge: **1144 passed, 0 failed** — #196 fixed the 42
+pre-existing ritual-cluster failures on main; this branch's fixes cover the
+three that remained (expired-key tz comparison, decline-invitation enum
+assertion, PRAGMA-bracket flake).
+
+Rehearsal rerun (fresh copy of the 0.3.1-era dev DB, plus a seeded legacy
+row with `.value` enums and `T`+offset datetimes): `oxyde migrate` applied
+0002–0007 cleanly; zero nonconforming datetimes across all 40 columns; zero
+legacy enum values across all 15 columns (`SELECT DISTINCT approval_mode
+FROM rituals` → `GATE`); the seeded legacy row is found by the exact
+`.name`-bound ORM filter #196's service code uses, hydrating to enum
+members with tz-aware timestamps.
+
 ## Open risks for production deploys
 
 - ~~Datetime storage format mix~~ — resolved by migration 0006 (above).
