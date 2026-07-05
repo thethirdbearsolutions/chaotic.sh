@@ -248,5 +248,50 @@ describe('quote-comment module', () => {
             const textarea = document.getElementById('new-comment');
             expect(textarea.value).toBe('');
         });
+
+        // Keyboard-made selections summon the tooltip without a mouse (PR #198 review M3)
+        it('keyup with a quotable selection shows the tooltip', () => {
+            setupQuoteComment();
+            hideTooltip();
+            selectDescriptionText();
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+            expect(getTooltip().style.display).toBe('flex');
+        });
+
+        it('keyup without a selection does not show the tooltip', () => {
+            setupQuoteComment();
+            hideTooltip();
+            window.getSelection().removeAllRanges();
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+            expect(getTooltip().style.display).toBe('none');
+        });
+
+        it('keyup with a non-quotable selection does not show the tooltip', () => {
+            setupQuoteComment();
+            hideTooltip();
+            document.body.insertAdjacentHTML('beforeend', '<div id="outside">outside text</div>');
+            const outside = document.getElementById('outside');
+            const range = document.createRange();
+            range.setStart(outside.firstChild, 0);
+            range.setEnd(outside.firstChild, 5);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+            expect(getTooltip().style.display).toBe('none');
+        });
+
+        it('Escape keyup does not re-show the tooltip after Escape dismisses it', () => {
+            setupQuoteComment();
+            selectDescriptionText();
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+            expect(getTooltip().style.display).toBe('flex');
+
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            expect(getTooltip().style.display).toBe('none');
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }));
+            expect(getTooltip().style.display).toBe('none');
+        });
     });
 });

@@ -167,6 +167,21 @@ export function quoteSelectionIntoComment() {
 }
 
 /**
+ * Show the tooltip anchored to the current selection's bounding rect.
+ * Used for keyboard-made selections, where there are no mouse coordinates (CHT-1175).
+ * @returns {boolean} true if the tooltip was shown
+ */
+function showTooltipAtSelection() {
+    const text = getQuotableSelection();
+    if (!text) return false;
+    const range = window.getSelection().getRangeAt(0);
+    // Range.getBoundingClientRect is missing in some environments (jsdom)
+    const rect = range.getBoundingClientRect?.() ?? { left: 0, width: 0, top: 0 };
+    showTooltip(rect.left + rect.width / 2, rect.top);
+    return true;
+}
+
+/**
  * Handle mouseup to check for quotable selection and show tooltip.
  */
 function handleMouseUp(e) {
@@ -224,6 +239,13 @@ export function setupQuoteComment({ signal } = {}) {
             if (e.key === 'Escape' && tooltipVisible) {
                 hideTooltip();
             }
+        });
+
+        // Keyboard-made selections (Shift+Arrow, caret browsing) never fire
+        // mouseup — show the tooltip at the selection on keyup too (CHT-1175)
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Escape') return; // don't undo the Escape dismissal
+            showTooltipAtSelection();
         });
     }
 }
