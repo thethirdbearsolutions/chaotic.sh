@@ -34,6 +34,8 @@ vi.mock('./teams.js', () => ({
 // Mock sprints.js
 vi.mock('./sprints.js', () => ({
     ensureSprintCacheForIssues: vi.fn(),
+    getCachedCurrentSprintId: vi.fn(() => undefined),
+    setCachedCurrentSprintId: vi.fn(),
 }));
 
 // Mock issue-list.js
@@ -66,6 +68,7 @@ import { api } from './api.js';
 import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
+import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 
@@ -1172,6 +1175,70 @@ describe('issues-view', () => {
             await loadIssues();
             expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', expect.any(Object));
         });
+
+        // CHT-1212: "Current Sprint" filter used to re-fetch sprints from
+        // the server on every loadIssues() call (including every debounced
+        // search keystroke) just to resolve "current" -> a sprint id.
+        describe('Current Sprint filter caching (CHT-1212)', () => {
+            beforeEach(() => {
+                const sprintFilter = document.getElementById('sprint-filter');
+                sprintFilter.innerHTML += '<option value="current">Current Sprint</option>';
+                sprintFilter.value = 'current';
+                api.getIssues.mockResolvedValue([]);
+            });
+
+            it('reuses a cached current-sprint id without calling api.getSprints', async () => {
+                getCachedCurrentSprintId.mockReturnValue('sprint-active-1');
+
+                await loadIssues();
+
+                expect(api.getSprints).not.toHaveBeenCalled();
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.objectContaining({ sprint_id: 'sprint-active-1' })
+                );
+            });
+
+            it('does not call api.getSprints when the cache says there is no active sprint (cached null)', async () => {
+                getCachedCurrentSprintId.mockReturnValue(null);
+
+                await loadIssues();
+
+                expect(api.getSprints).not.toHaveBeenCalled();
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.not.objectContaining({ sprint_id: expect.anything() })
+                );
+            });
+
+            it('falls back to fetching sprints when not yet cached, then caches the resolved id', async () => {
+                getCachedCurrentSprintId.mockReturnValue(undefined);
+                api.getSprints.mockResolvedValue([
+                    { id: 'sprint-active-1', status: 'active' },
+                    { id: 'sprint-done-1', status: 'completed' },
+                ]);
+
+                await loadIssues();
+
+                expect(api.getSprints).toHaveBeenCalledWith('p-1');
+                expect(setCachedCurrentSprintId).toHaveBeenCalledWith('p-1', 'sprint-active-1');
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.objectContaining({ sprint_id: 'sprint-active-1' })
+                );
+            });
+
+            it('caches undefined (no active sprint) when a fetch resolves with none active', async () => {
+                getCachedCurrentSprintId.mockReturnValue(undefined);
+                api.getSprints.mockResolvedValue([
+                    { id: 'sprint-done-1', status: 'completed' },
+                ]);
+
+                await loadIssues();
+
+                expect(setCachedCurrentSprintId).toHaveBeenCalledWith('p-1', undefined);
+                expect(api.getIssues).toHaveBeenCalledWith(
+                    expect.not.objectContaining({ sprint_id: expect.anything() })
+                );
+            });
+        });
     });
 
     // ========================================
@@ -1392,6 +1459,27 @@ describe('issues-view', () => {
             expect(sprintFilter.innerHTML).toContain('Sprint 1');
             expect(sprintFilter.innerHTML).toContain('Sprint 2');
             expect(sprintFilter.innerHTML).toContain('Current Sprint');
+        });
+
+        // CHT-1212: updateSprintFilter() is the write-side of the
+        // current-sprint-id cache loadIssues() reads from
+        it('caches the resolved active-sprint id', async () => {
+            getCurrentProject.mockReturnValue('proj-1');
+            api.getSprints.mockResolvedValue([
+                { id: 's-1', name: 'Sprint 1', status: 'active' },
+                { id: 's-2', name: 'Sprint 2', status: 'completed' },
+            ]);
+            await updateSprintFilter();
+            expect(setCachedCurrentSprintId).toHaveBeenCalledWith('proj-1', 's-1');
+        });
+
+        it('caches undefined when no sprint is active', async () => {
+            getCurrentProject.mockReturnValue('proj-1');
+            api.getSprints.mockResolvedValue([
+                { id: 's-2', name: 'Sprint 2', status: 'completed' },
+            ]);
+            await updateSprintFilter();
+            expect(setCachedCurrentSprintId).toHaveBeenCalledWith('proj-1', undefined);
         });
     });
 

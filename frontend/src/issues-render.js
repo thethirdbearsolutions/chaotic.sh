@@ -11,6 +11,7 @@ import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } f
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { OPEN_STATUSES } from './constants.js';
+import { setCachedCurrentSprintId } from './sprints.js';
 import {
     getSelectedStatuses,
     getSelectedPriorities,
@@ -743,6 +744,9 @@ export async function updateSprintFilter() {
         if (currentSprint) {
             options += `<option value="current">Current Sprint (${escapeHtml(currentSprint.name)})</option>`;
         }
+        // Cache the resolved id so loadIssues() doesn't re-fetch sprints just
+        // to resolve "current" on every filter/debounced-search reload (CHT-1212)
+        setCachedCurrentSprintId(projectId, currentSprint?.id);
         updateSprintBudgetBar(currentSprint || null);
         sprints.forEach(s => {
             const statusLabel = s.status === 'active' ? ' (Active)' : s.status === 'completed' ? ' (Done)' : '';

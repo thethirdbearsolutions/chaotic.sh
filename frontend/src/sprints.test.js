@@ -88,6 +88,8 @@ import {
     ensureSprintCacheForIssues,
     invalidateSprintCache,
     updateSprintCacheForProject,
+    getCachedCurrentSprintId,
+    setCachedCurrentSprintId,
 } from './sprints.js';
 
 beforeEach(() => {
@@ -163,6 +165,37 @@ describe('sprint cache', () => {
         updateSprintCacheForProject('p1', [{ id: 's1' }]);
         invalidateSprintCache();
         expect(getSprintCache()).toEqual({});
+    });
+});
+
+// CHT-1212: cached current (active) sprint id per project, so loadIssues()
+// doesn't re-resolve "current" -> a sprint id on every call.
+describe('current-sprint-id cache', () => {
+    it('is undefined (not yet cached) before anything sets it', () => {
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+    });
+
+    it('caches a resolved sprint id per project', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        expect(getCachedCurrentSprintId('p1')).toBe('s1');
+    });
+
+    it('caches null (not undefined) when there is no active sprint, distinguishing "checked, none active" from "not yet checked"', () => {
+        setCachedCurrentSprintId('p1', undefined);
+        expect(getCachedCurrentSprintId('p1')).toBeNull();
+    });
+
+    it('keys the cache independently per project', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        setCachedCurrentSprintId('p2', 's2');
+        expect(getCachedCurrentSprintId('p1')).toBe('s1');
+        expect(getCachedCurrentSprintId('p2')).toBe('s2');
+    });
+
+    it('invalidateSprintCache clears the current-sprint-id cache too', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        invalidateSprintCache();
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
     });
 });
 
@@ -567,6 +600,19 @@ describe('completeSprint', () => {
         await completeSprint('s1');
 
         expect(showApiError).toHaveBeenCalledWith('complete sprint', expect.objectContaining({ message: 'cannot close' }));
+    });
+
+    // CHT-1212: completing a sprint can change which sprint is "current"
+    it('clears the cached current-sprint id so the next lookup re-resolves', async () => {
+        setCachedCurrentSprintId('p1', 's1');
+        api.closeSprint.mockResolvedValue({ limbo: false });
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await completeSprint('s1');
+
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
     });
 });
 

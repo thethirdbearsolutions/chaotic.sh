@@ -660,6 +660,10 @@ export async function completeSprint(sprintId) {
     try {
         const result = await api.closeSprint(sprintId);
         await loadSprints();
+        // Completing a sprint can change which sprint is "current" for its
+        // project — clear the cached current-sprint id so the next lookup
+        // re-resolves instead of pointing at the now-completed sprint (CHT-1212)
+        currentSprintIdByProject = {};
 
         if (result.limbo) {
             showLimboModal(result);
@@ -881,11 +885,37 @@ export function invalidateSprintCache() {
     currentSprintIssues = [];
     currentSprintTransactions = [];
     currentSprintDocuments = [];
+    currentSprintIdByProject = {};
 }
 
 export function updateSprintCacheForProject(projectId, sprintList) {
     sprintList.forEach(s => { sprintCache[s.id] = s; });
     sprintCacheLoadedProjects.add(projectId);
+}
+
+// ============================================================================
+// Current (active) Sprint id cache, per project (CHT-1212)
+//
+// The Issues filter's "Current Sprint" option re-resolved the active sprint
+// id from scratch on every loadIssues() call — including every 300ms
+// debounce tick while typing in search — even though updateSprintFilter()
+// (issues-render.js) already resolves this same value moments earlier and
+// it essentially never changes mid-session. Cache it here, keyed by
+// project, so loadIssues() can reuse it instead of re-fetching sprints.
+// ============================================================================
+
+let currentSprintIdByProject = {}; // project_id -> active sprint id, or null if none
+
+/**
+ * Returns the cached active-sprint id for a project, `null` if the project
+ * was checked and has no active sprint, or `undefined` if not yet cached.
+ */
+export function getCachedCurrentSprintId(projectId) {
+    return currentSprintIdByProject[projectId];
+}
+
+export function setCachedCurrentSprintId(projectId, sprintId) {
+    currentSprintIdByProject[projectId] = sprintId ?? null;
 }
 
 // ============================================================================

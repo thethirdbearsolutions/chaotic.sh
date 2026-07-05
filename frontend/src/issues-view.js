@@ -24,7 +24,7 @@ import {
     subscribe,
 } from './state.js';
 import { getProjects } from './projects.js';
-import { ensureSprintCacheForIssues } from './sprints.js';
+import { ensureSprintCacheForIssues, getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
@@ -263,14 +263,25 @@ export async function loadIssues() {
     if (sprintFilter) {
         if (sprintFilter === 'current') {
             if (projectId) {
-                try {
-                    const sprints = await api.getSprints(projectId);
-                    const currentSprint = sprints.find(s => s.status === 'active');
-                    if (currentSprint) {
-                        params.sprint_id = currentSprint.id;
+                // updateSprintFilter() already resolved and cached this same
+                // lookup moments earlier (and the active sprint essentially
+                // never changes mid-session) — reuse it instead of
+                // re-fetching sprints on every loadIssues() call, including
+                // every 300ms debounced search keystroke (CHT-1212)
+                const cachedId = getCachedCurrentSprintId(projectId);
+                if (cachedId !== undefined) {
+                    if (cachedId) params.sprint_id = cachedId;
+                } else {
+                    try {
+                        const sprints = await api.getSprints(projectId);
+                        const currentSprint = sprints.find(s => s.status === 'active');
+                        setCachedCurrentSprintId(projectId, currentSprint?.id);
+                        if (currentSprint) {
+                            params.sprint_id = currentSprint.id;
+                        }
+                    } catch (e) {
+                        console.error('Failed to resolve current sprint:', e);
                     }
-                } catch (e) {
-                    console.error('Failed to resolve current sprint:', e);
                 }
             }
         } else {
