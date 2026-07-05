@@ -194,10 +194,21 @@ _patch_objects_create_to_apply_default_factory()
 
 
 async def init_oxyde() -> AsyncDatabase:
-    """Initialize the Oxyde database connection."""
+    """Initialize the Oxyde database connection.
+
+    OXYDE_MAX_CONNECTIONS caps the pool (test harnesses pin it to 1 so
+    per-connection PRAGMAs like foreign_keys apply deterministically).
+    """
     global _db
     url = _get_oxyde_url()
-    _db = AsyncDatabase(url, overwrite=True)
+    if max_conn := os.environ.get("OXYDE_MAX_CONNECTIONS"):
+        from oxyde import PoolSettings
+        _db = AsyncDatabase(
+            url, overwrite=True,
+            settings=PoolSettings(max_connections=int(max_conn)),
+        )
+    else:
+        _db = AsyncDatabase(url, overwrite=True)
     await _db.connect()
 
     # Import models so they register with Oxyde
