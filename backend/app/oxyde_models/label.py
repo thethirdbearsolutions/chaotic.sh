@@ -5,6 +5,7 @@ The full Issue/Label port happens in Phase 2.
 """
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 
 
@@ -16,7 +17,7 @@ class OxydeLabel(Model):
     name: str = Field()
     color: str = Field(default="#6366f1")
     description: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True

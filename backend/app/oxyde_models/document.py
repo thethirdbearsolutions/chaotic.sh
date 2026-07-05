@@ -1,6 +1,7 @@
 """Oxyde ORM Document models."""
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
@@ -19,8 +20,8 @@ class OxydeDocument(Model):
     title: str = Field()
     content: str | None = Field(default=None)
     icon: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeDocumentLabel")
 
     class Meta:
@@ -35,8 +36,8 @@ class OxydeDocumentComment(Model):
     document_id: str = Field()
     author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     content: str = Field()
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
@@ -53,7 +54,7 @@ class OxydeDocumentActivity(Model):
     activity_type: DbEnum(DocumentActivityType) = Field()
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
@@ -65,7 +66,7 @@ class OxydeDocumentIssue(Model):
 
     document_id: str = Field(db_pk=True)
     issue_id: str = Field(db_pk=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True

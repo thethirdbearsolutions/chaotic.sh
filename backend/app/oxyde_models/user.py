@@ -1,6 +1,7 @@
 """Oxyde ORM User model."""
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 
 
@@ -14,8 +15,8 @@ class OxydeUser(Model):
     avatar_url: str | None = Field(default=None)
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Agent-specific fields
     is_agent: bool = Field(default=False)

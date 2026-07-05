@@ -1,6 +1,7 @@
 """Oxyde ORM Project model."""
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 from app.enums import EstimateScale, UnestimatedHandling
 from app.oxyde_models.enums import DbEnum
@@ -24,8 +25,8 @@ class OxydeProject(Model):
     default_sprint_budget: int | None = Field(default=None)
     human_rituals_required: bool = Field(default=False)
     require_estimate_on_claim: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True

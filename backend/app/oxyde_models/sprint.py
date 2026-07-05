@@ -1,6 +1,7 @@
 """Oxyde ORM Sprint model."""
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 from app.enums import SprintStatus
 from app.oxyde_models.enums import DbEnum
@@ -15,15 +16,15 @@ class OxydeSprint(Model):
     description: str | None = Field(default=None)
     status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
 
-    start_date: datetime | None = Field(default=None)
-    end_date: datetime | None = Field(default=None)
+    start_date: DateTimeUTC | None = Field(default=None)
+    end_date: DateTimeUTC | None = Field(default=None)
     budget: int | None = Field(default=None)
     points_spent: int = Field(default=0)
     token_budget: int | None = Field(default=None)
     tokens_spent: int = Field(default=0)
     limbo: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def in_arrears(self) -> bool:

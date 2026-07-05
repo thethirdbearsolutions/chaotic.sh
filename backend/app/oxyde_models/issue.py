@@ -4,6 +4,7 @@ Phase 2 migration from SQLAlchemy.
 """
 import uuid
 from datetime import datetime, timezone
+from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
@@ -28,10 +29,10 @@ class OxydeIssue(Model):
     creator: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     sprint_id: str | None = Field(default=None)
     parent_id: str | None = Field(default=None)
-    due_date: datetime | None = Field(default=None)
-    completed_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    due_date: DateTimeUTC | None = Field(default=None)
+    completed_at: DateTimeUTC | None = Field(default=None)
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")
 
     class Meta:
@@ -46,8 +47,8 @@ class OxydeIssueComment(Model):
     issue_id: str = Field()
     author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     content: str = Field()
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
@@ -64,7 +65,7 @@ class OxydeIssueActivity(Model):
     field_name: str | None = Field(default=None)
     old_value: str | None = Field(default=None)
     new_value: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
@@ -78,7 +79,7 @@ class OxydeIssueRelation(Model):
     issue_id: str = Field()
     related_issue_id: str = Field()
     relation_type: DbEnum(IssueRelationType) = Field(default=IssueRelationType.RELATES_TO)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
@@ -116,8 +117,8 @@ class OxydeTicketLimbo(Model):
     issue_id: str = Field(db_on_delete="CASCADE")
     limbo_type: str = Field()
     requested_by_id: str = Field(db_on_delete="CASCADE")
-    requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    cleared_at: datetime | None = Field(default=None)
+    requested_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    cleared_at: DateTimeUTC | None = Field(default=None)
     cleared_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
 
     class Meta:
@@ -144,7 +145,7 @@ class OxydeTicketLimboBlocker(Model):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     limbo_id: str = Field(db_on_delete="CASCADE")
     ritual_id: str = Field(db_on_delete="CASCADE")
-    resolved_at: datetime | None = Field(default=None)
+    resolved_at: DateTimeUTC | None = Field(default=None)
     resolved_by_id: str | None = Field(default=None, db_on_delete="SET NULL")
 
     class Meta:
@@ -164,7 +165,7 @@ class OxydeBudgetTransaction(Model):
     issue_identifier: str = Field()
     issue_title: str = Field()
     sprint_name: str = Field()
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
