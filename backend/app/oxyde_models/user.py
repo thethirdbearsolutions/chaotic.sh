@@ -1,10 +1,10 @@
 """Oxyde ORM User model."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 
 
-class OxydeUser(OxydeModel):
+class OxydeUser(Model):
     """User model for authentication and identification."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)

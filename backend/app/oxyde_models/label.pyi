@@ -6,11 +6,11 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 
-from oxyde import OxydeModel
+from oxyde import Model
 from oxyde.queries import Query, QueryManager
 
 
-class OxydeLabel(OxydeModel):
+class OxydeLabel(Model):
     class Meta:
         is_table: bool
         table_name: str

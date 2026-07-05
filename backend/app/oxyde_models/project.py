@@ -1,12 +1,12 @@
 """Oxyde ORM Project model."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 from app.enums import EstimateScale, UnestimatedHandling
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeProject(OxydeModel):
+class OxydeProject(Model):
     """Project model for organizing issues."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)

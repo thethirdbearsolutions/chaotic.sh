@@ -1,14 +1,14 @@
 """Oxyde ORM Document models."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.enums import DocumentActivityType
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeDocument(OxydeModel):
+class OxydeDocument(Model):
     """Document model for team documentation."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -28,7 +28,7 @@ class OxydeDocument(OxydeModel):
         table_name = "documents"
 
 
-class OxydeDocumentComment(OxydeModel):
+class OxydeDocumentComment(Model):
     """Comment on a document."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -43,7 +43,7 @@ class OxydeDocumentComment(OxydeModel):
         table_name = "document_comments"
 
 
-class OxydeDocumentActivity(OxydeModel):
+class OxydeDocumentActivity(Model):
     """Activity log for documents."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -60,7 +60,7 @@ class OxydeDocumentActivity(OxydeModel):
         table_name = "document_activities"
 
 
-class OxydeDocumentIssue(OxydeModel):
+class OxydeDocumentIssue(Model):
     """Junction table for document-issue links."""
 
     document_id: str = Field(db_pk=True)
@@ -72,7 +72,7 @@ class OxydeDocumentIssue(OxydeModel):
         table_name = "document_issues"
 
 
-class OxydeDocumentLabel(OxydeModel):
+class OxydeDocumentLabel(Model):
     """Junction table for document-label links."""
 
     document: OxydeDocument | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")

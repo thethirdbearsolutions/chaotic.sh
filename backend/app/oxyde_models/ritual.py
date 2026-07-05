@@ -4,7 +4,7 @@ Phase 2 migration from SQLAlchemy.
 """
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
@@ -12,7 +12,7 @@ from app.enums import RitualTrigger, ApprovalMode, SelectionMode
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeRitualGroup(OxydeModel):
+class OxydeRitualGroup(Model):
     """Group of rituals with selection logic."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -36,7 +36,7 @@ class OxydeRitualGroup(OxydeModel):
         table_name = "ritual_groups"
 
 
-class OxydeRitual(OxydeModel):
+class OxydeRitual(Model):
     """Ritual definition for a project."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -64,7 +64,7 @@ class OxydeRitual(OxydeModel):
         table_name = "rituals"
 
 
-class OxydeRitualAttestation(OxydeModel):
+class OxydeRitualAttestation(Model):
     """Record of a ritual being attested for a specific sprint or ticket."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)

@@ -6,11 +6,11 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 
-from oxyde import OxydeModel
+from oxyde import Model
 from oxyde.queries import Query, QueryManager
 
 
-class OxydeTeam(OxydeModel):
+class OxydeTeam(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -23,7 +23,7 @@ class OxydeTeam(OxydeModel):
     updated_at: datetime
     objects: "OxydeTeamManager"
 
-class OxydeTeamMember(OxydeModel):
+class OxydeTeamMember(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -35,7 +35,7 @@ class OxydeTeamMember(OxydeModel):
     user_id: str | None
     objects: "OxydeTeamMemberManager"
 
-class OxydeTeamInvitation(OxydeModel):
+class OxydeTeamInvitation(Model):
     class Meta:
         is_table: bool
         table_name: str

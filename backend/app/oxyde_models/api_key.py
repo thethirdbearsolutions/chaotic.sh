@@ -1,10 +1,10 @@
 """Oxyde ORM API Key model."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 
 
-class OxydeAPIKey(OxydeModel):
+class OxydeAPIKey(Model):
     """API Key model for programmatic authentication."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)

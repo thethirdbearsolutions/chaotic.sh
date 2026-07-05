@@ -1,13 +1,13 @@
 """Oxyde ORM Team models."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.enums import TeamRole, InvitationStatus
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeTeam(OxydeModel):
+class OxydeTeam(Model):
     """Team/workspace model."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -23,7 +23,7 @@ class OxydeTeam(OxydeModel):
         table_name = "teams"
 
 
-class OxydeTeamMember(OxydeModel):
+class OxydeTeamMember(Model):
     """Team membership model."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -37,7 +37,7 @@ class OxydeTeamMember(OxydeModel):
         table_name = "team_members"
 
 
-class OxydeTeamInvitation(OxydeModel):
+class OxydeTeamInvitation(Model):
     """Team invitation model."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)

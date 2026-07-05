@@ -4,14 +4,14 @@ Phase 2 migration from SQLAlchemy.
 """
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeIssue(OxydeModel):
+class OxydeIssue(Model):
     """Issue/task model."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -39,7 +39,7 @@ class OxydeIssue(OxydeModel):
         table_name = "issues"
 
 
-class OxydeIssueComment(OxydeModel):
+class OxydeIssueComment(Model):
     """Comment on an issue."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -54,7 +54,7 @@ class OxydeIssueComment(OxydeModel):
         table_name = "issue_comments"
 
 
-class OxydeIssueActivity(OxydeModel):
+class OxydeIssueActivity(Model):
     """Activity log for issues."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -71,7 +71,7 @@ class OxydeIssueActivity(OxydeModel):
         table_name = "issue_activities"
 
 
-class OxydeIssueRelation(OxydeModel):
+class OxydeIssueRelation(Model):
     """Relationship between issues."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -85,7 +85,7 @@ class OxydeIssueRelation(OxydeModel):
         table_name = "issue_relations"
 
 
-class OxydeIssueLabel(OxydeModel):
+class OxydeIssueLabel(Model):
     """Junction table for issue-label links."""
 
     issue: OxydeIssue | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")
@@ -96,7 +96,7 @@ class OxydeIssueLabel(OxydeModel):
         table_name = "issue_labels"
 
 
-class OxydeTicketLimbo(OxydeModel):
+class OxydeTicketLimbo(Model):
     """One row per open intent on a ticket.
 
     Under the unified intent+limbo model, a single limbo row
@@ -125,7 +125,7 @@ class OxydeTicketLimbo(OxydeModel):
         table_name = "ticket_limbo"
 
 
-class OxydeTicketLimboBlocker(OxydeModel):
+class OxydeTicketLimboBlocker(Model):
     """One row per ritual blocking an intent.
 
     Lives under a parent `OxydeTicketLimbo`. Resolved (attested or
@@ -152,7 +152,7 @@ class OxydeTicketLimboBlocker(OxydeModel):
         table_name = "ticket_limbo_blockers"
 
 
-class OxydeBudgetTransaction(OxydeModel):
+class OxydeBudgetTransaction(Model):
     """Records effort spent when issues are completed."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
