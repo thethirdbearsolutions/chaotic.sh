@@ -128,9 +128,14 @@ configureRouter({
             return true;
         }
         if (parts[0] === 'issues' && parts[1]) {
-            // CHT-1182: redirect /issues/<id> to the canonical /issue/<id>
-            history.replaceState({ view: 'issue', identifier: parts[1] }, '', `/issue/${parts[1]}`);
-            viewIssueByPath(parts[1]);
+            // CHT-1182: alias /issues/<id> to canonical /issue/<id> — rewrite
+            // the URL only once the issue actually renders, preserving the
+            // query string; unknown ids keep the typed URL
+            const identifier = parts[1];
+            const search = window.location.search;
+            Promise.resolve(viewIssueByPath(identifier)).then((ok) => {
+                if (ok) history.replaceState({ view: 'issue', identifier }, '', `/issue/${identifier}${search}`);
+            });
             return true;
         }
         if (parts[0] === 'document' && parts[1]) {

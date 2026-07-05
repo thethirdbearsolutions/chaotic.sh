@@ -326,12 +326,38 @@ describe('app.js router configuration', () => {
     });
 
     // CHT-1182: /issues/<id> (plural) redirects to the canonical /issue/<id>
-    it('detailRoute aliases /issues/<id> to /issue/<id>', () => {
+    it('detailRoute aliases /issues/<id> to /issue/<id> once the issue renders', async () => {
+        viewIssueByPath.mockResolvedValue(true);
+        history.replaceState(null, '', '/issues/CHT-123');
+
         const result = routerConfig.detailRoute(['issues', 'CHT-123']);
         expect(result).toBe(true);
         expect(viewIssueByPath).toHaveBeenCalledWith('CHT-123');
+
+        await new Promise(r => setTimeout(r, 0));
         expect(window.location.pathname).toBe('/issue/CHT-123');
         expect(history.state).toEqual({ view: 'issue', identifier: 'CHT-123' });
+    });
+
+    it('preserves the query string when canonicalizing /issues/<id>', async () => {
+        viewIssueByPath.mockResolvedValue(true);
+        history.replaceState(null, '', '/issues/CHT-123?project=proj-1');
+
+        routerConfig.detailRoute(['issues', 'CHT-123']);
+
+        await new Promise(r => setTimeout(r, 0));
+        expect(window.location.pathname + window.location.search).toBe('/issue/CHT-123?project=proj-1');
+    });
+
+    it('does not rewrite the URL when the issue lookup fails', async () => {
+        viewIssueByPath.mockResolvedValue(false);
+        history.replaceState(null, '', '/issues/JUNK-999');
+
+        const result = routerConfig.detailRoute(['issues', 'JUNK-999']);
+        expect(result).toBe(true);
+
+        await new Promise(r => setTimeout(r, 0));
+        expect(window.location.pathname).toBe('/issues/JUNK-999');
     });
 
     it('detailRoute leaves bare /issues (no id) to standard view routing', () => {
