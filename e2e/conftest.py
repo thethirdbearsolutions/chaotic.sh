@@ -26,6 +26,9 @@ _MIGRATIONS_DIR = os.path.abspath(
 os.environ["DEBUG"] = "false"
 os.environ["SECRET_KEY"] = "e2e-test-secret-key-not-for-production"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
+# Single connection so per-connection PRAGMAs (foreign_keys) in the
+# between-test reset apply deterministically (same pin as backend/tests).
+os.environ["OXYDE_MAX_CONNECTIONS"] = "1"
 
 import pytest
 from unittest.mock import patch
@@ -127,9 +130,11 @@ def reset_db_between_tests():
             "AND name NOT LIKE 'sqlite_%' AND name != 'oxyde_migrations'"
         )
         await execute_raw("PRAGMA foreign_keys = OFF")
-        for row in rows:
-            await execute_raw(f'DELETE FROM "{row["name"]}"')
-        await execute_raw("PRAGMA foreign_keys = ON")
+        try:
+            for row in rows:
+                await execute_raw(f'DELETE FROM "{row["name"]}"')
+        finally:
+            await execute_raw("PRAGMA foreign_keys = ON")
 
     _run_async(_clear_data())
 
