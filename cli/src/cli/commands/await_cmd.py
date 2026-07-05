@@ -69,6 +69,7 @@ TYPE_TOKEN_VALUES: dict[str, list[str]] = {
     "commented": ["commented", "doc_commented"],
     "created": ["created", "doc_created"],
     "updated": ["updated", "doc_updated"],
+    "deleted": ["doc_deleted"],
     "status_changed": ["status_changed"],
     "priority_changed": ["priority_changed"],
     "assigned": ["assigned"],

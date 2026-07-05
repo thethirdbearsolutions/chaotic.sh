@@ -89,6 +89,37 @@ class TestTypeTokenResolution:
         assert await_cmd._resolve_type_filter("approved") == {"ritual_approved"}
         assert await_cmd._resolve_type_filter("attested") == {"ritual_attested"}
 
+    def test_doc_deleted_is_awaitable(self):
+        assert await_cmd._resolve_type_filter("deleted") == {"doc_deleted"}
+
+    def test_every_backend_activity_type_has_a_token(self):
+        # Forward direction (token → wire) is pinned above; this pins
+        # the reverse: every wire value the backend can emit must be
+        # reachable through some logical token, or the next backend
+        # enum addition silently drops out of the CLI surface.
+        import importlib.util
+        from pathlib import Path
+
+        enums_path = (
+            Path(__file__).resolve().parents[2] / "backend" / "app" / "enums.py"
+        )
+        spec = importlib.util.spec_from_file_location("backend_enums", enums_path)
+        backend_enums = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(backend_enums)
+
+        covered = {
+            wire
+            for wires in await_cmd.TYPE_TOKEN_VALUES.values()
+            for wire in wires
+        }
+        backend_values = {e.value for e in backend_enums.ActivityType} | {
+            e.value for e in backend_enums.DocumentActivityType
+        }
+        missing = backend_values - covered
+        assert not missing, (
+            f"Backend activity types with no await token: {sorted(missing)}"
+        )
+
 
 class TestEventScopeMatching:
     def test_issue_scope_matches_issue_events(self):

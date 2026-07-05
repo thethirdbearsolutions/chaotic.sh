@@ -236,7 +236,9 @@ want to wake on intents regardless of ritual name.
                       commented, status_changed, priority_changed,
                       assigned, unassigned, labeled, unlabeled,
                       moved_to_sprint, removed_from_sprint,
-                      attested, created, updated, any
+                      attested, approved, intent_opened,
+                      intent_cleared, intent_canceled,
+                      created, updated, deleted, any
                     Default: any. These tokens are a stable CLI contract;
                     they do not change if backend enum names are renamed.
                     For cross-entity scopes (project, team) a token
