@@ -887,7 +887,8 @@ textarea {
 }
 
 .filter-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — was beating the global
+       *:focus-visible ring by CSS specificity, killing it for keyboard users */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
 }
@@ -1689,7 +1690,7 @@ input, textarea, select, .command-input {
 }
 
 .inline-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -3015,7 +3016,7 @@ input[type="checkbox"] {
 }
 
 .label-create-input:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -3426,7 +3427,7 @@ input[type="checkbox"] {
 }
 
 .description-inline-editor textarea:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
 }
@@ -4852,7 +4853,7 @@ input[type="checkbox"] {
 }
 
 .project-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -4879,9 +4880,9 @@ input[type="checkbox"] {
     width: 100%;
 }
 
-.create-issue-title-input:focus {
-    outline: none;
-}
+/* .create-issue-title-input:focus { outline: none; } removed (CHT-1215) —
+   was beating the global *:focus-visible ring for keyboard users; browser
+   default focus indication + the global ring already cover this input. */
 
 .create-issue-title-input::placeholder {
     color: var(--text-muted);
@@ -7535,7 +7536,7 @@ input[type="checkbox"] {
 }
 
 .onboarding-step .form-input:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
