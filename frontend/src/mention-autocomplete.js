@@ -77,7 +77,12 @@ export function setupMentionAutocomplete() {
     textarea.addEventListener('input', update);
     textarea.addEventListener('click', update);
     textarea.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && !container.classList.contains('hidden')) {
+            // Only dismiss the suggestion popup — don't let the keydown bubble
+            // to the global handler, which would also blur the textarea itself
+            // (CHT-1215), losing the comment's cursor position.
+            event.preventDefault();
+            event.stopPropagation();
             hide();
         }
     });
