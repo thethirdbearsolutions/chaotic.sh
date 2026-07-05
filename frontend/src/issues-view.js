@@ -202,6 +202,19 @@ export function clearExcludeLabelFilter() {
 // Issue Loading & Search
 // ========================================
 
+/**
+ * Resolve label checkbox ids to their display names via the DOM (the
+ * backend's label/exclude_label filters match by name, not id) — mirrors
+ * the technique updateFilterChips() already uses (CHT-1212).
+ */
+function resolveLabelNames(labelIds, dropdownId) {
+    if (labelIds.length === 0) return [];
+    const dropdown = document.getElementById(dropdownId);
+    return labelIds
+        .map(id => dropdown?.querySelector(`input[value="${id}"]`)?.closest('label')?.querySelector('.label-name')?.textContent)
+        .filter(Boolean);
+}
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
     if (!getCurrentTeam()) return;
@@ -276,6 +289,20 @@ export async function loadIssues() {
         params.search = searchQuery;
     }
 
+    // Label/exclude-label filters are sent to the server (which matches by
+    // name, case-insensitively) instead of over-fetching a 1000-row page and
+    // filtering client-side (CHT-1212) — resolve id -> name via the DOM the
+    // same way updateFilterChips() already does.
+    const selectedLabelNames = resolveLabelNames(getSelectedLabels(), 'label-filter-dropdown');
+    if (selectedLabelNames.length > 0) {
+        params.label = selectedLabelNames;
+    }
+
+    const excludedLabelNames = resolveLabelNames(getExcludedLabels(), 'exclude-label-filter-dropdown');
+    if (excludedLabelNames.length > 0) {
+        params.exclude_label = excludedLabelNames;
+    }
+
     try {
         let issues;
         if (projectId) {
@@ -283,22 +310,6 @@ export async function loadIssues() {
             issues = await api.getIssues(params);
         } else if (getProjects().length > 0) {
             issues = await api.getTeamIssues(getCurrentTeam().id, params);
-        }
-
-        const selectedLabels = getSelectedLabels();
-        if (selectedLabels.length > 0) {
-            issues = issues.filter(issue => {
-                if (!issue.labels || issue.labels.length === 0) return false;
-                return issue.labels.some(label => selectedLabels.includes(label.id));
-            });
-        }
-
-        const excludedLabels = getExcludedLabels();
-        if (excludedLabels.length > 0) {
-            issues = issues.filter(issue => {
-                if (!issue.labels || issue.labels.length === 0) return true;
-                return !issue.labels.some(label => excludedLabels.includes(label.id));
-            });
         }
 
         setIssues(issues);

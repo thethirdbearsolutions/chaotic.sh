@@ -943,12 +943,18 @@ class IssueService:
             params.extend([pattern, pattern, pattern])
 
         if label_names:
-            for label_name in label_names:
-                conditions.append(
-                    "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                    "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
-                )
-                params.append(label_name)
+            # Single IN-based subquery: an issue matches if it carries ANY of
+            # the given labels — consistent with status/priority (i.status IN
+            # (...)) above and with exclude_label_names' OR-of-names below.
+            # (The old per-name AND'd EXISTS clauses required ALL of the
+            # selected labels, silently diverging from the multi-select
+            # Filter UI's OR semantics — CHT-1212.)
+            placeholders = ",".join("?" for _ in label_names)
+            conditions.append(
+                "i.id IN (SELECT il.issue_id FROM issue_labels il "
+                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
+            )
+            params.extend(name.lower() for name in label_names)
 
         if exclude_statuses:
             status_vals = [s.name for s in exclude_statuses]

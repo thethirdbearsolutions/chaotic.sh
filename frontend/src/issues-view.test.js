@@ -1029,23 +1029,105 @@ describe('issues-view', () => {
             expect(api.getIssues).not.toHaveBeenCalled();
         });
 
-        it('filters issues by labels client-side', async () => {
-            // Set up label checkboxes
+        // CHT-1212: label/exclude-label filters are sent to the server
+        // (which matches by name) instead of over-fetching and filtering
+        // client-side against a hard 1000-row page.
+        it('resolves selected label ids to names and sends them as params.label', async () => {
             const labelDropdown = document.getElementById('label-filter-dropdown');
             labelDropdown.querySelector('.multi-select-options').innerHTML = `
-                <label class="multi-select-option"><input type="checkbox" value="label-1" checked></label>
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug'] })
+            );
+        });
+
+        it('resolves selected exclude-label ids to names and sends them as params.exclude_label', async () => {
+            const excludeDropdown = document.getElementById('exclude-label-filter-dropdown');
+            excludeDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-2" checked>
+                    <span class="label-badge"><span class="label-name">Wontfix</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ exclude_label: ['Wontfix'] })
+            );
+        });
+
+        it('resolves multiple selected labels to multiple names', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-2" checked>
+                    <span class="label-badge"><span class="label-name">Urgent</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug', 'Urgent'] })
+            );
+        });
+
+        it('stores whatever the server returns without re-filtering by label client-side', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
             `;
 
             const mockIssues = [
-                { id: 'i-1', project_id: 'p-1', labels: [{ id: 'label-1' }] },
-                { id: 'i-2', project_id: 'p-1', labels: [{ id: 'label-2' }] },
-                { id: 'i-3', project_id: 'p-1', labels: [] },
+                { id: 'i-1', project_id: 'p-1', labels: [{ id: 'label-1', name: 'Bug' }] },
+                { id: 'i-2', project_id: 'p-1', labels: [{ id: 'label-1', name: 'Bug' }] },
             ];
             api.getIssues.mockResolvedValue(mockIssues);
             await loadIssues();
 
-            // Only issue with label-1 should be stored
-            expect(setIssues).toHaveBeenCalledWith([mockIssues[0]]);
+            expect(setIssues).toHaveBeenCalledWith(mockIssues);
+        });
+
+        it('omits params.label when a selected label id has no resolvable name', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            // Checkbox with no .label-name sibling — can't resolve a name
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option"><input type="checkbox" value="label-1" checked></label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label: expect.anything() })
+            );
+        });
+
+        it('omits params.label/exclude_label entirely when nothing is selected', async () => {
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label: expect.anything(), exclude_label: expect.anything() })
+            );
         });
 
         it('shows error toast on API failure', async () => {
