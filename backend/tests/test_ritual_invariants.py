@@ -240,7 +240,7 @@ class TestGroupSelectionEnforcedAtAttest:
             prompt="A",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
-            group=group,
+            group_id=group.id,
             note_required=False,
         )
         r_b = await OxydeRitual.objects.create(
@@ -249,19 +249,24 @@ class TestGroupSelectionEnforcedAtAttest:
             prompt="B",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
-            group=group,
+            group_id=group.id,
             note_required=False,
         )
 
-        # Force r_a to be the "selected" one for this issue (round-robin
-        # last_selected_ritual_id mechanism). The user attempts to attest
-        # r_b — must be rejected.
-        group.last_selected_ritual_id = r_a.id
-        await group.save(update_fields={"last_selected_ritual_id"})
+        # RANDOM_ONE selection is a weighted pick seeded by the issue id
+        # (mirrors _apply_group_selection; last_selected_ritual_id only
+        # drives ROUND_ROBIN). Compute the pick the listing would offer,
+        # then attempt to attest the OTHER ritual — must be rejected.
+        service = RitualService()
+        siblings = await OxydeRitual.objects.filter(
+            group_id=group.id, is_active=True,
+        ).all()
+        picked = service._select_random_one(siblings, seed=test_issue.id)
+        non_selected = r_b if picked.id == r_a.id else r_a
 
         with pytest.raises((ValueError, Exception)) as exc:
-            await RitualService().attest_for_issue(
-                r_b, test_issue.id, test_user.id, note="wrong one"
+            await service.attest_for_issue(
+                non_selected, test_issue.id, test_user.id, note="wrong one"
             )
         msg = str(exc.value).lower()
         assert "group" in msg or "select" in msg or "choose" in msg, (
@@ -288,8 +293,8 @@ class TestSprintApproveEnforcesTrigger:
         # Bypass attest_for_sprint validation by manually creating an
         # attestation with a sprint_id and a TICKET_CLOSE ritual.
         att = await OxydeRitualAttestation.objects.create(
-            ritual=ritual,
-            sprint=test_sprint,
+            ritual_id=ritual.id,
+            sprint_id=test_sprint.id,
             attested_by=test_user.id,
             note="bogus",
         )
@@ -368,9 +373,9 @@ class TestSoftDeleteHandling:
                 is_human_request=False,
             )
 
-        # Soft-delete the ritual.
-        gate_close_ritual.is_active = False
-        await gate_close_ritual.save(update_fields={"is_active"})
+        # Soft-delete the ritual through the service (the enforcement
+        # boundary — internal callers and the API both route here).
+        await RitualService().delete(gate_close_ritual, deleted_by_id=test_user.id)
 
         # The open limbo row must be explicitly cleared with attribution
         # to the deletion event — not silently abandoned.
@@ -384,3 +389,65 @@ class TestSoftDeleteHandling:
             "Soft-delete of the gating ritual must clear (or otherwise "
             "explicitly mark) the open limbo row, not leave it orphaned."
         )
+        assert rows[0].cleared_by_id == test_user.id
+
+        # The audit trail must be written, not just the clear.
+        from app.oxyde_models.issue import OxydeIssueActivity
+        from app.enums import ActivityType
+        activities = await OxydeIssueActivity.objects.filter(
+            issue_id=test_issue.id,
+            activity_type=ActivityType.INTENT_CANCELED.name,
+        ).all()
+        assert len(activities) == 1
+        assert "deleted" in (activities[0].new_value or "")
+
+    @pytest.mark.asyncio
+    async def test_soft_delete_keeps_intent_open_when_other_blockers_remain(
+        self, db, test_issue, test_user, test_project, make_ritual
+    ):
+        """Deleting one of two gating rituals must resolve only that
+        ritual's blocker; the intent stays open on the survivor."""
+        from app.services.issue_service import IssueService, TicketRitualsError
+        from app.schemas.issue import IssueUpdate
+        from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
+        from app.enums import LimboType
+
+        ritual_a = await make_ritual(
+            name="gate_close_a",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        ritual_b = await make_ritual(
+            name="gate_close_b",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+
+        test_issue.status = IssueStatus.IN_PROGRESS
+        await test_issue.save(update_fields={"status"})
+
+        with pytest.raises(TicketRitualsError):
+            await IssueService().update(
+                test_issue,
+                IssueUpdate(status=IssueStatus.DONE),
+                user_id=test_user.id,
+                is_human_request=False,
+            )
+
+        await RitualService().delete(ritual_a, deleted_by_id=test_user.id)
+
+        rows = await OxydeTicketLimbo.objects.filter(
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE.name,
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].cleared_at is None, (
+            "Intent must stay open while another ritual still blocks it."
+        )
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=rows[0].id,
+        ).all()
+        by_ritual = {b.ritual_id: b for b in blockers}
+        assert by_ritual[ritual_a.id].resolved_at is not None
+        assert by_ritual[ritual_a.id].resolved_by_id == test_user.id
+        assert by_ritual[ritual_b.id].resolved_at is None

@@ -7,7 +7,7 @@ from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue
 from app.oxyde_models.project import OxydeProject
-from app.oxyde_models.issue import OxydeTicketLimbo
+from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.enums import RitualTrigger, ApprovalMode, SprintStatus, LimboType
 from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
@@ -671,7 +671,7 @@ class TestRitualAttestation:
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="requires human completion"):
+        with pytest.raises(ValueError, match="is GATE mode"):
             await service.attest(ritual, sprint.id, test_user.id)
 
     async def test_approve_attestation(self, db, test_project, test_user, test_user2):
@@ -688,6 +688,7 @@ class TestRitualAttestation:
             name="review-ritual",
             prompt="Do something",
             approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
         )
 
         service = RitualService()
@@ -826,6 +827,7 @@ class TestLimboFlow:
             prompt="Done",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
         pending_ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
@@ -833,12 +835,14 @@ class TestLimboFlow:
             prompt="Not done",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
         ticket_ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ticket-close",
             prompt="For tickets",
             trigger=RitualTrigger.TICKET_CLOSE,  # Should be excluded
+            note_required=False,
         )
 
         # Attest the completed ritual
@@ -874,6 +878,7 @@ class TestLimboFlow:
             prompt="Do it",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
@@ -961,6 +966,7 @@ class TestTicketCloseRituals:
             prompt="Check it",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
         )
 
         service = RitualService()
@@ -981,7 +987,7 @@ class TestTicketCloseRituals:
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="requires human completion"):
+        with pytest.raises(ValueError, match="is GATE mode"):
             await service.attest_for_issue(ritual, test_issue.id, test_user.id)
 
     async def test_complete_gate_ritual_for_issue(self, db, test_project, test_issue, test_user):
@@ -1012,6 +1018,7 @@ class TestTicketCloseRituals:
             prompt="Check it",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1030,6 +1037,7 @@ class TestTicketCloseRituals:
             name="test-ritual",
             prompt="Test",
             trigger=RitualTrigger.TICKET_CLOSE,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1054,6 +1062,7 @@ class TestTicketCloseRituals:
             prompt="Test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1097,6 +1106,7 @@ class TestTicketCloseRituals:
             prompt="Test",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1288,6 +1298,7 @@ class TestTicketCloseRituals:
             prompt="Check before close",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1374,6 +1385,7 @@ class TestTicketCloseRituals:
             prompt="Check before claim",
             trigger=RitualTrigger.TICKET_CLAIM,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1551,6 +1563,7 @@ class TestRitualServiceMisc:
             prompt="Test",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.AUTO,
+            note_required=False,
         )
 
         service = RitualService()
@@ -1577,6 +1590,7 @@ class TestRitualServiceMisc:
             prompt="Test",
             trigger=RitualTrigger.EVERY_SPRINT,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         service = RitualService()
@@ -2724,6 +2738,7 @@ class TestTicketClaimRituals:
             prompt="Design must be approved",
             trigger=RitualTrigger.TICKET_CLAIM,
             approval_mode=ApprovalMode.REVIEW,
+            note_required=False,
         )
 
         # Attest but don't approve
@@ -2754,7 +2769,7 @@ class TestTicketClaimRituals:
         )
 
         service = RitualService()
-        with pytest.raises(ValueError, match="requires human completion"):
+        with pytest.raises(ValueError, match="is GATE mode"):
             await service.attest_for_issue(ritual, test_issue.id, test_user.id)
 
     async def test_claim_ritual_gate_mode_human_can_complete(
@@ -3081,7 +3096,7 @@ class TestTicketLimbo:
         # Manually create a limbo record (simulating blocked close)
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -3140,7 +3155,7 @@ class TestTicketLimbo:
         # Create limbo record only for issue_in_limbo
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue_in_limbo.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -3154,10 +3169,13 @@ class TestTicketLimbo:
         assert pending[0]["issue_id"] == issue_in_limbo.id
         assert pending[0]["pending_gates"][0]["requested_by_name"] == test_user.name
 
-    async def test_auto_mode_ritual_does_not_create_limbo(
+    async def test_auto_mode_ritual_creates_intent_limbo(
         self, db, test_project, test_issue, test_user
     ):
-        """Test that AUTO mode rituals don't create limbo records (user can complete themselves)."""
+        """AUTO mode rituals create limbo intent rows too. Under the
+        unified intent+blockers model, limbo is the universal record of
+        intent regardless of approval mode (pre-refactor only GATE
+        created limbo)."""
         from app.services.issue_service import IssueService, ClaimRitualsError
         from app.schemas.issue import IssueUpdate
         from app.enums import IssueStatus
@@ -3182,11 +3200,20 @@ class TestTicketLimbo:
         with pytest.raises(ClaimRitualsError):
             await issue_service.update(test_issue, update, test_user.id, is_human_request=True)
 
-        # Check NO limbo record was created
+        # An open CLAIM intent with an unresolved blocker for the ritual
+        # must be recorded.
         limbo_records = await OxydeTicketLimbo.objects.filter(
             issue_id=test_issue.id,
         ).all()
-        assert len(limbo_records) == 0  # No limbo for AUTO mode
+        assert len(limbo_records) == 1
+        limbo = limbo_records[0]
+        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.cleared_at is None
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=limbo.id,
+        ).all()
+        assert [b.ritual_id for b in blockers] == [ritual.id]
+        assert blockers[0].resolved_at is None
 
 
 # ============================================================================
@@ -3577,6 +3604,38 @@ class TestSprintRitualAttestationAPI:
         data = response.json()
         assert data["approved_at"] is not None
 
+    async def test_approve_attestation_api_non_review_mode_is_400(
+        self, client, auth_headers, test_project, db, test_user
+    ):
+        """Approving a non-REVIEW attestation must be a 400 from the
+        service ValueError, not an unhandled 500. Same wrap the
+        GATE-complete endpoints use."""
+        ritual = await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="auto-ritual-approve",
+            prompt="Auto",
+            approval_mode=ApprovalMode.AUTO,
+        )
+        limbo_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Sprint 1",
+            status=SprintStatus.COMPLETED,
+            limbo=True,
+        )
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id,
+            sprint_id=limbo_sprint.id,
+            attested_by=test_user.id,
+            note="auto-attested",
+        )
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/approve?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 400
+        assert "REVIEW" in response.json()["detail"]
+
     async def test_approve_attestation_api_not_in_limbo(self, client, auth_headers, test_project, db):
         """Test that approval fails when not in limbo."""
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="no-limbo", prompt="No")
@@ -3845,7 +3904,7 @@ class TestPendingGatesAPI:
         # Create limbo for the issue
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -4963,7 +5022,7 @@ class TestPendingGatesAPISuccessPaths:
         # Create a ticket limbo record
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5036,7 +5095,7 @@ class TestOrphanedLimboCleanup:
         # Create a limbo record (simulating a blocked close attempt)
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5100,7 +5159,7 @@ class TestOrphanedLimboCleanup:
         # Create a limbo record
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5150,7 +5209,7 @@ class TestOrphanedLimboCleanup:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5204,7 +5263,7 @@ class TestOrphanedLimboCleanup:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5260,7 +5319,7 @@ class TestGetIssuesWithPendingApprovals:
         # Create a limbo record
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5349,7 +5408,7 @@ class TestGetIssuesWithPendingApprovals:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=gate_ritual.id)
@@ -5520,6 +5579,7 @@ class TestGateCompletionEdgeCases:
             prompt="Gate",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         with pytest.raises(ValueError, match="does not belong to the same project"):
@@ -5539,6 +5599,7 @@ class TestGateCompletionEdgeCases:
             prompt="Gate",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         # Create an existing attestation
@@ -5578,7 +5639,7 @@ class TestCleanupOrphanedTicketLimbo:
         # Create limbo record (simulating failed clear)
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5614,7 +5675,7 @@ class TestCleanupOrphanedTicketLimbo:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
         )
         await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5653,7 +5714,7 @@ class TestCleanupOrphanedTicketLimbo:
 
             limbo = await OxydeTicketLimbo.objects.create(
                 issue_id=issue.id,
-                limbo_type=LimboType.CLOSE,
+                limbo_type=LimboType.CLOSE.name,
                 requested_by_id=test_user.id,
             )
             await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=ritual.id)
@@ -5690,7 +5751,7 @@ class TestCleanupOrphanedTicketLimbo:
 
         limbo = await OxydeTicketLimbo.objects.create(
             issue_id=test_issue.id,
-            limbo_type=LimboType.CLOSE,
+            limbo_type=LimboType.CLOSE.name,
             requested_by_id=test_user.id,
             cleared_at=datetime.now(timezone.utc),
             cleared_by_id=test_user.id,
@@ -5716,6 +5777,7 @@ class TestDefensiveLimboHandling:
             prompt="Gate",
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
+            note_required=False,
         )
 
         with patch.object(service, '_clear_ticket_limbo', new_callable=AsyncMock, side_effect=Exception("DB error")):

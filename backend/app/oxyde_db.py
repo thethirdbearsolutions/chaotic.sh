@@ -3,6 +3,7 @@ import os
 import typing
 import uuid
 from datetime import datetime, timezone
+from pydantic_core import PydanticUndefined
 from oxyde import AsyncDatabase
 from app.config import get_settings
 
@@ -112,7 +113,15 @@ def _patch_objects_create_to_apply_default_factory() -> None:
         if is_pk and ann is str:
             return True, str(uuid.uuid4())
 
-        # 4. Datetime fields: default to now(). Covers created_at /
+        # 4. Plain `default=` values (enums, bools, floats, None). Oxyde's
+        #    INSERT dump uses exclude_unset=True, so a defaulted-but-unset
+        #    column is omitted from the row entirely and NOT NULL columns
+        #    with no SQL-level default fail (e.g. rituals.trigger).
+        default = getattr(info, "default", PydanticUndefined)
+        if default is not PydanticUndefined:
+            return True, default
+
+        # 5. Datetime fields: default to now(). Covers created_at /
         #    updated_at / joined_at / attested_at / requested_at and any
         #    future timestamp added with default_factory.
         if ann is datetime:
