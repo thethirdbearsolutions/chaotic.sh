@@ -687,6 +687,48 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         return False, f"Migration failed: {e.stderr}"
 
 
+def rebuild_frontend() -> tuple[bool, str]:
+    """Install npm deps and rebuild the frontend bundle.
+
+    The upstream repo commits the built bundle (frontend/static/js/app.bundle.js)
+    so a fresh clone "just works." But if a PR forgets to commit the rebuilt
+    bundle alongside source changes, an in-place git pull/reset leaves source
+    files updated and the served bundle stale — the daemon then renders an
+    older UI than the code on disk implies. Rebuilding as part of the upgrade
+    closes that gap.
+
+    Uses `npm ci`, not `npm install`. `ci` reproducibly installs from
+    package-lock.json (wiping any stale node_modules) and refuses to mutate
+    the committed lockfile. That's the deploy-shaped install we want —
+    `npm install` would silently rewrite the lockfile, and combined with
+    a node_modules existence-guard would never reinstall after an upstream
+    lockfile bump, reproducing the exact silent-skew bug this function
+    exists to prevent (just at the deps layer instead of the bundle layer).
+
+    Best-effort: if node/npm is unavailable, skip with a message rather
+    than failing the upgrade. The committed bundle (if up to date) will
+    still be served.
+
+    Returns (success, message).
+    """
+    if shutil.which("npm") is None or shutil.which("node") is None:
+        return True, "skipped (node/npm not on PATH; serving committed bundle)"
+    frontend_dir = PROJECT_DIR / "frontend"
+    if not (frontend_dir / "package.json").exists():
+        return True, "skipped (no frontend/package.json)"
+    try:
+        # `npm ci` is idempotent and the only safe way to ensure
+        # node_modules matches the committed lockfile on disk.
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600)
+        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180)
+        return True, "rebuilt"
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        return False, f"npm ci/build failed: {stderr[:200]}"
+    except subprocess.TimeoutExpired:
+        return False, "npm ci/build timed out"
+
+
 # CLI Command Group
 @click.group()
 def system():
@@ -1296,6 +1338,16 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
             if not start_service():
                 console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         raise SystemExit(1)
+
+    # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
+    # committed bundle (if a PR remembered to commit it) is still served.
+    console.print("Rebuilding frontend...")
+    fe_ok, fe_msg = rebuild_frontend()
+    if fe_ok:
+        console.print(f"  [dim]{fe_msg}[/dim]")
+    else:
+        console.print(f"  [yellow]{fe_msg}[/yellow]")
+        console.print("  [yellow]Continuing; UI may be stale until the next successful build.[/yellow]")
 
     # Start server
     if was_running:
