@@ -1530,7 +1530,9 @@ class RitualService:
         active_rituals = {r.id: r for r in await OxydeRitual.objects.filter(
             project_id=project_id,
             is_active=True,
-            approval_mode=ApprovalMode.GATE,
+            # DbEnum columns store .name; a raw enum member binds its
+            # .value ('gate') and matches nothing.
+            approval_mode=ApprovalMode.GATE.name,
         ).all()}
 
         # Get uncleared limbo records and their unresolved blockers,
