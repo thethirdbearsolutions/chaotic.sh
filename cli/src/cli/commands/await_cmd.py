@@ -932,6 +932,9 @@ def register(cli):
     def await_sprint(sprint_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
         """Wait on activity in the project that hosts a sprint.
 
+        With SPRINT_ID, waits on the named sprint's parent project;
+        without, on the current project.
+
         MVP limitation: sprint-level filtering is not yet wired up.
         This wakes on any activity in the sprint's parent project,
         which is a superset of true sprint activity. Combine with
@@ -939,7 +942,17 @@ def register(cli):
         narrow to sprint-specific signals.
         """
         team_id = _require_current_team()
-        project_id = _require_current_project()
+        if sprint_id:
+            # Resolve the sprint so the positional actually means
+            # something: its parent project becomes the wait scope.
+            try:
+                sprint = _client().get_sprint(sprint_id)
+            except APIError as exc:
+                _stderr(f"await: {exc}")
+                raise SystemExit(1) from exc
+            project_id = sprint["project_id"]
+        else:
+            project_id = _require_current_project()
         # The team feed doesn't filter by sprint server-side, and we
         # don't fetch each event's issue to check its sprint_id (heavy
         # + racy). Scope by project for MVP; documented above.

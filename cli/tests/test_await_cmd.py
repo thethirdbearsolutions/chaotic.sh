@@ -1018,6 +1018,86 @@ class TestPrincipalResolutionFailFast:
 
 
 # ---------------------------------------------------------------------------
+# await sprint: positional resolves the sprint's parent project
+# ---------------------------------------------------------------------------
+
+
+class TestAwaitSprintScope:
+    def _root(self):
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        return root
+
+    def test_sprint_positional_resolves_parent_project(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = {}
+
+        def fake_run_wait(**kwargs):
+            captured.update(kwargs)
+            raise SystemExit(124)
+
+        monkeypatch.setattr(await_cmd, "_run_wait", fake_run_wait)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_client",
+            lambda: type("X", (), {
+                "get_sprint": lambda self, sprint_id: {
+                    "id": sprint_id, "project_id": "proj_from_sprint",
+                },
+            })(),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(self._root(), ["await", "sprint", "spr_9"])
+        assert result.exit_code == 124
+        assert captured["project_id"] == "proj_from_sprint"
+        assert captured["team_id"] == "team_1"
+
+    def test_sprint_lookup_failure_exits_1(self, monkeypatch):
+        from click.testing import CliRunner
+
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+
+        def boom(self, sprint_id):
+            raise await_cmd.APIError("Sprint not found", status_code=404)
+
+        monkeypatch.setattr(
+            await_cmd, "_client",
+            lambda: type("X", (), {"get_sprint": boom})(),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(self._root(), ["await", "sprint", "spr_missing"])
+        assert result.exit_code == 1
+
+    def test_sprint_without_positional_uses_current_project(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = {}
+
+        def fake_run_wait(**kwargs):
+            captured.update(kwargs)
+            raise SystemExit(124)
+
+        monkeypatch.setattr(await_cmd, "_run_wait", fake_run_wait)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_require_current_project", lambda: "proj_current",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(self._root(), ["await", "sprint"])
+        assert result.exit_code == 124
+        assert captured["project_id"] == "proj_current"
+
+
+# ---------------------------------------------------------------------------
 # Signal and pipe handling
 # ---------------------------------------------------------------------------
 

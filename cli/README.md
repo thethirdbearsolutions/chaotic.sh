@@ -212,7 +212,7 @@ when a required scope is missing.
 | `await doc ID`       | current team                      | Doc IDs are team-local              |
 | `await docs`         | current team                      | Mirrors `doc list`                  |
 | `await project [ID]` | current team (ID optional)        | Defaults to current project         |
-| `await sprint [ID]`  | current project (ID optional)     | MVP scopes to the sprint's project, not to the sprint itself. See note below. |
+| `await sprint [ID]`  | current project when ID omitted   | With ID, the sprint is looked up and its parent project becomes the scope. MVP scopes to that project, not to the sprint itself. See note below. |
 | `await team [ID]`    | auth (ID optional)                | Defaults to current team            |
 | `await ritual NAME`  | current project                   | Ritual names are per-project. Pass `--ticket` to also wake on `intent_*` events. |
 | `await rituals`      | current project                   | Wakes on ritual events project-wide, including intent lifecycle. |
