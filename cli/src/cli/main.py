@@ -88,7 +88,10 @@ def require_auth(f):
     """Decorator to require authentication."""
     def wrapper(*args, **kwargs):
         if not get_token() and not get_api_key():
-            console.print("[red]Not authenticated. Run 'chaotic auth login' or 'chaotic auth set-key' first.[/red]")
+            console.print(
+                "[red]Not authenticated.[/red] Run 'chaotic auth login' or 'chaotic auth set-key' "
+                "first, or 'chaotic quickstart' to get set up."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -101,7 +104,10 @@ def require_team(f):
     @require_auth
     def wrapper(*args, **kwargs):
         if not get_current_team():
-            console.print("[red]No team selected. Run 'chaotic team use <team_id>' first.[/red]")
+            console.print(
+                "[red]No team selected.[/red] Run 'chaotic team list' to see available teams, "
+                "or 'chaotic quickstart' if you don't have one yet."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -114,7 +120,10 @@ def require_project(f):
     @require_team
     def wrapper(*args, **kwargs):
         if not get_current_project():
-            console.print("[red]No project selected. Run 'chaotic project use <project_id>' first.[/red]")
+            console.print(
+                "[red]No project selected.[/red] Run 'chaotic project list' to see available "
+                "projects, or 'chaotic quickstart' if you don't have one yet."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -1035,6 +1044,13 @@ def status():
             console.print(f"  [yellow]![/yellow] Project ID set: {project_id[:8]}...")
     else:
         console.print("  [dim]-[/dim] No project selected")
+
+    # CHT-1221: bare `chaotic` already points a zero-state user at quickstart
+    # (main.py's no-subcommand branch) -- `status` gave the same information
+    # with no next step. Match it.
+    if not (get_token() or get_api_key()) and not team_id and not project_id:
+        console.print()
+        console.print("Run [bold cyan]chaotic quickstart[/bold cyan] to get set up.")
 
     # Pending approvals (GATE and REVIEW)
     if project_id:

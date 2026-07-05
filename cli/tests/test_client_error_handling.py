@@ -227,13 +227,74 @@ class TestFormatError:
         client = Client()
         assert client._format_error("Something went wrong") == "Something went wrong"
 
-    def test_list_detail_stringified(self):
-        """List error details (e.g. FastAPI validation errors) should be stringified."""
+    def test_list_detail_formatted_readably(self):
+        """List error details (e.g. FastAPI validation errors) render as
+        readable `<field>: <message>` lines (CHT-1221) -- not a raw
+        Python-repr dump of the whole list, which used to include
+        pydantic's raw `input` value alongside `loc`/`msg`."""
         client = Client()
         detail = [{"loc": ["body", "title"], "msg": "field required"}]
         result = client._format_error(detail)
         assert isinstance(result, str)
-        assert "field required" in result
+        assert result == "title: field required"
+
+    def test_list_detail_never_echoes_submitted_value(self):
+        """CHT-1221 (password leak): even though the backend's validation
+        handler already strips `input`, this stays value-blind on its own
+        -- if `input`/`ctx`/`value` show up in a detail dict for any
+        reason, they must never be rendered."""
+        client = Client()
+        detail = [{
+            "type": "string_too_short",
+            "loc": ["body", "password"],
+            "msg": "String should have at least 8 characters",
+            "input": "hunter2",
+            "ctx": {"min_length": 8},
+        }]
+        result = client._format_error(detail)
+        assert result == "password: String should have at least 8 characters"
+        assert "hunter2" not in result
+        assert "min_length" not in result
+
+    def test_list_detail_multiple_errors_one_line_each(self):
+        """Multiple validation errors render as one line per error."""
+        client = Client()
+        detail = [
+            {"loc": ["body", "name"], "msg": "field required"},
+            {"loc": ["body", "password"], "msg": "String should have at least 8 characters", "input": "abc"},
+        ]
+        result = client._format_error(detail)
+        assert result == (
+            "name: field required\n"
+            "password: String should have at least 8 characters"
+        )
+        assert "abc" not in result
+
+    def test_list_detail_strips_body_prefix_from_loc(self):
+        """The `body`/`query`/`path`/`header` root segment is noise -- drop
+        it so the field name reads cleanly."""
+        client = Client()
+        detail = [{"loc": ["query", "limit"], "msg": "value is not a valid integer"}]
+        assert client._format_error(detail) == "limit: value is not a valid integer"
+
+    def test_list_detail_nested_loc_joined_with_dots(self):
+        """Nested field paths (e.g. list index) join with '.'."""
+        client = Client()
+        detail = [{"loc": ["body", "items", 0, "name"], "msg": "field required"}]
+        assert client._format_error(detail) == "items.0.name: field required"
+
+    def test_list_detail_non_dict_entries_fall_back_to_str(self):
+        """Backward compatibility: a list of plain strings (not the
+        loc/msg dict shape) still stringifies per-entry."""
+        client = Client()
+        detail = ["first problem", "second problem"]
+        result = client._format_error(detail)
+        assert result == "first problem\nsecond problem"
+
+    def test_empty_list_detail(self):
+        """Degenerate case: empty list shouldn't blow up."""
+        client = Client()
+        assert client._format_error([]) == "Validation error."
 
     def test_dict_with_message_key(self, mock_client_request):
         """Dict detail with message key should use the message."""

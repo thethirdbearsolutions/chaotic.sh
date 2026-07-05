@@ -7,14 +7,44 @@ from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_pr
 
 
 class TestHealthEndpoint:
-    """Tests for the health check endpoint."""
+    """Tests for the health check endpoint (CHT-1221).
+
+    /health used to do nothing but return a static 200 -- it never
+    touched the DB, so it reported healthy even against a completely
+    unmigrated database. It now does a trivial DB round-trip and
+    reports the result via a new `db` key. `status` stays "healthy"
+    (backward compatible: cli/src/cli/system.py::health_check only
+    polls for HTTP 200) -- `db` and `version` are additive.
+    """
 
     @pytest.mark.asyncio
-    async def test_health_check(self, client):
-        """Health endpoint returns healthy status."""
+    async def test_health_check_migrated_db(self, client):
+        """Against a fully-migrated DB (the `client`/`db` fixture's
+        schema), /health reports status healthy and db ok."""
         response = await client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "healthy"}
+        body = response.json()
+        assert body["status"] == "healthy"
+        assert body["db"] == "ok"
+        assert "version" in body
+
+    @pytest.mark.asyncio
+    async def test_health_check_unmigrated_db(self, client):
+        """Regression for the seeded bug: an unmigrated/broken DB (here,
+        the `users` table dropped out from under a live connection) must
+        surface as db=="error" -- not silently report healthy."""
+        from oxyde import execute_raw
+
+        await execute_raw("DROP TABLE users", [])
+
+        response = await client.get("/health")
+        assert response.status_code == 200
+        body = response.json()
+        # HTTP-200 liveness contract is unchanged -- system.py's
+        # health_check() polls only for this.
+        assert body["status"] == "healthy"
+        assert body["db"] == "error"
+        assert "version" in body
 
 
 class TestCliAuth:
