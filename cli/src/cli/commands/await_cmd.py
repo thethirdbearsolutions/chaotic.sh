@@ -39,7 +39,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import click
 import httpx
@@ -382,8 +382,58 @@ def _is_transient(exc: Exception) -> bool:
 # Polling loop
 # ---------------------------------------------------------------------------
 
+_PAGE_LIMIT = 200
+"""Rows fetched per activity-feed page."""
+
+_MAX_PAGES = 10
+"""Pagination depth cap per poll. Beyond this we warn to stderr rather
+than fetch unboundedly — the feed would have to produce
+_MAX_PAGES * _PAGE_LIMIT rows inside one poll window to hit it."""
+
+_REFETCH_OVERLAP = 600.0
+"""Seconds of overlap kept behind the newest fetched event. The
+pagination floor trails the newest event by this margin so rows whose
+`created_at` commits slightly out of order are still fetched; seen-id
+entries older than the floor can never be re-fetched and are pruned,
+bounding the dedup map for long waits (and for a future --follow)."""
+
+
+def _fetch_new_pages(fetch_page, floor: datetime) -> list[dict]:
+    """Fetch activity-feed pages (newest first) until every row newer
+    than `floor` has been retrieved, a short page signals the end of
+    the feed, or the depth cap is hit (warned to stderr — events past
+    the cap may be missed).
+    """
+    batch: list[dict] = []
+    for page in range(_MAX_PAGES):
+        rows = fetch_page(page * _PAGE_LIMIT, _PAGE_LIMIT)
+        batch.extend(rows)
+        if len(rows) < _PAGE_LIMIT:
+            return batch
+        oldest = min(
+            (dt for row in rows
+             if (dt := _parse_event_dt(row.get("created_at"))) is not None),
+            default=None,
+        )
+        if oldest is not None and oldest <= floor:
+            return batch
+    _stderr(
+        f"await: activity feed produced more than "
+        f"{_MAX_PAGES * _PAGE_LIMIT} rows in one poll window; "
+        "events past that depth may be missed"
+    )
+    return batch
+
+
+def _prune_seen(seen: dict[str, datetime], floor: datetime) -> None:
+    """Drop seen-id entries older than the pagination floor. Rows below
+    the floor are never fetched again, so their ids can't recur."""
+    for ev_id in [i for i, dt in seen.items() if dt < floor]:
+        del seen[ev_id]
+
+
 def _poll(
-    fetch_team_activities,
+    fetch_page,
     *,
     watermark: datetime,
     scope: dict,
@@ -396,6 +446,11 @@ def _poll(
     """Block until a matching activity arrives or `--timeout` expires.
     Returns the matching event dict, or None on timeout.
 
+    `fetch_page(skip, limit)` returns one page of the activity feed,
+    newest first. Each poll paginates back to the floor (see
+    _REFETCH_OVERLAP) so a burst larger than one page — e.g. during a
+    backoff window — doesn't silently drop events.
+
     Network errors trigger exponential backoff (1/2/4/8/16/30s cap),
     retried indefinitely while the timeout has not expired.
     """
@@ -407,7 +462,8 @@ def _poll(
     deadline = (
         time.time() + timeout_secs if timeout_secs is not None else None
     )
-    seen_ids: set[str] = set()
+    seen: dict[str, datetime] = {}
+    floor = watermark
     backoff_idx = 0
 
     while True:
@@ -415,7 +471,7 @@ def _poll(
             return None
 
         try:
-            activities = fetch_team_activities()
+            activities = _fetch_new_pages(fetch_page, floor)
         except Exception as exc:  # noqa: BLE001 - we re-classify below
             if _is_transient(exc):
                 wait = _BACKOFF_SCHEDULE[min(backoff_idx, len(_BACKOFF_SCHEDULE) - 1)]
@@ -436,21 +492,30 @@ def _poll(
         # Activities arrive newest-first; sort oldest-first so we wake
         # on the chronologically earliest matching event.
         new_events: list[tuple[datetime, dict]] = []
+        max_dt: datetime | None = None
         for event in activities:
-            ev_id = event.get("id")
-            if ev_id and ev_id in seen_ids:
-                continue
             ev_dt = _parse_event_dt(event.get("created_at"))
-            if ev_dt is None or ev_dt <= watermark:
+            if ev_dt is None:
+                continue
+            if max_dt is None or ev_dt > max_dt:
+                max_dt = ev_dt
+            # Strictly-before events predate the wait. Equal-timestamp
+            # events are candidates (second-precision servers can stamp
+            # an event in the same instant the wait starts); the seen-id
+            # map absorbs any double-fetch.
+            if ev_dt < watermark:
+                continue
+            ev_id = event.get("id")
+            if ev_id and ev_id in seen:
                 continue
             new_events.append((ev_dt, event))
 
         new_events.sort(key=lambda pair: pair[0])
 
-        for _dt, event in new_events:
+        for ev_dt, event in new_events:
             ev_id = event.get("id")
             if ev_id:
-                seen_ids.add(ev_id)
+                seen[ev_id] = ev_dt
             if not _event_matches_type(event, type_filter):
                 continue
             if exclude_self_for and _event_is_self(event, exclude_self_for):
@@ -461,6 +526,15 @@ def _poll(
                 if not _run_until_predicate(until_cmd, event):
                     continue
             return event
+
+        # Advance the floor behind the newest event and prune the seen
+        # map. Rows older than the floor are never re-fetched, so their
+        # entries can't recur; this keeps memory bounded on long waits.
+        if max_dt is not None:
+            candidate = max_dt - timedelta(seconds=_REFETCH_OVERLAP)
+            if candidate > floor:
+                floor = candidate
+                _prune_seen(seen, floor)
 
         # Sleep until next poll, capped by timeout.
         wait = interval_secs
@@ -586,35 +660,14 @@ def _run_wait(
             raise SystemExit(1)
     watermark = _now_utc()
 
-    def fetch():
+    def fetch_page(skip: int, limit: int) -> list:
         return _client().get_team_activities(
-            team_id=team_id, skip=0, limit=50,
-        ) if project_id is None else _client().get_team_activities(
-            # Manual URL build since the helper doesn't take project_id.
-            # Falls back to a direct request below.
-            team_id=team_id, skip=0, limit=50,
+            team_id=team_id, skip=skip, limit=limit, project_id=project_id,
         )
-
-    # The bundled client.get_team_activities doesn't accept project_id;
-    # build a direct request when we need it. Keep using the helper
-    # otherwise so we benefit from its auth + error wrapping.
-    if project_id is not None:
-        from urllib.parse import urlencode
-
-        def fetch_with_project():  # noqa: D401
-            params = urlencode({
-                "team_id": team_id,
-                "project_id": project_id,
-                "skip": 0,
-                "limit": 50,
-            })
-            return _client()._request("GET", f"/issues/activities?{params}")
-
-        fetch = fetch_with_project
 
     try:
         event = _poll(
-            fetch,
+            fetch_page,
             watermark=watermark,
             scope=scope,
             type_filter=type_filter,

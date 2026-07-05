@@ -390,7 +390,7 @@ class TestPollingLoop:
             _event("e1", later, activity_type="commented", user_id="u1"),
         ]
 
-        def fetch():
+        def fetch(skip, limit):
             return events
 
         result = await_cmd._poll(
@@ -414,7 +414,7 @@ class TestPollingLoop:
             _event("new", after, activity_type="commented"),
         ]
 
-        def fetch():
+        def fetch(skip, limit):
             return events
 
         result = await_cmd._poll(
@@ -427,7 +427,7 @@ class TestPollingLoop:
     def test_returns_none_on_timeout_with_no_matches(self):
         watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-        def fetch():
+        def fetch(skip, limit):
             return []
 
         result = await_cmd._poll(
@@ -444,7 +444,7 @@ class TestPollingLoop:
             _event("mine", later, activity_type="commented", user_id="me"),
         ]
 
-        def fetch():
+        def fetch(skip, limit):
             return events
 
         result = await_cmd._poll(
@@ -462,7 +462,7 @@ class TestPollingLoop:
             _event("e1", later, activity_type="updated"),
         ]
 
-        def fetch():
+        def fetch(skip, limit):
             return events
 
         result = await_cmd._poll(
@@ -487,7 +487,7 @@ class TestPollingLoop:
             ),
         ]
 
-        def fetch():
+        def fetch(skip, limit):
             return events
 
         result = await_cmd._poll(
@@ -506,7 +506,7 @@ class TestPollingLoop:
         events = [_event("e1", later, activity_type="commented")]
         call_count = {"n": 0}
 
-        def fetch():
+        def fetch(skip, limit):
             call_count["n"] += 1
             return events
 
@@ -518,6 +518,130 @@ class TestPollingLoop:
         # First call returns the event; loop exits immediately.
         assert result["id"] == "e1"
         assert call_count["n"] == 1
+
+    def test_event_at_exact_watermark_is_candidate(self):
+        # Servers that truncate created_at to the second can stamp an
+        # event in the same instant the wait starts. Equal-timestamp
+        # events must be candidates (strict-less-than filter).
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        events = [_event("e1", watermark, activity_type="commented")]
+
+        def fetch(skip, limit):
+            return events
+
+        result = await_cmd._poll(
+            fetch, watermark=watermark, scope={}, type_filter=None,
+            exclude_self_for=None, until_cmd=None,
+            timeout_secs=5, interval_secs=0.01,
+        )
+        assert result["id"] == "e1"
+
+    def test_wakes_on_event_beyond_first_page(self):
+        # A burst larger than one page (e.g. after a backoff window)
+        # must not drop the older events past page 1.
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        target = _event(
+            "target", watermark + timedelta(seconds=1),
+            activity_type="commented",
+        )
+        page1 = [
+            _event(f"noise{i}", watermark + timedelta(seconds=500 - i),
+                   activity_type="updated")
+            for i in range(await_cmd._PAGE_LIMIT)
+        ]
+        page2 = [target, _event("old", watermark - timedelta(seconds=5),
+                                activity_type="commented")]
+
+        def fetch(skip, limit):
+            if skip == 0:
+                return page1
+            if skip == await_cmd._PAGE_LIMIT:
+                return page2
+            return []
+
+        result = await_cmd._poll(
+            fetch, watermark=watermark, scope={},
+            type_filter={"commented"},
+            exclude_self_for=None, until_cmd=None,
+            timeout_secs=5, interval_secs=0.01,
+        )
+        assert result["id"] == "target"
+
+
+class TestFetchNewPages:
+    def _full_page(self, base_ts, n_start):
+        return [
+            _event(f"e{n_start + i}", base_ts - timedelta(seconds=i))
+            for i in range(await_cmd._PAGE_LIMIT)
+        ]
+
+    def test_short_page_ends_walk(self):
+        floor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        calls = []
+
+        def fetch(skip, limit):
+            calls.append((skip, limit))
+            return [_event("e1", floor + timedelta(seconds=1))]
+
+        rows = await_cmd._fetch_new_pages(fetch, floor)
+        assert len(rows) == 1
+        assert calls == [(0, await_cmd._PAGE_LIMIT)]
+
+    def test_walk_stops_when_page_reaches_floor(self):
+        floor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # Page 1 entirely above floor; page 2 crosses it.
+        page1 = self._full_page(floor + timedelta(seconds=1000), 0)
+        page2 = [_event("below", floor - timedelta(seconds=1))] * await_cmd._PAGE_LIMIT
+        calls = []
+
+        def fetch(skip, limit):
+            calls.append(skip)
+            return page1 if skip == 0 else page2
+
+        rows = await_cmd._fetch_new_pages(fetch, floor)
+        assert calls == [0, await_cmd._PAGE_LIMIT]
+        assert len(rows) == 2 * await_cmd._PAGE_LIMIT
+
+    def test_depth_cap_warns_and_stops(self, capsys):
+        floor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        calls = []
+
+        def fetch(skip, limit):
+            calls.append(skip)
+            # Every page full and entirely above the floor.
+            return self._full_page(
+                floor + timedelta(seconds=10_000_000 - skip), skip,
+            )
+
+        await_cmd._fetch_new_pages(fetch, floor)
+        assert len(calls) == await_cmd._MAX_PAGES
+        assert "may be missed" in capsys.readouterr().err
+
+    def test_rows_without_timestamps_do_not_break_walk(self):
+        floor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        def fetch(skip, limit):
+            return [{"id": "no-ts"}]
+
+        rows = await_cmd._fetch_new_pages(fetch, floor)
+        assert rows == [{"id": "no-ts"}]
+
+
+class TestPruneSeen:
+    def test_prunes_entries_older_than_floor(self):
+        floor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        seen = {
+            "old": floor - timedelta(seconds=1),
+            "at-floor": floor,
+            "new": floor + timedelta(seconds=1),
+        }
+        await_cmd._prune_seen(seen, floor)
+        assert sorted(seen) == ["at-floor", "new"]
+
+    def test_empty_map_is_fine(self):
+        seen: dict = {}
+        await_cmd._prune_seen(seen, datetime(2026, 1, 1, tzinfo=timezone.utc))
+        assert seen == {}
 
 
 # ---------------------------------------------------------------------------

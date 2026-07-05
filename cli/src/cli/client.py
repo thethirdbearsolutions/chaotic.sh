@@ -321,8 +321,14 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}/comments/{comment_id}")
 
     # Activities
-    def get_team_activities(self, team_id: str, skip: int = 0, limit: int = 20) -> list:
-        params = urlencode({"team_id": team_id, "skip": skip, "limit": limit})
+    def get_team_activities(
+        self, team_id: str, skip: int = 0, limit: int = 20,
+        project_id: str | None = None,
+    ) -> list:
+        query: dict = {"team_id": team_id, "skip": skip, "limit": limit}
+        if project_id is not None:
+            query["project_id"] = project_id
+        params = urlencode(query)
         return self._request("GET", f"/issues/activities?{params}")
 
     # Comments (team-wide)
