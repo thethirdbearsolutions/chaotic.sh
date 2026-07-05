@@ -800,6 +800,35 @@ describe('issues-view', () => {
             const container = document.getElementById('filter-chips-row');
             expect(container.innerHTML).toContain('Clear all');
         });
+
+        // CHT-1212: Excluded Labels chip was wired inconsistently with its
+        // sibling Labels chip (different clearAction, inconsistent casing)
+        describe('Excluded Labels chip (CHT-1212)', () => {
+            beforeEach(() => {
+                document.getElementById('exclude-label-filter-dropdown')
+                    .querySelector('.multi-select-options').innerHTML = `
+                        <label class="multi-select-option">
+                            <input type="checkbox" value="lbl-x" checked>
+                            <span class="label-badge"><span class="label-name">Wontfix</span></span>
+                        </label>
+                    `;
+            });
+
+            it('renders "Excluded Labels" in Title Case, matching the Labels chip', () => {
+                updateFilterChips();
+                const container = document.getElementById('filter-chips-row');
+                expect(container.innerHTML).toContain('Excluded Labels');
+                expect(container.innerHTML).not.toContain('Excluded labels');
+            });
+
+            it('wires the × to clear-exclude-label-filter-new, matching the Labels chip pattern', () => {
+                updateFilterChips();
+                const container = document.getElementById('filter-chips-row');
+                const removeBtn = Array.from(container.querySelectorAll('.filter-chip-remove'))
+                    .find(btn => btn.closest('.filter-chip').textContent.includes('Excluded Labels'));
+                expect(removeBtn.dataset.action).toBe('clear-exclude-label-filter-new');
+            });
+        });
     });
 
     describe('updateFilterCountBadge', () => {

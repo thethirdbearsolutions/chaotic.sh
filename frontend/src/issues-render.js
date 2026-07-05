@@ -665,9 +665,12 @@ export function updateFilterChips() {
         }).join(', ');
         chips.push({
             category: 'labels',
-            label: 'Excluded labels',
+            label: 'Excluded Labels',
             value: names,
-            clearAction: 'clear-exclude-label-filter'
+            // Match the Labels chip: the "-new" action also re-renders the
+            // popover's option pane, so a still-open Exclude Labels pane
+            // reflects the change instead of going stale (CHT-1212)
+            clearAction: 'clear-exclude-label-filter-new'
         });
     }
 
