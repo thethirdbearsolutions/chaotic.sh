@@ -1000,6 +1000,35 @@ describe('issues-view', () => {
             expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
+        // CHT-1212: sub-2-char search used to silently no-op even though the
+        // backend only requires min_length=1
+        it('includes a 1-character search query in params', async () => {
+            document.getElementById('issue-search').value = 'b';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ search: 'b' })
+            );
+        });
+
+        it('includes a 2+ character search query in params', async () => {
+            document.getElementById('issue-search').value = 'bug';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ search: 'bug' })
+            );
+        });
+
+        it('omits search from params when the query is empty', async () => {
+            document.getElementById('issue-search').value = '';
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ search: expect.anything() })
+            );
+        });
+
         it('loads team issues when no project selected', async () => {
             getCurrentProject.mockReturnValue(null);
             getProjects.mockReturnValue([{ id: 'p-1' }]);

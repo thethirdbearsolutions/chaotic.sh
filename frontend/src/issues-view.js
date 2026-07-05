@@ -270,7 +270,9 @@ export async function loadIssues() {
         params.issue_type = issueTypeFilter;
     }
 
-    if (searchQuery && searchQuery.length >= 2) {
+    // Backend's search param only requires min_length=1 (CHT-1212) — a 1-char
+    // query used to silently no-op with no visible explanation.
+    if (searchQuery && searchQuery.length >= 1) {
         params.search = searchQuery;
     }
 
