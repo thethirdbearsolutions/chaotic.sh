@@ -189,10 +189,12 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/issues?project_id={project_id}", data)
 
-    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None) -> list:
+    def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None, team_id: str = None) -> list:
         params = {}
         if project_id:
             params["project_id"] = project_id
+        if team_id:
+            params["team_id"] = team_id
         if sprint_id:
             params["sprint_id"] = sprint_id
         if assignee_id:
