@@ -206,6 +206,8 @@ describe('renderAgents', () => {
     await loadAgents();
     const list = document.getElementById('agents-list');
     expect(list.innerHTML).toContain('No agents yet');
+    expect(list.innerHTML).toContain('Create an agent to enable CLI automation with its own identity');
+    expect(list.innerHTML).toContain('empty-state');
     setCurrentTeam(null);
   });
 

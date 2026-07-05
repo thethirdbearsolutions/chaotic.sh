@@ -441,6 +441,24 @@ describe('issue-detail-view', () => {
             expect(getCurrentDetailIssue()).toEqual(mockIssue);
         });
 
+        it('renders empty sub-issues state', async () => {
+            await viewIssue('issue-1');
+
+            const content = document.getElementById('issue-detail-content').innerHTML;
+            expect(content).toContain('No sub-issues');
+            expect(content).toContain('Break this issue down by creating sub-issues');
+            expect(content).toContain('empty-state');
+        });
+
+        it('renders empty activity state', async () => {
+            await viewIssue('issue-1');
+
+            const content = document.getElementById('issue-detail-content').innerHTML;
+            expect(content).toContain('No activity yet');
+            expect(content).toContain('Activity will appear here as the issue is updated');
+            expect(content).toContain('empty-state');
+        });
+
         it('shows error toast on API failure', async () => {
             api.getIssue.mockRejectedValue(new Error('API Error'));
 
