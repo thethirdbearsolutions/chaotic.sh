@@ -243,6 +243,55 @@ describe('event-delegation', () => {
 
             expect(handler).not.toHaveBeenCalled();
         });
+
+        // CHT-1206: a focused data-action element (e.g. a tabindex="-1" row)
+        // used to fire its handler on ANY keydown, not just Enter/Space —
+        // so tabbing away from it silently re-triggered the action.
+        describe('keydown only activates on Enter/Space, mirroring native buttons (CHT-1206)', () => {
+            it('does NOT fire on Tab when the data-action element itself has focus', () => {
+                const handler = vi.fn();
+                registerActions({ 'show-filter-category': handler });
+
+                document.body.innerHTML = '<div data-action="show-filter-category" tabindex="-1"></div>';
+                const row = document.querySelector('div');
+                row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+
+                expect(handler).not.toHaveBeenCalled();
+            });
+
+            it('does NOT fire on arbitrary keys when the data-action element itself has focus', () => {
+                const handler = vi.fn();
+                registerActions({ 'show-filter-category': handler });
+
+                document.body.innerHTML = '<div data-action="show-filter-category" tabindex="-1"></div>';
+                const row = document.querySelector('div');
+                row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+                expect(handler).not.toHaveBeenCalled();
+            });
+
+            it('still fires on Enter', () => {
+                const handler = vi.fn();
+                registerActions({ 'show-filter-category': handler });
+
+                document.body.innerHTML = '<div data-action="show-filter-category" tabindex="-1"></div>';
+                const row = document.querySelector('div');
+                row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+                expect(handler).toHaveBeenCalledTimes(1);
+            });
+
+            it('still fires on Space', () => {
+                const handler = vi.fn();
+                registerActions({ 'show-filter-category': handler });
+
+                document.body.innerHTML = '<div data-action="show-filter-category" tabindex="-1"></div>';
+                const row = document.querySelector('div');
+                row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+
+                expect(handler).toHaveBeenCalledTimes(1);
+            });
+        });
     });
 
     describe('input dispatch from form controls does not bubble to parent action', () => {
