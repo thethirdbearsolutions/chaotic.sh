@@ -1,7 +1,10 @@
 """System commands for self-hosted server management.
 
 The system commands manage the lifecycle of a local Chaotic server installation:
-install, start, stop, status, upgrade, migrate, logs, uninstall.
+install, status, start, stop, reconfigure, logs, upgrade, backup.
+
+There is no standalone `migrate` command -- migrations run automatically
+inside install/upgrade -- and no `uninstall` command.
 
 These commands orchestrate existing tools (git, systemd/launchd, just, uv)
 rather than bundling the server.
