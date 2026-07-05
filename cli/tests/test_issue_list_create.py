@@ -384,6 +384,37 @@ class TestIssueCreate:
 
         assert result.exit_code != 0
 
+    def test_create_no_project_selected_json_outputs_error_json(self, cli_runner):
+        """The 'No project selected' guard used to console.print + raise
+        SystemExit(1) directly, bypassing handle_error's --json formatting
+        entirely (CHT-1222) -- under --json this produced a raw ANSI string
+        on stdout instead of {"error": ...} JSON. Now routes through
+        click.ClickException like every other validation error in this
+        function."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value=None):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'Title', '--json'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no project selected' in data['error'].lower()
+
+    def test_create_label_not_found_json_outputs_error_json(self, cli_runner):
+        """--label naming a nonexistent label used to bypass handle_error
+        the same way (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'create', 'Title', '--label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()
+
     def test_create_json(self, cli_runner):
         """issue create --json outputs JSON."""
         from cli.main import cli, client

@@ -798,3 +798,35 @@ class TestIssueUpdateJson:
         assert data['identifier'] == 'CHT-100'
         assert 'added label' in result.stderr.lower()
         assert 'blocked by' in result.stderr.lower()
+
+    def test_update_add_label_not_found_outputs_error_json(self, cli_runner, mock_issue):
+        """--label naming a nonexistent label used to console.print + raise
+        SystemExit(1) directly, bypassing handle_error's --json formatting
+        (CHT-1222). Now routes through click.ClickException."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()
+
+    def test_update_remove_label_not_found_outputs_error_json(self, cli_runner, mock_issue):
+        """Same bug, remove-label side (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--remove-label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()

@@ -89,8 +89,9 @@ def register(cli):
         """List issues in current project (or team-wide with --all-projects)."""
         m = _main()
         if not all_projects and not m.get_current_project():
-            console.print("[red]No project selected. Run 'chaotic project use <project_id>' or pass --all-projects.[/red]")
-            raise SystemExit(1)
+            raise click.ClickException(
+                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+            )
         # Validate status values if provided (CHT-502)
         valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
         if status:
@@ -367,8 +368,9 @@ def register(cli):
         else:
             project_id = m.get_current_project()
             if not project_id:
-                console.print("[red]No project selected. Use --project or run 'chaotic project use <project_id>' first.[/red]")
-                raise SystemExit(1)
+                raise click.ClickException(
+                    "No project selected. Use --project or run 'chaotic project use <project_id>' first."
+                )
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
         if estimate:
@@ -389,8 +391,9 @@ def register(cli):
             for label_name in labels:
                 label = next((l for l in all_labels if l["name"].lower() == label_name.lower()), None)
                 if not label:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 label_ids.append(label["id"])
             data["label_ids"] = label_ids
         if sprint is not None:
@@ -680,8 +683,9 @@ def register(cli):
             for label_name in add_labels:
                 label_id = label_lookup.get(label_name.lower())
                 if not label_id:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 _client().add_label_to_issue(iss["id"], label_id)
                 console.print(f"[dim]Added label: {label_name}[/dim]")
                 labels_modified = True
@@ -690,8 +694,9 @@ def register(cli):
             for label_name in remove_labels:
                 label_id = label_lookup.get(label_name.lower())
                 if not label_id:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 _client().remove_label_from_issue(iss["id"], label_id)
                 console.print(f"[dim]Removed label: {label_name}[/dim]")
                 labels_modified = True
