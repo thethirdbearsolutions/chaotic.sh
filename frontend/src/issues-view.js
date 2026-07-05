@@ -51,6 +51,7 @@ import {
 import {
     renderFilterMenuCategories,
     showFilterCategoryOptions,
+    showFilterCategories,
     closeAllFilterMenus,
     updateFilterChips,
     updateFilterCountBadge,
@@ -84,6 +85,7 @@ export {
     closeAllFilterMenus,
     renderFilterMenuCategories,
     showFilterCategoryOptions,
+    showFilterCategories,
     renderDisplayMenuOptions,
     updateFilterChips,
     updateFilterCountBadge,
@@ -543,7 +545,13 @@ registerActions({
     'clear-label-filter': () => clearLabelFilter(),
     'update-exclude-label-filter': () => updateExcludeLabelFilter(),
     'clear-exclude-label-filter': () => clearExcludeLabelFilter(),
-    'show-filter-category': (_event, dataset) => showFilterCategoryOptions(dataset.category),
+    'show-filter-category': (_event, dataset) => {
+        showFilterCategoryOptions(dataset.category);
+        // CHT-1161: mobile shows one pane at a time — entering a category
+        // switches the dropdown to the options pane
+        document.getElementById('filter-menu-dropdown')?.classList.add('show-options');
+    },
+    'filter-menu-back': () => showFilterCategories(),
     'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
     'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),
