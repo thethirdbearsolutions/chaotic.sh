@@ -74,6 +74,8 @@ export function toggleFilterMenu() {
         document.removeEventListener('click', closeFilterMenuOnOutsideClick);
     } else {
         dropdown.classList.remove('hidden');
+        // CHT-1161: open on the category list (mobile shows one pane at a time)
+        dropdown.classList.remove('show-options');
         renderFilterMenuCategories();
         showFilterCategoryOptions(getActiveFilterCategory());
         setTimeout(() => {
@@ -148,7 +150,8 @@ export function renderFilterMenuCategories() {
             <div class="filter-menu-category ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
                  data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
                 <span>${cat.label}</span>
-                ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : '<span class="filter-menu-category-arrow">\u2192</span>'}
+                ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : ''}
+                <span class="filter-menu-category-arrow">\u2192</span>
             </div>
         `;
     }).join('');
@@ -187,6 +190,27 @@ export function showFilterCategoryOptions(category) {
             renderExcludeLabelOptions(container);
             break;
     }
+
+    // CHT-1161: explicit back to the category list (visible on mobile)
+    const header = container.querySelector('.filter-options-header');
+    if (header) {
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.className = 'filter-options-back';
+        back.dataset.action = 'filter-menu-back';
+        back.setAttribute('aria-label', 'Back to filter categories');
+        back.textContent = '←';
+        header.prepend(back);
+    }
+}
+
+/**
+ * Return to the category list pane (CHT-1161, mobile one-pane navigation).
+ */
+export function showFilterCategories() {
+    const dropdown = document.getElementById('filter-menu-dropdown');
+    if (dropdown) dropdown.classList.remove('show-options');
+    renderFilterMenuCategories();
 }
 
 // ========================================

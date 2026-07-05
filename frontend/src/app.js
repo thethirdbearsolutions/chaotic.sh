@@ -127,6 +127,17 @@ configureRouter({
             viewIssueByPath(parts[1]);
             return true;
         }
+        if (parts[0] === 'issues' && parts[1]) {
+            // CHT-1182: alias /issues/<id> to canonical /issue/<id> — rewrite
+            // the URL only once the issue actually renders, preserving the
+            // query string; unknown ids keep the typed URL
+            const identifier = parts[1];
+            const search = window.location.search;
+            Promise.resolve(viewIssueByPath(identifier)).then((ok) => {
+                if (ok) history.replaceState({ view: 'issue', identifier }, '', `/issue/${identifier}${search}`);
+            });
+            return true;
+        }
         if (parts[0] === 'document' && parts[1]) {
             viewDocumentByPath(parts[1]);
             return true;
@@ -430,9 +441,11 @@ function initSidebarNav() {
     const createBtn = document.querySelector('.sidebar-create-btn');
     if (createBtn) createBtn.addEventListener('click', () => showCreateIssueModal());
 
-    // Navigation items — use data-view attribute
+    // Navigation items — use data-view attribute (CHT-1183: real hrefs;
+    // let modified clicks fall through to the browser for new-tab behavior)
     document.querySelectorAll('.sidebar-nav .nav-item[data-view]').forEach(item => {
         item.addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigateTo(item.dataset.view);
         });

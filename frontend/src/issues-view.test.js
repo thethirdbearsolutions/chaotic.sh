@@ -69,8 +69,12 @@ import { getMembers } from './teams.js';
 import { renderIssues } from './issue-list.js';
 import { showApiError } from './ui.js';
 
+import { registerActions } from './event-delegation.js';
+
 import {
     toggleMultiSelect,
+    toggleFilterMenu,
+    showFilterCategories,
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
@@ -99,6 +103,9 @@ import {
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
 } from './issues-view.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const issuesViewActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('issues-view', () => {
     let replaceStateSpy;
@@ -424,6 +431,74 @@ describe('issues-view', () => {
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
             expect(container.innerHTML).toContain('filter-menu-category-count');
+        });
+
+        // CHT-1161: arrows are a persistent affordance, not conditional on filter state
+        it('shows arrow indicator on every category even with no filters', () => {
+            renderFilterMenuCategories();
+            const container = document.getElementById('filter-menu-categories');
+            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(8);
+        });
+
+        it('shows arrow indicator alongside count badge when filters are applied', () => {
+            getCurrentProject.mockReturnValue('proj-1');
+            renderFilterMenuCategories();
+            const container = document.getElementById('filter-menu-categories');
+            const projectCat = container.querySelector('[data-category="project"]');
+            expect(projectCat.querySelector('.filter-menu-category-count')).not.toBeNull();
+            expect(projectCat.querySelector('.filter-menu-category-arrow')).not.toBeNull();
+            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(8);
+        });
+    });
+
+    // ========================================
+    // Filter menu back navigation (CHT-1161)
+    // ========================================
+
+    describe('filter menu back navigation (CHT-1161)', () => {
+        it('showFilterCategoryOptions injects a back button into the options header', () => {
+            showFilterCategoryOptions('status');
+            const back = document.querySelector('#filter-menu-options .filter-options-header .filter-options-back');
+            expect(back).not.toBeNull();
+            expect(back.tagName).toBe('BUTTON');
+            expect(back.dataset.action).toBe('filter-menu-back');
+            expect(back.getAttribute('aria-label')).toBe('Back to filter categories');
+        });
+
+        it('injects a back button for every category', () => {
+            for (const cat of FILTER_CATEGORIES) {
+                showFilterCategoryOptions(cat.key);
+                const back = document.querySelector('#filter-menu-options .filter-options-back');
+                expect(back, `back button missing for ${cat.key}`).not.toBeNull();
+            }
+        });
+
+        it('show-filter-category action switches the dropdown to the options pane', () => {
+            const dropdown = document.getElementById('filter-menu-dropdown');
+            issuesViewActions['show-filter-category'](null, { category: 'status' });
+            expect(dropdown.classList.contains('show-options')).toBe(true);
+        });
+
+        it('filter-menu-back action returns to the category pane', () => {
+            const dropdown = document.getElementById('filter-menu-dropdown');
+            dropdown.classList.add('show-options');
+            issuesViewActions['filter-menu-back']();
+            expect(dropdown.classList.contains('show-options')).toBe(false);
+        });
+
+        it('showFilterCategories re-renders the category list', () => {
+            document.getElementById('filter-menu-categories').innerHTML = '';
+            showFilterCategories();
+            const container = document.getElementById('filter-menu-categories');
+            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(8);
+        });
+
+        it('toggleFilterMenu opens on the category pane, not a stale options pane', () => {
+            const dropdown = document.getElementById('filter-menu-dropdown');
+            dropdown.classList.add('show-options');
+            toggleFilterMenu();
+            expect(dropdown.classList.contains('hidden')).toBe(false);
+            expect(dropdown.classList.contains('show-options')).toBe(false);
         });
     });
 
