@@ -39,10 +39,22 @@ class TestParseDuration:
     def test_compound(self):
         assert await_cmd._parse_duration("1h30m") == 5400.0
 
+    def test_compound_with_whitespace(self):
+        assert await_cmd._parse_duration("1h 30m") == 5400.0
+        assert await_cmd._parse_duration(" 30 s ") == 30.0
+
+    def test_zero_is_rejected(self):
+        import click
+        for spec in ("0", "0s", "0m", "0h0m0s"):
+            with pytest.raises(click.BadParameter) as exc_info:
+                await_cmd._parse_duration(spec)
+            assert "zero" in str(exc_info.value)
+
     def test_malformed_raises(self):
         import click
-        with pytest.raises(click.BadParameter):
-            await_cmd._parse_duration("nope")
+        for spec in ("nope", "abc30", "5x", "30ss", "-5m"):
+            with pytest.raises(click.BadParameter):
+                await_cmd._parse_duration(spec)
 
 
 class TestTypeTokenResolution:

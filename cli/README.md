@@ -250,9 +250,11 @@ want to wake on intents regardless of ritual name.
                     share one principal (e.g. a team bot), this filter
                     hides all of their activity, not just the caller's.
 --timeout DURATION  Give up after DURATION. Accepted forms: integer
-                    seconds (`30`), or suffixed units combinable with no
-                    separator (`30s`, `5m`, `8h`, `1h30m`). Default: no
-                    timeout. Exits 124 on expiry.
+                    seconds (`30`), or suffixed units, combinable
+                    (`30s`, `5m`, `8h`, `1h30m`; whitespace between
+                    parts is fine). Zero is rejected — omit the flag
+                    for no timeout. Default: no timeout. Exits 124 on
+                    expiry.
 --json              Emit the event as a single JSON object on stdout.
                     See "JSON output contract" below.
 --until CMD         Shell predicate. When a candidate event would match,

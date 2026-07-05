@@ -113,18 +113,20 @@ def _resolve_type_filter(spec: str | None) -> set[str] | None:
 # Duration parsing for --timeout
 # ---------------------------------------------------------------------------
 
-_DURATION_RE = re.compile(r"(\d+)\s*([smhd]?)", re.IGNORECASE)
+_DURATION_RE = re.compile(r"(\d+)([smhd]?)", re.IGNORECASE)
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def _parse_duration(spec: str | None) -> float | None:
-    """Parse `30`, `30s`, `5m`, `8h`, `1h30m` → seconds. Returns None on
-    empty input (meaning "no timeout"). Raises BadParameter for
-    malformed input.
+    """Parse `30`, `30s`, `5m`, `8h`, `1h30m` → seconds. Whitespace is
+    ignored, so `1h 30m` works too. Returns None on empty input
+    (meaning "no timeout"). Raises BadParameter for malformed input
+    and for a zero duration — `--timeout 0` is ambiguous (instant
+    expiry vs. no timeout), so we refuse to guess.
     """
     if spec is None or not spec.strip():
         return None
-    text = spec.strip().lower()
+    text = re.sub(r"\s+", "", spec.lower())
     total = 0
     pos = 0
     while pos < len(text):
@@ -137,7 +139,12 @@ def _parse_duration(spec: str | None) -> float | None:
         n, unit = m.group(1), m.group(2)
         total += int(n) * _UNIT_SECONDS[unit]
         pos = m.end()
-    return float(total) if total > 0 else 0.0
+    if total == 0:
+        raise click.BadParameter(
+            f"--timeout {spec!r} is zero. Omit --timeout to wait forever; "
+            "a zero timeout would expire on the first poll."
+        )
+    return float(total)
 
 
 # ---------------------------------------------------------------------------
