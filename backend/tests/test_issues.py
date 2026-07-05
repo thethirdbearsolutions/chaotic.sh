@@ -3466,6 +3466,110 @@ async def test_list_issues_exclude_label_with_team_scope(
     assert labeled_issues["chore"].id in ids
 
 
+# ---------------------------------------------------------------------------
+# Multi-label match modes (CHT-1212)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def dual_labeled_issue_api(db, test_project, test_user, labeled_issues):
+    """Create an issue carrying BOTH the 'bug' and 'chore' labels."""
+    from app.oxyde_models.issue import OxydeIssue, OxydeIssueLabel
+    from app.oxyde_models.label import OxydeLabel
+
+    bug = await OxydeLabel.objects.filter(team_id=test_project.team_id, name="bug").first()
+    chore = await OxydeLabel.objects.filter(team_id=test_project.team_id, name="chore").first()
+
+    issue = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-9004",
+        number=9004,
+        title="bug and chore ticket",
+        creator_id=test_user.id,
+    )
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=bug.id)
+    await OxydeIssueLabel.objects.create(issue_id=issue.id, label_id=chore.id)
+    return issue
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_default_requires_all(
+    client, auth_headers, test_project, labeled_issues, dual_labeled_issue_api
+):
+    """Repeated label params without label_match require ALL labels — the
+    CLI's documented `--label a,b` wire contract (CHT-1212)."""
+    response = await client.get(
+        f"/api/issues?project_id={test_project.id}&label=bug&label=chore",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    ids = {i["id"] for i in response.json()}
+    assert dual_labeled_issue_api.id in ids
+    assert labeled_issues["bug"].id not in ids
+    assert labeled_issues["chore"].id not in ids
+    assert labeled_issues["plain"].id not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_match_all_explicit(
+    client, auth_headers, test_project, labeled_issues, dual_labeled_issue_api
+):
+    """label_match=all behaves identically to the default."""
+    response = await client.get(
+        f"/api/issues?project_id={test_project.id}&label=bug&label=chore&label_match=all",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    ids = {i["id"] for i in response.json()}
+    assert ids == {dual_labeled_issue_api.id}
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_match_any(
+    client, auth_headers, test_project, labeled_issues, dual_labeled_issue_api
+):
+    """label_match=any returns issues carrying AT LEAST ONE named label —
+    the web UI's multi-select filter semantics (CHT-1212)."""
+    response = await client.get(
+        f"/api/issues?project_id={test_project.id}&label=bug&label=chore&label_match=any",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    ids = {i["id"] for i in response.json()}
+    assert dual_labeled_issue_api.id in ids
+    assert labeled_issues["bug"].id in ids
+    assert labeled_issues["chore"].id in ids
+    assert labeled_issues["plain"].id not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_issues_label_match_rejects_invalid_value(
+    client, auth_headers, test_project, labeled_issues
+):
+    """label_match only accepts all|any."""
+    response = await client.get(
+        f"/api/issues?project_id={test_project.id}&label=bug&label_match=some",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_issues_multi_label_match_any_team_scope(
+    client, auth_headers, test_team, labeled_issues, dual_labeled_issue_api
+):
+    """label_match=any works for team-scoped queries too."""
+    response = await client.get(
+        f"/api/issues?team_id={test_team.id}&label=bug&label=chore&label_match=any",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    ids = {i["id"] for i in response.json()}
+    assert dual_labeled_issue_api.id in ids
+    assert labeled_issues["bug"].id in ids
+    assert labeled_issues["chore"].id in ids
+
+
 @pytest.mark.asyncio
 async def test_list_issues_exclude_status(
     client, auth_headers, test_project, test_user, db

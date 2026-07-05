@@ -202,6 +202,13 @@ export function clearExcludeLabelFilter() {
 // Issue Loading & Search
 // ========================================
 
+// Escape a value for interpolation inside a quoted CSS attribute selector
+// (`[value="..."]`) — backslashes and double quotes are the only
+// metacharacters inside a quoted string (CHT-1212 review).
+function escapeSelectorValue(value) {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /**
  * Resolve label checkbox ids to their display names via the DOM (the
  * backend's label/exclude_label filters match by name, not id) — mirrors
@@ -211,7 +218,7 @@ function resolveLabelNames(labelIds, dropdownId) {
     if (labelIds.length === 0) return [];
     const dropdown = document.getElementById(dropdownId);
     return labelIds
-        .map(id => dropdown?.querySelector(`input[value="${id}"]`)?.closest('label')?.querySelector('.label-name')?.textContent)
+        .map(id => dropdown?.querySelector(`input[value="${escapeSelectorValue(id)}"]`)?.closest('label')?.querySelector('.label-name')?.textContent)
         .filter(Boolean);
 }
 
@@ -300,21 +307,24 @@ export async function loadIssues() {
         params.search = searchQuery;
     }
 
-    // Label/exclude-label filters are sent to the server (which matches by
-    // name, case-insensitively) instead of over-fetching a 1000-row page and
-    // filtering client-side (CHT-1212) — resolve id -> name via the DOM the
-    // same way updateFilterChips() already does.
-    const selectedLabelNames = resolveLabelNames(getSelectedLabels(), 'label-filter-dropdown');
-    if (selectedLabelNames.length > 0) {
-        params.label = selectedLabelNames;
-    }
-
-    const excludedLabelNames = resolveLabelNames(getExcludedLabels(), 'exclude-label-filter-dropdown');
-    if (excludedLabelNames.length > 0) {
-        params.exclude_label = excludedLabelNames;
-    }
-
     try {
+        // Label/exclude-label filters are sent to the server (which matches
+        // by name, case-insensitively) instead of over-fetching a 1000-row
+        // page and filtering client-side (CHT-1212) — resolve id -> name via
+        // the DOM the same way updateFilterChips() already does.
+        // label_match=any preserves the multi-select UI's OR semantics; the
+        // server default (all) is the CLI's documented AND contract.
+        const selectedLabelNames = resolveLabelNames(getSelectedLabels(), 'label-filter-dropdown');
+        if (selectedLabelNames.length > 0) {
+            params.label = selectedLabelNames;
+            params.label_match = 'any';
+        }
+
+        const excludedLabelNames = resolveLabelNames(getExcludedLabels(), 'exclude-label-filter-dropdown');
+        if (excludedLabelNames.length > 0) {
+            params.exclude_label = excludedLabelNames;
+        }
+
         let issues;
         if (projectId) {
             params.project_id = projectId;

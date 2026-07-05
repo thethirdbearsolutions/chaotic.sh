@@ -874,6 +874,7 @@ class IssueService:
         sort_by: str | None = None,
         order: str | None = None,
         label_names: list[str] | None = None,
+        label_match: str = "all",
         exclude_label_names: list[str] | None = None,
         exclude_statuses: list | None = None,
         exclude_priorities: list | None = None,
@@ -881,6 +882,12 @@ class IssueService:
         exclude_issue_types: list | None = None,
     ) -> list[OxydeIssue]:
         """Unified issue listing with all filter options.
+
+        ``label_match`` controls multi-``label_names`` semantics:
+        ``"all"`` (default) requires an issue to carry every named label —
+        the CLI's documented ``--label a,b`` contract; ``"any"`` requires
+        at least one — the web UI's multi-select filter semantics
+        (CHT-1212). Both match case-insensitively.
 
         Exclude filters (``exclude_*``) remove matching issues from the
         result set. For ``exclude_label_names``, an issue is removed if
@@ -943,18 +950,28 @@ class IssueService:
             params.extend([pattern, pattern, pattern])
 
         if label_names:
-            # Single IN-based subquery: an issue matches if it carries ANY of
-            # the given labels — consistent with status/priority (i.status IN
-            # (...)) above and with exclude_label_names' OR-of-names below.
-            # (The old per-name AND'd EXISTS clauses required ALL of the
-            # selected labels, silently diverging from the multi-select
-            # Filter UI's OR semantics — CHT-1212.)
-            placeholders = ",".join("?" for _ in label_names)
-            conditions.append(
-                "i.id IN (SELECT il.issue_id FROM issue_labels il "
-                f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
-            )
-            params.extend(name.lower() for name in label_names)
+            if label_match == "any":
+                # OR-of-names: single IN-based subquery — the web UI's
+                # multi-select filter semantics (its pre-CHT-1212
+                # client-side .filter() used .some()), consistent with
+                # exclude_label_names' OR-of-names below.
+                placeholders = ",".join("?" for _ in label_names)
+                conditions.append(
+                    "i.id IN (SELECT il.issue_id FROM issue_labels il "
+                    f"JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) IN ({placeholders}))"
+                )
+                params.extend(name.lower() for name in label_names)
+            else:
+                # AND-per-name (default): the CLI documents `--label a,b`
+                # as "issues must have ALL labels" and was the only
+                # server-side consumer of this param before CHT-1212 —
+                # its wire contract stays the default.
+                for label_name in label_names:
+                    conditions.append(
+                        "i.id IN (SELECT il.issue_id FROM issue_labels il "
+                        "JOIN labels l ON il.label_id = l.id WHERE LOWER(l.name) = LOWER(?))"
+                    )
+                    params.append(label_name)
 
         if exclude_statuses:
             status_vals = [s.name for s in exclude_statuses]

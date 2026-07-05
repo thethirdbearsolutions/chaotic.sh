@@ -1052,6 +1052,55 @@ describe('issues-view', () => {
             );
         });
 
+        // The multi-select UI is OR-of-labels; the server default (all) is
+        // the CLI's documented AND contract — the UI must opt into `any`.
+        it('sends label_match=any alongside params.label', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" value="label-1" checked>
+                    <span class="label-badge"><span class="label-name">Bug</span></span>
+                </label>
+            `;
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Bug'], label_match: 'any' })
+            );
+        });
+
+        it('omits label_match when no labels are selected', async () => {
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.not.objectContaining({ label_match: expect.anything() })
+            );
+        });
+
+        // CHT-1212 review nit: a label id must not be interpolated raw into
+        // querySelector — quotes/backslashes are escaped for the quoted
+        // attribute selector, and the resolution runs inside the try/catch.
+        it('handles a label id containing selector metacharacters without throwing', async () => {
+            const labelDropdown = document.getElementById('label-filter-dropdown');
+            labelDropdown.querySelector('.multi-select-options').innerHTML = `
+                <label class="multi-select-option">
+                    <input type="checkbox" checked>
+                    <span class="label-badge"><span class="label-name">Weird</span></span>
+                </label>
+            `;
+            labelDropdown.querySelector('input').setAttribute('value', 'we"ird]id');
+
+            api.getIssues.mockResolvedValue([]);
+            await loadIssues();
+
+            expect(api.getIssues).toHaveBeenCalledWith(
+                expect.objectContaining({ label: ['Weird'] })
+            );
+        });
+
         it('resolves selected exclude-label ids to names and sends them as params.exclude_label', async () => {
             const excludeDropdown = document.getElementById('exclude-label-filter-dropdown');
             excludeDropdown.querySelector('.multi-select-options').innerHTML = `
