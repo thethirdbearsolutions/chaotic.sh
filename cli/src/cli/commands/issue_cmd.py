@@ -169,18 +169,18 @@ def register(cli):
             console.print("[yellow]No issues found.[/yellow]")
             return
 
-        # Build sprint ID -> name map
+        # Build project/sprint lookup maps
+        project_keys = {}
         if all_projects:
-            # Sprints span projects here; resolve names per unique sprint ID
+            # One projects call for the Project column; sprints are
+            # project-scoped, so fetch once per project that has sprinted
+            # issues (bounded by project count, no per-issue calls)
+            projects = _client().get_projects(team_id)
+            project_keys = {p["id"]: p["key"] for p in projects}
             sprint_names = {}
-            for i in issues:
-                sid = i.get("sprint_id")
-                if sid and sid not in sprint_names:
-                    try:
-                        s = _client().get_sprint(sid)
-                        sprint_names[sid] = s["name"]
-                    except m.APIError:
-                        sprint_names[sid] = sid[:8] + "..."
+            for pid in {i["project_id"] for i in issues if i.get("sprint_id")}:
+                for s in _client().get_sprints(pid):
+                    sprint_names[s["id"]] = s["name"]
         else:
             sprints = _client().get_sprints(project_id)
             sprint_names = {s["id"]: s["name"] for s in sprints}
@@ -202,8 +202,7 @@ def register(cli):
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
             ]
             if all_projects:
-                # identifier is "<project_key>-<number>"
-                row.append(i["identifier"].rsplit("-", 1)[0])
+                row.append(project_keys.get(i.get("project_id"), "-"))
             row.extend([
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
