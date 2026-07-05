@@ -61,7 +61,7 @@ the user surface.
 
 `--type` accepts CLI-stable logical names (`commented`, `attested`,
 `approved`, `intent_opened`, …) mapped to backend wire values via
-`TYPE_TOKEN_VALUES`. Cross-entity tokens include both issue and
+`TYPE_TOKEN_TO_WIRE`. Cross-entity tokens include both issue and
 document variants, so `await project --type commented` wakes on
 either kind.
 
@@ -91,7 +91,7 @@ piped to stdin. This deliberately:
   cannot inject commands.
 * **Discards predicate stdout/stderr** — preserves `await`'s own
   stdout contract.
-* **Treats exit codes 126/127 as `PredicateBroken`** (fatal exit 1
+* **Treats exit codes 126/127 as `PredicateExecutionError`** (fatal exit 1
   with a clear message), distinct from "predicate rejected this
   event" (a normal non-zero exit). Without this, a missing `jq`
   binary would cause silent forever-polling.

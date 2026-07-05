@@ -20,7 +20,7 @@ Implementation overview
   loop that calls `chaotic.activities` against the team feed.
 * Logical type tokens (`commented`, `attested`, …) map to backend
   ActivityType / DocumentActivityType wire values per
-  `TYPE_TOKEN_VALUES` so the CLI contract is stable across backend
+  `TYPE_TOKEN_TO_WIRE` so the CLI contract is stable across backend
   enum renames.
 * The watermark is wall-clock at command start; events with
   `created_at` strictly greater than the watermark are candidates.
@@ -66,7 +66,7 @@ def _main():
 # These tokens are part of the CLI contract; backend enum renames must keep
 # the wire values listed here or update this map in the same change.
 
-TYPE_TOKEN_VALUES: dict[str, list[str]] = {
+TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
     "commented": ["commented", "doc_commented"],
     "created": ["created", "doc_created"],
     "updated": ["updated", "doc_updated"],
@@ -102,12 +102,12 @@ def _resolve_type_filter(spec: str | None) -> set[str] | None:
         key = token.lower()
         if key == "any":
             return None
-        if key not in TYPE_TOKEN_VALUES:
-            valid = ", ".join(sorted(set(TYPE_TOKEN_VALUES) | {"any"}))
+        if key not in TYPE_TOKEN_TO_WIRE:
+            valid = ", ".join(sorted(set(TYPE_TOKEN_TO_WIRE) | {"any"}))
             raise click.BadParameter(
                 f"Unknown type token '{token}'. Valid: {valid}"
             )
-        wire.update(TYPE_TOKEN_VALUES[key])
+        wire.update(TYPE_TOKEN_TO_WIRE[key])
     return wire
 
 
@@ -276,7 +276,7 @@ def _normalize_event(event: dict) -> dict:
 # --until predicate
 # ---------------------------------------------------------------------------
 
-class PredicateBroken(Exception):
+class PredicateExecutionError(Exception):
     """Raised when --until CMD itself failed to execute (binary missing
     / not executable / wedged past the execution ceiling), as distinct
     from "predicate rejected this event" (a normal non-zero exit).
@@ -293,7 +293,7 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
     """Run the `--until` predicate. Returns True iff exit code is 0
     (event matches). Predicate stdout/stderr are discarded so the
     caller's stdout contract is preserved. Exit codes 126/127 raise
-    PredicateBroken — the predicate itself is broken, not just
+    PredicateExecutionError — the predicate itself is broken, not just
     rejecting events. So does exceeding _UNTIL_TIMEOUT_SECS.
     """
     payload = (
@@ -309,17 +309,17 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
             timeout=_UNTIL_TIMEOUT_SECS,
         )
     except FileNotFoundError as exc:
-        raise PredicateBroken(
+        raise PredicateExecutionError(
             f"--until: shell unavailable to run predicate ({exc})"
         ) from exc
     except subprocess.TimeoutExpired as exc:
-        raise PredicateBroken(
+        raise PredicateExecutionError(
             f"--until: predicate did not finish within "
             f"{_UNTIL_TIMEOUT_SECS:.0f}s and was killed. Predicates must "
             "be fast; a wedged predicate would hang the wait forever."
         ) from exc
     if proc.returncode in (126, 127):
-        raise PredicateBroken(
+        raise PredicateExecutionError(
             f"--until: predicate could not be executed "
             f"(exit code {proc.returncode}). Check the command and "
             "ensure required binaries (e.g. jq) are installed."
@@ -410,13 +410,13 @@ def _render_event_line(event: dict) -> str:
     return " ".join(parts)
 
 
-def _emit_event(event: dict, json_mode: bool) -> None:
+def _emit_event(event: dict, json_output: bool) -> None:
     """Write the wake event to stdout per the CLI contract: exactly
     one JSON object + `\\n` under --json, or a single human-readable
     line otherwise. The rendered form is unstable and intended for
     human eyes; harness scripts use --json.
     """
-    if json_mode:
+    if json_output:
         sys.stdout.write(json.dumps(_normalize_event(event), default=str) + "\n")
         sys.stdout.flush()
         return
@@ -521,7 +521,7 @@ def _poll(
     watermark: datetime,
     scope: dict,
     type_filter: set[str] | None,
-    exclude_self_for: str | None,
+    exclude_user_id: str | None,
     until_cmd: str | None,
     timeout_secs: float | None,
     interval_secs: float = 5.0,
@@ -607,7 +607,7 @@ def _poll(
                 seen[ev_id] = ev_dt
             if not _event_matches_type(event, type_filter):
                 continue
-            if exclude_self_for and _event_is_self(event, exclude_self_for):
+            if exclude_user_id and _event_is_self(event, exclude_user_id):
                 continue
             if not _event_matches_scope(event, scope):
                 continue
@@ -640,7 +640,7 @@ def _poll(
 
 _TYPE_OPTION_HELP = (
     "Comma-separated activity tokens to wake on. Tokens: "
-    + ", ".join(sorted(set(TYPE_TOKEN_VALUES) | {"any"}))
+    + ", ".join(sorted(set(TYPE_TOKEN_TO_WIRE) | {"any"}))
     + ". Default: any."
 )
 
@@ -653,7 +653,7 @@ def _common_options(f):
              "JSON on stdin. Exit 0 wakes; non-zero keeps polling.",
     )(f)
     f = click.option(
-        "--json", "json_mode", is_flag=True,
+        "--json", "json_output", is_flag=True,
         help="Emit the matching event as a single JSON object.",
     )(f)
     f = click.option(
@@ -707,7 +707,7 @@ def _require_current_project() -> str:
     return project_id
 
 
-def _run_wait(
+def _await_event(
     *,
     team_id: str,
     project_id: str | None,
@@ -715,7 +715,7 @@ def _run_wait(
     type_spec: str | None,
     include_self: bool,
     timeout_spec: str | None,
-    json_mode: bool,
+    json_output: bool,
     until_cmd: str | None,
 ) -> None:
     """Common entry: resolve filters, run the poll loop, emit/exit."""
@@ -727,10 +727,10 @@ def _run_wait(
         raise SystemExit(2) from exc
 
     if include_self:
-        exclude_self_for = None
+        exclude_user_id = None
     else:
         try:
-            exclude_self_for = _resolve_principal_id()
+            exclude_user_id = _resolve_principal_id()
         except Exception as exc:  # noqa: BLE001
             _stderr(
                 "await: cannot resolve current user "
@@ -740,7 +740,7 @@ def _run_wait(
                 "to opt in, or fix authentication and retry."
             )
             raise SystemExit(1) from exc
-        if exclude_self_for is None:
+        if exclude_user_id is None:
             _stderr(
                 "await: current user has no id field in /users/me. "
                 "--include-self defaults OFF but cannot be enforced without "
@@ -770,15 +770,15 @@ def _run_wait(
                 watermark=watermark,
                 scope=scope,
                 type_filter=type_filter,
-                exclude_self_for=exclude_self_for,
+                exclude_user_id=exclude_user_id,
                 until_cmd=until_cmd,
                 timeout_secs=timeout_secs,
             )
             if event is None:
                 _stderr("await: timeout")
                 raise SystemExit(124)
-            _emit_event(event, json_mode)
-        except PredicateBroken as exc:
+            _emit_event(event, json_output)
+        except PredicateExecutionError as exc:
             _stderr(f"await: {exc}")
             raise SystemExit(1) from exc
         except APIError as exc:
@@ -839,7 +839,7 @@ def register(cli):
     @await_.command("issue")
     @click.argument("identifier")
     @_common_options
-    def await_issue(identifier, type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_issue(identifier, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on a specific issue.
 
         Example: `chaotic await issue CHT-1334`.
@@ -854,10 +854,10 @@ def register(cli):
         team_id = issue.get("team_id") or _require_current_team()
         project_id = issue.get("project_id")
         scope = {"issue_id": issue["id"]}
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope=scope,
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
@@ -866,70 +866,70 @@ def register(cli):
                   help="Project key to scope to (defaults to current project).")
     @_common_options
     def await_issues(project_override, type_spec, include_self,
-                     timeout_spec, json_mode, until_cmd):
+                     timeout_spec, json_output, until_cmd):
         """Wait on any issue in the (current or specified) project.
 
         For a specific issue, use `chaotic await issue ID` instead.
         """
         team_id = _require_current_team()
         project_id = project_override or _require_current_project()
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("doc")
     @click.argument("document_id")
     @_common_options
-    def await_doc(document_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_doc(document_id, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on a specific document.
 
         For any document in the team, use `chaotic await docs` instead.
         """
         team_id = _require_current_team()
         scope = {"document_id": document_id}
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=None, scope=scope,
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("docs")
     @_common_options
-    def await_docs(type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_docs(type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any document in the current team.
 
         For a specific document, use `chaotic await doc ID` instead.
         """
         team_id = _require_current_team()
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=None, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("project")
     @click.argument("project_id", required=False)
     @_common_options
-    def await_project(project_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_project(project_id, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any activity in a project (defaults to current project)."""
         team_id = _require_current_team()
         project_id = project_id or _require_current_project()
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("sprint")
     @click.argument("sprint_id", required=False)
     @_common_options
-    def await_sprint(sprint_id, type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_sprint(sprint_id, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on activity in the project that hosts a sprint.
 
         With SPRINT_ID, waits on the named sprint's parent project;
@@ -956,23 +956,23 @@ def register(cli):
         # The team feed doesn't filter by sprint server-side, and we
         # don't fetch each event's issue to check its sprint_id (heavy
         # + racy). Scope by project for MVP; documented above.
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("team")
     @click.argument("team_id_arg", required=False)
     @_common_options
-    def await_team(team_id_arg, type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_team(team_id_arg, type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any activity on a team (defaults to current team)."""
         team_id = team_id_arg or _require_current_team()
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=None, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
@@ -982,7 +982,7 @@ def register(cli):
                   help="Restrict to attestations/approvals on this ticket.")
     @_common_options
     def await_ritual(ritual_name, ticket_identifier, type_spec, include_self,
-                     timeout_spec, json_mode, until_cmd):
+                     timeout_spec, json_output, until_cmd):
         """Wait on a specific ritual's next attestation or approval.
 
         For any ritual in the current project, use `chaotic await rituals`.
@@ -1004,16 +1004,16 @@ def register(cli):
         # attested/approved/intent_* events.
         if type_spec is None:
             type_spec = "attested,approved,intent_opened,intent_cleared,intent_canceled"
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope=scope,
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )
 
     @await_.command("rituals")
     @_common_options
-    def await_rituals(type_spec, include_self, timeout_spec, json_mode, until_cmd):
+    def await_rituals(type_spec, include_self, timeout_spec, json_output, until_cmd):
         """Wait on any ritual attestation/approval in the current project.
 
         For a specific ritual, use `chaotic await ritual NAME` instead.
@@ -1022,9 +1022,9 @@ def register(cli):
         project_id = _require_current_project()
         if type_spec is None:
             type_spec = "attested,approved,intent_opened,intent_cleared,intent_canceled"
-        _run_wait(
+        _await_event(
             team_id=team_id, project_id=project_id, scope={},
             type_spec=type_spec, include_self=include_self,
-            timeout_spec=timeout_spec, json_mode=json_mode,
+            timeout_spec=timeout_spec, json_output=json_output,
             until_cmd=until_cmd,
         )

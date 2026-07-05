@@ -109,7 +109,7 @@ class TestTypeTokenResolution:
 
         covered = {
             wire
-            for wires in await_cmd.TYPE_TOKEN_VALUES.values()
+            for wires in await_cmd.TYPE_TOKEN_TO_WIRE.values()
             for wire in wires
         }
         backend_values = {e.value for e in backend_enums.ActivityType} | {
@@ -447,7 +447,7 @@ class TestNormalizeEvent:
         assert out["future_field"] == 7
 
     def test_emitted_json_carries_full_contract(self, capsys):
-        await_cmd._emit_event({"id": "e1"}, json_mode=True)
+        await_cmd._emit_event({"id": "e1"}, json_output=True)
         line = capsys.readouterr().out
         assert line.endswith("\n")
         parsed = json.loads(line)
@@ -469,9 +469,9 @@ class TestUntilPredicate:
 
     def test_wedged_predicate_raises_predicate_broken(self, monkeypatch):
         # A predicate that outlives the execution ceiling must surface
-        # as PredicateBroken, not hang the poll loop forever.
+        # as PredicateExecutionError, not hang the poll loop forever.
         monkeypatch.setattr(await_cmd, "_UNTIL_TIMEOUT_SECS", 0.2)
-        with pytest.raises(await_cmd.PredicateBroken) as exc_info:
+        with pytest.raises(await_cmd.PredicateExecutionError) as exc_info:
             await_cmd._run_until_predicate("sleep 10", {"id": "x"})
         assert "did not finish" in str(exc_info.value)
 
@@ -487,7 +487,7 @@ class TestUntilPredicate:
         # Shell exit 127 = command not found. Predicate is genuinely
         # broken (jq not installed, typo, etc.) and we surface as a
         # fatal error rather than polling forever.
-        with pytest.raises(await_cmd.PredicateBroken):
+        with pytest.raises(await_cmd.PredicateExecutionError):
             await_cmd._run_until_predicate(
                 "this_binary_does_not_exist_anywhere_12345", {"id": "x"},
             )
@@ -539,7 +539,7 @@ class TestPollingLoop:
             watermark=watermark,
             scope={},
             type_filter=None,
-            exclude_self_for=None,
+            exclude_user_id=None,
             until_cmd=None,
             timeout_secs=5,
             interval_secs=0.01,
@@ -560,7 +560,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=5, interval_secs=0.01,
         )
         assert result["id"] == "new"
@@ -573,7 +573,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=0.2, interval_secs=0.05,
         )
         assert result is None
@@ -590,7 +590,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for="me", until_cmd=None,
+            exclude_user_id="me", until_cmd=None,
             timeout_secs=0.2, interval_secs=0.05,
         )
         # Excluded → no match → timeout.
@@ -609,7 +609,7 @@ class TestPollingLoop:
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={},
             type_filter={"commented"},
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=0.2, interval_secs=0.05,
         )
         assert result is None
@@ -633,7 +633,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None,
+            exclude_user_id=None,
             until_cmd='grep -q yes',
             timeout_secs=2, interval_secs=0.05,
         )
@@ -653,7 +653,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=2, interval_secs=0.05,
         )
         # First call returns the event; loop exits immediately.
@@ -675,7 +675,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=5, interval_secs=0.01,
         )
         assert result["id"] == "e1"
@@ -691,7 +691,7 @@ class TestPollingLoop:
         with pytest.raises(await_cmd.APIError):
             await_cmd._poll(
                 fetch, watermark=watermark, scope={}, type_filter=None,
-                exclude_self_for=None, until_cmd=None,
+                exclude_user_id=None, until_cmd=None,
                 timeout_secs=5, interval_secs=0.01,
             )
 
@@ -707,7 +707,7 @@ class TestPollingLoop:
 
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={}, type_filter=None,
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=5, interval_secs=0.01,
         )
         assert result["id"] == "e1"
@@ -738,7 +738,7 @@ class TestPollingLoop:
         result = await_cmd._poll(
             fetch, watermark=watermark, scope={},
             type_filter={"commented"},
-            exclude_self_for=None, until_cmd=None,
+            exclude_user_id=None, until_cmd=None,
             timeout_secs=5, interval_secs=0.01,
         )
         assert result["id"] == "target"
@@ -930,12 +930,12 @@ class TestCommandTree:
 
 
 # ---------------------------------------------------------------------------
-# _run_wait: principal resolution failure must fail fast
+# _await_event: principal resolution failure must fail fast
 # ---------------------------------------------------------------------------
 
 
 class TestPrincipalResolutionFailFast:
-    def test_run_wait_fails_when_whoami_raises_and_include_self_off(
+    def test_await_event_fails_when_whoami_raises_and_include_self_off(
         self, monkeypatch,
     ):
         # Without a resolvable principal id and --include-self OFF, the
@@ -949,19 +949,19 @@ class TestPrincipalResolutionFailFast:
         monkeypatch.setattr(await_cmd, "_resolve_principal_id", boom)
 
         with pytest.raises(SystemExit) as excinfo:
-            await_cmd._run_wait(
+            await_cmd._await_event(
                 team_id="team_x",
                 project_id=None,
                 scope={},
                 type_spec=None,
                 include_self=False,
                 timeout_spec="1s",
-                json_mode=False,
+                json_output=False,
                 until_cmd=None,
             )
         assert excinfo.value.code == 1
 
-    def test_run_wait_fails_when_whoami_returns_no_id_and_include_self_off(
+    def test_await_event_fails_when_whoami_returns_no_id_and_include_self_off(
         self, monkeypatch,
     ):
         # Server responded but didn't include an id field. Same risk:
@@ -969,19 +969,19 @@ class TestPrincipalResolutionFailFast:
         monkeypatch.setattr(await_cmd, "_resolve_principal_id", lambda: None)
 
         with pytest.raises(SystemExit) as excinfo:
-            await_cmd._run_wait(
+            await_cmd._await_event(
                 team_id="team_x",
                 project_id=None,
                 scope={},
                 type_spec=None,
                 include_self=False,
                 timeout_spec="1s",
-                json_mode=False,
+                json_output=False,
                 until_cmd=None,
             )
         assert excinfo.value.code == 1
 
-    def test_run_wait_does_not_call_whoami_when_include_self_on(
+    def test_await_event_does_not_call_whoami_when_include_self_on(
         self, monkeypatch,
     ):
         # When --include-self is ON, we don't need the principal id, so
@@ -991,7 +991,7 @@ class TestPrincipalResolutionFailFast:
 
         monkeypatch.setattr(await_cmd, "_resolve_principal_id", boom)
 
-        # We expect _run_wait to fall through to _poll. Stub the poll
+        # We expect _await_event to fall through to _poll. Stub the poll
         # to return None (timeout) so the test doesn't hit real IO.
         monkeypatch.setattr(await_cmd, "_poll", lambda *a, **kw: None)
         # Patch the client lookup to a no-op fetcher.
@@ -1003,14 +1003,14 @@ class TestPrincipalResolutionFailFast:
         )
 
         with pytest.raises(SystemExit) as excinfo:
-            await_cmd._run_wait(
+            await_cmd._await_event(
                 team_id="team_x",
                 project_id=None,
                 scope={},
                 type_spec=None,
                 include_self=True,  # opt in
                 timeout_spec="1s",
-                json_mode=False,
+                json_output=False,
                 until_cmd=None,
             )
         # _poll returned None → timeout exit.
@@ -1038,11 +1038,11 @@ class TestAwaitSprintScope:
 
         captured = {}
 
-        def fake_run_wait(**kwargs):
+        def fake_await_event(**kwargs):
             captured.update(kwargs)
             raise SystemExit(124)
 
-        monkeypatch.setattr(await_cmd, "_run_wait", fake_run_wait)
+        monkeypatch.setattr(await_cmd, "_await_event", fake_await_event)
         monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
         monkeypatch.setattr(
             await_cmd, "_client",
@@ -1081,11 +1081,11 @@ class TestAwaitSprintScope:
 
         captured = {}
 
-        def fake_run_wait(**kwargs):
+        def fake_await_event(**kwargs):
             captured.update(kwargs)
             raise SystemExit(124)
 
-        monkeypatch.setattr(await_cmd, "_run_wait", fake_run_wait)
+        monkeypatch.setattr(await_cmd, "_await_event", fake_await_event)
         monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
         monkeypatch.setattr(
             await_cmd, "_require_current_project", lambda: "proj_current",
@@ -1113,10 +1113,10 @@ class TestSignalAndPipeHandling:
             })(),
         )
         with pytest.raises(SystemExit) as excinfo:
-            await_cmd._run_wait(
+            await_cmd._await_event(
                 team_id="team_x", project_id=None, scope={},
                 type_spec=None, include_self=False, timeout_spec="1s",
-                json_mode=True, until_cmd=None,
+                json_output=True, until_cmd=None,
             )
         return excinfo.value.code
 
@@ -1143,7 +1143,7 @@ class TestSignalAndPipeHandling:
     def test_broken_pipe_on_emit_exits_0(self, monkeypatch):
         monkeypatch.setattr(
             await_cmd, "_emit_event",
-            lambda event, json_mode: (_ for _ in ()).throw(BrokenPipeError()),
+            lambda event, json_output: (_ for _ in ()).throw(BrokenPipeError()),
         )
         # Neutralize the fd redirection so it can't clobber pytest's
         # capture file descriptors.
