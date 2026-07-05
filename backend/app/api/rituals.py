@@ -772,7 +772,13 @@ async def approve_issue_attestation(
             detail="Attestation already approved",
         )
 
-    attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
+    try:
+        attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     try:
         await broadcast_attestation_event(
@@ -1199,7 +1205,13 @@ async def approve_attestation(
             detail="Attestation already approved",
         )
 
-    attestation = await ritual_service.approve(attestation, current_user.id)
+    try:
+        attestation = await ritual_service.approve(attestation, current_user.id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     return attestation
 
 

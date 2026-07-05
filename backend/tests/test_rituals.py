@@ -3604,6 +3604,38 @@ class TestSprintRitualAttestationAPI:
         data = response.json()
         assert data["approved_at"] is not None
 
+    async def test_approve_attestation_api_non_review_mode_is_400(
+        self, client, auth_headers, test_project, db, test_user
+    ):
+        """Approving a non-REVIEW attestation must be a 400 from the
+        service ValueError, not an unhandled 500. Same wrap the
+        GATE-complete endpoints use."""
+        ritual = await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="auto-ritual-approve",
+            prompt="Auto",
+            approval_mode=ApprovalMode.AUTO,
+        )
+        limbo_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Sprint 1",
+            status=SprintStatus.COMPLETED,
+            limbo=True,
+        )
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id,
+            sprint_id=limbo_sprint.id,
+            attested_by=test_user.id,
+            note="auto-attested",
+        )
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/approve?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 400
+        assert "REVIEW" in response.json()["detail"]
+
     async def test_approve_attestation_api_not_in_limbo(self, client, auth_headers, test_project, db):
         """Test that approval fails when not in limbo."""
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="no-limbo", prompt="No")

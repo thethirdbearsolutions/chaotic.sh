@@ -389,3 +389,65 @@ class TestSoftDeleteHandling:
             "Soft-delete of the gating ritual must clear (or otherwise "
             "explicitly mark) the open limbo row, not leave it orphaned."
         )
+        assert rows[0].cleared_by_id == test_user.id
+
+        # The audit trail must be written, not just the clear.
+        from app.oxyde_models.issue import OxydeIssueActivity
+        from app.enums import ActivityType
+        activities = await OxydeIssueActivity.objects.filter(
+            issue_id=test_issue.id,
+            activity_type=ActivityType.INTENT_CANCELED.name,
+        ).all()
+        assert len(activities) == 1
+        assert "deleted" in (activities[0].new_value or "")
+
+    @pytest.mark.asyncio
+    async def test_soft_delete_keeps_intent_open_when_other_blockers_remain(
+        self, db, test_issue, test_user, test_project, make_ritual
+    ):
+        """Deleting one of two gating rituals must resolve only that
+        ritual's blocker; the intent stays open on the survivor."""
+        from app.services.issue_service import IssueService, TicketRitualsError
+        from app.schemas.issue import IssueUpdate
+        from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
+        from app.enums import LimboType
+
+        ritual_a = await make_ritual(
+            name="gate_close_a",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+        ritual_b = await make_ritual(
+            name="gate_close_b",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+        )
+
+        test_issue.status = IssueStatus.IN_PROGRESS
+        await test_issue.save(update_fields={"status"})
+
+        with pytest.raises(TicketRitualsError):
+            await IssueService().update(
+                test_issue,
+                IssueUpdate(status=IssueStatus.DONE),
+                user_id=test_user.id,
+                is_human_request=False,
+            )
+
+        await RitualService().delete(ritual_a, deleted_by_id=test_user.id)
+
+        rows = await OxydeTicketLimbo.objects.filter(
+            issue_id=test_issue.id,
+            limbo_type=LimboType.CLOSE.name,
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].cleared_at is None, (
+            "Intent must stay open while another ritual still blocks it."
+        )
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=rows[0].id,
+        ).all()
+        by_ritual = {b.ritual_id: b for b in blockers}
+        assert by_ritual[ritual_a.id].resolved_at is not None
+        assert by_ritual[ritual_a.id].resolved_by_id == test_user.id
+        assert by_ritual[ritual_b.id].resolved_at is None

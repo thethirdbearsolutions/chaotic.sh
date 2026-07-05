@@ -275,42 +275,47 @@ class RitualService:
         the limbo row stayed open forever. Scrub semantics — no
         auto-transition fires; the user re-attempts.
         """
-        ritual.is_active = False
-        await ritual.save(update_fields={"is_active"})
-
         from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 
         now = datetime.now(timezone.utc)
-        blockers = await OxydeTicketLimboBlocker.objects.filter(
-            ritual_id=ritual.id, resolved_at=None,
-        ).all()
-        for blocker in blockers:
-            intent = await OxydeTicketLimbo.objects.get_or_none(id=blocker.limbo_id)
-            if intent is None or intent.cleared_at is not None:
-                continue
-            blocker.resolved_at = now
-            blocker.resolved_by_id = deleted_by_id
-            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+        # All-or-nothing: deactivation and blocker release commit together.
+        # A crash between them would otherwise leave an inactive ritual
+        # holding an open blocker that no pending list shows and that the
+        # orphan cleanup (which requires an approved attestation) can
+        # never recover.
+        async with atomic():
+            ritual.is_active = False
+            await ritual.save(update_fields={"is_active"})
 
-            remaining = await OxydeTicketLimboBlocker.objects.filter(
-                limbo_id=intent.id, resolved_at=None,
+            blockers = await OxydeTicketLimboBlocker.objects.filter(
+                ritual_id=ritual.id, resolved_at=None,
             ).all()
-            if remaining:
-                continue
-            intent.cleared_at = now
-            intent.cleared_by_id = deleted_by_id
-            await intent.save(update_fields={"cleared_at", "cleared_by_id"})
-            try:
+            for blocker in blockers:
+                intent = await OxydeTicketLimbo.objects.get_or_none(id=blocker.limbo_id)
+                if intent is None or intent.cleared_at is not None:
+                    continue
+                # Conditional update: a concurrent gate-complete/approve
+                # resolving the same blocker wins; don't clobber its
+                # attribution.
+                resolved = await OxydeTicketLimboBlocker.objects.filter(
+                    id=blocker.id, resolved_at=None,
+                ).update(resolved_at=now, resolved_by_id=deleted_by_id)
+                if not resolved:
+                    continue
+
+                remaining = await OxydeTicketLimboBlocker.objects.filter(
+                    limbo_id=intent.id, resolved_at=None,
+                ).all()
+                if remaining:
+                    continue
+                intent.cleared_at = now
+                intent.cleared_by_id = deleted_by_id
+                await intent.save(update_fields={"cleared_at", "cleared_by_id"})
                 await OxydeIssueActivity.objects.create(
                     issue_id=intent.issue_id,
                     user_id=deleted_by_id or intent.requested_by_id,
                     activity_type=ActivityType.INTENT_CANCELED,
                     new_value=f"ritual '{ritual.name}' deleted",
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to write INTENT_CANCELED activity for issue=%s "
-                    "after deleting ritual=%s", intent.issue_id, ritual.id,
                 )
 
     async def list_by_project(self, project_id: str, include_inactive: bool = False) -> list[OxydeRitual]:
@@ -1397,10 +1402,10 @@ class RitualService:
                 continue
             intent = intent_by_id[limbo_id]
             intent.cleared_at = now
-            # Attribute the clear to the approver whose attestation
-            # resolved the final blocker — a real user id, so no FK
-            # violation under PRAGMA foreign_keys = ON (unlike the old
-            # literal "system"). NULL only if attribution is unknown.
+            # Best-effort attribution: the approver of a blocker this
+            # sweep resolved for the intent (not necessarily the
+            # historically-final one). A user id, unlike the old literal
+            # "system" which violated the FK; NULL if unknown.
             intent.cleared_by_id = approved_by
             await intent.save(update_fields={"cleared_at", "cleared_by_id"})
 
