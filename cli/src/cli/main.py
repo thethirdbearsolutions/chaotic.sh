@@ -75,13 +75,63 @@ def json_option(f):
             ctx.ensure_object(dict)
             ctx.obj['json'] = True
         return f(*args, **kwargs)
-    return click.option('--json', 'json_output', is_flag=True, hidden=True,
-                        help='Output as JSON instead of formatted text.')(wrapper)
+    # CHT-1222: was hidden=True, making --json (the CLI's core machine-output
+    # feature) undiscoverable via --help on every subcommand that has it.
+    return click.option('--json', 'json_output', is_flag=True,
+                        help='Output as JSON instead of formatted text; all other output goes to stderr.')(wrapper)
 
 
 def output_json(data):
     """Output data as JSON and exit."""
     click.echo(json.dumps(data, indent=2, default=str))
+
+
+def json_result(build=None):
+    """The CLI's one sanctioned pattern for wiring --json onto a mutation
+    or state-transition command (CHT-1222).
+
+    After the wrapped command body runs, if --json is active, emits a
+    single JSON object on stdout:
+
+    * If the command function returned a non-None value, that value is
+      emitted directly — use this when the mutation itself already
+      produces the payload worth reporting (a freshly created comment,
+      an updated issue from ``update_issue``'s own response, a relation).
+    * Otherwise ``build(*args, **kwargs)`` is called with the exact
+      positional/keyword arguments Click passed to the command, and its
+      return value is emitted — typically a small lambda that re-fetches
+      the affected entity by identifier.
+
+    Usage — must sit innermost in the decorator stack, directly above
+    ``def``, *below* @handle_error, so a failure raised by the command
+    body OR by ``build`` still reaches handle_error's --json error
+    formatting instead of escaping raw::
+
+        @issue.command("move")
+        @click.argument("identifier")
+        @click.argument("status")
+        @_main().json_option
+        @_main().require_auth
+        @_main().handle_error
+        @_main().json_result(lambda identifier, status: _client().update_issue(...))
+        def issue_move(identifier, status):
+            ...
+
+    Command console.print status lines don't need to be gated — the
+    shared ``console`` object (commands/shared.py) already redirects all
+    chatter to stderr while --json is active, so this decorator only
+    needs to own the stdout JSON payload.
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            ret = f(*args, **kwargs)
+            if is_json_output():
+                payload = ret if ret is not None else (build(*args, **kwargs) if build else None)
+                output_json(payload)
+            return ret
+        return wrapper
+    return decorator
 
 
 def require_auth(f):
@@ -145,7 +195,11 @@ def handle_error(f):
         except click.ClickException as e:
             if is_json_output():
                 output_json({"error": e.format_message()})
-                raise SystemExit(1)
+                # Preserve whatever exit code the non-JSON path would have
+                # produced (UsageError/BadParameter use 2, everything else
+                # ClickException's default of 1) instead of collapsing
+                # every ClickException to 1 under --json (CHT-1222).
+                raise SystemExit(getattr(e, "exit_code", 1)) from e
             raise
         except httpx.ConnectError:
             msg = f"Could not connect to server at {get_api_url()}. Is the server running?"

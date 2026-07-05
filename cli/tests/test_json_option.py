@@ -90,16 +90,34 @@ class TestJsonErrorHandling:
         assert 'not found' in data['error'].lower()
 
     def test_bad_parameter_outputs_json(self, cli_runner):
-        """BadParameter errors from validation should output JSON when --json is enabled."""
+        """BadParameter errors from validation should output JSON when --json is enabled,
+        and preserve BadParameter/UsageError's exit code 2 (CHT-1222) rather than
+        collapsing every ClickException to 1 under --json."""
         from cli.main import cli
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--status', 'invalid_status'])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 2
         data = json.loads(result.output)
         assert 'error' in data
         assert 'invalid status' in data['error'].lower()
+
+    def test_plain_click_exception_still_exits_1_under_json(self, cli_runner):
+        """A plain click.ClickException (not UsageError) keeps exit code 1
+        under --json — only the UsageError/BadParameter 2 is preserved."""
+        from cli.main import cli, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "s1", "name": "Sprint 1"},
+        ])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert 'error' in data
 
     def test_click_exception_still_works_without_json(self, cli_runner):
         """ClickExceptions should still produce normal text when --json is not used."""

@@ -11,7 +11,29 @@ import sys
 import click
 from rich.console import Console
 
-console = Console()
+
+class _JsonAwareConsole(Console):
+    """Rich Console that redirects ordinary chatter to stderr while --json
+    mode is active (CHT-1222), so no command's status lines/tables/panels
+    can leak onto the single-JSON-value stdout contract.
+
+    This is the ONE place that decision is made: individual command call
+    sites keep calling plain ``console.print(...)`` and get stdout-purity
+    under --json for free, without gating each call behind an
+    ``is_json_output()`` check. Structured JSON payloads never go through
+    this console — they're written directly via ``cli.main.output_json``
+    (a plain ``click.echo`` to stdout) — so this override can never
+    suppress the actual JSON output, only the human-readable chatter
+    around it.
+    """
+
+    def print(self, *args, **kwargs):
+        if "file" not in kwargs and _is_json_output():
+            kwargs["file"] = sys.stderr
+        super().print(*args, **kwargs)
+
+
+console = _JsonAwareConsole()
 
 
 def _client():
@@ -21,6 +43,11 @@ def _client():
     rather than binding it at import time via ``from ..client import client``.
     """
     return sys.modules['cli.main'].client
+
+
+def _is_json_output() -> bool:
+    """Late-bind to cli.main.is_json_output (same rationale as _client())."""
+    return sys.modules['cli.main'].is_json_output()
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
