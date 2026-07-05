@@ -1110,7 +1110,8 @@ textarea {
     font-size: var(--font-base);
 }
 
-.mention-suggestion:hover {
+.mention-suggestion:hover,
+.mention-suggestion.highlighted {
     border-color: var(--border-color);
     background: var(--bg-tertiary);
 }

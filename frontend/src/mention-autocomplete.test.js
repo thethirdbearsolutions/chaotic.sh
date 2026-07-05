@@ -77,3 +77,115 @@ describe('Escape layering (CHT-1215)', () => {
         expect(globalEscapeBlur).toHaveBeenCalled();
     });
 });
+
+// CHT-1215: the suggestion list only wired up mouse clicks — a keyboard-only
+// user typing a comment had to grab the mouse to complete an @mention.
+describe('Arrow-key/Enter/Tab selection (CHT-1215)', () => {
+    let setupMentionAutocomplete;
+    let textarea;
+    let container;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.doMock('./teams.js', () => ({
+            getMembers: vi.fn(() => [
+                { id: '1', name: 'Ada Lovelace', email: 'ada@example.com' },
+                { id: '2', name: 'Alan Turing', email: 'alan@example.com' },
+                { id: '3', name: 'Amy Rivera', email: 'amy@example.com' },
+            ]),
+        }));
+        ({ setupMentionAutocomplete } = await import('./mention-autocomplete.js'));
+
+        document.body.innerHTML = `
+            <textarea id="new-comment"></textarea>
+            <div id="mention-suggestions" class="hidden"></div>
+        `;
+        textarea = document.getElementById('new-comment');
+        container = document.getElementById('mention-suggestions');
+
+        setupMentionAutocomplete();
+    });
+
+    function typeQuery(text) {
+        textarea.value = text;
+        textarea.selectionStart = text.length;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function keydown(key) {
+        return textarea.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    }
+
+    function suggestions() {
+        return Array.from(container.querySelectorAll('.mention-suggestion'));
+    }
+
+    function highlightedHandles() {
+        return suggestions().filter(b => b.classList.contains('highlighted')).map(b => b.dataset.handle);
+    }
+
+    it('highlights the first suggestion by default', () => {
+        typeQuery('@a');
+        expect(suggestions().length).toBeGreaterThan(1);
+        expect(highlightedHandles()).toEqual([suggestions()[0].dataset.handle]);
+    });
+
+    it('ArrowDown moves the highlight to the next suggestion', () => {
+        typeQuery('@a');
+        keydown('ArrowDown');
+        expect(highlightedHandles()).toEqual([suggestions()[1].dataset.handle]);
+    });
+
+    it('ArrowDown wraps from the last suggestion back to the first', () => {
+        typeQuery('@a');
+        const count = suggestions().length;
+        for (let i = 0; i < count; i++) keydown('ArrowDown');
+        expect(highlightedHandles()).toEqual([suggestions()[0].dataset.handle]);
+    });
+
+    it('ArrowUp wraps from the first suggestion to the last', () => {
+        typeQuery('@a');
+        keydown('ArrowUp');
+        const last = suggestions()[suggestions().length - 1];
+        expect(highlightedHandles()).toEqual([last.dataset.handle]);
+    });
+
+    it('Enter accepts the highlighted suggestion and hides the popup', () => {
+        typeQuery('@a');
+        keydown('ArrowDown'); // highlight suggestion index 1
+        const targetHandle = suggestions()[1].dataset.handle;
+
+        const prevented = !keydown('Enter');
+        expect(prevented).toBe(true); // preventDefault() was called
+        expect(textarea.value).toBe(`@${targetHandle} `);
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('Tab accepts the highlighted suggestion and hides the popup', () => {
+        typeQuery('@a');
+        const targetHandle = suggestions()[0].dataset.handle;
+
+        const prevented = !keydown('Tab');
+        expect(prevented).toBe(true);
+        expect(textarea.value).toBe(`@${targetHandle} `);
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('Enter/Tab/Arrow keys do nothing when the popup is not open', () => {
+        typeQuery('no mention here');
+        expect(container.classList.contains('hidden')).toBe(true);
+
+        const enterPrevented = !keydown('Enter');
+        const tabPrevented = !keydown('Tab');
+
+        expect(enterPrevented).toBe(false);
+        expect(tabPrevented).toBe(false);
+        expect(textarea.value).toBe('no mention here');
+    });
+
+    it('mouseenter on a suggestion syncs the keyboard highlight', () => {
+        typeQuery('@a');
+        suggestions()[2].dispatchEvent(new Event('mouseenter', { bubbles: true }));
+        expect(highlightedHandles()).toEqual([suggestions()[2].dataset.handle]);
+    });
+});
