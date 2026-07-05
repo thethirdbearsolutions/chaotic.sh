@@ -335,8 +335,29 @@ describe('viewSprint', () => {
 
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView.innerHTML).toContain('Documents (0)');
-        expect(detailView.innerHTML).toContain('No documents in this sprint yet');
+        expect(detailView.innerHTML).toContain('No documents yet');
+        expect(detailView.innerHTML).toContain('Create a sprint document to get started');
+        expect(detailView.innerHTML).toContain('empty-state');
         expect(detailView.innerHTML).toContain('+ New Document');
+    });
+
+    it('shows empty states for open and completed issues', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('No open issues');
+        expect(detailView.innerHTML).toContain('All issues in this sprint are completed');
+        expect(detailView.innerHTML).toContain('No completed issues');
+        expect(detailView.innerHTML).toContain('Issues will appear here once marked done');
+        expect(detailView.innerHTML).toContain('empty-state');
     });
 
     it('fetches documents with team and project context', async () => {

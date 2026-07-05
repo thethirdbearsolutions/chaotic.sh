@@ -236,6 +236,8 @@ describe('dashboard module', () => {
 
             const container = document.getElementById('dashboard-activity-list');
             expect(container.innerHTML).toContain('Failed to load activity');
+            expect(container.innerHTML).toContain('Check your connection and try again');
+            expect(container.innerHTML).toContain('empty-state');
         });
 
         it('does nothing if no current team', async () => {
@@ -310,6 +312,8 @@ describe('dashboard module', () => {
 
             const container = document.getElementById('dashboard-activity-list');
             expect(container.innerHTML).toContain('No recent activity');
+            expect(container.innerHTML).toContain('Create or update issues to see activity here');
+            expect(container.innerHTML).toContain('empty-state');
         });
 
         it('renders issue link when issue_identifier present', () => {

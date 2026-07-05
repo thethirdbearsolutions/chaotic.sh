@@ -110,6 +110,8 @@ describe('api-keys module', () => {
             renderApiKeys();
 
             expect(container.innerHTML).toContain('No API keys yet');
+            expect(container.innerHTML).toContain('Create one to get started');
+            expect(container.innerHTML).toContain('empty-state');
         });
 
         it('renders key list', () => {

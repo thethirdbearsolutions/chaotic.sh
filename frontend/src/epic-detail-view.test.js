@@ -232,6 +232,18 @@ describe('epic-detail-view', () => {
 
             const content = document.getElementById('epic-detail-content').innerHTML;
             expect(content).toContain('No activity yet');
+            expect(content).toContain('Activity will appear here as the epic is updated');
+            expect(content).toContain('empty-state');
+        });
+
+        it('renders empty sub-issues state', async () => {
+            api.getSubIssues.mockResolvedValue([]);
+            await viewEpic('epic-1');
+
+            const content = document.getElementById('epic-detail-content').innerHTML;
+            expect(content).toContain('No sub-issues');
+            expect(content).toContain('Break this epic down by creating sub-issues');
+            expect(content).toContain('empty-state');
         });
 
         it('renders sidebar properties', async () => {
