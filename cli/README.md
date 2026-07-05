@@ -270,6 +270,7 @@ want to wake on intents regardless of ritual name.
 | 2    | Usage error (invalid ID up front, missing required scope, etc.)   |
 | 124  | `--timeout` expired with no matching event                        |
 | 130  | Interrupted (SIGINT)                                              |
+| 143  | Terminated (SIGTERM) — clean exit with a stderr message, never a partial JSON object on stdout |
 
 ### Error handling and retries
 

@@ -36,6 +36,7 @@ Implementation overview
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -374,6 +375,16 @@ def _stderr(msg: str) -> None:
     click.echo(msg, err=True)
 
 
+class TerminatedBySignal(Exception):
+    """Raised by the SIGTERM handler so a supervised wait exits cleanly
+    (143 + stderr message) instead of dying mid-write and breaking the
+    one-JSON-object stdout contract."""
+
+
+def _raise_terminated(signum, frame):
+    raise TerminatedBySignal()
+
+
 # ---------------------------------------------------------------------------
 # Retry policy
 # ---------------------------------------------------------------------------
@@ -678,31 +689,55 @@ def _run_wait(
             team_id=team_id, skip=skip, limit=limit, project_id=project_id,
         )
 
+    # SIGTERM from a supervisor (systemd, k8s, harness wrapper) should
+    # exit cleanly, not hard-kill the process mid-write.
     try:
-        event = _poll(
-            fetch_page,
-            watermark=watermark,
-            scope=scope,
-            type_filter=type_filter,
-            exclude_self_for=exclude_self_for,
-            until_cmd=until_cmd,
-            timeout_secs=timeout_secs,
-        )
-    except PredicateBroken as exc:
-        _stderr(f"await: {exc}")
-        raise SystemExit(1) from exc
-    except APIError as exc:
-        _stderr(f"await: {exc}")
-        raise SystemExit(1) from exc
-    except KeyboardInterrupt:
-        raise SystemExit(130)
+        old_sigterm = signal.signal(signal.SIGTERM, _raise_terminated)
+    except ValueError:
+        # Not the main thread (embedded use); SIGTERM keeps its default
+        # behavior there.
+        old_sigterm = None
 
-    if event is None:
-        _stderr("await: timeout")
-        raise SystemExit(124)
-
-    _emit_event(event, json_mode)
-    raise SystemExit(0)
+    try:
+        try:
+            event = _poll(
+                fetch_page,
+                watermark=watermark,
+                scope=scope,
+                type_filter=type_filter,
+                exclude_self_for=exclude_self_for,
+                until_cmd=until_cmd,
+                timeout_secs=timeout_secs,
+            )
+            if event is None:
+                _stderr("await: timeout")
+                raise SystemExit(124)
+            _emit_event(event, json_mode)
+        except PredicateBroken as exc:
+            _stderr(f"await: {exc}")
+            raise SystemExit(1) from exc
+        except APIError as exc:
+            _stderr(f"await: {exc}")
+            raise SystemExit(1) from exc
+        except KeyboardInterrupt:
+            raise SystemExit(130)
+        except TerminatedBySignal:
+            _stderr("await: terminated (SIGTERM)")
+            raise SystemExit(143)
+        except BrokenPipeError:
+            # The reader closed stdout early. The event was delivered as
+            # far as we can know; exit 0 quietly. Point stdout at
+            # /dev/null so the interpreter's shutdown flush doesn't
+            # print a second traceback.
+            try:
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            except OSError:
+                pass
+            raise SystemExit(0)
+        raise SystemExit(0)
+    finally:
+        if old_sigterm is not None:
+            signal.signal(signal.SIGTERM, old_sigterm)
 
 
 def register(cli):

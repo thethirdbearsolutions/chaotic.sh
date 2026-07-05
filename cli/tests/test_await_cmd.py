@@ -6,6 +6,9 @@ contract, and the JSON output discipline. Polling itself is exercised via
 a controllable fetch function so tests don't need a running server.
 """
 from datetime import datetime, timedelta, timezone
+import os
+import signal
+import time
 import json
 
 import pytest
@@ -850,3 +853,65 @@ class TestPrincipalResolutionFailFast:
             )
         # _poll returned None → timeout exit.
         assert excinfo.value.code == 124
+
+
+# ---------------------------------------------------------------------------
+# Signal and pipe handling
+# ---------------------------------------------------------------------------
+
+
+class TestSignalAndPipeHandling:
+    def _run(self, monkeypatch, poll):
+        monkeypatch.setattr(await_cmd, "_resolve_principal_id", lambda: "me")
+        monkeypatch.setattr(await_cmd, "_poll", poll)
+        monkeypatch.setattr(
+            await_cmd, "_client",
+            lambda: type("X", (), {
+                "get_team_activities": lambda self, **kw: [],
+            })(),
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            await_cmd._run_wait(
+                team_id="team_x", project_id=None, scope={},
+                type_spec=None, include_self=False, timeout_spec="1s",
+                json_mode=True, until_cmd=None,
+            )
+        return excinfo.value.code
+
+    def test_sigterm_handler_raises_terminated(self):
+        with pytest.raises(await_cmd.TerminatedBySignal):
+            await_cmd._raise_terminated(signal.SIGTERM, None)
+
+    def test_sigterm_during_poll_exits_143(self, monkeypatch, capsys):
+        # Deliver a real SIGTERM mid-poll: the installed handler must
+        # convert it into a clean 143, not a hard kill.
+        def poll(*a, **kw):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)  # never reached; signal interrupts
+            raise AssertionError("signal did not interrupt the poll")
+
+        assert self._run(monkeypatch, poll) == 143
+        assert "SIGTERM" in capsys.readouterr().err
+
+    def test_sigterm_handler_restored_after_wait(self, monkeypatch):
+        before = signal.getsignal(signal.SIGTERM)
+        self._run(monkeypatch, lambda *a, **kw: None)  # timeout path
+        assert signal.getsignal(signal.SIGTERM) is before
+
+    def test_broken_pipe_on_emit_exits_0(self, monkeypatch):
+        monkeypatch.setattr(
+            await_cmd, "_emit_event",
+            lambda event, json_mode: (_ for _ in ()).throw(BrokenPipeError()),
+        )
+        # Neutralize the fd redirection so it can't clobber pytest's
+        # capture file descriptors.
+        monkeypatch.setattr(os, "open", lambda *a, **kw: -1)
+        monkeypatch.setattr(os, "dup2", lambda *a, **kw: None)
+        code = self._run(
+            monkeypatch,
+            lambda *a, **kw: {"id": "e1", "created_at": "2026-01-01T00:00:00Z"},
+        )
+        assert code == 0
+
+    def test_timeout_still_exits_124(self, monkeypatch):
+        assert self._run(monkeypatch, lambda *a, **kw: None) == 124
