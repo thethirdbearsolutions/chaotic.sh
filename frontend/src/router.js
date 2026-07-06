@@ -73,6 +73,13 @@ export function getValidViews() {
     return Object.keys(viewHandlers);
 }
 
+// Views that read getCurrentProject()/getCurrentView() to scope their data
+// and so should round-trip ?project= in the URL (CHT-1211 item 5). Hand-
+// maintained rather than derived from the DOM's `${view}-project-filter`
+// elements because the ids aren't consistently named (`project-filter`,
+// `sprint-project-filter`, `doc-project-filter`, ...).
+const viewsWithProject = ['issues', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
+
 /**
  * Navigate to a view by name.
  * Updates URL, highlights nav item, hides/shows view containers, calls load handler.
@@ -80,7 +87,7 @@ export function getValidViews() {
 export function navigateTo(view, pushHistory = true) {
     // Save scroll position of the current page before navigating away
     if (pushHistory) {
-        scrollPositions.set(window.location.href, window.scrollY);
+        saveScrollPosition();
     }
 
     setCurrentView(view);
@@ -89,10 +96,11 @@ export function navigateTo(view, pushHistory = true) {
     if (pushHistory) {
         let url;
         const projectId = getProjectFromUrl();
-        const viewsWithProject = ['issues', 'board', 'sprints'];
 
         if (view === 'my-issues') {
-            url = '/';
+            // my-issues (Dashboard) is served at '/' — still round-trip
+            // ?project= for it like the other project-scoped views (CHT-1211)
+            url = (projectId) ? `/?project=${projectId}` : '/';
         } else if (view === 'issues' && window.location.search) {
             // Preserve existing query params when navigating to issues
             url = `/issues${window.location.search}`;
@@ -179,10 +187,19 @@ export function handleRoute() {
 }
 
 /**
+ * Record the current URL's scroll offset so it can be restored on Back
+ * (CHT-1211). Every detail-view entry point (viewIssue/viewEpic/viewSprint/
+ * viewDocument) calls this before replacing the page with detail content.
+ */
+export function saveScrollPosition() {
+    scrollPositions.set(window.location.href, window.scrollY);
+}
+
+/**
  * Navigate to an issue by its identifier (e.g., "CHT-123").
  */
 export function navigateToIssueByIdentifier(identifier) {
-    scrollPositions.set(window.location.href, window.scrollY);
+    saveScrollPosition();
     history.pushState({ view: 'issue', identifier }, '', `/issue/${identifier}`);
     if (onIssueNavigate) onIssueNavigate(identifier);
 }
@@ -191,7 +208,7 @@ export function navigateToIssueByIdentifier(identifier) {
  * Navigate to an epic by its identifier (e.g., "CHT-123").
  */
 export function navigateToEpicByIdentifier(identifier) {
-    scrollPositions.set(window.location.href, window.scrollY);
+    saveScrollPosition();
     history.pushState({ view: 'epic', identifier }, '', `/epic/${identifier}`);
     if (onEpicNavigate) onEpicNavigate(identifier);
 }
