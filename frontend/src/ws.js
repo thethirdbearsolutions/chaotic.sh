@@ -15,6 +15,13 @@ import { showToast } from './ui.js';
 let wsFailCount = 0;
 let reconnectTimer = null;
 
+// Connection generation (CHT-1224 PR #211 review finding 1): incremented on
+// every connectWebSocket() call so a superseded socket's late events can be
+// recognized and ignored. wsFailCount is scoped to the current generation's
+// outage — a deliberate fresh connect (team switch, initial load) resets it,
+// while the internal reconnect loop preserves it for backoff/toast state.
+let wsGeneration = 0;
+
 // Pub/sub event registry: Map<string, Set<Function>>
 // Keys are "entity" or "entity:type" (e.g., "issue", "issue:created")
 const subscribers = new Map();
@@ -63,23 +70,48 @@ export function getReconnectDelay(failCount) {
 /**
  * Connect to the WebSocket for real-time updates.
  * Handles reconnection with exponential backoff on disconnect (CHT-1038).
+ *
+ * @param {string} teamId
+ * @param {object} [options]
+ * @param {boolean} [options.isReconnect=false] - true only when called from
+ *   the internal reconnect loop, so the outage state (wsFailCount) carries
+ *   across attempts. A deliberate fresh connect (team switch, initial load)
+ *   starts a clean slate instead.
  */
-export function connectWebSocket(teamId) {
+export function connectWebSocket(teamId, { isReconnect = false } = {}) {
     // Clear any pending reconnect timer
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
 
-    // Close existing connection
+    // Close existing connection. Detach its handlers first (CHT-1224 PR #211
+    // review finding 1): in a real browser close() fires the socket's onclose
+    // asynchronously, so an ordinary team switch used to run the OLD
+    // connection's disconnect branch — flashing the "disconnected" toast and
+    // sticking the Offline badge while the new team's connection was already
+    // opening.
     const existing = getWebsocket();
     if (existing) {
+        existing.onopen = null;
+        existing.onmessage = null;
+        existing.onclose = null;
+        existing.onerror = null;
         existing.close();
         setWebsocket(null);
     }
 
+    // Fresh connect = new outage scope: clear any leftover fail state from
+    // the previous connection generation (e.g. switching teams mid-outage).
+    if (!isReconnect && wsFailCount > 0) {
+        wsFailCount = 0;
+        updateWsStatusIndicator();
+    }
+
     const token = api.getToken();
     if (!token) return;
+
+    const generation = ++wsGeneration;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}&team_id=${encodeURIComponent(teamId)}`;
@@ -89,6 +121,7 @@ export function connectWebSocket(teamId) {
         setWebsocket(ws);
 
         ws.onopen = () => {
+            if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket connected');
             if (wsFailCount > 0) {
                 showToast('Live updates reconnected', 'success');
@@ -98,6 +131,7 @@ export function connectWebSocket(teamId) {
         };
 
         ws.onmessage = (event) => {
+            if (generation !== wsGeneration) return; // superseded connection — ignore
             // CHT-1038: Safe JSON parsing
             let message;
             try {
@@ -110,6 +144,7 @@ export function connectWebSocket(teamId) {
         };
 
         ws.onclose = () => {
+            if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket disconnected');
             wsFailCount++;
             if (wsFailCount === 1) {
@@ -121,7 +156,7 @@ export function connectWebSocket(teamId) {
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
                 if (getCurrentTeam() && getCurrentTeam().id === teamId) {
-                    connectWebSocket(teamId);
+                    connectWebSocket(teamId, { isReconnect: true });
                 }
             }, delay);
         };
