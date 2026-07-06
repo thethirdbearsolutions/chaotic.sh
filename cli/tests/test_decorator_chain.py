@@ -8,6 +8,12 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _flat(output: str) -> str:
+    """Collapse Rich's line-wrapping so substring checks aren't sensitive
+    to where a long hint message happens to wrap."""
+    return ' '.join(output.split())
+
+
 # Local _FakeAPIError: must be defined here (not imported from conftest) because
 # handle_error's except clause needs the SAME class that's set on mock_mod.APIError,
 # and pytest's conftest loading may create a different class than a direct import.
@@ -42,6 +48,9 @@ class TestRequireAuth:
 
         assert result.exit_code != 0
         assert 'Not authenticated' in result.output
+        # CHT-1221: a true first-run user has no token/team/project id to
+        # plug into the other hinted commands -- must point at quickstart.
+        assert 'chaotic quickstart' in _flat(result.output)
 
     def test_token_auth_passes(self, cli_runner):
         """Commands pass auth check when token is set."""
@@ -87,6 +96,11 @@ class TestRequireTeam:
 
         assert result.exit_code != 0
         assert 'No team selected' in result.output
+        # CHT-1221: point at `team list` (discoverable create-hint lives
+        # there) and quickstart for a user with zero teams.
+        flat = _flat(result.output)
+        assert 'chaotic team list' in flat
+        assert 'chaotic quickstart' in flat
 
     def test_auth_checked_before_team(self, cli_runner):
         """require_team checks auth first — shows auth error, not team error."""
@@ -110,10 +124,17 @@ class TestRequireProject:
              patch('cli.main.get_current_team', return_value='team-123'), \
              patch('cli.main.get_current_project', return_value=None):
             from cli.main import cli
-            result = cli_runner.invoke(cli, ['issue', 'list'])
+            # `sprint create` is gated by the bare require_project decorator
+            # (unlike `issue list`, which has its own inline --all-projects
+            # fallback message) -- exercises require_project's own hint text.
+            result = cli_runner.invoke(cli, ['sprint', 'create'])
 
         assert result.exit_code != 0
         assert 'No project selected' in result.output
+        # CHT-1221: point at `project list` and quickstart, same as require_team.
+        flat = _flat(result.output)
+        assert 'chaotic project list' in flat
+        assert 'chaotic quickstart' in flat
 
     def test_chain_order_auth_before_team_before_project(self, cli_runner):
         """require_project checks auth -> team -> project in order."""

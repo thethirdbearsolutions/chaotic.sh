@@ -79,6 +79,9 @@ class Client:
 
     def _format_error(self, detail) -> str:
         """Format an API error detail into a user-friendly message."""
+        if isinstance(detail, list):
+            return self._format_validation_errors(detail)
+
         if not isinstance(detail, dict):
             return str(detail)
 
@@ -89,6 +92,33 @@ class Client:
         if "arrears_by" in detail:
             return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
         return detail.get("message", str(detail))
+
+    def _format_validation_errors(self, detail: list) -> str:
+        """Format a list of FastAPI/pydantic validation errors (422 body)
+        readably, as `<field>: <message>` lines.
+
+        Deliberately reads only `loc`/`msg` off each error and never
+        touches `input`/`ctx`/`value` -- even though the backend's
+        RequestValidationError handler already strips those, this stays
+        value-blind so a too-short password (or any other field value)
+        can never end up dumped to the terminal from here either.
+        """
+        if not detail:
+            return "Validation error."
+
+        lines = []
+        for error in detail:
+            if not isinstance(error, dict) or "msg" not in error:
+                lines.append(str(error))
+                continue
+            loc = error.get("loc", [])
+            field = ".".join(
+                str(part) for part in loc if part not in ("body", "query", "path", "header")
+            )
+            if not field:
+                field = ".".join(str(part) for part in loc)
+            lines.append(f"{field}: {error['msg']}" if field else str(error["msg"]))
+        return "\n".join(lines)
 
     def _format_ticket_ritual_error(self, detail: dict) -> str:
         """Format a ticket ritual error with actionable hint."""
