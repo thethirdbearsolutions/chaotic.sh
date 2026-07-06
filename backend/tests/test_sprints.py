@@ -14,7 +14,7 @@ from app.enums import SprintStatus, TeamRole, UnestimatedHandling
 async def test_list_sprints(client, auth_headers, test_project, test_sprint):
     """Test listing sprints."""
     response = await client.get(
-        f"/api/sprints?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/sprints",
         headers=auth_headers,
     )
     assert response.status_code == 200
@@ -33,7 +33,7 @@ async def test_list_sprints_with_status_filter(client, auth_headers, test_projec
     )
 
     response = await client.get(
-        f"/api/sprints?project_id={test_project.id}&sprint_status=active",
+        f"/api/projects/{test_project.id}/sprints?sprint_status=active",
         headers=auth_headers,
     )
     assert response.status_code == 200
@@ -547,7 +547,7 @@ async def test_enter_limbo_not_active_fails(db, test_project):
 async def test_list_sprints_project_not_found(client, auth_headers):
     """Test listing sprints for project that doesn't exist."""
     response = await client.get(
-        "/api/sprints?project_id=00000000-0000-0000-0000-000000000000",
+        "/api/projects/00000000-0000-0000-0000-000000000000/sprints",
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -557,7 +557,7 @@ async def test_list_sprints_project_not_found(client, auth_headers):
 async def test_list_sprints_not_member(client, auth_headers2, test_project):
     """Test listing sprints when not a team member."""
     response = await client.get(
-        f"/api/sprints?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/sprints",
         headers=auth_headers2,
     )
     assert response.status_code == 403
@@ -663,7 +663,7 @@ async def test_list_sprints_with_pagination(client, auth_headers, test_project, 
         )
 
     response = await client.get(
-        f"/api/sprints?project_id={test_project.id}&skip=1&limit=2",
+        f"/api/projects/{test_project.id}/sprints?skip=1&limit=2",
         headers=auth_headers,
     )
     assert response.status_code == 200

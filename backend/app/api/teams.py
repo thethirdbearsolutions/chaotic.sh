@@ -8,6 +8,7 @@ from app.schemas.team import (
     TeamUpdate,
     TeamResponse,
     TeamMemberResponse,
+    TeamRoleUpdate,
     TeamInvitationCreate,
     TeamInvitationResponse,
 )
@@ -119,7 +120,12 @@ async def delete_team(team_id: str, current_user: CurrentUser):
 
 # Members
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
-async def list_team_members(team_id: str, current_user: CurrentUser):
+async def list_team_members(
+    team_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
+):
     """List team members."""
     team_service = TeamService()
 
@@ -131,7 +137,7 @@ async def list_team_members(team_id: str, current_user: CurrentUser):
             detail="Not a member of this team",
         )
 
-    members = await team_service.get_members(team_id)
+    members = (await team_service.get_members(team_id))[skip:skip + limit]
     return [
         TeamMemberResponse(
             id=m.id,
@@ -150,11 +156,20 @@ async def list_team_members(team_id: str, current_user: CurrentUser):
 async def update_member_role(
     team_id: str,
     user_id: str,
-    role: TeamRole,
+    role_in: TeamRoleUpdate,
     current_user: CurrentUser,
 ):
-    """Update a member's role."""
+    """Update a member's role.
+
+    CHT-1223: the server used to read ``role`` only from the query
+    string (a bare, non-Body-annotated param), but the CLI -- and every
+    other PATCH endpoint's convention in this codebase -- sends it as a
+    JSON body, so the only shipped client could never successfully
+    drive this endpoint. Body is now the only accepted shape (breaking
+    wire change, sanctioned: no query-string caller exists to break).
+    """
     team_service = TeamService()
+    resolved_role = role_in.role
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
@@ -175,7 +190,7 @@ async def update_member_role(
             detail="Cannot change owner's role",
         )
 
-    member = await team_service.update_member_role(member, role)
+    member = await team_service.update_member_role(member, resolved_role)
     return TeamMemberResponse(
         id=member.id,
         user_id=member.user_id,
@@ -260,7 +275,10 @@ async def create_invitation(
 
 @router.get("/{team_id}/invitations", response_model=list[TeamInvitationResponse])
 async def list_team_invitations(
-    team_id: str, current_user: CurrentUser
+    team_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List pending team invitations."""
     team_service = TeamService()
@@ -272,7 +290,7 @@ async def list_team_invitations(
         )
 
     invitations = await team_service.get_team_invitations(team_id)
-    return invitations
+    return invitations[skip:skip + limit]
 
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)

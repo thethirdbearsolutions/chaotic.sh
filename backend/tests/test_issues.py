@@ -12,7 +12,7 @@ async def test_create_multiple_issues_sequentially(client, auth_headers, test_pr
     """Test creating multiple issues in sequence - exercises identifier generation."""
     # Create first issue
     response1 = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "First Issue"},
     )
@@ -22,7 +22,7 @@ async def test_create_multiple_issues_sequentially(client, auth_headers, test_pr
 
     # Create second issue - this tests the issue_count increment logic
     response2 = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Second Issue"},
     )
@@ -32,7 +32,7 @@ async def test_create_multiple_issues_sequentially(client, auth_headers, test_pr
 
     # Create third issue
     response3 = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Third Issue"},
     )
@@ -45,7 +45,7 @@ async def test_create_multiple_issues_sequentially(client, auth_headers, test_pr
 async def test_create_issue(client, auth_headers, test_project):
     """Test creating an issue."""
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "New Issue",
@@ -69,7 +69,7 @@ async def test_create_issue(client, auth_headers, test_project):
 async def test_create_issue_minimal(client, auth_headers, test_project):
     """Test creating an issue with minimal data."""
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Minimal Issue"},
     )
@@ -85,7 +85,7 @@ async def test_issue_response_includes_creator_name(client, auth_headers, test_p
     """Test that issue responses include creator_name."""
     # Create an issue
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Test Creator Name"},
     )
@@ -119,7 +119,7 @@ async def test_issue_response_includes_creator_name(client, auth_headers, test_p
 async def test_create_issue_not_member(client, auth_headers2, test_project):
     """Test creating issue when not a member."""
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers2,
         json={"title": "Unauthorized Issue"},
     )
@@ -399,7 +399,7 @@ async def test_activity_timestamps_are_utc(client, auth_headers, test_team, test
     """
     # First create an issue
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Test Issue for Activity Timestamps"},
     )
@@ -435,7 +435,7 @@ async def test_activity_timestamps_are_utc(client, auth_headers, test_team, test
 async def test_issue_timestamps_are_utc(client, auth_headers, test_project):
     """Test that issue timestamps include UTC timezone (CHT-425)."""
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Test Issue for Timestamps"},
     )
@@ -493,6 +493,66 @@ async def test_update_issue(client, auth_headers, test_issue):
     assert data["title"] == "Updated Issue"
     assert data["status"] == "in_progress"
     assert data["priority"] == "urgent"
+
+
+@pytest.mark.asyncio
+async def test_update_issue_explicit_null_assignee_unassigns(client, auth_headers, test_project, test_user, test_user2, test_issue):
+    """CHT-1223: PATCH {"assignee_id": null} unassigns without a validation error.
+
+    _validate_assignee is only invoked when assignee_id is not None
+    (api/issues.py), so explicit-null must skip validation and clear the
+    relationship -- this is the CHT-741-class case the taste-pass spec
+    flagged as correct-but-untested at the API layer.
+    """
+    # Add test_user2 to the team and assign the issue to them first.
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    assign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": test_user2.id},
+    )
+    assert assign_response.status_code == 200
+    assert assign_response.json()["assignee_id"] == test_user2.id
+
+    unassign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": None},
+    )
+    assert unassign_response.status_code == 200
+    assert unassign_response.json()["assignee_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_issue_omitted_assignee_untouched(client, auth_headers, test_project, test_user2, test_issue):
+    """CHT-1223: an *omitted* assignee_id leaves the existing assignee untouched.
+
+    Exercises the exclude_unset boundary explicitly: a PATCH that doesn't
+    mention assignee_id at all must not clear it (only an explicit null
+    should).
+    """
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    assign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": test_user2.id},
+    )
+    assert assign_response.status_code == 200
+
+    # PATCH with an unrelated field only -- assignee_id is omitted, not null.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"priority": "high"},
+    )
+    assert response.status_code == 200
+    assert response.json()["assignee_id"] == test_user2.id
 
 
 @pytest.mark.asyncio
@@ -1264,7 +1324,7 @@ async def test_create_issue_with_parent(client, auth_headers, test_project, test
     )
 
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Child Issue",
@@ -1652,6 +1712,56 @@ async def test_create_relation(client, auth_headers, test_project, test_user, db
     assert data["issue_id"] == issue1.id
     assert data["related_issue_id"] == issue2.id
     assert data["relation_type"] == "relates_to"
+
+
+@pytest.mark.asyncio
+async def test_create_relation_matches_list_relations_shape(client, auth_headers, test_project, test_user, db):
+    """CHT-1223: create_relation and list_relations return the same shape.
+
+    Before the fix, create_relation's hand-built dict omitted
+    related_issue_identifier/title/status and "direction" entirely, while
+    list_relations included both -- same logical resource, two different
+    wire shapes.
+    """
+    from app.oxyde_models.issue import OxydeIssue
+
+    issue1 = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-1200",
+        number=1200,
+        title="Issue 1",
+        creator_id=test_user.id,
+    )
+    issue2 = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-1201",
+        number=1201,
+        title="Issue 2",
+        creator_id=test_user.id,
+    )
+
+    create_response = await client.post(
+        f"/api/issues/{issue1.id}/relations",
+        headers=auth_headers,
+        json={"related_issue_id": issue2.id, "relation_type": "blocks"},
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+
+    # Fields list_relations has always populated, now also on create's response.
+    assert created["related_issue_identifier"] == issue2.identifier
+    assert created["related_issue_title"] == issue2.title
+    assert created["related_issue_status"] == "backlog"
+    assert created["direction"] == "outgoing"
+
+    list_response = await client.get(
+        f"/api/issues/{issue1.id}/relations",
+        headers=auth_headers,
+    )
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert len(listed) == 1
+    assert set(created.keys()) == set(listed[0].keys())
 
 
 @pytest.mark.asyncio
@@ -2166,6 +2276,9 @@ async def test_update_issue_sprint_limbo_error(client, auth_headers, test_projec
     )
     assert response.status_code == 409
     assert "limbo" in response.json()["detail"]["message"].lower()
+    # CHT-1223: stable discriminator so clients can switch on error_code
+    # instead of duck-typing which keys are present.
+    assert response.json()["detail"]["error_code"] == "sprint_in_limbo"
 
 
 @pytest.mark.asyncio
@@ -2259,7 +2372,7 @@ async def test_create_issue_with_done_status_blocked_during_limbo(client, auth_h
 
     # Try to create issue with DONE status (should fail due to limbo)
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Test issue",
@@ -2295,7 +2408,7 @@ async def test_create_issue_with_in_progress_status_blocked_during_limbo(client,
 
     # Try to create issue with IN_PROGRESS status (should fail due to limbo)
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Test issue",
@@ -2344,7 +2457,7 @@ async def test_allowed_operations_during_limbo(client, auth_headers, test_projec
 
     # Creating a backlog issue should work during limbo
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Created during limbo",
@@ -2689,7 +2802,7 @@ async def test_list_issues_no_scope_fails(client, auth_headers):
 async def test_create_issue_project_not_found(client, auth_headers):
     """Test creating issue with non-existent project."""
     response = await client.post(
-        "/api/issues?project_id=00000000-0000-0000-0000-000000000008",
+        "/api/projects/00000000-0000-0000-0000-000000000008/issues",
         headers=auth_headers,
         json={"title": "Test Issue"},
     )
@@ -2908,7 +3021,7 @@ async def test_create_issue_with_done_status_checks_rituals(
 
     # Agent tries to create issue with status=done - should be blocked
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=agent_headers,
         json={
             "title": "Issue Created as Done",
@@ -2921,7 +3034,7 @@ async def test_create_issue_with_done_status_checks_rituals(
 
     # Human can create issue with status=done (bypasses rituals)
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Human Issue Created as Done",
@@ -2971,7 +3084,7 @@ async def test_ticket_rituals_error_response_structure(
 
     # Agent tries to create issue with status=done - should be blocked with structured error
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=agent_headers,
         json={
             "title": "Issue to Test Error Structure",
@@ -3037,7 +3150,7 @@ async def test_ticket_rituals_error_multiple_rituals(
 
     # Agent tries to create issue with status=done
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=agent_headers,
         json={
             "title": "Issue with Multiple Pending Rituals",

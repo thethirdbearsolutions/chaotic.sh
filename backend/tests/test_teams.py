@@ -323,7 +323,10 @@ async def test_list_team_members_not_member(client, auth_headers2, test_team):
 
 @pytest.mark.asyncio
 async def test_update_member_role(client, auth_headers, test_team, test_user2, db):
-    """Test updating a member's role."""
+    """CHT-1223: role is sent as a JSON body -- the only shape the server
+    accepts now (query-string ?role= was removed; it never worked for
+    the CLI, the only shipped client, so there was nothing to keep
+    backward compatible)."""
     from app.oxyde_models.team import OxydeTeamMember
     from app.enums import TeamRole
 
@@ -331,12 +334,44 @@ async def test_update_member_role(client, auth_headers, test_team, test_user2, d
     member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.patch(
-        f"/api/teams/{test_team.id}/members/{test_user2.id}?role=admin",
+        f"/api/teams/{test_team.id}/members/{test_user2.id}",
+        json={"role": "admin"},
         headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.json()
     assert data["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_update_member_role_missing_body(client, auth_headers, test_team, test_user2, db):
+    """No body at all -> 422, not a 500/KeyError."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    response = await client.patch(
+        f"/api/teams/{test_team.id}/members/{test_user2.id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_member_role_query_param_no_longer_works(client, auth_headers, test_team, test_user2, db):
+    """CHT-1223: the old ?role= query-string shape is gone (breaking,
+    sanctioned -- no query-string caller ever existed for this to break)."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    response = await client.patch(
+        f"/api/teams/{test_team.id}/members/{test_user2.id}?role=admin",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -349,7 +384,8 @@ async def test_update_member_role_not_admin(client, auth_headers2, test_team, te
     member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
     response = await client.patch(
-        f"/api/teams/{test_team.id}/members/{test_user2.id}?role=admin",
+        f"/api/teams/{test_team.id}/members/{test_user2.id}",
+        json={"role": "admin"},
         headers=auth_headers2,
     )
     assert response.status_code == 403
@@ -359,7 +395,8 @@ async def test_update_member_role_not_admin(client, auth_headers2, test_team, te
 async def test_update_member_role_member_not_found(client, auth_headers, test_team):
     """Test updating role of member that doesn't exist."""
     response = await client.patch(
-        f"/api/teams/{test_team.id}/members/00000000-0000-0000-0000-000000000000?role=admin",
+        f"/api/teams/{test_team.id}/members/00000000-0000-0000-0000-000000000000",
+        json={"role": "admin"},
         headers=auth_headers,
     )
     assert response.status_code == 404
@@ -369,7 +406,8 @@ async def test_update_member_role_member_not_found(client, auth_headers, test_te
 async def test_update_owner_role_fails(client, auth_headers, test_team, test_user):
     """Test that updating owner's role fails."""
     response = await client.patch(
-        f"/api/teams/{test_team.id}/members/{test_user.id}?role=member",
+        f"/api/teams/{test_team.id}/members/{test_user.id}",
+        json={"role": "member"},
         headers=auth_headers,
     )
     assert response.status_code == 400

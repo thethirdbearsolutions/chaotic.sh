@@ -393,7 +393,7 @@ class TestRitualServiceValidation:
         )
 
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={
                 "name": "pct-ritual",
@@ -415,7 +415,7 @@ class TestRitualServiceValidation:
         )
 
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={
                 "name": "random-ritual",

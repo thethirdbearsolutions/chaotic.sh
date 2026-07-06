@@ -15,7 +15,7 @@ async def test_create_issue_broadcasts_event(client, auth_headers, test_project)
     """POST /issues should broadcast 'created' issue event."""
     with patch("app.api.issues.broadcast_issue_event", new_callable=AsyncMock) as mock_broadcast:
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Broadcast Test Issue"},
         )
@@ -67,7 +67,7 @@ async def test_create_issue_broadcasts_activity(client, auth_headers, test_proje
     """POST /issues should broadcast activity event alongside issue event."""
     with patch("app.api.issues.broadcast_activity_event", new_callable=AsyncMock) as mock_activity:
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Activity Broadcast Test"},
         )

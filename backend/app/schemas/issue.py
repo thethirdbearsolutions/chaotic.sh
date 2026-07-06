@@ -37,7 +37,7 @@ class IssueCreate(BaseModel):
 class IssueUpdate(BaseModel):
     """Schema for updating an issue."""
 
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = None
     status: IssueStatus | None = None
     priority: IssuePriority | None = None
@@ -129,7 +129,7 @@ class LabelCreate(BaseModel):
 class LabelUpdate(BaseModel):
     """Schema for updating a label."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     color: str | None = None
     description: str | None = None
 
@@ -233,24 +233,44 @@ class IssueRelationCreate(BaseModel):
 
 
 class IssueRelationResponse(BaseModel):
-    """Schema for issue relation response."""
+    """Schema for issue relation response.
+
+    ``relation_type`` is typed ``str`` (not ``IssueRelationType``) on
+    purpose: list_relations derives a client-friendly display label for
+    incoming BLOCKS relations ("blocked_by") that isn't itself a member
+    of ``IssueRelationType`` -- coerce_relation_type below normalizes
+    real enum values/names to their lowercase value but passes derived
+    labels through unchanged.
+    """
 
     id: str
     issue_id: str
     related_issue_id: str
-    relation_type: IssueRelationType
+    relation_type: str
     created_at: DateTimeUTC
     # Include basic info about the related issue
     related_issue_identifier: str | None = None
     related_issue_title: str | None = None
     related_issue_status: IssueStatus | None = None
+    # "outgoing" | "incoming" | None (unset on some construction paths)
+    direction: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
     @field_validator("relation_type", mode="before")
     @classmethod
     def coerce_relation_type(cls, v):
-        return _coerce_enum(IssueRelationType, v)
+        if isinstance(v, IssueRelationType):
+            return v.value
+        if isinstance(v, str):
+            try:
+                return IssueRelationType[v].value
+            except KeyError:
+                try:
+                    return IssueRelationType(v).value
+                except ValueError:
+                    return v  # derived display label, e.g. "blocked_by"
+        return v
 
     @field_validator("related_issue_status", mode="before")
     @classmethod

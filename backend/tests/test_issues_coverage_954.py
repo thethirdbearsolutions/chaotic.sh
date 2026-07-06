@@ -122,7 +122,7 @@ class TestCreateIssueErrorBranches:
     ):
         """Create with status=done and ticket_close ritual → 409 TicketRitualsError (line 234-235)."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=agent_headers,
             json={
                 "title": "Done issue",
@@ -138,7 +138,7 @@ class TestCreateIssueErrorBranches:
     ):
         """Create with status=in_progress and claim ritual → 409 ClaimRitualsError (line 234-235)."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=agent_headers,
             json={
                 "title": "Claimed issue",
@@ -157,7 +157,7 @@ class TestCreateIssueErrorBranches:
         await test_project.save(update_fields={"require_estimate_on_claim"})
 
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=agent_headers,
             json={
                 "title": "No estimate",
@@ -178,7 +178,7 @@ class TestCreateIssueErrorBranches:
             MockService.return_value = mock_svc
 
             response = await client.post(
-                f"/api/issues?project_id={test_project.id}",
+                f"/api/projects/{test_project.id}/issues",
                 headers=auth_headers,
                 json={"title": "Arrears issue"},
             )
@@ -190,7 +190,7 @@ class TestCreateIssueErrorBranches:
     ):
         """Create issue with identifiers in description exercises cross-ref path (line 248)."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Issue with refs",
@@ -222,7 +222,7 @@ class TestCreateIssueErrorBranches:
             MockService.return_value = mock_svc
 
             response = await client.post(
-                f"/api/issues?project_id={test_project.id}",
+                f"/api/projects/{test_project.id}/issues",
                 headers=auth_headers,
                 json={
                     "title": "Test",

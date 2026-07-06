@@ -74,7 +74,7 @@ class RitualGroupCreate(BaseModel):
 class RitualGroupUpdate(BaseModel):
     """Schema for updating a ritual group."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     selection_mode: SelectionMode | None = None
 
 
@@ -144,7 +144,7 @@ class RitualCreate(BaseModel):
 class RitualUpdate(BaseModel):
     """Schema for updating a ritual."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     prompt: str | None = None
     trigger: RitualTrigger | None = None
     approval_mode: ApprovalMode | None = None
@@ -406,3 +406,21 @@ class PendingApprovalIssueResponse(BaseModel):
     project_id: str
     project_name: str
     pending_approvals: list[PendingApprovalRitualInfo]
+
+
+class LimboClearedResponse(BaseModel):
+    """Schema for force_clear_limbo's response (CHT-1223).
+
+    Same fields the handler already returned as an ad hoc dict; this just
+    documents/validates the shape (additive, no field removed or renamed).
+    """
+
+    message: str
+    next_sprint_name: str | None = None
+
+
+class TicketLimboClearedResponse(BaseModel):
+    """Schema for force_clear_ticket_limbo's response (CHT-1223)."""
+
+    message: str
+    cleared_count: int

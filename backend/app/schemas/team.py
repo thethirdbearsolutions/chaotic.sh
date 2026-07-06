@@ -28,9 +28,20 @@ class TeamCreate(BaseModel):
 class TeamUpdate(BaseModel):
     """Schema for updating a team."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     logo_url: str | None = None
+
+
+class TeamRoleUpdate(BaseModel):
+    """Schema for updating a team member's role (CHT-1223).
+
+    PATCH /teams/{team_id}/members/{user_id} previously bound `role` as a
+    bare (query-string) function param, but every client (CLI included)
+    sends it as a JSON body -- this schema makes the body path work.
+    """
+
+    role: TeamRole
 
 
 class TeamResponse(BaseModel):

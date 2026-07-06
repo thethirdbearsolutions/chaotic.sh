@@ -596,11 +596,11 @@ describe('ApiClient', () => {
     });
 
     describe('createIssue', () => {
-      it('sends POST request with issue data and project_id query param', async () => {
+      it('sends POST request with issue data, project_id in the URL path (CHT-1223)', async () => {
         const issueData = { title: 'New Issue', description: 'Test' };
         await client.createIssue(789, issueData);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/issues?project_id=789',
+          '/api/projects/789/issues',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify(issueData),
@@ -800,11 +800,11 @@ describe('ApiClient', () => {
     });
 
     describe('createProject', () => {
-      it('sends POST request with project data and team_id query param', async () => {
+      it('sends POST request with project data, team_id in the URL path (CHT-1223)', async () => {
         const projectData = { name: 'New Project' };
         await client.createProject(1, projectData);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/projects?team_id=1',
+          '/api/teams/1/projects',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify(projectData),
@@ -814,10 +814,10 @@ describe('ApiClient', () => {
     });
 
     describe('getProjects', () => {
-      it('sends GET request with team_id query param', async () => {
+      it('sends GET request with team_id in the URL path (CHT-1223)', async () => {
         await client.getProjects(1);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/projects?team_id=1',
+          '/api/teams/1/projects',
           expect.objectContaining({
             method: 'GET',
           })
@@ -874,10 +874,10 @@ describe('ApiClient', () => {
     });
 
     describe('getSprints', () => {
-      it('sends GET request with project_id', async () => {
+      it('sends GET request with project_id in the URL path (CHT-1223)', async () => {
         await client.getSprints(5);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/sprints?project_id=5',
+          '/api/projects/5/sprints',
           expect.objectContaining({
             method: 'GET',
           })
@@ -887,7 +887,7 @@ describe('ApiClient', () => {
       it('includes status filter when provided', async () => {
         await client.getSprints(5, 'active');
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/sprints?project_id=5&sprint_status=active',
+          '/api/projects/5/sprints?sprint_status=active',
           expect.objectContaining({
             method: 'GET',
           })
@@ -956,11 +956,11 @@ describe('ApiClient', () => {
     });
 
     describe('createRitual', () => {
-      it('sends POST request with project_id query param', async () => {
+      it('sends POST request with project_id in the URL path (CHT-1223)', async () => {
         const ritualData = { name: 'Daily Standup', type: 'attestation' };
         await client.createRitual(5, ritualData);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/rituals?project_id=5',
+          '/api/projects/5/rituals',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify(ritualData),
@@ -970,10 +970,10 @@ describe('ApiClient', () => {
     });
 
     describe('getRituals', () => {
-      it('sends GET request with project_id', async () => {
+      it('sends GET request with project_id in the URL path (CHT-1223)', async () => {
         await client.getRituals(5);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/rituals?project_id=5',
+          '/api/projects/5/rituals',
           expect.objectContaining({
             method: 'GET',
           })
@@ -1335,12 +1335,13 @@ describe('ApiClient', () => {
     });
 
     describe('updateMemberRole', () => {
-      it('sends PATCH request with role query parameter', async () => {
+      it('sends PATCH request with role in the JSON body', async () => {
         await client.updateMemberRole(1, 5, 'admin');
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/teams/1/members/5?role=admin',
+          '/api/teams/1/members/5',
           expect.objectContaining({
             method: 'PATCH',
+            body: JSON.stringify({ role: 'admin' }),
           })
         );
       });
@@ -1640,7 +1641,7 @@ describe('ApiClient', () => {
       const specialTitle = '<script>alert("xss")</script> & "quotes" \' apostrophes';
       await client.createIssue(789, { title: specialTitle });
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/issues?project_id=789',
+        '/api/projects/789/issues',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ title: specialTitle }),
@@ -1670,7 +1671,7 @@ describe('ApiClient', () => {
       const unicodeContent = 'Test with emoji 🚀 and unicode: \u00A9 \u2603';
       await client.createIssue(789, { description: unicodeContent });
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/issues?project_id=789',
+        '/api/projects/789/issues',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ description: unicodeContent }),
@@ -1789,11 +1790,11 @@ describe('ApiClient', () => {
     });
 
     describe('createDocument', () => {
-      it('sends POST request with team_id query param', async () => {
+      it('sends POST request with team_id in the URL path (CHT-1223)', async () => {
         const docData = { title: 'New Doc', content: 'Content' };
         await client.createDocument(1, docData);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/documents?team_id=1',
+          '/api/teams/1/documents',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify(docData),
@@ -1803,10 +1804,10 @@ describe('ApiClient', () => {
     });
 
     describe('getDocuments', () => {
-      it('sends GET request with team_id', async () => {
+      it('sends GET request with team_id in the URL path (CHT-1223)', async () => {
         await client.getDocuments(1);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/documents?team_id=1',
+          '/api/teams/1/documents',
           expect.objectContaining({
             method: 'GET',
           })
@@ -1816,7 +1817,7 @@ describe('ApiClient', () => {
       it('includes projectId when provided', async () => {
         await client.getDocuments(1, 5);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/documents?team_id=1&project_id=5',
+          '/api/teams/1/documents?project_id=5',
           expect.objectContaining({
             method: 'GET',
           })
@@ -1826,7 +1827,7 @@ describe('ApiClient', () => {
       it('includes search parameter when provided', async () => {
         await client.getDocuments(1, null, 'test query');
         const url = fetchMock.mock.calls[0][0];
-        expect(url).toContain('team_id=1');
+        expect(url).toContain('/teams/1/documents');
         expect(url).toContain('search=test%20query');
       });
     });
@@ -1880,11 +1881,11 @@ describe('ApiClient', () => {
     });
 
     describe('createLabel', () => {
-      it('sends POST request with team_id query param', async () => {
+      it('sends POST request with team_id in the URL path (CHT-1223)', async () => {
         const labelData = { name: 'bug', color: 'red' };
         await client.createLabel(1, labelData);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/labels?team_id=1',
+          '/api/teams/1/labels',
           expect.objectContaining({
             method: 'POST',
             body: JSON.stringify(labelData),
@@ -1894,10 +1895,10 @@ describe('ApiClient', () => {
     });
 
     describe('getLabels', () => {
-      it('sends GET request with team_id', async () => {
+      it('sends GET request with team_id in the URL path (CHT-1223)', async () => {
         await client.getLabels(1);
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/labels?team_id=1',
+          '/api/teams/1/labels',
           expect.objectContaining({
             method: 'GET',
           })

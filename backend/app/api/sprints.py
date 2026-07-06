@@ -13,7 +13,6 @@ from app.websocket import broadcast_sprint_event
 router = APIRouter()
 
 
-@router.get("", response_model=list[SprintResponse])
 async def list_sprints(
     project_id: str,
     current_user: CurrentUser,
@@ -21,7 +20,11 @@ async def list_sprints(
     skip: int = 0,
     limit: int = 100,
 ):
-    """List sprints for a project."""
+    """List sprints for a project.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``GET /projects/{project_id}/sprints`` in nested.py.
+    """
     project_service = ProjectService()
     sprint_service = SprintService()
 
@@ -42,7 +45,6 @@ async def list_sprints(
     return sprints
 
 
-@router.post("", response_model=SprintResponse, status_code=status.HTTP_200_OK)
 async def create_sprint(
     project_id: str,
     current_user: CurrentUser,
@@ -54,6 +56,9 @@ async def create_sprint(
     the close endpoint. This endpoint exists so that agents/clients
     that attempt to create sprints get a useful response instead of
     an error.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /projects/{project_id}/sprints`` in nested.py.
     """
     project_service = ProjectService()
     sprint_service = SprintService()

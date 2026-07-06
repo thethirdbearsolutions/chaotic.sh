@@ -20,7 +20,7 @@ class SprintCreate(BaseModel):
 class SprintUpdate(BaseModel):
     """Schema for updating a sprint."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     status: SprintStatus | None = None
     start_date: datetime | None = None

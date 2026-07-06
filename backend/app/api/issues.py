@@ -19,6 +19,7 @@ from app.schemas.issue import (
     IssueActivityFeedResponse,
     TeamCommentResponse,
     IssueRelationCreate,
+    IssueRelationResponse,
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
@@ -176,13 +177,19 @@ def issue_to_response(issue: Issue) -> IssueResponse:
     )
 
 
-@router.post("", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
 ):
-    """Create a new issue."""
+    """Create a new issue.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /projects/{project_id}/issues`` in nested.py.
+    ``GET /issues`` (list_issues, below) keeps project_id/team_id/
+    sprint_id/assignee_id as alternative query-based scope filters --
+    no path-nested list alias, see nested.py's module docstring.
+    """
     project_service = ProjectService()
     issue_service = IssueService()
 
@@ -223,6 +230,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_limbo",
                 "message": "Sprint is in limbo. Complete pending rituals to continue.",
                 "sprint_id": e.sprint_id,
                 "pending_rituals": e.pending_rituals,
@@ -232,6 +240,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_arrears",
                 "message": "Sprint is in arrears. Close the current sprint to continue.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
@@ -242,6 +251,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "ticket_rituals_pending",
                 "message": "Cannot create issue as done - ticket has pending rituals.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -251,6 +261,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "claim_rituals_pending",
                 "message": "Cannot create issue as in_progress - ticket has pending claim rituals.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -260,6 +271,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "intent_in_flight",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
@@ -805,6 +817,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_limbo",
                 "message": "Sprint is in limbo. Complete pending rituals to continue.",
                 "sprint_id": e.sprint_id,
                 "pending_rituals": e.pending_rituals,
@@ -814,6 +827,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_arrears",
                 "message": "Sprint is in arrears. Close the current sprint to continue.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
@@ -824,6 +838,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "ticket_rituals_pending",
                 "message": "Ticket has pending rituals. Complete them before closing.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -833,6 +848,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "claim_rituals_pending",
                 "message": "Ticket has pending claim rituals. Complete them before claiming.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -842,6 +858,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "intent_in_flight",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
@@ -1282,6 +1299,7 @@ async def delete_comment(
 # Issue Relations
 @router.post(
     "/{issue_id}/relations",
+    response_model=IssueRelationResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_relation(
@@ -1338,19 +1356,27 @@ async def create_relation(
         "created",
         {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id},
     )
-    return {
-        "id": relation.id,
-        "issue_id": relation.issue_id,
-        "related_issue_id": relation.related_issue_id,
-        "relation_type": (relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name).lower(),
-        "created_at": relation.created_at,
-    }
+    # Fill in the related-issue fields and "direction" that list_relations
+    # already computes, so create and list return the same shape (CHT-1223).
+    return IssueRelationResponse(
+        id=relation.id,
+        issue_id=relation.issue_id,
+        related_issue_id=relation.related_issue_id,
+        relation_type=(relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name).lower(),
+        created_at=relation.created_at,
+        related_issue_identifier=related_issue.identifier,
+        related_issue_title=related_issue.title,
+        related_issue_status=related_issue.status,
+        direction="outgoing",
+    )
 
 
-@router.get("/{issue_id}/relations")
+@router.get("/{issue_id}/relations", response_model=list[IssueRelationResponse])
 async def list_relations(
     issue_id: str,
     current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List all relations for an issue."""
     issue_service = IssueService()
@@ -1372,7 +1398,7 @@ async def list_relations(
         )
 
     relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
-    return relations
+    return relations[skip:skip + limit]
 
 
 @router.delete(

@@ -3,7 +3,7 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
-from oxyde import F, atomic
+from oxyde import F, atomic, IntegrityError
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.document import (
@@ -25,20 +25,35 @@ class ProjectService:
         pass
 
     async def create(self, project_in: ProjectCreate, team_id: str) -> OxydeProject:
-        """Create a new project."""
-        project = await OxydeProject.objects.create(
-            team_id=team_id,
-            name=project_in.name,
-            key=project_in.key.upper(),
-            description=project_in.description,
-            color=project_in.color,
-            icon=project_in.icon,
-            lead_id=project_in.lead_id,
-            estimate_scale=project_in.estimate_scale,
-            unestimated_handling=project_in.unestimated_handling,
-            default_sprint_budget=project_in.default_sprint_budget,
-            require_estimate_on_claim=project_in.require_estimate_on_claim,
-        )
+        """Create a new project, idempotently on (team_id, key).
+
+        The API's create_project does a check-then-act (get_by_key, then
+        this call) with no lock in between, so two concurrent or
+        retried-after-timeout requests can both pass the existence check.
+        A DB-level UNIQUE(team_id, key) index (migration 0008) backstops
+        that race: on IntegrityError, re-check and return the winner's
+        row instead of surfacing a 500 -- mirrors
+        IssueService.create_relation's fallback.
+        """
+        try:
+            project = await OxydeProject.objects.create(
+                team_id=team_id,
+                name=project_in.name,
+                key=project_in.key.upper(),
+                description=project_in.description,
+                color=project_in.color,
+                icon=project_in.icon,
+                lead_id=project_in.lead_id,
+                estimate_scale=project_in.estimate_scale,
+                unestimated_handling=project_in.unestimated_handling,
+                default_sprint_budget=project_in.default_sprint_budget,
+                require_estimate_on_claim=project_in.require_estimate_on_claim,
+            )
+        except IntegrityError:
+            existing = await self.get_by_key(team_id, project_in.key)
+            if existing is not None:
+                return existing
+            raise
         await project.refresh()
         return project
 

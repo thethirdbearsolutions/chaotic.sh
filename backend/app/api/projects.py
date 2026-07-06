@@ -9,13 +9,19 @@ from app.websocket import broadcast_project_event
 router = APIRouter()
 
 
-@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     team_id: str,
     project_in: ProjectCreate,
     current_user: CurrentUser,
 ):
-    """Create a new project."""
+    """Create a new project.
+
+    Not directly routed here (CHT-1223): the canonical route is the
+    path-nested ``POST /teams/{team_id}/projects`` in nested.py, which
+    calls this function directly. Kept in this module (rather than
+    inlined in nested.py) since it's the natural home for project
+    business logic, alongside get/update/delete below.
+    """
     project_service = ProjectService()
 
     if not await check_user_team_access(current_user, team_id):
@@ -37,14 +43,17 @@ async def create_project(
     return response
 
 
-@router.get("", response_model=list[ProjectResponse])
 async def list_projects(
     team_id: str,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
-    """List projects for a team."""
+    """List projects for a team.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``GET /teams/{team_id}/projects`` in nested.py.
+    """
     project_service = ProjectService()
 
     if not await check_user_team_access(current_user, team_id):
