@@ -18,6 +18,7 @@ import { getPendingGates, setPendingGates, getCurrentTeam, getCurrentProject, ge
 import { completeGateRitual } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 import { viewIssue } from './issue-detail-view.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 
 /**
@@ -217,7 +218,19 @@ export async function loadGateApprovals() {
     const container = document.getElementById('approvals-list');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading">Loading pending approvals...</div>';
+    // CHT-1226: loading skeleton, matching every other list view post-CHT-1160
+    // (was plain 'Loading pending approvals...' text).
+    container.innerHTML = Array(3).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <div class="skeleton skeleton-badge"></div>
+                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 
     try {
         const currentProjectId = getCurrentProject();
@@ -250,7 +263,18 @@ export async function loadGateApprovals() {
         sprintLimboApprovals = allLimbo;
         renderGateApprovals();
     } catch (e) {
-        container.innerHTML = `<div class="empty-state"><h3>Error loading approvals</h3><p>${escapeHtml(e.message)}</p></div>`;
+        // CHT-1226: was a raw icon-less div exposing the raw backend
+        // exception string -- Approvals blocks work, so a business-critical
+        // page deserves the same generic, standardized failure copy (plus
+        // Retry) every other list view gets post-PR#200.
+        container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.issues,
+            heading: 'Failed to load approvals',
+            description: 'Check your connection and try again',
+            cta: { label: 'Retry', action: 'retry-load-approvals' },
+            variant: 'error',
+        });
+        showApiError('load approvals', e);
     }
 }
 
@@ -271,6 +295,7 @@ function renderGateApprovals() {
         if (showExplainer) {
             container.innerHTML = `
                 <div class="empty-state approvals-explainer">
+                    <div class="empty-state-icon">${EMPTY_ICONS.issues}</div>
                     <h3>Welcome to Approvals</h3>
                     <p>This is where you'll review and approve ritual attestations from your team.</p>
                     <div class="explainer-details">
@@ -287,12 +312,11 @@ function renderGateApprovals() {
                 </div>
             `;
         } else {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <h3>No pending approvals</h3>
-                    <p>All rituals have been completed. Nice work!</p>
-                </div>
-            `;
+            container.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.issues,
+                heading: 'No pending approvals',
+                description: 'All rituals have been completed. Nice work!',
+            });
         }
         return;
     }
@@ -573,6 +597,7 @@ registerActions({
     'dismiss-approvals-explainer': () => {
         dismissApprovalsExplainer();
     },
+    'retry-load-approvals': () => loadGateApprovals(),
 });
 
 export {

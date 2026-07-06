@@ -371,7 +371,7 @@ describe('loadGateApprovals', () => {
         getCurrentProject.mockReturnValue(null);
     });
 
-    it('shows error state on failure', async () => {
+    it('shows a standardized error state with retry on failure (CHT-1226)', async () => {
         getCurrentTeam.mockReturnValue({ id: 'team-1' });
         document.body.innerHTML += '<div id="approvals-list"></div>';
         getProjects.mockReturnValue([{ id: 'p1' }]);
@@ -380,8 +380,44 @@ describe('loadGateApprovals', () => {
         await loadGateApprovals();
 
         const container = document.getElementById('approvals-list');
-        expect(container.innerHTML).toContain('Error loading approvals');
-        expect(container.innerHTML).toContain('Network error');
+        expect(container.innerHTML).toContain('Failed to load approvals');
+        expect(container.innerHTML).toContain('empty-state-icon');
+        // Standardized copy replaces the raw backend exception string.
+        expect(container.innerHTML).not.toContain('Network error');
+        expect(container.innerHTML).toContain('data-action="retry-load-approvals"');
+        expect(showApiError).toHaveBeenCalledWith('load approvals', expect.any(Error));
+    });
+
+    it('shows a loading skeleton (not plain text) while fetching', async () => {
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        document.body.innerHTML += '<div id="approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        let capturedDuringLoad = null;
+        api.getPendingApprovals.mockImplementation(async () => {
+            capturedDuringLoad = document.getElementById('approvals-list').innerHTML;
+            return [];
+        });
+
+        await loadGateApprovals();
+
+        expect(capturedDuringLoad).toContain('skeleton-list-item');
+        expect(capturedDuringLoad).not.toContain('Loading pending approvals...');
+    });
+
+    it('shows a standardized "no pending approvals" empty state once the explainer is dismissed', async () => {
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        document.body.innerHTML += '<div id="approvals-list"></div>';
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        vi.spyOn(Storage.prototype, 'getItem').mockReturnValue('1'); // explainer dismissed
+        api.getPendingApprovals.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await loadGateApprovals();
+
+        const container = document.getElementById('approvals-list');
+        expect(container.innerHTML).toContain('No pending approvals');
+        expect(container.innerHTML).toContain('empty-state-icon');
+        Storage.prototype.getItem.mockRestore();
     });
 });
 
