@@ -18,6 +18,20 @@ import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
 
 /**
+ * True while the issue detail view has its inline description editor open.
+ * Handlers below that would otherwise call viewIssue() to live-refresh the
+ * currently-open issue skip that destructive full re-render while this is
+ * true — it would tear down the open editor (textarea, cursor position,
+ * Write/Preview state) out from under the user (CHT-1214). Typed text itself
+ * stays safe via the CHT-1041 draft-on-input listener; this just avoids the
+ * visible interruption. The refresh is skipped, not deferred — the next
+ * save/cancel/navigation on this issue picks up whatever changed remotely.
+ */
+function hasOpenDescriptionEditor() {
+    return !!document.querySelector('.description-inline-editor');
+}
+
+/**
  * Register all WebSocket event handlers.
  * Call this once during app initialization.
  */
@@ -136,9 +150,14 @@ function handleIssueUpdated(data) {
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'issue-detail') {
-        const detailContent = document.getElementById('issue-detail-content');
-        if (detailContent && detailContent.dataset.issueId === data.id) {
-            viewIssue(data.id);
+        // Was gated on detailContent.dataset.issueId, an attribute production
+        // code never sets — remote updates to the open issue (including a
+        // description change from another user) silently never refreshed
+        // (CHT-1214). Match the getCurrentDetailIssue() check every other
+        // handler below already uses, and skip the refresh entirely while
+        // the description editor is open so it isn't clobbered mid-edit.
+        if (getCurrentDetailIssue()?.id === data.id && !hasOpenDescriptionEditor()) {
+            viewIssue(data.id, false);
         }
     }
 }
@@ -177,7 +196,7 @@ function handleComment(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id && !hasOpenDescriptionEditor()) {
         viewIssue(data.issue_id, false);
     }
 }
@@ -185,7 +204,7 @@ function handleComment(data) {
 function handleRelation(data) {
     if (getCurrentView() === 'issue-detail') {
         const currentIssueId = getCurrentDetailIssue()?.id;
-        if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
+        if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId) && !hasOpenDescriptionEditor()) {
             viewIssue(currentIssueId, false);
         }
     }
@@ -195,7 +214,7 @@ function handleAttestation(data) {
     if (getCurrentView() === 'approvals') {
         loadGateApprovals();
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id && !hasOpenDescriptionEditor()) {
         viewIssue(data.issue_id, false);
     }
 }
@@ -204,7 +223,7 @@ function handleActivity(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id && !hasOpenDescriptionEditor()) {
         viewIssue(data.issue_id, false);
     }
 }
