@@ -58,6 +58,24 @@ class TestTeamMembers:
         with pytest.raises(APIError):
             api_client.remove_member(test_team["id"], test_user.id)
 
+    def test_update_member_role_via_cli_client(self, api_client, test_team, test_user2):
+        """CHT-1223 regression: the CLI's update_member_role() sends `role`
+        as a JSON body (cli/src/cli/client.py). Before the fix, the server
+        only bound `role` from the query string, so this real client call
+        would 422 -- the only shipped client could never drive this
+        endpoint. No mocks in the request chain here.
+        """
+        from conftest import _run_async
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        _run_async(OxydeTeamMember.objects.create(
+            team_id=test_team["id"], user_id=test_user2.id, role=TeamRole.MEMBER,
+        ))
+
+        updated = api_client.update_member_role(test_team["id"], test_user2.id, "admin")
+        assert updated["role"] == "admin"
+
 
 class TestInvitations:
     def test_invite_member(self, api_client, test_team):

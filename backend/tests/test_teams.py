@@ -340,6 +340,62 @@ async def test_update_member_role(client, auth_headers, test_team, test_user2, d
 
 
 @pytest.mark.asyncio
+async def test_update_member_role_via_body(client, auth_headers, test_team, test_user2, db):
+    """CHT-1223: role sent as a JSON body (the CLI's actual wire shape) works.
+
+    Regression test for the PATCH member-role bug: the endpoint used to
+    read `role` only from the query string, so the CLI (which always
+    sends it as `{"role": ...}` in the body) could never successfully
+    drive this endpoint.
+    """
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    response = await client.patch(
+        f"/api/teams/{test_team.id}/members/{test_user2.id}",
+        json={"role": "admin"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_update_member_role_body_preferred_over_query(client, auth_headers, test_team, test_user2, db):
+    """When both body and query are sent, the body value wins."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    response = await client.patch(
+        f"/api/teams/{test_team.id}/members/{test_user2.id}?role=member",
+        json={"role": "admin"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_update_member_role_missing_both(client, auth_headers, test_team, test_user2, db):
+    """Neither body nor query role given -> 422, not a 500/KeyError."""
+    from app.oxyde_models.team import OxydeTeamMember
+    from app.enums import TeamRole
+
+    member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    response = await client.patch(
+        f"/api/teams/{test_team.id}/members/{test_user2.id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_update_member_role_not_admin(client, auth_headers2, test_team, test_user2, db):
     """Test updating member role when not admin."""
     from app.oxyde_models.team import OxydeTeamMember
