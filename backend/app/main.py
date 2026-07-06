@@ -202,6 +202,18 @@ async def websocket_endpoint(
             # Could handle client messages here if needed (e.g., presence, typing indicators)
     except WebSocketDisconnect:
         manager.disconnect(websocket, team_id)
+    except Exception:
+        # CHT-1225: only WebSocketDisconnect was caught here -- any other
+        # exception during receive_text() (an abrupt network drop can
+        # surface as a different exception depending on the starlette/
+        # websockets version) skipped cleanup entirely, leaking the dead
+        # connection in manager.active_connections until the next
+        # broadcast_to_team for this team incidentally swept it.
+        logger.exception(
+            "WebSocket receive error for team=%s; cleaning up connection",
+            team_id,
+        )
+        manager.disconnect(websocket, team_id)
 
 
 @app.get("/cli-auth", response_class=HTMLResponse)

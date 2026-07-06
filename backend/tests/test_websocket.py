@@ -280,6 +280,27 @@ class TestWebSocketEndpointTeamValidation:
         ws.close.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_non_disconnect_exception_still_cleans_up_connection(self):
+        """CHT-1225: receive_text() raising anything other than
+        WebSocketDisconnect (e.g. an abrupt network drop surfacing as a
+        different exception type) must still remove the connection from
+        the registry -- the except clause used to only catch
+        WebSocketDisconnect, leaking dead connections."""
+        from app.main import websocket_endpoint
+        ws = AsyncMock()
+        ws.receive_text.side_effect = RuntimeError("connection reset")
+        mock_user = MagicMock(id="user-1")
+        mock_user_service = AsyncMock()
+        mock_user_service.get_by_id.return_value = mock_user
+        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
+             patch("app.main.UserService", return_value=mock_user_service), \
+             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=True), \
+             patch("app.main.manager", new_callable=AsyncMock) as mock_manager:
+            await websocket_endpoint(ws, token="valid", team_id="team-1")
+        mock_manager.connect.assert_awaited_once_with(ws, "team-1")
+        mock_manager.disconnect.assert_called_once_with(ws, "team-1")
+
+    @pytest.mark.asyncio
     async def test_inactive_user_closes_with_4003(self):
         """WS with token for inactive user should close with 4003."""
         from app.main import websocket_endpoint
