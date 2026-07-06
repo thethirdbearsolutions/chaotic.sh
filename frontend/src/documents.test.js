@@ -16,7 +16,7 @@ import {
 } from './documents.js';
 import { api } from './api.js';
 import { showToast } from './ui.js';
-import { getDocumentDraft, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
+import { getDocumentDraft, getDocumentDraftBase, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
 import { registerActions } from './event-delegation.js';
 
 // Mock the api module
@@ -732,15 +732,77 @@ describe('document draft persistence (CHT-1213)', () => {
     setCurrentTeam(null);
   });
 
-  it('restores an edit-modal draft keyed by document id', async () => {
-    setDocumentDraft('doc-1', { content: 'Recovered edit' });
-    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Existing', content: 'Server content' });
-    await showEditDocumentModal('doc-1');
-    expect(document.getElementById('edit-doc-content').value).toBe('Recovered edit');
+  // PR #210 review finding 1: the edit modal follows storage.js's DRAFT
+  // POLICY — prefill only when the draft's basedOn snapshot matches the live
+  // server fields, never silently; on mismatch warn and keep server content.
+  describe('edit-modal restore policy', () => {
+    const serverDoc = { id: 'doc-1', title: 'Existing', content: 'Server content', icon: '📄' };
+    const serverBase = { title: 'Existing', content: 'Server content', icon: '📄' };
+
+    it('prefills a draft whose basedOn matches the server content, with a visible notice', async () => {
+      setDocumentDraft('doc-1', { title: 'Existing', content: 'Recovered edit', icon: '📄' }, serverBase);
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      expect(document.getElementById('edit-doc-content').value).toBe('Recovered edit');
+      const warnEl = document.getElementById('edit-doc-content-draft-warning');
+      expect(warnEl.classList.contains('hidden')).toBe(false);
+      expect(warnEl.textContent).toContain('Restored');
+    });
+
+    it('does NOT prefill a draft whose basedOn mismatches; warns and keeps server content', async () => {
+      setDocumentDraft('doc-1', { title: 'Existing', content: 'Stale edit', icon: '📄' },
+        { title: 'Existing', content: 'An older version of the content', icon: '📄' });
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      expect(document.getElementById('edit-doc-content').value).toBe('Server content');
+      const warnEl = document.getElementById('edit-doc-content-draft-warning');
+      expect(warnEl.classList.contains('hidden')).toBe(false);
+      expect(warnEl.textContent).toContain('not loaded');
+      // The stored draft survives untouched — not silently deleted
+      expect(getDocumentDraft('doc-1')).toEqual(expect.objectContaining({ content: 'Stale edit' }));
+    });
+
+    it('does NOT prefill a draft with no basedOn snapshot (treated as stale)', async () => {
+      setDocumentDraft('doc-1', { content: 'Recovered edit' }); // basedOn defaults to null
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      expect(document.getElementById('edit-doc-content').value).toBe('Server content');
+      expect(document.getElementById('edit-doc-content-draft-warning').classList.contains('hidden')).toBe(false);
+    });
+
+    it('shows no warning when there is no draft at all', async () => {
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      expect(document.getElementById('edit-doc-content').value).toBe('Server content');
+      expect(document.getElementById('edit-doc-content-draft-warning').classList.contains('hidden')).toBe(true);
+    });
+
+    it('saves edit-modal drafts with the server snapshot as basedOn on input', async () => {
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      const contentEl = document.getElementById('edit-doc-content');
+      contentEl.value = 'Fresh edit';
+      contentEl.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(getDocumentDraft('doc-1')).toEqual(expect.objectContaining({ content: 'Fresh edit' }));
+      expect(getDocumentDraftBase('doc-1')).toEqual(serverBase);
+    });
+
+    it('clears the draft when the fields return to the server content', async () => {
+      api.getDocument.mockResolvedValue(serverDoc);
+      await showEditDocumentModal('doc-1');
+      const contentEl = document.getElementById('edit-doc-content');
+      contentEl.value = 'Fresh edit';
+      contentEl.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(getDocumentDraft('doc-1')).not.toBeNull();
+      contentEl.value = 'Server content';
+      contentEl.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(getDocumentDraft('doc-1')).toBeNull();
+    });
   });
 
-  it('clears the edit-modal draft after a successful update', async () => {
-    setDocumentDraft('doc-1', { content: 'Recovered edit' });
+  it('clears the edit-modal draft after a save that committed it', async () => {
+    setDocumentDraft('doc-1', { title: 'Updated Title', content: 'Updated content', icon: '' },
+      { title: 'Old', content: 'Old content', icon: '' });
     document.body.innerHTML = `
       <input id="edit-doc-title" value="Updated Title">
       <select id="edit-doc-project"><option value="" selected>Global</option></select>
@@ -756,6 +818,30 @@ describe('document draft persistence (CHT-1213)', () => {
     api.getDocumentComments.mockResolvedValue([]);
     await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
     expect(getDocumentDraft('doc-1')).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('a save from the no-prefill path leaves the stale draft untouched', async () => {
+    // The stale draft was never loaded into the form; saving unrelated
+    // changes must not delete the draft the warning just pointed at
+    // (mirrors issue-edit.js's conditional clear).
+    setDocumentDraft('doc-1', { title: 'Stale Title', content: 'Stale content', icon: '' },
+      { title: 'Even Older', content: 'Even older content', icon: '' });
+    document.body.innerHTML = `
+      <input id="edit-doc-title" value="Updated Title">
+      <select id="edit-doc-project"><option value="" selected>Global</option></select>
+      <select id="edit-doc-sprint" disabled><option value="">None</option></select>
+      <textarea id="edit-doc-content">Server content</textarea>
+      <input id="edit-doc-icon" value="">
+      <div class="view"></div>
+      <div id="document-detail-view" class="hidden"><div id="document-detail-content"></div></div>
+    `;
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+    api.updateDocument.mockResolvedValue({});
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Updated', updated_at: '2024-01-01' });
+    api.getDocumentComments.mockResolvedValue([]);
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(getDocumentDraft('doc-1')).toEqual(expect.objectContaining({ content: 'Stale content' }));
     vi.restoreAllMocks();
   });
 });

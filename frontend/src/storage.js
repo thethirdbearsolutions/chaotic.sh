@@ -191,22 +191,55 @@ export function setDescriptionDraft(issueId, content, basedOn = '') {
 // The create-modal draft is a single slot ('new') since only one
 // create-document modal can be open at a time (mirrors
 // create_issue_title/create_issue_description above). The edit-modal draft
-// is keyed per document id, like description drafts.
+// is keyed per document id.
+//
+// Stored as `{draft: {title, content, icon}, basedOn}` following the
+// DRAFT POLICY block above (PR #210 review finding 1): the edit modal is
+// exactly the surface the policy calls dangerous — a user opening it to
+// tweak an unrelated field (project, sprint) would otherwise silently
+// commit a forgotten stale draft with zero signal. So the edit modal only
+// prefills when basedOn matches the live server fields, and never silently;
+// on mismatch it warns and keeps the server content, leaving the stored
+// draft untouched. The CREATE modal has no server content to clobber, so it
+// prefills freely (basedOn stays null there). Document comment drafts stay
+// basedOn-less on purpose — parity with issue comment drafts, where the
+// textarea is always visibly on-page and starts empty, so there's no server
+// content a restore could overwrite.
 
-export function getDocumentDraft(key) {
-    const raw = get(`document_draft_${key}`);
-    if (!raw) return null;
+/** Parse the `{draft, basedOn}` payload, or null if not one. */
+function parseDocumentDraftPayload(raw) {
     try {
         const parsed = JSON.parse(raw);
-        return (parsed && typeof parsed === 'object') ? parsed : null;
+        if (parsed && typeof parsed === 'object' && parsed.draft && typeof parsed.draft === 'object') {
+            return parsed;
+        }
+        return null;
     } catch {
         return null;
     }
 }
 
-export function setDocumentDraft(key, draft) {
+export function getDocumentDraft(key) {
+    const raw = get(`document_draft_${key}`);
+    if (!raw) return null;
+    return parseDocumentDraftPayload(raw)?.draft ?? null;
+}
+
+/**
+ * The `{title, content, icon}` server snapshot an edit-modal draft was
+ * captured against, or null if unknown (no draft, or a create-modal draft,
+ * which has no server content).
+ */
+export function getDocumentDraftBase(key) {
+    const raw = get(`document_draft_${key}`);
+    if (!raw) return null;
+    const parsed = parseDocumentDraftPayload(raw);
+    return (parsed && parsed.basedOn && typeof parsed.basedOn === 'object') ? parsed.basedOn : null;
+}
+
+export function setDocumentDraft(key, draft, basedOn = null) {
     if (draft && (draft.title || draft.content || draft.icon)) {
-        set(`document_draft_${key}`, JSON.stringify(draft));
+        set(`document_draft_${key}`, JSON.stringify({ draft, basedOn }));
     } else {
         remove(`document_draft_${key}`);
     }

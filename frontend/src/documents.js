@@ -9,7 +9,7 @@ import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
     getDocViewMode, setDocViewMode as persistDocViewMode,
     getCommentDraft, setCommentDraft,
-    getDocumentDraft, setDocumentDraft,
+    getDocumentDraft, getDocumentDraftBase, setDocumentDraft,
 } from './storage.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
@@ -1197,30 +1197,74 @@ function setDocEditorMode(textareaId, mode) {
 
 /**
  * Wire draft persistence for a document modal's title/content/icon fields —
- * restore any abandoned draft on open, save on every input (CHT-1213; CHT-1041
- * explicitly didn't cover documents). Mirrors issue-creation.js's
- * restore-on-open/save-on-input/clear-on-success pattern.
+ * restore an abandoned draft on open, save on every input (CHT-1213; CHT-1041
+ * explicitly didn't cover documents).
+ *
+ * Restore policy follows storage.js's DRAFT POLICY block (PR #210 review
+ * finding 1), mirroring issue-edit.js's edit-modal behavior:
+ * - CREATE modal (no serverContent): no server content to clobber, so any
+ *   draft prefills freely.
+ * - EDIT modal (serverContent given): only prefill when the draft's basedOn
+ *   snapshot matches the live server fields, with a visible "restored"
+ *   notice — never silently. On mismatch (someone else edited the document
+ *   since the draft was abandoned) the server content stays, a warning
+ *   explains why, and the stored draft is left untouched: a user opening
+ *   this modal to change an unrelated field (project, sprint) must not
+ *   silently commit a forgotten stale draft.
  * @param {string} key - 'new' for the create modal, documentId for edit
  * @param {object} [ids] - field ids; defaults to the create modal's ids
+ * @param {object|null} [serverContent] - the live `{title, content, icon}`
+ *   loaded into the edit modal, or null for the create modal
  */
-function wireDocumentModalDraft(key, ids = { title: 'doc-title', content: 'doc-content', icon: 'doc-icon' }) {
+function wireDocumentModalDraft(key, ids = { title: 'doc-title', content: 'doc-content', icon: 'doc-icon' }, serverContent = null) {
   const titleInput = document.getElementById(ids.title);
   const contentInput = document.getElementById(ids.content);
   const iconInput = document.getElementById(ids.icon);
 
   const draft = getDocumentDraft(key);
   if (draft) {
-    if (draft.title && titleInput) titleInput.value = draft.title;
-    if (draft.content && contentInput) contentInput.value = draft.content;
-    if (draft.icon && iconInput) iconInput.value = draft.icon;
+    const base = getDocumentDraftBase(key);
+    const baseMatchesServer = serverContent !== null && base !== null
+      && base.title === serverContent.title
+      && base.content === serverContent.content
+      && base.icon === serverContent.icon;
+    const warnEl = document.getElementById(`${ids.content}-draft-warning`);
+    if (serverContent === null) {
+      // Create modal — prefill freely
+      if (draft.title && titleInput) titleInput.value = draft.title;
+      if (draft.content && contentInput) contentInput.value = draft.content;
+      if (draft.icon && iconInput) iconInput.value = draft.icon;
+    } else if (baseMatchesServer) {
+      if (titleInput) titleInput.value = draft.title || '';
+      if (contentInput) contentInput.value = draft.content || '';
+      if (iconInput) iconInput.value = draft.icon || '';
+      if (warnEl) {
+        warnEl.textContent = 'Restored your unsaved draft.';
+        warnEl.classList.remove('hidden');
+      }
+    } else if (warnEl) {
+      warnEl.textContent = 'You have an unsaved draft from an older version of this document — it was not loaded here, to avoid overwriting newer changes.';
+      warnEl.classList.remove('hidden');
+    }
   }
 
   const saveDraft = () => {
-    setDocumentDraft(key, {
+    const current = {
       title: titleInput?.value || '',
       content: contentInput?.value || '',
       icon: iconInput?.value || '',
-    });
+    };
+    // Nothing actually diverges from the server content → no draft to keep
+    // (mirrors issue-edit.js clearing the slot when the value returns to
+    // the saved description)
+    if (serverContent !== null
+        && current.title === serverContent.title
+        && current.content === serverContent.content
+        && current.icon === serverContent.icon) {
+      setDocumentDraft(key, null);
+      return;
+    }
+    setDocumentDraft(key, current, serverContent);
   };
   [titleInput, contentInput, iconInput].forEach(el => el?.addEventListener('input', saveDraft));
 }
@@ -1406,6 +1450,7 @@ export async function showEditDocumentModal(documentId) {
             <option value="">${!doc.project_id ? 'Select project first' : 'None'}</option>
           </select>
         </div>
+        <div id="edit-doc-content-draft-warning" class="description-draft-warning hidden"></div>
         ${docContentEditorHtml('edit-doc-content', doc.content || '')}
         <div class="form-group">
           <label for="edit-doc-icon">Icon (emoji)</label>
@@ -1415,7 +1460,11 @@ export async function showEditDocumentModal(documentId) {
       </form>
     `;
     showModal();
-    wireDocumentModalDraft(documentId, { title: 'edit-doc-title', content: 'edit-doc-content', icon: 'edit-doc-icon' });
+    wireDocumentModalDraft(
+      documentId,
+      { title: 'edit-doc-title', content: 'edit-doc-content', icon: 'edit-doc-icon' },
+      { title: doc.title || '', content: doc.content || '', icon: doc.icon || '' }
+    );
 
     // Load sprints for current project if document has one
     if (doc.project_id) {
@@ -1457,7 +1506,17 @@ export async function handleUpdateDocument(event, documentId) {
 
   try {
     await api.updateDocument(documentId, data);
-    setDocumentDraft(documentId, null);
+    // Clear the draft only when this save actually committed it — a save
+    // from the no-prefill path (stale draft, warning shown, server content
+    // kept) must not delete the draft the warning just told the user about
+    // (mirrors issue-edit.js's handleUpdateIssue).
+    const storedDraft = getDocumentDraft(documentId);
+    if (storedDraft
+        && storedDraft.title === data.title
+        && storedDraft.content === data.content
+        && (storedDraft.icon || '') === (data.icon || '')) {
+      setDocumentDraft(documentId, null);
+    }
     closeModal();
     await viewDocument(documentId);
     showToast('Document updated!', 'success');

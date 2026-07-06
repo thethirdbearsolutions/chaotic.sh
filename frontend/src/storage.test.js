@@ -8,7 +8,7 @@ import {
     getCommentDraft, setCommentDraft,
     getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase,
     getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft,
-    getDocumentDraft, setDocumentDraft,
+    getDocumentDraft, getDocumentDraftBase, setDocumentDraft,
     getDocViewMode, setDocViewMode,
     isApprovalsExplainerDismissed, dismissApprovalsExplainer,
 } from './storage.js';
@@ -236,9 +236,38 @@ describe('storage', () => {
             expect(getDocumentDraft('new')).toBeNull();
         });
 
-        it('returns null for valid JSON that is not an object', () => {
+        it('returns null for valid JSON that is not the {draft, basedOn} shape', () => {
             localStorage.setItem('chaotic_document_draft_new', '"just a string"');
             expect(getDocumentDraft('new')).toBeNull();
+            localStorage.setItem('chaotic_document_draft_new', '{"title": "old bare shape"}');
+            expect(getDocumentDraft('new')).toBeNull();
+        });
+
+        // PR #210 review finding 1: `{draft, basedOn}` shape per storage.js's
+        // DRAFT POLICY, so the edit modal can detect staleness before prefilling.
+        describe('basedOn snapshot', () => {
+            it('stores and retrieves the basedOn snapshot alongside the draft', () => {
+                const base = { title: 'Server T', content: 'Server C', icon: '' };
+                setDocumentDraft('doc-1', { title: 'T', content: 'C', icon: '' }, base);
+                expect(getDocumentDraft('doc-1')).toEqual({ title: 'T', content: 'C', icon: '' });
+                expect(getDocumentDraftBase('doc-1')).toEqual(base);
+            });
+
+            it('defaults basedOn to null when omitted (create-modal drafts)', () => {
+                setDocumentDraft('new', { title: 'T' });
+                expect(getDocumentDraftBase('new')).toBeNull();
+            });
+
+            it('returns null basedOn when there is no draft', () => {
+                expect(getDocumentDraftBase('doc-1')).toBeNull();
+            });
+
+            it('clears both draft and snapshot together', () => {
+                setDocumentDraft('doc-1', { title: 'T' }, { title: 'S', content: '', icon: '' });
+                setDocumentDraft('doc-1', null);
+                expect(getDocumentDraft('doc-1')).toBeNull();
+                expect(getDocumentDraftBase('doc-1')).toBeNull();
+            });
         });
     });
 
