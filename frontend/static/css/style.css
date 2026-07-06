@@ -2531,6 +2531,13 @@ input[type="checkbox"] {
     background: var(--bg-hover);
 }
 
+/* Keyboard navigation highlight (CHT-1215), matching .issue-row.keyboard-selected */
+.kanban-card.keyboard-selected {
+    border-color: var(--accent-color);
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+
 .kanban-card-title {
     font-size: var(--font-base);
     font-weight: 500;

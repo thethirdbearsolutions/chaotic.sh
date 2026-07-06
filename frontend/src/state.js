@@ -24,6 +24,7 @@ const initialState = {
     activeFilterCategory: 'status',
     selectedIssueIndex: -1,
     selectedDocIndex: -1,
+    selectedBoardIndex: -1,
 
     // Pending gates for ritual completion
     pendingGates: [],
@@ -145,6 +146,9 @@ export const setSelectedIssueIndex = (index) => setState('selectedIssueIndex', i
 
 export const getSelectedDocIndex = () => state.selectedDocIndex;
 export const setSelectedDocIndex = (index) => setState('selectedDocIndex', index);
+
+export const getSelectedBoardIndex = () => state.selectedBoardIndex;
+export const setSelectedBoardIndex = (index) => setState('selectedBoardIndex', index);
 
 export const getPendingGates = () => state.pendingGates;
 export const setPendingGates = (gates) => setState('pendingGates', gates);

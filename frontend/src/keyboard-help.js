@@ -70,6 +70,13 @@ const SHORTCUT_GROUPS = [
         ],
     },
     {
+        title: 'Board',
+        shortcuts: [
+            { key: 'j / k', description: 'Navigate cards' },
+            { key: 'Enter', description: 'Open selected card' },
+        ],
+    },
+    {
         title: 'General',
         shortcuts: [
             { key: '⌘Enter', description: 'Submit form / comment' },

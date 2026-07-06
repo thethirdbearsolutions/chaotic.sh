@@ -94,6 +94,7 @@ vi.mock('./keyboard.js', () => ({
     createModifierKeyHandler: vi.fn().mockReturnValue(vi.fn()),
     createListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createDocListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
+    createBoardNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
@@ -157,6 +158,8 @@ vi.mock('./state.js', () => ({
     setSelectedIssueIndex: vi.fn(),
     getSelectedDocIndex: vi.fn(),
     setSelectedDocIndex: vi.fn(),
+    getSelectedBoardIndex: vi.fn(),
+    setSelectedBoardIndex: vi.fn(),
     setCurrentUser: vi.fn(),
     setCurrentProject: vi.fn(),
     setCurrentDetailIssue: vi.fn(),

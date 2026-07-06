@@ -37,7 +37,7 @@ import {
 import { loadGateApprovals } from './gate-approvals.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler } from './keyboard.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import {
     toggleTeamDropdown,
@@ -89,6 +89,8 @@ import {
     setSelectedIssueIndex,
     getSelectedDocIndex,
     setSelectedDocIndex,
+    getSelectedBoardIndex,
+    setSelectedBoardIndex,
     setCurrentUser,
     setCurrentProject,
     setCurrentDetailIssue,
@@ -588,6 +590,16 @@ document.addEventListener('keydown', createDocListNavigationHandler({
     setSelectedIndex: setSelectedDocIndex,
     viewDocument,
     showEditDocumentModal,
+    isModalOpen,
+    isCommandPaletteOpen,
+}));
+
+// j/k/Enter card navigation for the Board (CHT-1215)
+document.addEventListener('keydown', createBoardNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedBoardIndex,
+    setSelectedIndex: setSelectedBoardIndex,
+    viewIssue,
     isModalOpen,
     isCommandPaletteOpen,
 }));

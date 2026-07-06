@@ -38,7 +38,7 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
-import { setState } from './state.js';
+import { setState, getSelectedBoardIndex, setSelectedBoardIndex } from './state.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import {
@@ -177,6 +177,89 @@ describe('board', () => {
             expect(cards[0].textContent).toContain('First');
             expect(cards[1].textContent).toContain('Second');
             expect(cards[2].textContent).toContain('Third');
+        });
+
+        // CHT-1215: renderBoard() rebuilds #kanban-board innerHTML from
+        // scratch on every call (drag/drop, websocket updates) — same
+        // staleness bug as issue-list.js's renderIssues() had for the j/k
+        // cursor, fixed here proactively alongside adding the new cursor.
+        describe('keyboard selection survives a re-render', () => {
+            const issues = [
+                { id: '1', title: 'First', status: 'todo', identifier: 'TEST-1', priority: 'high' },
+                { id: '2', title: 'Second', status: 'todo', identifier: 'TEST-2', priority: 'low' },
+                { id: '3', title: 'Third', status: 'done', identifier: 'TEST-3', priority: 'medium' },
+            ];
+
+            beforeEach(() => {
+                setSelectedBoardIndex(-1);
+            });
+
+            function selectCardById(id, index) {
+                setSelectedBoardIndex(index);
+                document.querySelector(`.kanban-card[data-id="${id}"]`)?.classList.add('keyboard-selected');
+            }
+
+            it('does nothing when no card was previously selected', () => {
+                setBoardIssues(issues);
+                renderBoard();
+
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
+
+            it('re-applies the highlight at the same card after an in-place re-render', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('2', 1);
+
+                renderBoard(); // e.g. a websocket-triggered re-render, same issues
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+                expect(getSelectedBoardIndex()).toBe(1);
+            });
+
+            it('follows the selected card by id across a column move', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('2', 1);
+
+                // Card 2 moves from todo -> done (e.g. drag/drop or remote update)
+                const moved = issues.map(i => i.id === '2' ? { ...i, status: 'done' } : i);
+                setBoardIssues(moved);
+                renderBoard();
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+            });
+
+            it('clamps to the new last card when the selected card is removed', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('3', 2);
+
+                setBoardIssues([issues[0], issues[1]]);
+                renderBoard();
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+                expect(getSelectedBoardIndex()).toBe(1);
+            });
+
+            it('resets to -1 when the re-render leaves no cards', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('1', 0);
+
+                setBoardIssues([]);
+                renderBoard();
+
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
         });
     });
 

@@ -4,6 +4,7 @@ import {
     createModifierKeyHandler,
     createListNavigationHandler,
     createDocListNavigationHandler,
+    createBoardNavigationHandler,
     updateKeyboardSelection,
 } from './keyboard.js';
 
@@ -979,6 +980,151 @@ describe('Document List Navigation Handler', () => {
             const event = makeEvent('Enter');
             handler(event);
             expect(actions.viewDocument).toHaveBeenCalledWith('doc-a');
+        });
+    });
+});
+
+// ============================================================================
+// Board Navigation Handler (j/k/Enter/Escape for the kanban board) - CHT-1215
+// ============================================================================
+
+describe('Board Navigation Handler', () => {
+    let actions;
+    let handler;
+
+    beforeEach(() => {
+        actions = {
+            getCurrentView: vi.fn().mockReturnValue('board'),
+            getSelectedIndex: vi.fn().mockReturnValue(0),
+            setSelectedIndex: vi.fn(),
+            viewIssue: vi.fn(),
+            isModalOpen: vi.fn().mockReturnValue(false),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+        };
+        handler = createBoardNavigationHandler(actions);
+        Element.prototype.scrollIntoView = vi.fn();
+        // Mirrors board.js's renderBoard() markup: cards nested inside
+        // per-status columns, cursor is linear across DOM order.
+        document.body.innerHTML = `
+            <div id="kanban-board">
+                <div class="kanban-column" data-status="backlog">
+                    <div class="kanban-card" data-id="issue-1" data-identifier="CHT-1">Card 1</div>
+                </div>
+                <div class="kanban-column" data-status="todo">
+                    <div class="kanban-card" data-id="issue-2" data-identifier="CHT-2">Card 2</div>
+                    <div class="kanban-card" data-id="issue-3" data-identifier="CHT-3">Card 3</div>
+                </div>
+            </div>
+        `;
+    });
+
+    describe('guard conditions', () => {
+        it('ignores when not on the board view', () => {
+            actions.getCurrentView.mockReturnValue('issues');
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on INPUT', () => {
+            handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when command palette is open', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when no cards exist', () => {
+            document.body.innerHTML = '<div id="kanban-board"></div>';
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('j/k navigation (linear cursor across columns in DOM order)', () => {
+        it('j moves the cursor to the next card, crossing into the next column', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+            expect(document.querySelectorAll('.kanban-card')[1].classList.contains('keyboard-selected')).toBe(true);
+        });
+
+        it('k moves the cursor to the previous card', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('k');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('j clamps at the last card', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(2);
+        });
+
+        it('k clamps at the first card', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('k'));
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(0);
+        });
+    });
+
+    describe('Enter to open the selected card', () => {
+        it('opens the issue detail for the selected card', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.viewIssue).toHaveBeenCalledWith('issue-2');
+        });
+
+        it('does nothing when no card is selected (index -1)', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Enter'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+
+        it('does nothing when selectedIndex exceeds the card count', () => {
+            actions.getSelectedIndex.mockReturnValue(99);
+            handler(makeEvent('Enter'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Escape to deselect', () => {
+        it('clears the cursor when a card is selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            document.querySelectorAll('.kanban-card')[1].classList.add('keyboard-selected');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
+            expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        });
+
+        it('does nothing when no card is selected', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Escape'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('unrecognized keys', () => {
+        it('does not act on other keys', () => {
+            handler(makeEvent('x'));
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
     });
 });

@@ -354,3 +354,63 @@ export function createDocListNavigationHandler(actions) {
         }
     };
 }
+
+/**
+ * Creates a handler for j/k/Enter/Escape card navigation on the Board (kanban)
+ * view (CHT-1215). The Board had zero keyboard support despite being one of
+ * the core triage surfaces alongside Issues/Documents, which both already
+ * have this grammar.
+ *
+ * This is a linear cursor over cards in DOM order (column 1 top-to-bottom,
+ * then column 2, ...) — not column-aware left/right movement between
+ * statuses. That's a materially bigger lift (2D grid navigation is new logic,
+ * not a wiring fix); this ships the coverage gap's cursor + Enter-to-open
+ * core first.
+ *
+ * @param {Object} actions
+ * @param {Function} actions.getCurrentView - Returns the current view name
+ * @param {Function} actions.getSelectedIndex - Returns the currently selected index
+ * @param {Function} actions.setSelectedIndex - Sets the selected index
+ * @param {Function} actions.viewIssue - Opens an issue by ID
+ * @param {Function} actions.isModalOpen - Returns true if a modal is open
+ * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @returns {Function} The keydown event handler
+ */
+export function createBoardNavigationHandler(actions) {
+    const selector = '#kanban-board .kanban-card';
+    return function handleBoardNavigation(e) {
+        if (actions.getCurrentView() !== 'board') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (actions.isModalOpen()) return;
+        if (actions.isCommandPaletteOpen()) return;
+
+        const items = document.querySelectorAll(selector);
+        if (items.length === 0) return;
+
+        const selectedIndex = actions.getSelectedIndex();
+        switch (e.key) {
+            case 'j':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
+                break;
+            case 'k':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
+                break;
+            case 'Enter':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    const issueId = items[selectedIndex].dataset.id;
+                    if (issueId) actions.viewIssue(issueId);
+                }
+                break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    actions.setSelectedIndex(-1);
+                }
+                break;
+        }
+    };
+}
