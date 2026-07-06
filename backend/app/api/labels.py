@@ -8,13 +8,16 @@ from app.services.team_service import TeamService
 router = APIRouter()
 
 
-@router.post("", response_model=LabelResponse, status_code=status.HTTP_201_CREATED)
 async def create_label(
     team_id: str,
     label_in: LabelCreate,
     current_user: CurrentUser,
 ):
-    """Create a new label."""
+    """Create a new label.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /teams/{team_id}/labels`` in nested.py.
+    """
     issue_service = IssueService()
 
     if not await check_user_team_access(current_user, team_id):
@@ -27,14 +30,17 @@ async def create_label(
     return label
 
 
-@router.get("", response_model=list[LabelResponse])
 async def list_labels(
     team_id: str,
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
 ):
-    """List labels for a team."""
+    """List labels for a team.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``GET /teams/{team_id}/labels`` in nested.py.
+    """
     issue_service = IssueService()
 
     if not await check_user_team_access(current_user, team_id):

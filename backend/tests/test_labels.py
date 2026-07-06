@@ -10,7 +10,7 @@ from app.utils.security import create_access_token
 async def test_create_label(client, auth_headers, test_team):
     """Test creating a label."""
     response = await client.post(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=auth_headers,
         json={
             "name": "Feature",
@@ -29,7 +29,7 @@ async def test_create_label(client, auth_headers, test_team):
 async def test_create_label_minimal(client, auth_headers, test_team):
     """Test creating label with minimal data."""
     response = await client.post(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=auth_headers,
         json={"name": "Quick Label"},
     )
@@ -43,7 +43,7 @@ async def test_create_label_minimal(client, auth_headers, test_team):
 async def test_create_label_not_member(client, auth_headers2, test_team):
     """Test creating label when not a member."""
     response = await client.post(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=auth_headers2,
         json={"name": "Unauthorized Label"},
     )
@@ -54,7 +54,7 @@ async def test_create_label_not_member(client, auth_headers2, test_team):
 async def test_list_labels(client, auth_headers, test_team, test_label):
     """Test listing labels."""
     response = await client.get(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=auth_headers,
     )
     assert response.status_code == 200
@@ -101,7 +101,7 @@ async def test_get_label_not_found(client, auth_headers):
 async def test_list_labels_not_member(client, auth_headers2, test_team):
     """Test listing labels when not a member."""
     response = await client.get(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=auth_headers2,
     )
     assert response.status_code == 403
@@ -196,7 +196,7 @@ async def test_delete_label_not_admin(client, auth_headers2, test_label, db, tes
 async def test_issue_with_labels(client, auth_headers, test_project, test_label):
     """Test creating an issue with labels."""
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
             "title": "Issue with Labels",
@@ -250,7 +250,7 @@ async def test_agent_can_list_labels(client, agent_and_headers, test_team, test_
     """Test that agents can list labels (regression: was returning 403)."""
     _, headers = agent_and_headers
     response = await client.get(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=headers,
     )
     assert response.status_code == 200
@@ -263,7 +263,7 @@ async def test_agent_can_create_label(client, agent_and_headers, test_team):
     """Test that agents can create labels."""
     _, headers = agent_and_headers
     response = await client.post(
-        f"/api/labels?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/labels",
         headers=headers,
         json={"name": "Agent Label", "color": "#10b981"},
     )

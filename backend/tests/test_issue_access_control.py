@@ -335,7 +335,7 @@ class TestLabelTeamValidation:
     ):
         """Creating issue with nonexistent label_id returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Test", "label_ids": ["00000000-0000-0000-0000-000000000006"]},
         )
@@ -348,7 +348,7 @@ class TestLabelTeamValidation:
     ):
         """Creating issue with label from another team returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Test", "label_ids": [other_team_label.id]},
         )
@@ -361,7 +361,7 @@ class TestLabelTeamValidation:
     ):
         """Creating issue with label from own team succeeds."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Test", "label_ids": [test_label.id]},
         )

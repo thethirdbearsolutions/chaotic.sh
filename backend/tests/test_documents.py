@@ -15,7 +15,7 @@ class TestDocumentCRUD:
     async def test_create_document(self, client, auth_headers, test_team):
         """Test creating a document."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Test Document",
@@ -31,7 +31,7 @@ class TestDocumentCRUD:
     async def test_create_document_not_member(self, client, auth_headers2, test_team):
         """Test creating document when not a team member."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers2,
             json={"title": "Unauthorized", "content": "Test"},
         )
@@ -40,7 +40,7 @@ class TestDocumentCRUD:
     async def test_create_document_with_project(self, client, auth_headers, test_team, test_project):
         """Test creating document with project association."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Project Doc",
@@ -55,7 +55,7 @@ class TestDocumentCRUD:
     async def test_create_document_with_sprint(self, client, auth_headers, test_team, test_project, test_sprint):
         """Test creating document with sprint association."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Sprint Doc",
@@ -71,7 +71,7 @@ class TestDocumentCRUD:
     async def test_create_document_with_invalid_sprint(self, client, auth_headers, test_team):
         """Test creating document with non-existent sprint."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Doc",
@@ -85,7 +85,7 @@ class TestDocumentCRUD:
     async def test_create_document_minimal(self, client, auth_headers, test_team):
         """Test creating document with only required fields."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Minimal Doc",
@@ -112,7 +112,7 @@ class TestDocumentCRUD:
 
         # test_sprint belongs to test_project, but we specify project2
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
             json={
                 "title": "Sprint Doc",
@@ -130,7 +130,7 @@ class TestDocumentCRUD:
         doc2 = await OxydeDocument.objects.create(team_id=test_team.id, author_id=test_user.id, title="Doc 2", content="Content 2")
 
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers,
         )
         assert response.status_code == 200
@@ -144,7 +144,7 @@ class TestDocumentCRUD:
     async def test_list_documents_not_member(self, client, auth_headers2, test_team):
         """Test listing documents when not a team member."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=auth_headers2,
         )
         assert response.status_code == 403
@@ -160,7 +160,7 @@ class TestDocumentCRUD:
         )
 
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
+            f"/api/teams/{test_team.id}/documents?project_id={test_project.id}",
             headers=auth_headers,
         )
         assert response.status_code == 200
@@ -181,7 +181,7 @@ class TestDocumentCRUD:
         )
 
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&sprint_id={test_sprint.id}",
+            f"/api/teams/{test_team.id}/documents?sprint_id={test_sprint.id}",
             headers=auth_headers,
         )
         assert response.status_code == 200
@@ -193,7 +193,7 @@ class TestDocumentCRUD:
     async def test_list_documents_sprint_not_found(self, client, auth_headers, test_team):
         """Test listing documents with non-existent sprint."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&sprint_id=00000000-0000-0000-0000-000000000009",
+            f"/api/teams/{test_team.id}/documents?sprint_id=00000000-0000-0000-0000-000000000009",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -209,7 +209,7 @@ class TestDocumentCRUD:
         )
 
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&search=Unique%20Search%20Term",
+            f"/api/teams/{test_team.id}/documents?search=Unique%20Search%20Term",
             headers=auth_headers,
         )
         assert response.status_code == 200
@@ -946,7 +946,7 @@ class TestProjectDocumentAccessControl:
     ):
         """POST /documents by agent without icon returns 400."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=agent_headers_for_docs,
             json={"title": "Agent Doc", "content": "No icon"},
         )
@@ -958,7 +958,7 @@ class TestProjectDocumentAccessControl:
     ):
         """POST /documents by agent with icon succeeds."""
         response = await client.post(
-            f"/api/documents?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/documents",
             headers=agent_headers_for_docs,
             json={"title": "Agent Doc", "content": "With icon", "icon": "📝"},
         )
@@ -969,7 +969,7 @@ class TestProjectDocumentAccessControl:
     ):
         """GET /documents?project_id= returns 403 for cross-team user."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
+            f"/api/teams/{test_team.id}/documents?project_id={test_project.id}",
             headers=cross_team_headers,
         )
         assert response.status_code == 403

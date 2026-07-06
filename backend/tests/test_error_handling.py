@@ -15,13 +15,13 @@ class TestProjectsUnauthenticated:
 
     async def test_create_project_unauthenticated(self, client, test_team):
         response = await client.post(
-            f"/api/projects?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/projects",
             json={"name": "Unauthorized", "key": "NOAUTH"},
         )
         assert response.status_code == 401
 
     async def test_list_projects_unauthenticated(self, client, test_team):
-        response = await client.get(f"/api/projects?team_id={test_team.id}")
+        response = await client.get(f"/api/teams/{test_team.id}/projects")
         assert response.status_code == 401
 
     async def test_get_project_unauthenticated(self, client, test_project):
@@ -46,7 +46,7 @@ class TestSprintsUnauthenticated:
 
     async def test_list_sprints_unauthenticated(self, client, test_project):
         response = await client.get(
-            f"/api/sprints?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/sprints",
         )
         assert response.status_code == 401
 
@@ -88,13 +88,13 @@ class TestLabelsUnauthenticated:
 
     async def test_create_label_unauthenticated(self, client, test_team):
         response = await client.post(
-            f"/api/labels?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/labels",
             json={"name": "Unauthorized Label"},
         )
         assert response.status_code == 401
 
     async def test_list_labels_unauthenticated(self, client, test_team):
-        response = await client.get(f"/api/labels?team_id={test_team.id}")
+        response = await client.get(f"/api/teams/{test_team.id}/labels")
         assert response.status_code == 401
 
 
@@ -108,7 +108,7 @@ class TestValidationErrors:
     async def test_create_project_missing_name(self, client, auth_headers, test_team):
         """Project creation without required 'name' field."""
         response = await client.post(
-            f"/api/projects?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/projects",
             headers=auth_headers,
             json={"key": "NONAME"},
         )
@@ -117,7 +117,7 @@ class TestValidationErrors:
     async def test_create_project_missing_key(self, client, auth_headers, test_team):
         """Project creation without required 'key' field."""
         response = await client.post(
-            f"/api/projects?team_id={test_team.id}",
+            f"/api/teams/{test_team.id}/projects",
             headers=auth_headers,
             json={"name": "No Key"},
         )
@@ -126,7 +126,7 @@ class TestValidationErrors:
     async def test_create_issue_empty_title(self, client, auth_headers, test_project):
         """Issue creation with empty title should fail validation."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": ""},
         )
@@ -135,7 +135,7 @@ class TestValidationErrors:
     async def test_create_issue_estimate_out_of_range(self, client, auth_headers, test_project):
         """Issue creation with estimate > 100 should fail validation."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={"title": "Bad Estimate", "estimate": 999},
         )

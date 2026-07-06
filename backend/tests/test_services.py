@@ -113,6 +113,55 @@ async def test_project_service_create(db, test_team):
 
 
 @pytest.mark.asyncio
+async def test_project_service_create_duplicate_key_idempotent(db, test_team):
+    """CHT-1223: a second create() for the same (team_id, key) after the
+    first succeeds returns the existing row instead of a 500.
+
+    Regression for the DB-level UNIQUE(team_id, key) index (migration
+    0008) added as a backstop for create_project's check-then-act race
+    -- calling the service directly (bypassing the API's own
+    get_by_key pre-check) exercises the IntegrityError fallback path
+    itself.
+    """
+    service = ProjectService()
+    first = await service.create(ProjectCreate(name="Race Project", key="RACE"), test_team.id)
+
+    second = await service.create(ProjectCreate(name="Race Project 2", key="RACE"), test_team.id)
+    assert second.id == first.id
+    assert second.name == "Race Project"  # the winner's row, not the loser's
+
+
+@pytest.mark.asyncio
+async def test_project_service_same_key_different_teams_allowed(db, test_team):
+    """Project keys are only unique *within* a team, not globally."""
+    from app.oxyde_models.team import OxydeTeam
+
+    other_team = await OxydeTeam.objects.create(name="Other Team", key="OTHERT")
+
+    service = ProjectService()
+    p1 = await service.create(ProjectCreate(name="P1", key="SHARED"), test_team.id)
+    p2 = await service.create(ProjectCreate(name="P2", key="SHARED"), other_team.id)
+    assert p1.key == p2.key == "SHARED"
+    assert p1.id != p2.id
+
+
+@pytest.mark.asyncio
+async def test_label_service_create_duplicate_name_idempotent(db, test_team):
+    """CHT-1223: create_label had no duplicate check at all before --
+    a retried create for the same (team_id, name) now returns the
+    existing label instead of creating a silent second copy."""
+    service = IssueService()
+    first = await service.create_label(LabelCreate(name="bug", color="#ff0000"), test_team.id)
+
+    second = await service.create_label(LabelCreate(name="bug", color="#00ff00"), test_team.id)
+    assert second.id == first.id
+    assert second.color == "#ff0000"  # the winner's row, not the loser's
+
+    labels = await service.list_labels(test_team.id)
+    assert len([l for l in labels if l.name == "bug"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_project_service_list_by_team(db, test_team, test_project):
     """Test listing projects by team."""
     service = ProjectService()

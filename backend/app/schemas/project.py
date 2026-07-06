@@ -24,7 +24,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     """Schema for updating a project."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     color: str | None = None
     icon: str | None = None

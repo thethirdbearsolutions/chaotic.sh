@@ -216,11 +216,12 @@ class Client:
 
     # Projects
     def create_project(self, team_id: str, name: str, key: str, **kwargs) -> dict:
+        # CHT-1223: team_id moved from a query param to the URL path.
         data = {"name": name, "key": key, **kwargs}
-        return self._request("POST", f"/projects?team_id={team_id}", data)
+        return self._request("POST", f"/teams/{team_id}/projects", data)
 
     def get_projects(self, team_id: str) -> list:
-        return self._request("GET", f"/projects?team_id={team_id}")
+        return self._request("GET", f"/teams/{team_id}/projects")
 
     def get_project(self, project_id: str) -> dict:
         return self._request("GET", f"/projects/{project_id}")
@@ -233,8 +234,9 @@ class Client:
 
     # Issues
     def create_issue(self, project_id: str, title: str, **kwargs) -> dict:
+        # CHT-1223: project_id moved from a query param to the URL path.
         data = {"title": title, **kwargs}
-        return self._request("POST", f"/issues?project_id={project_id}", data)
+        return self._request("POST", f"/projects/{project_id}/issues", data)
 
     def get_issues(self, project_id: str = None, sprint_id: str = None, assignee_id: str = None, status: str = None, priority: str = None, limit: int = None, parent_id: str = None, sort_by: str = None, order: str = None, label: str = None, search: str = None, issue_type: str = None, skip: int = None, exclude_label: str = None, exclude_status: str = None, exclude_priority: str = None, exclude_assignee_id: str = None, exclude_issue_type: str = None, team_id: str = None) -> list:
         params = {}
@@ -370,14 +372,15 @@ class Client:
 
     # Sprints
     def get_sprints(self, project_id: str, status: str = None) -> list:
-        url = f"/sprints?project_id={project_id}"
+        # CHT-1223: project_id moved from a query param to the URL path.
+        url = f"/projects/{project_id}/sprints"
         if status:
-            url += f"&sprint_status={status}"
+            url += f"?sprint_status={status}"
         return self._request("GET", url)
 
     def create_sprint(self, project_id: str, name: str, **kwargs) -> dict:
         data = {"name": name, **kwargs}
-        return self._request("POST", f"/sprints?project_id={project_id}", data)
+        return self._request("POST", f"/projects/{project_id}/sprints", data)
 
     def get_sprint(self, sprint_id: str) -> dict:
         return self._request("GET", f"/sprints/{sprint_id}")
@@ -393,19 +396,23 @@ class Client:
 
     # Documents
     def create_document(self, team_id: str, title: str, **kwargs) -> dict:
+        # CHT-1223: team_id moved from a query param to the URL path.
         data = {"title": title, **kwargs}
-        return self._request("POST", f"/documents?team_id={team_id}", data)
+        return self._request("POST", f"/teams/{team_id}/documents", data)
 
     def get_documents(self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None, limit: int = None) -> list:
-        url = f"/documents?team_id={team_id}"
+        url = f"/teams/{team_id}/documents"
+        params = []
         if project_id:
-            url += f"&project_id={project_id}"
+            params.append(f"project_id={project_id}")
         if sprint_id:
-            url += f"&sprint_id={sprint_id}"
+            params.append(f"sprint_id={sprint_id}")
         if search:
-            url += f"&search={search}"
+            params.append(f"search={search}")
         if limit is not None:
-            url += f"&limit={limit}"
+            params.append(f"limit={limit}")
+        if params:
+            url += "?" + "&".join(params)
         return self._request("GET", url)
 
     def get_document(self, document_id: str) -> dict:
@@ -444,11 +451,12 @@ class Client:
 
     # Labels
     def create_label(self, team_id: str, name: str, **kwargs) -> dict:
+        # CHT-1223: team_id moved from a query param to the URL path.
         data = {"name": name, **kwargs}
-        return self._request("POST", f"/labels?team_id={team_id}", data)
+        return self._request("POST", f"/teams/{team_id}/labels", data)
 
     def get_labels(self, team_id: str) -> list:
-        return self._request("GET", f"/labels?team_id={team_id}")
+        return self._request("GET", f"/teams/{team_id}/labels")
 
     def update_label(self, label_id: str, **kwargs) -> dict:
         return self._request("PATCH", f"/labels/{label_id}", kwargs)
@@ -475,9 +483,10 @@ class Client:
         return self._request("POST", f"/rituals/{ritual_id}/approve-issue/{issue_id}", {})
 
     def get_rituals(self, project_id: str, include_inactive: bool = False) -> list:
-        url = f"/rituals?project_id={project_id}"
+        # CHT-1223: project_id moved from a query param to the URL path.
+        url = f"/projects/{project_id}/rituals"
         if include_inactive:
-            url += "&include_inactive=true"
+            url += "?include_inactive=true"
         return self._request("GET", url)
 
     def get_ritual_history(self, project_id: str, skip: int = 0, limit: int = 50) -> list:
@@ -493,8 +502,9 @@ class Client:
         return self._request("POST", f"/rituals/force-clear-ticket-limbo?issue_id={issue_id}", {})
 
     def create_ritual(self, project_id: str, name: str, prompt: str, **kwargs) -> dict:
+        # CHT-1223: project_id moved from a query param to the URL path.
         data = {"name": name, "prompt": prompt, **kwargs}
-        return self._request("POST", f"/rituals?project_id={project_id}", data)
+        return self._request("POST", f"/projects/{project_id}/rituals", data)
 
     def update_ritual(self, ritual_id: str, **kwargs) -> dict:
         """Update a ritual. Accepts prompt, name, approval_mode, trigger."""

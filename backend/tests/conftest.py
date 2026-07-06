@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_projects_key ON projects ("key");
+-- CHT-1223 (migration 0008): backstop for create_project's idempotency fix.
+CREATE UNIQUE INDEX IF NOT EXISTS projects_team_id_key_idx ON projects (team_id, "key");
 
 CREATE TABLE IF NOT EXISTS labels (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -72,6 +74,8 @@ CREATE TABLE IF NOT EXISTS labels (
     description VARCHAR(500),
     created_at DATETIME NOT NULL
 );
+-- CHT-1223 (migration 0008): backstop for create_label's idempotency fix.
+CREATE UNIQUE INDEX IF NOT EXISTS labels_team_id_name_idx ON labels (team_id, name);
 
 CREATE TABLE IF NOT EXISTS sprints (
     id VARCHAR(36) NOT NULL PRIMARY KEY,

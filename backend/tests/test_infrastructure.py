@@ -47,6 +47,36 @@ class TestHealthEndpoint:
         assert "version" in body
 
 
+class TestUnhandledExceptionHandler:
+    """CHT-1223: unhandled exceptions return JSON, not Starlette's default
+    text/plain 500 body.
+
+    httpx's ASGITransport (used by the `client` fixture, raise_app_exceptions
+    default True) re-raises any exception that propagates out of the app
+    regardless of whether a custom exception_handler(Exception) is
+    registered -- Starlette's ServerErrorMiddleware always re-raises after
+    sending the response ("allows servers to log the error, or allows test
+    clients to optionally raise the error"). A real ASGI server's client
+    never sees that re-raise (the response bytes are already flushed), but
+    round-tripping through `client` in this test suite can't observe it
+    either way -- so call the handler directly instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unhandled_exception_returns_json_500(self):
+        import json
+        from starlette.requests import Request
+        from app.main import unhandled_exception_handler
+
+        scope = {"type": "http", "method": "GET", "path": "/api/whatever", "headers": []}
+        request = Request(scope)
+
+        response = await unhandled_exception_handler(request, RuntimeError("boom"))
+
+        assert response.status_code == 500
+        assert json.loads(response.body) == {"detail": "Internal server error"}
+
+
 class TestCliAuth:
     """Tests for CLI authorization endpoint."""
 

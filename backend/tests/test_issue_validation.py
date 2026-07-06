@@ -54,7 +54,7 @@ class TestAssigneeValidation:
     ):
         """Assigning to nonexistent user returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Test issue",
@@ -69,7 +69,7 @@ class TestAssigneeValidation:
     ):
         """Assigning to user not on the team returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Test issue",
@@ -89,7 +89,7 @@ class TestSprintValidation:
     ):
         """Creating issue with nonexistent sprint returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Test issue",
@@ -109,7 +109,7 @@ class TestSprintValidation:
         )
 
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Test issue",
@@ -129,7 +129,7 @@ class TestParentValidation:
     ):
         """Creating issue with nonexistent parent returns 400."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Test issue",
@@ -154,7 +154,7 @@ class TestParentValidation:
         )
 
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             headers=auth_headers,
             json={
                 "title": "Child issue",

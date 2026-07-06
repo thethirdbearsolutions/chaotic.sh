@@ -28,11 +28,13 @@ async def create_api_key(
 @router.get("", response_model=list[APIKeyResponse])
 async def list_api_keys(
     current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List all API keys for the current user."""
     api_key_service = APIKeyService()
     api_keys = await api_key_service.list_by_user(current_user.id)
-    return api_keys
+    return api_keys[skip:skip + limit]
 
 
 @router.delete("/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)

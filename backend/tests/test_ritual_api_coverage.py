@@ -237,7 +237,7 @@ class TestRitualCRUD:
     ):
         """POST /rituals creates a ritual."""
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={
                 "name": "new-ritual",
@@ -255,7 +255,7 @@ class TestRitualCRUD:
     ):
         """POST /rituals returns 403 for non-admin."""
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=non_admin_headers,
             json={
                 "name": "unauthorized-ritual",
@@ -290,7 +290,7 @@ class TestRitualCRUD:
     ):
         """DELETE /rituals/{id} deletes the ritual."""
         create_resp = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={"name": "delete-me", "prompt": "Temporary ritual"},
         )

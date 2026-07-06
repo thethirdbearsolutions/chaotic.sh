@@ -1,6 +1,6 @@
 """API routes."""
 from fastapi import APIRouter
-from app.api import auth, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents
+from app.api import auth, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested
 
 api_router = APIRouter()
 
@@ -15,3 +15,6 @@ api_router.include_router(documents.router, prefix="/documents", tags=["document
 api_router.include_router(labels.router, prefix="/labels", tags=["labels"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(agents.router, tags=["agents"])
+# Path-nested aliases (CHT-1223) for the query-param routes above --
+# same handlers, different URL shape. See nested.py's module docstring.
+api_router.include_router(nested.router, tags=["nested-aliases"])
