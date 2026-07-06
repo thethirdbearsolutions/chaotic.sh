@@ -487,6 +487,7 @@ registerActions({
     },
     'showCreateIssueModal': () => showCreateIssueModal(),
     'showCreateEpicModal': () => showCreateEpicModal(),
+    'retry-load-epics': () => loadEpics(),
     'showCreateProjectModal': () => showCreateProjectModal(),
     'showCreateDocumentModal': () => showCreateDocumentModal(),
     'showCreateTeamModal': () => showCreateTeamModal(),

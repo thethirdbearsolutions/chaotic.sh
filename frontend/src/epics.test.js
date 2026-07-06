@@ -22,10 +22,21 @@ vi.mock('./utils.js', () => ({
     escapeAttr: (s) => s != null ? String(s) : '',
 }));
 
+// CHT-1226: loadEpics()'s catch block now calls showApiError(); without
+// this mock it hits the real showToast(), which throws on the missing
+// #toast-container in this file's minimal test DOM.
+vi.mock('./ui.js', () => ({
+    showModal: vi.fn(),
+    closeModal: vi.fn(),
+    showToast: vi.fn(),
+    showApiError: vi.fn(),
+}));
+
 import { setCurrentTeam } from './state.js';
 import { loadEpics, renderEpics, getCurrentEpics } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
+import { showApiError } from './ui.js';
 
 function setupDom() {
     document.body.innerHTML = '<div id="epics-list"></div>';
@@ -113,8 +124,24 @@ describe('loadEpics', () => {
         await loadEpics();
 
         const el = document.getElementById('epics-list');
+        // CHT-1226: standardized on renderEmptyState(); the raw exception
+        // message no longer leaks into the DOM (showApiError, mocked
+        // above, is the toast surface for that instead).
         expect(el.innerHTML).toContain('Failed to load epics');
-        expect(el.innerHTML).toContain('Network error');
+        expect(el.innerHTML).toContain('empty-state-icon');
+        expect(el.innerHTML).not.toContain('Network error');
+        expect(el.innerHTML).toContain('data-action="retry-load-epics"');
+        expect(showApiError).toHaveBeenCalledWith('load epics', expect.any(Error));
+    });
+
+    it('shows a standardized empty state (no raw div) when no team is selected', async () => {
+        setCurrentTeam(null);
+
+        await loadEpics();
+
+        const el = document.getElementById('epics-list');
+        expect(el.innerHTML).toContain('Select a team');
+        expect(el.innerHTML).toContain('empty-state-icon');
     });
 
     it('shows complete progress bar style when all done', async () => {
