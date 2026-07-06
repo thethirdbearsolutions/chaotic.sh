@@ -69,6 +69,14 @@ document.addEventListener('keydown', (e) => {
     if (!document.body.classList.contains('sidebar-open')) return;
     if (e.key !== 'Tab') return;
 
+    // CHT-1215 (review finding 4): a modal can open on top of the sidebar
+    // (e.g. the sidebar's own New Issue button) without closing it. The
+    // modal is the topmost layer — the same priority Escape already encodes
+    // (modal > sidebar, CHT-869) — so yield Tab to ui.js's modal trap while
+    // one is open, instead of yanking focus back into the sidebar.
+    const modalOverlay = document.getElementById('modal-overlay');
+    if (modalOverlay && !modalOverlay.classList.contains('hidden')) return;
+
     const sidebar = document.querySelector('.sidebar');
     if (!sidebar) return;
 

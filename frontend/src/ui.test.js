@@ -182,6 +182,53 @@ describe('Modal focus management (CHT-1215)', () => {
       // anything in the (hidden) modal
       expect(document.activeElement).toBe(link);
     });
+
+    // CHT-1215 review finding 4: opening a modal from the sidebar (its
+    // "New Issue" button) leaves BOTH open. The sidebar trap used to run
+    // after the modal's, see focus inside the modal as "outside the
+    // sidebar", and yank it back into the sidebar on every Tab — hijacking
+    // Tab out of the modal entirely. The modal is the topmost layer (same
+    // priority Escape encodes: modal > sidebar), so its trap must govern.
+    describe('when sidebar AND modal are both open', () => {
+      it('modal trap governs Tab: focus cycles within the modal, not yanked to the sidebar', () => {
+        toggleSidebar(); // sidebar open, focus on sidebar link
+        showModal(); // modal opens on top; sidebar stays open
+        expect(document.body.classList.contains('sidebar-open')).toBe(true);
+
+        document.getElementById('field-2').focus(); // last focusable in modal
+        const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        document.dispatchEvent(event);
+
+        expect(document.activeElement).toBe(document.querySelector('.modal-close'));
+        expect(document.querySelector('.sidebar').contains(document.activeElement)).toBe(false);
+      });
+
+      it('modal trap governs Shift+Tab too', () => {
+        toggleSidebar();
+        showModal();
+
+        document.querySelector('.modal-close').focus(); // first focusable in modal
+        const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+        document.dispatchEvent(event);
+
+        expect(document.activeElement).toBe(document.getElementById('field-2'));
+      });
+
+      it('sidebar trap re-engages after the modal closes with the sidebar still open', () => {
+        toggleSidebar();
+        const link = document.querySelector('.sidebar a');
+        showModal();
+        closeModal();
+        expect(document.body.classList.contains('sidebar-open')).toBe(true);
+
+        link.focus();
+        const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        document.dispatchEvent(event);
+
+        // Single focusable in the sidebar — its trap wraps back to it
+        expect(document.activeElement).toBe(link);
+      });
+    });
   });
 });
 
