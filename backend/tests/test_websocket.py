@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event
+from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event, broadcast_document_event
 
 
 @pytest.fixture
@@ -196,6 +196,20 @@ class TestBroadcastHelpers:
             "type": "completed",
             "entity": "attestation",
             "data": {"ritual_id": "r1", "issue_id": "i1"},
+        })
+
+    @pytest.mark.asyncio
+    async def test_broadcast_document_event(self, monkeypatch):
+        """CHT-1213: documents previously broadcast nothing on mutation."""
+        mock_broadcast = AsyncMock()
+        monkeypatch.setattr("app.websocket.manager.broadcast_to_team", mock_broadcast)
+
+        await broadcast_document_event("team-1", "created", {"id": "d1", "title": "Doc"})
+
+        mock_broadcast.assert_awaited_once_with("team-1", {
+            "type": "created",
+            "entity": "document",
+            "data": {"id": "d1", "title": "Doc"},
         })
 
 

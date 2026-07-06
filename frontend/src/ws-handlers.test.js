@@ -72,6 +72,13 @@ vi.mock('./gate-approvals.js', () => ({
     loadGateApprovals: (...args) => mockLoadGateApprovals(...args),
 }));
 
+// Mock documents.js (CHT-1213)
+vi.mock('./documents.js', () => ({
+    refreshDocumentsListIfActive: vi.fn(),
+    refreshDocumentDetailIfViewing: vi.fn(),
+    handleRemoteDocumentDeleted: vi.fn(),
+}));
+
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
@@ -79,6 +86,7 @@ import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
+import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch, resetWsState } from './ws.js';
@@ -381,6 +389,41 @@ describe('ws-handlers.js', () => {
             expect(viewIssue).not.toHaveBeenCalled();
             expect(noteSkippedDetailRefresh).toHaveBeenCalled();
             document.body.innerHTML = '';
+        });
+
+        // CHT-1213: document comments broadcast a document_id field but were
+        // previously silently dropped here (only issue_id was checked).
+        it('refreshes the open document detail on a document comment', () => {
+            dispatch({ type: 'created', entity: 'comment', data: { document_id: 'doc-1' } });
+            expect(refreshDocumentDetailIfViewing).toHaveBeenCalledWith('doc-1');
+        });
+
+        it('does not call refreshDocumentDetailIfViewing for an issue comment', () => {
+            dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            expect(refreshDocumentDetailIfViewing).not.toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1213: documents previously broadcast nothing at all on
+    // create/update/delete.
+    describe('document', () => {
+        it('refreshes the documents list and the open detail on create/update', () => {
+            dispatch({ type: 'created', entity: 'document', data: { id: 'doc-1' } });
+            expect(refreshDocumentsListIfActive).toHaveBeenCalled();
+            expect(refreshDocumentDetailIfViewing).toHaveBeenCalledWith('doc-1');
+
+            dispatch({ type: 'updated', entity: 'document', data: { id: 'doc-1' } });
+            expect(refreshDocumentsListIfActive).toHaveBeenCalledTimes(2);
+            expect(refreshDocumentDetailIfViewing).toHaveBeenCalledTimes(2);
+        });
+
+        // Refreshing a just-deleted document would 404 and show a generic
+        // error toast over stale content instead of navigating away.
+        it('handles delete via handleRemoteDocumentDeleted instead of refreshDocumentDetailIfViewing', () => {
+            dispatch({ type: 'deleted', entity: 'document', data: { id: 'doc-1', title: 'Deleted Doc' } });
+            expect(refreshDocumentsListIfActive).toHaveBeenCalled();
+            expect(handleRemoteDocumentDeleted).toHaveBeenCalledWith('doc-1', 'Deleted Doc');
+            expect(refreshDocumentDetailIfViewing).not.toHaveBeenCalled();
         });
     });
 

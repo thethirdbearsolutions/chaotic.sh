@@ -2684,6 +2684,20 @@ input[type="checkbox"] {
     font-style: italic;
 }
 
+/* Comments-fetch failure state (CHT-1213): visible + retryable instead of
+   the section silently disappearing with zero user-facing indication. */
+.comments-error {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--warning-color, #f59e0b);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+}
+
 /* ========================================
    Linear-style Issue List
    ======================================== */

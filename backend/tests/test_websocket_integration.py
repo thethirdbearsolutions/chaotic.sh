@@ -114,6 +114,81 @@ async def test_create_comment_broadcasts_event(client, auth_headers, test_issue)
         assert call_args[0][1] == "created"
 
 
+# === Document event broadcasting (CHT-1213) ===
+# Documents previously broadcast nothing at all on create/update/delete —
+# every other entity (issue, project, sprint, comment) does.
+
+
+@pytest.mark.asyncio
+async def test_create_document_broadcasts_event(client, auth_headers, test_team):
+    """POST /teams/{id}/documents should broadcast 'created' document event."""
+    with patch("app.api.documents.broadcast_document_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.post(
+            f"/api/teams/{test_team.id}/documents",
+            headers=auth_headers,
+            json={"title": "Broadcast Test Doc", "content": "Hello"},
+        )
+        assert response.status_code == 201
+
+        mock_broadcast.assert_awaited_once()
+        call_args = mock_broadcast.call_args
+        assert call_args[0][0] == test_team.id  # team_id
+        assert call_args[0][1] == "created"  # event_type
+        assert call_args[0][2]["title"] == "Broadcast Test Doc"
+
+
+@pytest.mark.asyncio
+async def test_update_document_broadcasts_event(client, auth_headers, test_document):
+    """PATCH /documents/{id} should broadcast 'updated' document event."""
+    with patch("app.api.documents.broadcast_document_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.patch(
+            f"/api/documents/{test_document.id}",
+            headers=auth_headers,
+            json={"title": "Updated Title"},
+        )
+        assert response.status_code == 200
+
+        mock_broadcast.assert_awaited_once()
+        call_args = mock_broadcast.call_args
+        assert call_args[0][1] == "updated"
+        assert call_args[0][2]["title"] == "Updated Title"
+
+
+@pytest.mark.asyncio
+async def test_delete_document_broadcasts_event(client, auth_headers, test_document):
+    """DELETE /documents/{id} should broadcast 'deleted' document event."""
+    with patch("app.api.documents.broadcast_document_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.delete(
+            f"/api/documents/{test_document.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 204
+
+        mock_broadcast.assert_awaited_once()
+        call_args = mock_broadcast.call_args
+        assert call_args[0][1] == "deleted"
+        assert call_args[0][2]["id"] == test_document.id
+
+
+@pytest.mark.asyncio
+async def test_document_comment_broadcast_includes_document_id(client, auth_headers, test_document):
+    """Document comment broadcasts must carry document_id so the frontend
+    can match it against the currently-open document (CHT-1213 — ws-handlers.js
+    previously only ever checked issue_id, silently dropping this)."""
+    with patch("app.api.documents.broadcast_comment_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.post(
+            f"/api/documents/{test_document.id}/comments",
+            headers=auth_headers,
+            json={"content": "Test doc comment for broadcast"},
+        )
+        assert response.status_code == 201
+
+        mock_broadcast.assert_awaited_once()
+        call_args = mock_broadcast.call_args
+        assert call_args[0][1] == "created"
+        assert call_args[0][2]["document_id"] == test_document.id
+
+
 # === Batch update broadcasting ===
 
 

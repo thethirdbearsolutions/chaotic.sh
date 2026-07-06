@@ -13,6 +13,7 @@ import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
+import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
@@ -62,6 +63,11 @@ export function registerWsHandlers() {
 
     // Sprint events
     subscribe('sprint', handleSprint);
+
+    // Document events (CHT-1213) — documents previously broadcast nothing at
+    // all on create/update/delete, so the list/detail view went stale until
+    // a manual reload.
+    subscribe('document', handleDocument);
 }
 
 function handleIssueCreated(data) {
@@ -220,6 +226,32 @@ function handleComment(data) {
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
         refreshOpenDetail(data.issue_id);
+    }
+    // Document comments broadcast a `document_id` field (documents.py), but
+    // were silently dropped here — this handler only ever checked issue_id
+    // (CHT-1213).
+    if (data.document_id) {
+        refreshDocumentDetailIfViewing(data.document_id);
+    }
+}
+
+/**
+ * Document create/update/delete (CHT-1213) — refresh the documents list if
+ * it's the active view, and the open document detail if it's the one that
+ * changed. See refreshDocumentDetailIfViewing()'s own comment (documents.js)
+ * for why this doesn't reuse the getCurrentView() === '<x>-detail' pattern
+ * the issue-detail handlers above use — that check is dead in production.
+ *
+ * 'deleted' is handled separately: refreshing a just-deleted document would
+ * 404 and just show a generic error toast over stale content, so it
+ * navigates away instead (mirrors handleIssueDeleted below).
+ */
+function handleDocument(data, { type } = {}) {
+    refreshDocumentsListIfActive();
+    if (type === 'deleted') {
+        handleRemoteDocumentDeleted(data.id, data.title);
+    } else {
+        refreshDocumentDetailIfViewing(data.id);
     }
 }
 
