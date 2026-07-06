@@ -98,7 +98,7 @@ vi.mock('./state.js', async (importOriginal) => {
     };
 });
 
-import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getDetailNavContext } from './state.js';
+import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getDetailNavContext, setDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
@@ -611,6 +611,72 @@ describe('issue-detail-view', () => {
 
                 const html = document.getElementById('issue-detail-content').innerHTML;
                 expect(html).not.toContain('issue-nav-arrows');
+            });
+
+            // CHT-1211 review #1: ws-handlers patches the context on remote
+            // issue events; the rendered arrows are a snapshot and must
+            // re-sync when that happens while the detail view is open.
+            describe('live refresh on remote context changes', () => {
+                it('delete-while-detail-open: removes the deleted next sibling from the arrows', async () => {
+                    getDetailNavContext.mockReturnValue(issueList);
+                    await viewIssue('issue-1');
+                    expect(document.querySelector('[title="Next issue"]').dataset.issueId).toBe('issue-c');
+
+                    // Remote issue:deleted for issue-c — ws-handlers filters
+                    // it out of the context, firing the state subscription
+                    const patched = issueList.filter(i => i.id !== 'issue-c');
+                    getDetailNavContext.mockReturnValue(patched);
+                    setDetailNavContext(patched);
+
+                    const nextBtn = document.querySelector('[title="Next issue"]');
+                    expect(nextBtn.hasAttribute('disabled')).toBe(true);
+                    expect(nextBtn.dataset.issueId).toBeUndefined();
+                    expect(document.querySelector('.issue-nav-counter').textContent.trim()).toBe('2 / 2');
+                });
+
+                it('delete-while-detail-open: keyboard j no longer reaches the deleted sibling', async () => {
+                    getDetailNavContext.mockReturnValue(issueList);
+                    await viewIssue('issue-1');
+
+                    const patched = issueList.filter(i => i.id !== 'issue-c');
+                    getDetailNavContext.mockReturnValue(patched);
+                    setDetailNavContext(patched);
+
+                    api.getIssue.mockClear();
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' }));
+                    await new Promise(r => setTimeout(r, 10));
+
+                    expect(api.getIssue).not.toHaveBeenCalled();
+                });
+
+                it('remote update: arrows re-render with the patched sibling data', async () => {
+                    getDetailNavContext.mockReturnValue(issueList);
+                    await viewIssue('issue-1');
+                    expect(document.querySelector('[title="Next issue"]').dataset.identifier).toBe('TEST-3');
+
+                    // Remote issue:updated retitles/re-identifies issue-c —
+                    // ws-handlers maps it into the context
+                    const patched = issueList.map(i => i.id === 'issue-c'
+                        ? { ...i, identifier: 'TEST-99', title: 'Renamed' }
+                        : i);
+                    getDetailNavContext.mockReturnValue(patched);
+                    setDetailNavContext(patched);
+
+                    expect(document.querySelector('[title="Next issue"]').dataset.identifier).toBe('TEST-99');
+                });
+
+                it('does nothing when the detail view is hidden', async () => {
+                    getDetailNavContext.mockReturnValue(issueList);
+                    await viewIssue('issue-1');
+                    document.getElementById('issue-detail-view').classList.add('hidden');
+                    const before = document.getElementById('issue-detail-content').innerHTML;
+
+                    const patched = issueList.filter(i => i.id !== 'issue-c');
+                    getDetailNavContext.mockReturnValue(patched);
+                    setDetailNavContext(patched);
+
+                    expect(document.getElementById('issue-detail-content').innerHTML).toBe(before);
+                });
             });
 
             it('handles keyboard ArrowRight to navigate next', async () => {
