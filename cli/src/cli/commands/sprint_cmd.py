@@ -256,6 +256,7 @@ def register(cli):
 
     @sprint.command("add")
     @click.argument("identifiers", nargs=-1, required=True)
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def sprint_add(identifiers):
@@ -274,13 +275,34 @@ def register(cli):
             raise click.ClickException("No project selected. Run 'chaotic project use <project_id>' first.")
         sprint_id = m.resolve_sprint_id("current", project_id)
 
+        # Note: the backend's /issues/batch-update endpoint intentionally
+        # excludes sprint_id (status/assignee/sprint changes need
+        # per-issue validation), so this can't collapse to a single batch
+        # call. Instead: continue past per-identifier failures (rather
+        # than aborting the whole batch on the first bad identifier) and
+        # report per-issue success/failure -- both in --json and as
+        # per-line text -- so a partial-failure run over many identifiers
+        # is machine-diagnosable (CHT-1222).
+        results = []
         for identifier in identifiers:
-            issue = _client().get_issue_by_identifier(identifier)
-            _client().update_issue(issue["id"], sprint_id=sprint_id)
-            console.print(f"[green]Added {issue['identifier']} to current sprint.[/green]")
+            try:
+                issue = _client().get_issue_by_identifier(identifier)
+                _client().update_issue(issue["id"], sprint_id=sprint_id)
+                console.print(f"[green]Added {issue['identifier']} to current sprint.[/green]")
+                results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
+            except m.APIError as e:
+                console.print(f"[red]Failed to add {identifier}: {e}[/red]")
+                results.append({"identifier": identifier, "success": False, "error": str(e)})
+
+        any_failed = any(not r["success"] for r in results)
+        if m.is_json_output():
+            m.output_json({"sprint_id": sprint_id, "results": results})
+        if any_failed:
+            raise SystemExit(1)
 
     @sprint.command("remove")
     @click.argument("identifiers", nargs=-1, required=True)
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def sprint_remove(identifiers):
@@ -293,10 +315,26 @@ def register(cli):
             chaotic sprint remove CHT-123
             chaotic sprint remove CHT-123 CHT-456
         """
+        m = _main()
+        # See sprint_add's comment: batch-update can't cover sprint_id, so
+        # this continues past per-identifier failures and reports
+        # per-issue success/failure instead (CHT-1222).
+        results = []
         for identifier in identifiers:
-            issue = _client().get_issue_by_identifier(identifier)
-            _client().update_issue(issue["id"], sprint_id=None)
-            console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
+            try:
+                issue = _client().get_issue_by_identifier(identifier)
+                _client().update_issue(issue["id"], sprint_id=None)
+                console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
+                results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
+            except m.APIError as e:
+                console.print(f"[red]Failed to remove {identifier}: {e}[/red]")
+                results.append({"identifier": identifier, "success": False, "error": str(e)})
+
+        any_failed = any(not r["success"] for r in results)
+        if m.is_json_output():
+            m.output_json({"results": results})
+        if any_failed:
+            raise SystemExit(1)
 
     @sprint.command("issues")
     @_main().json_option
