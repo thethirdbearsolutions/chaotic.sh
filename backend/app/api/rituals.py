@@ -1080,11 +1080,20 @@ async def delete_ritual(
 @router.post("/{ritual_id}/attest", response_model=RitualAttestationResponse)
 async def attest_ritual(
     ritual_id: str,
-    project_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
+    project_id: str | None = None,
 ):
-    """Attest to a ritual for the current limbo sprint."""
+    """Attest to a ritual for the current limbo sprint.
+
+    ``project_id`` is optional (CHT-1223): the ritual-scoped variants of
+    this action (attest-issue/complete-issue) already derive project
+    scope from the ritual/issue rather than requiring a redundant query
+    param, and ``ritual.project_id`` is the same value this endpoint
+    validates ``project_id`` against immediately below -- so it's safe
+    to fall back to it when omitted. Existing callers that still pass
+    ``?project_id=`` keep working unchanged.
+    """
     ritual_service = RitualService()
     project_service = ProjectService()
 
@@ -1095,27 +1104,29 @@ async def attest_ritual(
             detail="Ritual not found",
         )
 
-    project = await project_service.get_by_id(project_id)
+    resolved_project_id = project_id if project_id is not None else ritual.project_id
+
+    project = await project_service.get_by_id(resolved_project_id)
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
 
-    if not await check_user_project_access(current_user, project_id, project.team_id):
+    if not await check_user_project_access(current_user, resolved_project_id, project.team_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
         )
 
-    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(project_id)
+    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(resolved_project_id)
     if not in_limbo or not limbo_sprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project is not in limbo. No rituals to attest.",
         )
 
-    if ritual.project_id != project_id:
+    if ritual.project_id != resolved_project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual does not belong to this project",
@@ -1157,10 +1168,15 @@ async def attest_ritual(
 @router.post("/{ritual_id}/approve", response_model=RitualAttestationResponse)
 async def approve_attestation(
     ritual_id: str,
-    project_id: str,
     current_user: CurrentUser,
+    project_id: str | None = None,
 ):
-    """Approve a ritual attestation (for REVIEW/GATE modes)."""
+    """Approve a ritual attestation (for REVIEW/GATE modes).
+
+    ``project_id`` is optional (CHT-1223) -- derived from the ritual when
+    omitted, matching attest_ritual/complete_gate_ritual. Existing
+    ``?project_id=`` callers keep working unchanged.
+    """
     ritual_service = RitualService()
     project_service = ProjectService()
     team_service = TeamService()
@@ -1172,7 +1188,9 @@ async def approve_attestation(
             detail="Ritual not found",
         )
 
-    project = await project_service.get_by_id(project_id)
+    resolved_project_id = project_id if project_id is not None else ritual.project_id
+
+    project = await project_service.get_by_id(resolved_project_id)
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1191,7 +1209,7 @@ async def approve_attestation(
             detail="Agents cannot approve attestations. A human admin must approve.",
         )
 
-    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(project_id)
+    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(resolved_project_id)
     if not in_limbo or not limbo_sprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1224,11 +1242,16 @@ async def approve_attestation(
 @router.post("/{ritual_id}/complete", response_model=RitualAttestationResponse)
 async def complete_gate_ritual(
     ritual_id: str,
-    project_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
+    project_id: str | None = None,
 ):
-    """Complete a GATE mode ritual (human-only)."""
+    """Complete a GATE mode ritual (human-only).
+
+    ``project_id`` is optional (CHT-1223) -- derived from the ritual when
+    omitted, matching attest_ritual/approve_attestation. Existing
+    ``?project_id=`` callers keep working unchanged.
+    """
     ritual_service = RitualService()
     project_service = ProjectService()
     team_service = TeamService()
@@ -1240,7 +1263,9 @@ async def complete_gate_ritual(
             detail="Ritual not found",
         )
 
-    project = await project_service.get_by_id(project_id)
+    resolved_project_id = project_id if project_id is not None else ritual.project_id
+
+    project = await project_service.get_by_id(resolved_project_id)
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1259,14 +1284,14 @@ async def complete_gate_ritual(
             detail="GATE rituals require human completion. Agent users cannot complete GATE mode rituals.",
         )
 
-    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(project_id)
+    in_limbo, limbo_sprint, _ = await ritual_service.check_limbo(resolved_project_id)
     if not in_limbo or not limbo_sprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project is not in limbo",
         )
 
-    if ritual.project_id != project_id:
+    if ritual.project_id != resolved_project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ritual does not belong to this project",

@@ -3506,6 +3506,38 @@ class TestSprintRitualAttestationAPI:
         assert data["note"] == "Tests passed"
         assert data["approved_at"] is not None  # AUTO mode approves immediately
 
+    async def test_attest_ritual_api_project_id_omitted(self, client, auth_headers, test_project, db):
+        """CHT-1223: project_id is now optional -- derived from the ritual.
+
+        Cheapest additive fix for the query-vs-path scoping-ID
+        inconsistency: the value is redundant with the ritual's own
+        project_id (validated against it immediately after), so it's
+        safe to omit. Existing ?project_id= callers are covered by
+        test_attest_ritual_api above.
+        """
+        ritual = await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="attest-ritual-noqs",
+            prompt="Test attestation",
+            trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO,
+        )
+
+        await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Sprint 1",
+            status=SprintStatus.COMPLETED,
+            limbo=True,
+        )
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/attest",
+            headers=auth_headers,
+            json={"note": "Tests passed"},
+        )
+        assert response.status_code == 200
+        assert response.json()["note"] == "Tests passed"
+
     async def test_attest_ritual_api_not_in_limbo(self, client, auth_headers, test_project, db):
         """Test that attestation fails when not in limbo."""
         ritual = await OxydeRitual.objects.create(
