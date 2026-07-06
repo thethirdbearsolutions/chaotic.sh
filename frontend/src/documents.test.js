@@ -843,6 +843,23 @@ describe('refreshDocumentsListIfActive / refreshDocumentDetailIfViewing (CHT-121
     expect(api.getDocuments).not.toHaveBeenCalled();
   });
 
+  // Opening a document from the list calls viewDocument() directly rather
+  // than navigateTo(), so getCurrentView() stays 'documents' the whole time
+  // a detail view covers the (hidden) list — without a visibility check,
+  // every document/comment websocket event would needlessly re-fetch and
+  // rebuild the hidden list underneath the open detail view.
+  it('refreshDocumentsListIfActive does nothing while a document detail view is open', async () => {
+    setCurrentTeam({ id: 'team-1' });
+    setCurrentView('documents');
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+    api.getDocumentComments.mockResolvedValue([]);
+    await viewDocument('doc-1');
+
+    api.getDocuments.mockClear();
+    refreshDocumentsListIfActive();
+    expect(api.getDocuments).not.toHaveBeenCalled();
+  });
+
   it('refreshDocumentDetailIfViewing refreshes only the currently-open document', async () => {
     api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
     api.getDocumentComments.mockResolvedValue([]);

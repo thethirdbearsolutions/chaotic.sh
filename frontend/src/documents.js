@@ -14,7 +14,6 @@ import {
 import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
-import { renderMarkdown } from './gate-approvals.js';
 import { renderCommentContent, renderDescriptionContent } from './rich-text.js';
 import { marked } from 'marked';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
@@ -358,6 +357,12 @@ export async function loadDocuments(teamId, projectId = null) {
  */
 export function refreshDocumentsListIfActive() {
   if (getCurrentView() !== 'documents') return;
+  // Opening a document from the list calls viewDocument() directly rather
+  // than navigateTo(), so getCurrentView() stays 'documents' for as long as
+  // the detail view covers the (now-hidden) list — skip the refetch then,
+  // or every document/comment event while any detail is open would re-fetch
+  // and rebuild the hidden list for nothing.
+  if (!document.getElementById('document-detail-view')?.classList.contains('hidden')) return;
   const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
   loadDocuments(teamId).catch(e => console.error('Failed to refresh documents list:', e));
@@ -1166,7 +1171,11 @@ function setDocEditorMode(textareaId, mode) {
 
   if (isPreview) {
     const value = textarea.value.trim();
-    preview.innerHTML = value ? renderMarkdown(value) : '<span class="text-muted">Nothing to preview.</span>';
+    // renderDescriptionContent (not raw renderMarkdown) so a previewed
+    // "see CHT-123" auto-links the same way it will once saved and viewed
+    // on the document detail page (matches issue-detail-view.js's own
+    // description preview, which has the same parity requirement).
+    preview.innerHTML = value ? renderDescriptionContent(value) : '<span class="text-muted">Nothing to preview.</span>';
   }
 }
 
