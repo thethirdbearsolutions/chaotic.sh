@@ -2276,6 +2276,9 @@ async def test_update_issue_sprint_limbo_error(client, auth_headers, test_projec
     )
     assert response.status_code == 409
     assert "limbo" in response.json()["detail"]["message"].lower()
+    # CHT-1223: stable discriminator so clients can switch on error_code
+    # instead of duck-typing which keys are present.
+    assert response.json()["detail"]["error_code"] == "sprint_in_limbo"
 
 
 @pytest.mark.asyncio

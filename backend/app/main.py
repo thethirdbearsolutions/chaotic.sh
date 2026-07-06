@@ -77,12 +77,45 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     password in the 422 response body, and from there into CLI stdout,
     shell history, and any agent harness logging raw output. Strip every
     error down to just `loc`+`msg`; nothing else is safe to echo back.
+
+    NOTE ON ERROR SHAPES (CHT-1223): this API's `detail` body is not one
+    consistent shape across status codes -- rather than force a wire
+    change to unify them, the three (four, counting this docstring)
+    existing forms are documented here so clients know what to expect:
+
+    1. Plain string `detail` -- most 4xx (e.g. 404 "Issue not found").
+    2. Structured dict `detail` with a stable `"error_code"` string (e.g.
+       "sprint_in_limbo", "ticket_rituals_pending") plus error-specific
+       keys -- ritual/limbo/arrears 409s from issues.py's create/update.
+       `error_code` was added so clients can switch on it instead of
+       duck-typing which keys happen to be present.
+    3. List-of-objects `detail` -- FastAPI/pydantic's built-in 422 shape
+       (this handler's own `sanitized` list, above).
+    4. Plain string `detail` again, but from the global handler below --
+       any unhandled exception, so every non-2xx response is at least
+       valid JSON with a `detail` key (previously Starlette's default
+       text/plain "Internal Server Error", which the CLI already had to
+       special-case as a non-JSON body).
     """
     sanitized = [
         {"loc": list(err.get("loc", ())), "msg": err.get("msg", "")}
         for err in exc.errors()
     ]
     return JSONResponse(status_code=422, content={"detail": sanitized})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return a JSON body for unhandled exceptions (CHT-1223).
+
+    Without this, Starlette's ServerErrorMiddleware falls back to a
+    text/plain "Internal Server Error" body -- the CLI's client.py
+    already has to special-case non-JSON error bodies for exactly this
+    case. Registering this handler makes every non-2xx response at least
+    valid JSON with a `detail` key, matching every other error path.
+    """
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # API routes
 app.include_router(api_router, prefix="/api")

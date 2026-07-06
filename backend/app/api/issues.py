@@ -224,6 +224,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_limbo",
                 "message": "Sprint is in limbo. Complete pending rituals to continue.",
                 "sprint_id": e.sprint_id,
                 "pending_rituals": e.pending_rituals,
@@ -233,6 +234,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_arrears",
                 "message": "Sprint is in arrears. Close the current sprint to continue.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
@@ -243,6 +245,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "ticket_rituals_pending",
                 "message": "Cannot create issue as done - ticket has pending rituals.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -252,6 +255,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "claim_rituals_pending",
                 "message": "Cannot create issue as in_progress - ticket has pending claim rituals.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -261,6 +265,7 @@ async def create_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "intent_in_flight",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
@@ -806,6 +811,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_limbo",
                 "message": "Sprint is in limbo. Complete pending rituals to continue.",
                 "sprint_id": e.sprint_id,
                 "pending_rituals": e.pending_rituals,
@@ -815,6 +821,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "sprint_in_arrears",
                 "message": "Sprint is in arrears. Close the current sprint to continue.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
@@ -825,6 +832,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "ticket_rituals_pending",
                 "message": "Ticket has pending rituals. Complete them before closing.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -834,6 +842,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "claim_rituals_pending",
                 "message": "Ticket has pending claim rituals. Complete them before claiming.",
                 "issue_id": e.issue_id,
                 "pending_rituals": e.pending_rituals,
@@ -843,6 +852,7 @@ async def update_issue(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
+                "error_code": "intent_in_flight",
                 "message": str(e),
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
