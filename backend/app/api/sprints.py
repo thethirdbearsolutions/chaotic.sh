@@ -76,7 +76,17 @@ async def create_sprint(
             detail="Not a member of this team",
         )
 
+    # CHT-1225: this endpoint is a get-or-create no-op (see docstring), so
+    # ensure_sprints_exist() runs unconditionally on every call -- broadcast
+    # only fires when there genuinely was no current sprint yet, otherwise
+    # every idempotent re-call (e.g. an agent's routine `chaotic sprint
+    # create`) would spam a false "created" event for a sprint nobody
+    # actually just created.
+    had_current = await sprint_service.get_current_sprint(project_id) is not None
     current, _ = await sprint_service.ensure_sprints_exist(project_id)
+    if not had_current:
+        response = SprintResponse.model_validate(current, from_attributes=True)
+        await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"))
     return current
 
 
