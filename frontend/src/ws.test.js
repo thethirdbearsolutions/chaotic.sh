@@ -122,6 +122,59 @@ describe('ws.js', () => {
             }
         });
 
+        // CHT-1225 item 3: resync on genuine reconnect. ws-handlers.js
+        // subscribes to this synthetic 'connection:reconnected' event to
+        // refetch whatever view is open -- dispatch() (not a direct
+        // import) is used here specifically to avoid a ws.js <-> ws-handlers.js
+        // circular dependency.
+        describe('resync dispatch on reconnect (CHT-1225)', () => {
+            it('dispatches connection:reconnected after a genuine outage', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws.onclose(); // genuine outage begins
+
+                    vi.advanceTimersByTime(1500); // internal reconnect fires
+                    const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws2.onopen();
+
+                    expect(handler).toHaveBeenCalledTimes(1);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('does not dispatch on a plain fresh connect (no prior outage)', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onopen();
+
+                expect(handler).not.toHaveBeenCalled();
+            });
+
+            it('does not dispatch on a deliberate team switch mid-outage', () => {
+                const handler = vi.fn();
+                subscribe('connection:reconnected', handler);
+
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose(); // outage on team-1
+
+                connectWebSocket('team-2'); // deliberate switch — fresh connect, resets wsFailCount
+                const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws2.onopen();
+
+                expect(handler).not.toHaveBeenCalled();
+            });
+        });
+
         // CHT-1224 PR #211 review finding 1: connectWebSocket() used to close
         // the old socket without detaching its onclose, so an ordinary team
         // switch ran the OLD connection's disconnect branch — false-positive
