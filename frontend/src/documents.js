@@ -13,7 +13,7 @@ import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { marked } from 'marked';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -697,8 +697,11 @@ export async function viewDocument(documentId, pushHistory = true) {
   try {
     const doc = await api.getDocument(documentId);
 
-    // Update URL
+    // Update URL — also records the originating list's scroll position
+    // before we replace it with detail content, so Back can restore it
+    // (CHT-1211 item 1).
     if (pushHistory) {
+      saveScrollPosition();
       history.pushState({ documentId }, '', `/document/${documentId}`);
     }
 
@@ -772,6 +775,11 @@ export async function viewDocument(documentId, pushHistory = true) {
     const nextDoc = currentIndex >= 0 && currentIndex < docList.length - 1 ? docList[currentIndex + 1] : null;
     const inList = currentIndex >= 0;
 
+    // Compute where Back should return to, the same way issue/epic detail do
+    // (CHT-1211 item 3/4) — was hardcoded to 'documents', a dead end when a
+    // document is opened from inside a Sprint's Documents tab.
+    const backView = getCurrentView() || 'documents';
+
     // Build sidebar labels
     const sidebarLabelsHtml = doc.labels && doc.labels.length > 0
       ? doc.labels.map(label => `
@@ -803,7 +811,7 @@ export async function viewDocument(documentId, pushHistory = true) {
       <div class="detail-layout">
         <div class="detail-main">
           <div class="issue-detail-nav">
-            <button class="back-link" data-action="navigate-to" data-view="documents">
+            <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
               Back
             </button>

@@ -40,8 +40,10 @@ vi.mock('./event-delegation.js', () => ({
 
 // Mock router.js
 const mockNavigateTo = vi.fn();
+const mockSaveScrollPosition = vi.fn();
 vi.mock('./router.js', () => ({
   navigateTo: (...args) => mockNavigateTo(...args),
+  saveScrollPosition: (...args) => mockSaveScrollPosition(...args),
 }));
 
 // Mock projects.js
@@ -215,6 +217,53 @@ describe('viewDocument', () => {
     expect(titleEl.textContent).toBe('<img onerror=alert(1)>');
     // Verify no img element was created
     expect(content.querySelector('img')).toBeNull();
+  });
+
+  // CHT-1211 item 1: scroll position must be saved before pushState
+  describe('scroll position', () => {
+    beforeEach(() => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      mockSaveScrollPosition.mockClear();
+    });
+
+    it('saves scroll position when pushHistory is true (default)', async () => {
+      await viewDocument('doc-1');
+      expect(mockSaveScrollPosition).toHaveBeenCalled();
+    });
+
+    it('does not save scroll position when pushHistory=false', async () => {
+      await viewDocument('doc-1', false);
+      expect(mockSaveScrollPosition).not.toHaveBeenCalled();
+    });
+  });
+
+  // CHT-1211 item 3/4: document detail 'Back' was hardcoded to 'documents'
+  // instead of computing backView from getCurrentView() — a dead end when a
+  // document is opened from inside a Sprint's Documents tab.
+  describe('Back button target', () => {
+    beforeEach(() => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+    });
+
+    afterEach(() => {
+      setState('currentView', 'my-issues');
+    });
+
+    it('defaults to documents when there is no current view', async () => {
+      setState('currentView', null);
+      await viewDocument('doc-1');
+
+      const backBtn = document.querySelector('#document-detail-content [data-action="navigate-to"]');
+      expect(backBtn.dataset.view).toBe('documents');
+    });
+
+    it('returns to the view the document was opened from (e.g. a sprint)', async () => {
+      setState('currentView', 'sprint');
+      await viewDocument('doc-1');
+
+      const backBtn = document.querySelector('#document-detail-content [data-action="navigate-to"]');
+      expect(backBtn.dataset.view).toBe('sprint');
+    });
   });
 });
 
