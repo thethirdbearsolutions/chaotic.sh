@@ -10,6 +10,7 @@ import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { getProjects } from './projects.js';
 
 // Board status configuration
 export const BOARD_STATUSES = [
@@ -80,11 +81,23 @@ export async function loadBoard() {
     if (!projectId) {
         const board = document.getElementById('kanban-board');
         if (board) {
-            board.innerHTML = renderEmptyState({
-                icon: EMPTY_ICONS.board,
-                heading: 'Select a project',
-                description: 'Choose a project to view its board',
-            });
+            // CHT-1226: distinguish "no project selected" from "zero
+            // projects exist" the way issues-view.js already does — a
+            // brand-new team otherwise gets the same generic copy as a team
+            // that just hasn't picked a project yet, with no hint that
+            // creating a project is the actual next step.
+            board.innerHTML = getProjects().length === 0
+                ? renderEmptyState({
+                    icon: EMPTY_ICONS.projects,
+                    heading: 'No projects yet',
+                    description: 'Create a project first to add a board',
+                    cta: { label: 'Create project', action: 'showCreateProjectModal' },
+                })
+                : renderEmptyState({
+                    icon: EMPTY_ICONS.board,
+                    heading: 'Select a project',
+                    description: 'Choose a project to view its board',
+                });
         }
         return;
     }

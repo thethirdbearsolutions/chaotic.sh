@@ -42,6 +42,7 @@ import { setState, getSelectedBoardIndex, setSelectedBoardIndex, getDetailNavCon
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
 import {
     BOARD_STATUSES,
     getBoardIssues,
@@ -140,6 +141,30 @@ describe('board', () => {
             api.getIssues.mockResolvedValue([]);
             await boardActions['retry-load-board']();
             expect(api.getIssues).toHaveBeenCalledTimes(2);
+        });
+
+        // CHT-1226: board.js didn't distinguish "no project selected" from
+        // "zero projects exist" the way issues-view.js does.
+        it('shows a "no projects yet" CTA when no project is selected and the team has zero projects', async () => {
+            setState('currentProject', null);
+            getProjects.mockReturnValueOnce([]);
+
+            await loadBoard();
+
+            const board = document.getElementById('kanban-board');
+            expect(board.innerHTML).toContain('No projects yet');
+            expect(board.innerHTML).toContain('data-action="showCreateProjectModal"');
+        });
+
+        it('shows the generic "select a project" state when projects exist but none is selected', async () => {
+            setState('currentProject', null);
+            getProjects.mockReturnValueOnce([{ id: 'p1' }, { id: 'p2' }]);
+
+            await loadBoard();
+
+            const board = document.getElementById('kanban-board');
+            expect(board.innerHTML).toContain('Select a project');
+            expect(board.innerHTML).not.toContain('No projects yet');
         });
 
         // CHT-1211 item 2: issue-detail prev/next should page through the
