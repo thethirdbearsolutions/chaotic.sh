@@ -266,6 +266,63 @@ describe('loadSprints', () => {
         await sprintsActions['retry-load-sprints']();
         expect(api.getSprints).toHaveBeenCalledWith('p1');
     });
+
+    // CHT-1224 PR #211 review finding 2: loadSprints() now has a Retry button
+    // AND an ambient project-switch subscriber — a Retry racing a project
+    // switch must not paint the wrong project's sprints.
+    describe('request sequencing (out-of-order responses)', () => {
+        it('drops a slow response from a superseded loadSprints()', async () => {
+            let resolveFirst;
+            const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+            api.getCurrentSprint.mockResolvedValue({ id: 's-active' });
+            api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+            setState('currentProject', 'p1');
+            api.getSprints.mockImplementationOnce(() => firstRequest);
+            const firstLoad = loadSprints(); // in flight, slow (e.g. a clicked Retry)
+
+            setState('currentProject', 'p2');
+            api.getSprints.mockImplementationOnce(() => Promise.resolve([
+                { id: 's2', name: 'P2 Sprint', status: 'active', project_id: 'p2' },
+            ]));
+            await loadSprints(); // newer request resolves first
+
+            expect(getSprints().map(s => s.id)).toEqual(['s2']);
+
+            // The slow first request now resolves — must be dropped
+            resolveFirst([{ id: 's1', name: 'P1 Sprint', status: 'active', project_id: 'p1' }]);
+            await firstLoad;
+
+            expect(getSprints().map(s => s.id)).toEqual(['s2']);
+            expect(document.getElementById('sprints-list').innerHTML).toContain('P2 Sprint');
+            expect(document.getElementById('sprints-list').innerHTML).not.toContain('P1 Sprint');
+        });
+
+        it('a stale failure does not paint the error card over fresher data', async () => {
+            let rejectFirst;
+            const firstRequest = new Promise((_resolve, reject) => { rejectFirst = reject; });
+            api.getCurrentSprint.mockResolvedValue({ id: 's-active' });
+            api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+            setState('currentProject', 'p1');
+            api.getSprints.mockImplementationOnce(() => firstRequest);
+            const firstLoad = loadSprints(); // in flight, will fail late
+
+            setState('currentProject', 'p2');
+            api.getSprints.mockImplementationOnce(() => Promise.resolve([
+                { id: 's2', name: 'P2 Sprint', status: 'active', project_id: 'p2' },
+            ]));
+            await loadSprints();
+
+            rejectFirst(new Error('slow network died'));
+            await firstLoad;
+
+            const html = document.getElementById('sprints-list').innerHTML;
+            expect(html).toContain('P2 Sprint');
+            expect(html).not.toContain('Failed to load sprints');
+            expect(showApiError).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe('renderSprints', () => {

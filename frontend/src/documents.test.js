@@ -192,6 +192,52 @@ describe('fetchDocumentsForCurrentProject', () => {
     // CHT-1224: error state visually distinguishable from empty state
     expect(list.innerHTML).toContain('empty-state-error');
   });
+
+  // CHT-1224 PR #211 review finding 2: loadDocuments() and
+  // fetchDocumentsForCurrentProject() both paint #documents-list and share a
+  // Retry button plus an ambient project-switch subscriber — a Retry racing
+  // a project switch must not paint the wrong project's documents. They share
+  // one request-id so they order against each other.
+  describe('request sequencing (out-of-order responses)', () => {
+    it('drops a slow loadDocuments() response superseded by a fresher fetch', async () => {
+      let resolveFirst;
+      api.getDocuments.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+      const firstLoad = loadDocuments('team-1'); // in flight, slow (e.g. a clicked Retry)
+
+      api.getDocuments.mockResolvedValue([
+        { id: 'doc-2', title: 'Fresh Doc', updated_at: '2024-01-02' },
+      ]);
+      await fetchDocumentsForCurrentProject(); // newer request resolves first
+
+      expect(document.getElementById('documents-list').innerHTML).toContain('Fresh Doc');
+
+      // The slow first request now resolves — must be dropped
+      resolveFirst([{ id: 'doc-1', title: 'Stale Doc', updated_at: '2024-01-01' }]);
+      await firstLoad;
+
+      expect(getDocuments().map(d => d.title)).toEqual(['Fresh Doc']);
+      expect(document.getElementById('documents-list').innerHTML).toContain('Fresh Doc');
+      expect(document.getElementById('documents-list').innerHTML).not.toContain('Stale Doc');
+    });
+
+    it('a stale failure does not paint the error card over fresher data', async () => {
+      let rejectFirst;
+      api.getDocuments.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+      const firstLoad = loadDocuments('team-1'); // in flight, will fail late
+
+      api.getDocuments.mockResolvedValue([
+        { id: 'doc-2', title: 'Fresh Doc', updated_at: '2024-01-02' },
+      ]);
+      await fetchDocumentsForCurrentProject();
+
+      rejectFirst(new Error('slow network died'));
+      await firstLoad;
+
+      const list = document.getElementById('documents-list');
+      expect(list.innerHTML).toContain('Fresh Doc');
+      expect(list.innerHTML).not.toContain('Failed to load documents');
+    });
+  });
 });
 
 describe('renderDocuments', () => {
@@ -317,6 +363,9 @@ describe('viewDocument', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load linked issues:', expect.any(Error));
       const content = document.getElementById('document-detail-content');
       expect(content.innerHTML).toContain("Couldn't load linked issues");
+      // PR #211 review finding 3: error-tinted, not the same text-muted
+      // styling as the genuinely-empty "None" case.
+      expect(content.innerHTML).toContain('sidebar-load-error');
       consoleErrorSpy.mockRestore();
     });
 
@@ -334,6 +383,8 @@ describe('viewDocument', () => {
       const content = document.getElementById('document-detail-content');
       expect(content.innerHTML).toContain('Sprint');
       expect(content.innerHTML).toContain("Couldn't load");
+      // PR #211 review finding 3: error-tinted marker
+      expect(content.innerHTML).toContain('sidebar-load-error');
       consoleErrorSpy.mockRestore();
     });
   });

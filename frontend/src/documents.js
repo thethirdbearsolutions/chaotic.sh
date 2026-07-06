@@ -272,6 +272,13 @@ export function filterDocuments() {
   renderDocuments('', currentViewMode);
 }
 
+// Monotonic request id shared by loadDocuments() and
+// fetchDocumentsForCurrentProject() — both paint the same #documents-list,
+// so they must order against each other: a Retry racing the ambient
+// project-switch subscriber below could otherwise paint the wrong project's
+// documents (CHT-1224 PR #211 review finding 2; CHT-1211 item 7 pattern).
+let loadDocumentsRequestId = 0;
+
 /**
  * Re-fetch documents from server with current project filter, then re-render.
  */
@@ -279,11 +286,16 @@ export async function fetchDocumentsForCurrentProject() {
   const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
 
+  const requestId = ++loadDocumentsRequestId;
+
   const projectFilter = getCurrentProject() || null;
   try {
-    documents = await api.getDocuments(teamId, projectFilter);
+    const fetched = await api.getDocuments(teamId, projectFilter);
+    if (requestId !== loadDocumentsRequestId) return; // a newer documents load has since started — drop this stale response
+    documents = fetched;
     filterDocuments();
   } catch (e) {
+    if (requestId !== loadDocumentsRequestId) return;
     // CHT-1224: was showApiError-only — the stale skeleton/list stayed on
     // screen with no indication the refresh failed. Render a persistent
     // error + Retry cta like loadDocuments() does.
@@ -323,6 +335,8 @@ export async function loadDocuments(teamId, projectId = null) {
   currentTeamId = teamId;
   setSelectedDocIndex(-1);
 
+  const requestId = ++loadDocumentsRequestId;
+
   // Show loading skeleton (CHT-1047)
   const listEl = document.getElementById('documents-list');
   if (listEl) {
@@ -343,7 +357,9 @@ export async function loadDocuments(teamId, projectId = null) {
   }
 
   try {
-    documents = await api.getDocuments(teamId, projectId);
+    const fetched = await api.getDocuments(teamId, projectId);
+    if (requestId !== loadDocumentsRequestId) return; // a newer documents load has since started — drop this stale response
+    documents = fetched;
 
     // Initialize view toggle button states
     const listBtn = document.getElementById('doc-view-list');
@@ -355,6 +371,7 @@ export async function loadDocuments(teamId, projectId = null) {
 
     filterDocuments();  // Apply search/sort and render
   } catch (e) {
+    if (requestId !== loadDocumentsRequestId) return;
     // CHT-1224: was clearing the skeleton to '' (CHT-1047) — worse than the
     // skeleton, since it left no message at all once the 3s toast passed,
     // indistinguishable from a team with zero documents. Render a persistent
@@ -974,7 +991,9 @@ export async function viewDocument(documentId, pushHistory = true) {
       // with genuinely no linked issues. Log it and render a distinct
       // "couldn't load" marker in the sidebar slot instead.
       console.error('Failed to load linked issues:', e);
-      sidebarLinkedHtml = '<span class="text-muted">Couldn\'t load linked issues</span>';
+      // sidebar-load-error (CHT-1224 PR #211 review finding 3): error-tinted,
+      // not the same text-muted styling as the genuinely-empty "None" case.
+      sidebarLinkedHtml = '<span class="sidebar-load-error">Couldn\'t load linked issues</span>';
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `
@@ -1018,7 +1037,7 @@ export async function viewDocument(documentId, pushHistory = true) {
             ${sprintName || sprintLoadFailed ? `
             <div class="property-row">
               <span class="property-label">Sprint</span>
-              <span class="property-value-static">${sprintLoadFailed ? '<span class="text-muted">Couldn\'t load</span>' : escapeHtml(sprintName)}</span>
+              <span class="property-value-static">${sprintLoadFailed ? '<span class="sidebar-load-error">Couldn\'t load</span>' : escapeHtml(sprintName)}</span>
             </div>
             ` : ''}
 

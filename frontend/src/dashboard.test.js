@@ -423,6 +423,53 @@ describe('dashboard module', () => {
 
             expect(document.getElementById('dashboard-sprint-status').innerHTML).toBe('');
         });
+
+        // CHT-1224 PR #211 review finding 2: loadSprintStatus() now has a
+        // Retry button AND an ambient project-switch subscriber — a Retry
+        // racing a project switch must not paint stale sprint cards.
+        describe('request sequencing (out-of-order responses)', () => {
+            it('drops a slow response from a superseded loadSprintStatus()', async () => {
+                let resolveFirst;
+                api.getCurrentSprint.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+                const firstLoad = loadSprintStatus(); // in flight, slow (e.g. a clicked Retry)
+
+                api.getCurrentSprint.mockResolvedValue({ id: 'sprint-2', name: 'Fresh Sprint' });
+                api.getIssues.mockResolvedValue([]);
+                await loadSprintStatus(); // newer request resolves first
+
+                const container = document.getElementById('dashboard-sprint-status');
+                expect(container.innerHTML).toContain('Fresh Sprint');
+
+                // The slow first request now resolves — must be dropped
+                resolveFirst({ id: 'sprint-1', name: 'Stale Sprint' });
+                await firstLoad;
+
+                expect(container.innerHTML).toContain('Fresh Sprint');
+                expect(container.innerHTML).not.toContain('Stale Sprint');
+            });
+
+            it('a stale failure does not paint the error card over fresher data', async () => {
+                const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+                let rejectFirst;
+                const promiseAllSpy = vi.spyOn(Promise, 'all').mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+                api.getCurrentSprint.mockResolvedValue({ id: 'sprint-2', name: 'Fresh Sprint' });
+                api.getIssues.mockResolvedValue([]);
+
+                const firstLoad = loadSprintStatus(); // aggregation will fail late
+                await loadSprintStatus(); // newer request resolves first
+
+                const container = document.getElementById('dashboard-sprint-status');
+                expect(container.innerHTML).toContain('Fresh Sprint');
+
+                rejectFirst(new Error('slow aggregation died'));
+                await firstLoad;
+
+                expect(container.innerHTML).toContain('Fresh Sprint');
+                expect(container.innerHTML).not.toContain('load sprint status');
+                promiseAllSpy.mockRestore();
+                consoleErrorSpy.mockRestore();
+            });
+        });
     });
 
     describe('renderMyIssues', () => {

@@ -61,6 +61,12 @@ subscribe((key) => {
     loadSprints();
 });
 
+// Monotonic request id — lets loadSprints() drop a response from a
+// superseded request (Retry racing the ambient project-switch subscriber
+// above) instead of painting the wrong project's sprints (CHT-1224 PR #211
+// review finding 2; same pattern as viewSprint below / CHT-1211 item 7).
+let loadSprintsRequestId = 0;
+
 export async function loadSprints() {
     const projectId = getCurrentProject();
     if (!projectId) {
@@ -75,6 +81,8 @@ export async function loadSprints() {
         }
         return;
     }
+
+    const requestId = ++loadSprintsRequestId;
 
     invalidateSprintCache();
 
@@ -93,10 +101,14 @@ export async function loadSprints() {
 
     try {
         await api.getCurrentSprint(projectId);
-        sprints = await api.getSprints(projectId);
+        const fetched = await api.getSprints(projectId);
+        if (requestId !== loadSprintsRequestId) return; // a newer loadSprints() has since started — drop this stale response
+
+        sprints = fetched;
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
+        if (requestId !== loadSprintsRequestId) return;
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadSprints().
         if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' }, variant: 'error' });

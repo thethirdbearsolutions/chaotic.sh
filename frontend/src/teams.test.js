@@ -451,6 +451,59 @@ describe('loadTeamInvitations', () => {
 
     expect(api.getTeamInvitations).toHaveBeenCalledTimes(2);
   });
+
+  // CHT-1224 PR #211 review finding 3: the failure state must be visually
+  // distinct from the plain informational/empty box, not just reworded.
+  it('error-tints the failure state (empty-state-error)', async () => {
+    api.getTeamInvitations.mockRejectedValue(new Error('network down'));
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('empty-state-error');
+  });
+
+  // CHT-1224 PR #211 review finding 2: loadTeamInvitations() now has a
+  // Retry button — a double-clicked Retry (or Retry racing a team switch)
+  // must not let a stale response win by network timing.
+  describe('request sequencing (out-of-order responses)', () => {
+    it('drops a slow response from a superseded loadTeamInvitations()', async () => {
+      let resolveFirst;
+      api.getTeamInvitations.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+      const firstLoad = loadTeamInvitations(); // in flight, slow
+
+      api.getTeamInvitations.mockResolvedValue([
+        { id: 'inv-2', email: 'fresh@example.com', role: 'member', expires_at: '2024-12-31' },
+      ]);
+      await loadTeamInvitations(); // newer request resolves first
+
+      const list = document.getElementById('team-invitations-list');
+      expect(list.innerHTML).toContain('fresh@example.com');
+
+      // The slow first request now resolves — must be dropped
+      resolveFirst([{ id: 'inv-1', email: 'stale@example.com', role: 'member', expires_at: '2024-12-31' }]);
+      await firstLoad;
+
+      expect(list.innerHTML).toContain('fresh@example.com');
+      expect(list.innerHTML).not.toContain('stale@example.com');
+    });
+
+    it('a stale failure does not paint the error card over fresher data', async () => {
+      let rejectFirst;
+      api.getTeamInvitations.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+      const firstLoad = loadTeamInvitations(); // in flight, will fail late
+
+      api.getTeamInvitations.mockResolvedValue([]);
+      await loadTeamInvitations();
+
+      const list = document.getElementById('team-invitations-list');
+      expect(list.innerHTML).toContain('No pending invitations');
+
+      rejectFirst(new Error('slow network died'));
+      await firstLoad;
+
+      expect(list.innerHTML).toContain('No pending invitations');
+      expect(list.innerHTML).not.toContain("Couldn't load invitations");
+    });
+  });
 });
 
 describe('renderTeamInvitations', () => {

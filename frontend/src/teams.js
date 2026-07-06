@@ -192,16 +192,26 @@ export function renderTeamMembers() {
     .join('');
 }
 
+// Monotonic request id — lets loadTeamInvitations() drop a response from a
+// superseded request (double-clicked Retry, or Retry racing a team switch)
+// instead of painting stale data (CHT-1224 PR #211 review finding 2).
+let loadTeamInvitationsRequestId = 0;
+
 /**
  * Load team invitations
  */
 export async function loadTeamInvitations() {
   if (!getCurrentTeam()) return;
 
+  const requestId = ++loadTeamInvitationsRequestId;
+
   try {
-    invitations = await api.getTeamInvitations(getCurrentTeam().id);
+    const fetched = await api.getTeamInvitations(getCurrentTeam().id);
+    if (requestId !== loadTeamInvitationsRequestId) return; // a newer loadTeamInvitations() has since started — drop this stale response
+    invitations = fetched;
     renderTeamInvitations();
   } catch (e) {
+    if (requestId !== loadTeamInvitationsRequestId) return;
     // CHT-1224: a 403 (not an admin) is an expected, silent no-op — but any
     // other failure (network, 500) used to collapse into the same blank
     // list, with zero indication to an actual admin that the request failed.
@@ -210,9 +220,11 @@ export async function loadTeamInvitations() {
       return;
     }
     console.error('Failed to load team invitations:', e);
+    // empty-state-error (CHT-1224 PR #211 review finding 3): failure states
+    // must be visually distinct from informational/empty boxes.
     document.getElementById('team-invitations-list').innerHTML = `
-      <div class="empty-state" style="padding: 1rem">
-        <p>Couldn't load invitations</p>
+      <div class="empty-state empty-state-error" style="padding: 1rem">
+        <h3>Couldn't load invitations</h3>
         <button class="btn btn-secondary btn-small" data-action="retry-load-team-invitations">Retry</button>
       </div>
     `;

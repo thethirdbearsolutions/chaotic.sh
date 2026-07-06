@@ -258,9 +258,17 @@ export function renderMyIssues() {
 /**
  * Load and render active sprint status across all projects.
  */
+// Monotonic request id — lets loadSprintStatus() drop a response from a
+// superseded request (Retry racing the ambient project-switch subscriber
+// above) instead of painting stale sprint cards (CHT-1224 PR #211 review
+// finding 2; same pattern as loadMyIssues above / CHT-1211 review #3).
+let loadSprintStatusRequestId = 0;
+
 export async function loadSprintStatus() {
     const container = document.getElementById('dashboard-sprint-status');
     if (!container) return;
+
+    const requestId = ++loadSprintStatusRequestId;
 
     const currentProjectId = getCurrentProject();
     const allProjects = getProjects();
@@ -301,8 +309,10 @@ export async function loadSprintStatus() {
             }
         });
         const results = (await Promise.all(sprintPromises)).filter(Boolean);
+        if (requestId !== loadSprintStatusRequestId) return; // a newer loadSprintStatus() has since started — drop this stale response
         renderSprintStatus(results);
     } catch (e) {
+        if (requestId !== loadSprintStatusRequestId) return;
         // CHT-1224: was `container.innerHTML = ''` with zero indication — the
         // whole Sprint Status section just disappeared on failure. Render a
         // persistent error + Retry cta instead.
