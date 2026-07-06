@@ -79,7 +79,10 @@ export async function loadTeamAgentsQuiet(teamId) {
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {
+    // CHT-1224: console.error-only silently broke the assignee picker
+    // app-wide until the next team switch, with zero user-visible signal.
     console.error('Failed to load team agents:', e);
+    showApiError('load team agents', e);
   }
 }
 

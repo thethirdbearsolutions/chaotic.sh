@@ -136,7 +136,10 @@ export async function loadTeamMembersQuiet() {
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
   } catch (e) {
+    // CHT-1224: console.error-only silently broke the assignee picker
+    // app-wide until the next team switch, with zero user-visible signal.
     console.error('Failed to load team members:', e);
+    showApiError('load team members', e);
   }
 }
 
@@ -198,9 +201,21 @@ export async function loadTeamInvitations() {
   try {
     invitations = await api.getTeamInvitations(getCurrentTeam().id);
     renderTeamInvitations();
-  } catch {
-    // User might not be admin
-    document.getElementById('team-invitations-list').innerHTML = '';
+  } catch (e) {
+    // CHT-1224: a 403 (not an admin) is an expected, silent no-op — but any
+    // other failure (network, 500) used to collapse into the same blank
+    // list, with zero indication to an actual admin that the request failed.
+    if (e?.status === 403) {
+      document.getElementById('team-invitations-list').innerHTML = '';
+      return;
+    }
+    console.error('Failed to load team invitations:', e);
+    document.getElementById('team-invitations-list').innerHTML = `
+      <div class="empty-state" style="padding: 1rem">
+        <p>Couldn't load invitations</p>
+        <button class="btn btn-secondary btn-small" data-action="retry-load-team-invitations">Retry</button>
+      </div>
+    `;
   }
 }
 
@@ -473,7 +488,11 @@ export async function loadLabels() {
         const labels = await api.getLabels(getCurrentTeam().id);
         setLabels(labels);
     } catch (e) {
+        // CHT-1224: was console.error-only — silently broke every label
+        // picker app-wide (issue-creation, issues-filter, document labels)
+        // until the next team switch, with zero user-visible signal.
         console.error('Failed to load labels:', e);
+        showApiError('load labels', e);
     }
 }
 
@@ -509,6 +528,9 @@ registerActions({
   },
   'delete-invitation': (event, dataset) => {
     deleteInvitation(dataset.invitationId);
+  },
+  'retry-load-team-invitations': () => {
+    loadTeamInvitations();
   },
   'invite-member': (event) => {
     handleInvite(event);
