@@ -118,6 +118,7 @@ export async function loadMyIssues() {
                 heading: 'Failed to load issues',
                 description: 'Check your connection and try again',
                 cta: { label: 'Retry', action: 'retry-load-my-issues' },
+                variant: 'error',
             });
         }
         showApiError('load issues', e);
@@ -156,6 +157,7 @@ export async function loadDashboardActivity({ showLoading = true } = {}) {
                 icon: EMPTY_ICONS.activity,
                 heading: 'Failed to load activity',
                 description: 'Check your connection and try again',
+                variant: 'error',
             });
         }
     }
@@ -310,6 +312,7 @@ export async function loadSprintStatus() {
             heading: "Couldn't load sprint status",
             description: 'Check your connection and try again',
             cta: { label: 'Retry', action: 'retry-load-sprint-status' },
+            variant: 'error',
         });
     }
 }

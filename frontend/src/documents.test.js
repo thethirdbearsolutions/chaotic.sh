@@ -150,6 +150,8 @@ describe('loadDocuments', () => {
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).toContain('Failed to load documents');
     expect(list.innerHTML).toContain('data-action="retry-load-documents"');
+    // CHT-1224: error state visually distinguishable from empty state
+    expect(list.innerHTML).toContain('empty-state-error');
   });
 
   it('wires the retry-load-documents action to re-run loadDocuments() for the last-loaded team', async () => {
@@ -187,6 +189,8 @@ describe('fetchDocumentsForCurrentProject', () => {
     const list = document.getElementById('documents-list');
     expect(list.innerHTML).toContain('Failed to load documents');
     expect(list.innerHTML).toContain('data-action="retry-load-documents"');
+    // CHT-1224: error state visually distinguishable from empty state
+    expect(list.innerHTML).toContain('empty-state-error');
   });
 });
 

@@ -134,6 +134,8 @@ describe('board', () => {
 
             const board = document.getElementById('kanban-board');
             expect(board.innerHTML).toContain('data-action="retry-load-board"');
+            // CHT-1224: error state visually distinguishable from empty state
+            expect(board.innerHTML).toContain('empty-state-error');
 
             api.getIssues.mockResolvedValue([]);
             await boardActions['retry-load-board']();

@@ -1249,6 +1249,8 @@ describe('issues-view', () => {
             const list = document.getElementById('issues-list');
             expect(list.innerHTML).toContain('Failed to load issues');
             expect(list.innerHTML).toContain('data-action="retry-load-issues"');
+            // CHT-1224: error state visually distinguishable from empty state
+            expect(list.innerHTML).toContain('empty-state-error');
         });
 
         it('wires the retry-load-issues action to re-run loadIssues()', async () => {

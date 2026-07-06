@@ -257,6 +257,8 @@ describe('loadSprints', () => {
 
         const html = document.getElementById('sprints-list').innerHTML;
         expect(html).toContain('data-action="retry-load-sprints"');
+        // CHT-1224: error state visually distinguishable from empty state
+        expect(html).toContain('empty-state-error');
 
         api.getCurrentSprint.mockResolvedValue({ id: 's1' });
         api.getSprints.mockResolvedValue([]);

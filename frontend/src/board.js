@@ -122,7 +122,7 @@ export async function loadBoard() {
         if (requestId !== loadBoardRequestId) return;
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadBoard().
-        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' } });
+        if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-board' }, variant: 'error' });
         showApiError('load board', e);
     }
 }

@@ -230,6 +230,8 @@ describe('dashboard module', () => {
             const list = document.getElementById('my-issues-list');
             expect(list.innerHTML).toContain('Failed to load issues');
             expect(list.innerHTML).toContain('data-action="retry-load-my-issues"');
+            // CHT-1224: error state visually distinguishable from empty state
+            expect(list.innerHTML).toContain('empty-state-error');
         });
 
         it('wires the retry-load-my-issues action to re-run loadMyIssues()', async () => {
@@ -328,6 +330,8 @@ describe('dashboard module', () => {
             expect(container.innerHTML).toContain('Failed to load activity');
             expect(container.innerHTML).toContain('Check your connection and try again');
             expect(container.innerHTML).toContain('empty-state');
+            // CHT-1224: error state visually distinguishable from empty state
+            expect(container.innerHTML).toContain('empty-state-error');
         });
 
         it('does nothing if no current team', async () => {
@@ -398,6 +402,8 @@ describe('dashboard module', () => {
             // the substring unaffected by that stubbing.
             expect(container.innerHTML).toContain('load sprint status');
             expect(container.innerHTML).toContain('data-action="retry-load-sprint-status"');
+            // CHT-1224: error state visually distinguishable from empty state
+            expect(container.innerHTML).toContain('empty-state-error');
             promiseAllSpy.mockRestore();
             consoleErrorSpy.mockRestore();
         });

@@ -17,17 +17,24 @@ import { escapeHtml, escapeAttr } from './utils.js';
  * @param {string} options.cta.label - Button label
  * @param {string} options.cta.action - data-action value
  * @param {Object} [options.cta.data] - Additional data-* attributes (key-value pairs)
+ * @param {'error'} [options.variant] - CHT-1224: pass 'error' for failure
+ *   states (as opposed to genuine empty collections) so they're visually
+ *   distinguishable — a low-pri ticket had flagged the dashboard's error and
+ *   empty states as identical-looking, which this variant unifies a fix for
+ *   across every call site rather than patching one view.
  * @returns {string} HTML string
  */
-export function renderEmptyState({ icon, heading, description, cta }) {
+export function renderEmptyState({ icon, heading, description, cta, variant }) {
     const ctaHtml = cta ? `
         <button class="btn btn-primary empty-state-cta" data-action="${escapeAttr(cta.action)}"${
             cta.data ? Object.entries(cta.data).map(([k, v]) => ` data-${escapeAttr(k)}="${escapeAttr(v)}"`).join('') : ''
         }>${escapeHtml(cta.label)}</button>
     ` : '';
 
+    const variantClass = variant === 'error' ? ' empty-state-error' : '';
+
     return `
-        <div class="empty-state">
+        <div class="empty-state${variantClass}">
             <div class="empty-state-icon">${icon}</div>
             <h3>${escapeHtml(heading)}</h3>
             <p>${escapeHtml(description)}</p>

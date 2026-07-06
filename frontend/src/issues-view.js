@@ -372,6 +372,7 @@ export async function loadIssues() {
                 heading: 'Failed to load issues',
                 description: 'Check your connection and try again',
                 cta: { label: 'Retry', action: 'retry-load-issues' },
+                variant: 'error',
             });
         }
         showApiError('load issues', e);

@@ -99,7 +99,7 @@ export async function loadSprints() {
     } catch (e) {
         // CHT-1224: the copy said "try again" but shipped no button — add the
         // cta the helper already supports, wired to re-run loadSprints().
-        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' } });
+        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' }, variant: 'error' });
         showApiError('load sprints', e);
     }
 }

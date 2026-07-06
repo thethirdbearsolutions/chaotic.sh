@@ -294,6 +294,7 @@ export async function fetchDocumentsForCurrentProject() {
         heading: 'Failed to load documents',
         description: 'Check your connection and try again',
         cta: { label: 'Retry', action: 'retry-load-documents' },
+        variant: 'error',
       });
     }
     showApiError('load documents', e);
@@ -365,6 +366,7 @@ export async function loadDocuments(teamId, projectId = null) {
         heading: 'Failed to load documents',
         description: 'Check your connection and try again',
         cta: { label: 'Retry', action: 'retry-load-documents' },
+        variant: 'error',
       });
     }
     showApiError('load documents', e);

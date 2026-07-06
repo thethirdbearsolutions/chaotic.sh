@@ -1896,6 +1896,17 @@ select:focus-visible {
     margin-top: 1rem;
 }
 
+/* CHT-1224: error variant — visually distinguishes a failed load from a
+   genuinely empty collection (previously identical-looking). */
+.empty-state-error .empty-state-icon {
+    color: var(--error-color);
+    opacity: 0.8;
+}
+
+.empty-state-error h3 {
+    color: var(--error-color);
+}
+
 /* Quick create bar */
 .quick-create {
     display: flex;
