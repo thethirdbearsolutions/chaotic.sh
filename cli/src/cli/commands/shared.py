@@ -13,7 +13,7 @@ from rich.console import Console
 
 
 class _JsonAwareConsole:
-    """Proxy that redirects ``.print()`` to stderr while --json mode is
+    """Proxy that redirects Rich output to stderr while --json mode is
     active (CHT-1222), so no command's status lines/tables/panels can leak
     onto the single-JSON-value stdout contract.
 
@@ -28,21 +28,41 @@ class _JsonAwareConsole:
     Rich's ``Console.print()`` has no per-call ``file=`` override (the
     file is bound at Console construction), so this holds two real
     Console instances — one bound to stdout, one to stderr — and picks
-    per call. ``.print`` is the only Console method any command in this
-    codebase calls (confirmed via grep); everything else falls through to
-    the stdout console via ``__getattr__`` as a defensive fallback.
+    per call. Only the output methods commands are expected to use are
+    exposed (``print``/``log``/``rule``/``print_json``/``status``), each
+    routed through the same stream selection. There is deliberately no
+    ``__getattr__`` fallback: any other Console method raises
+    AttributeError at dev time (fail loud) instead of silently picking
+    the wrong stream in production — a future command imitating existing
+    chatter with a new Rich method must be added here, where it will get
+    the redirection for free.
     """
 
     def __init__(self):
         self._stdout_console = Console()
         self._stderr_console = Console(stderr=True)
 
-    def print(self, *args, **kwargs):
-        target = self._stderr_console if _is_json_output() else self._stdout_console
-        target.print(*args, **kwargs)
+    @property
+    def _target(self):
+        return self._stderr_console if _is_json_output() else self._stdout_console
 
-    def __getattr__(self, name):
-        return getattr(self._stdout_console, name)
+    def print(self, *args, **kwargs):
+        self._target.print(*args, **kwargs)
+
+    def log(self, *args, **kwargs):
+        self._target.log(*args, **kwargs)
+
+    def rule(self, *args, **kwargs):
+        self._target.rule(*args, **kwargs)
+
+    def print_json(self, *args, **kwargs):
+        # NOTE: this is Rich chatter (pretty-printed, human-facing), not
+        # the machine contract — the actual --json payload always goes
+        # through cli.main.output_json to stdout.
+        self._target.print_json(*args, **kwargs)
+
+    def status(self, *args, **kwargs):
+        return self._target.status(*args, **kwargs)
 
 
 console = _JsonAwareConsole()
@@ -110,6 +130,15 @@ def resolve_content_value(ctx, param, value):
         try:
             with open(path, encoding="utf-8") as f:
                 return f.read()
+        except UnicodeDecodeError as exc:
+            # e.g. --description @screenshot.png — not OSError (it's a
+            # ValueError subclass), and this fires during Click's
+            # parameter-callback phase, outside every command decorator's
+            # reach; UsageError routes it through the Group-level --json
+            # handling (CHT-1222).
+            raise click.UsageError(
+                f"Could not read content from {path!r}: not valid UTF-8 text ({exc})"
+            )
         except OSError as exc:
             raise click.UsageError(
                 f"Could not read content from {path!r}: {exc.strerror or exc}"

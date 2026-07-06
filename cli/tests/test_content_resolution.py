@@ -10,6 +10,19 @@ from unittest.mock import MagicMock, patch
 import click
 import pytest
 
+# Imported at module scope, OUTSIDE any patch window, so it lands in the
+# snapshot patch.dict('sys.modules') takes at fixture setup and survives
+# teardown. Without this, when THIS FILE runs alone, the first integration
+# test's patch.dict teardown evicts cli.main from sys.modules (it was
+# first-imported inside that window); the next test's
+# patch('cli.main.get_token') then reaches the evicted module via the
+# stale `main` attribute on the still-cached `cli` package and patches an
+# ORPHANED module object, while the test's own `from cli.main import cli`
+# re-imports a fresh, unpatched one -> spurious "Not authenticated"
+# failures that never reproduce in a full-suite run (where another file
+# has already imported cli.main outside a patch window).
+import cli.main  # noqa: F401  (see comment above)
+
 
 # ── Unit tests for the helper ────────────────────────────────────────────────
 
@@ -80,6 +93,20 @@ def test_at_with_empty_path_raises(resolver):
     # "@" alone means try to read file with empty path — should fail clearly.
     with pytest.raises(click.UsageError):
         resolver(None, None, "@")
+
+
+def test_binary_file_raises_usage_error_not_traceback(resolver, tmp_path):
+    """@path pointing at a binary file (e.g. --description @screenshot.png)
+    hits UnicodeDecodeError on read — a ValueError subclass, NOT OSError,
+    so it used to escape as a raw traceback with empty stdout (CHT-1222
+    review finding #3). Must be a clean UsageError like the missing-file
+    case."""
+    binary = tmp_path / "screenshot.png"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\xff\xfe\xfd binary junk \xff")
+    with pytest.raises(click.UsageError) as exc:
+        resolver(None, None, f"@{binary}")
+    assert str(binary) in str(exc.value)
+    assert "UTF-8" in str(exc.value)
 
 
 def test_literal_value_starting_with_hyphen(resolver):
@@ -181,3 +208,25 @@ def test_team_create_double_at_escape(patched_for_integration):
     call_args = client.create_team.call_args.args
     description_passed = call_kwargs.get('description') or (call_args[2] if len(call_args) > 2 else None)
     assert description_passed == "@alice"
+
+
+def test_team_create_binary_file_json_emits_error_json(patched_for_integration, tmp_path):
+    """A binary @file under --json flows through the parameter-callback
+    phase (outside every command decorator) into the Group-level --json
+    handling: {"error": ...} on stdout, exit 2 — not a raw traceback with
+    empty stdout (CHT-1222)."""
+    import json as json_mod
+
+    runner, _ = patched_for_integration
+
+    binary = tmp_path / "screenshot.png"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\xff\xfe\xfd")
+
+    from cli.main import cli
+    result = runner.invoke(
+        cli, ['team', 'create', 'Squad', 'SQ', '--description', f'@{binary}', '--json'],
+    )
+
+    assert result.exit_code == 2
+    data = json_mod.loads(result.stdout)
+    assert str(binary) in data['error']
