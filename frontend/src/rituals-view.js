@@ -20,6 +20,7 @@ import {
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // ========================================
 // Rituals top-level view
@@ -42,20 +43,46 @@ async function loadRitualsForProject() {
     if (!projectId) {
         const tabs = document.getElementById('rituals-tabs');
         if (tabs) tabs.classList.add('hidden');
-        if (container) container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
+        // CHT-1226: was a raw icon-less div, missed by CHT-1169.
+        if (container) container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.projects,
+            heading: 'Select a project',
+            description: 'Choose a project to view and manage its rituals',
+        });
         return;
     }
 
     // Set the project context so create/edit/delete functions work
     setCurrentSettingsProjectId(projectId);
 
-    if (container) container.innerHTML = '<div class="loading">Loading rituals...</div>';
+    // CHT-1226: loading skeleton, matching epics.js/board.js's pattern —
+    // was plain 'Loading rituals...' text.
+    if (container) container.innerHTML = Array(3).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <div class="skeleton skeleton-badge"></div>
+                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 
     try {
         await loadProjectSettingsRituals();
         // renderRitualsView() is called via the _onRitualsChanged callback
     } catch (e) {
-        if (container) container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
+        // CHT-1226: was a raw div exposing the raw exception message
+        // directly, unlike every other list view post-PR#200.
+        if (container) container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.rituals,
+            heading: 'Failed to load rituals',
+            description: 'Check your connection and try again',
+            cta: { label: 'Retry', action: 'retry-load-rituals' },
+            variant: 'error',
+        });
+        showApiError('load rituals', e);
     }
 }
 
@@ -320,4 +347,5 @@ registerActions({
     'attest-ticket-ritual': (_event, data) => {
         attestTicketRitual(data.ritualId, data.issueId);
     },
+    'retry-load-rituals': () => loadRitualsForProject(),
 });

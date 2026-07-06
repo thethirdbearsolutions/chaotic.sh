@@ -124,6 +124,41 @@ describe('rituals-view', () => {
             const content = document.getElementById('rituals-content');
             expect(content.innerHTML).toContain('Select a project');
         });
+
+        // CHT-1226: rituals-view.js's loading/error states were raw
+        // icon-less divs, missed by the CHT-1169 standardization pass.
+        it('shows a skeleton while loading (not the old plain-text loading div)', async () => {
+            const { setState } = await import('./state.js');
+            setState('currentProject', 'p1');
+            document.body.innerHTML = `<div id="rituals-content"></div>`;
+            let capturedDuringLoad = null;
+            loadProjectSettingsRituals.mockImplementation(async () => {
+                capturedDuringLoad = document.getElementById('rituals-content').innerHTML;
+            });
+
+            await loadRitualsView();
+
+            expect(capturedDuringLoad).toContain('skeleton-list-item');
+            expect(capturedDuringLoad).not.toContain('Loading rituals...');
+            setState('currentProject', null);
+        });
+
+        it('shows a standardized error state with retry on fetch failure', async () => {
+            const { setState } = await import('./state.js');
+            setState('currentProject', 'p1');
+            document.body.innerHTML = `<div id="rituals-content"></div>`;
+            loadProjectSettingsRituals.mockRejectedValue(new Error('boom'));
+
+            await loadRitualsView();
+
+            const content = document.getElementById('rituals-content');
+            expect(content.innerHTML).toContain('empty-state-icon');
+            expect(content.innerHTML).toContain('Failed to load rituals');
+            expect(content.innerHTML).not.toContain('boom');
+            expect(content.innerHTML).toContain('data-action="retry-load-rituals"');
+            expect(showApiError).toHaveBeenCalledWith('load rituals', expect.any(Error));
+            setState('currentProject', null);
+        });
     });
 
     // ========================================
