@@ -479,9 +479,15 @@ export async function viewIssue(issueId, pushHistory = true) {
         if (pushHistory) saveScrollPosition();
 
         ticketRitualsCollapsed = true;
+        // CHT-1224: comments used to be the one fetch in this Promise.all with
+        // no per-call .catch (unlike ritual status/sprints below), so a single
+        // comments-endpoint failure discarded 4 successful fetches and failed
+        // the whole detail view. Isolate it like documents.js's viewDocument()
+        // does, and surface a small notice in the comments section instead.
+        let commentsLoadFailed = false;
         const [issue, comments, activities, subIssues, relations, ritualStatus] = await Promise.all([
             api.getIssue(issueId),
-            api.getComments(issueId),
+            api.getComments(issueId).catch(e => { console.error('Failed to load comments:', e); commentsLoadFailed = true; return []; }),
             api.getActivities(issueId),
             api.getSubIssues(issueId),
             api.getRelations(issueId),
@@ -703,9 +709,15 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <div class="comments-list section-collapsible-content">
-                            ${allComments.length === 0 ? `
+                            ${commentsLoadFailed ? `
+                                <div class="comments-error">
+                                    Comments failed to load.
+                                    <button type="button" class="btn btn-secondary btn-sm" data-action="retry-issue-comments" data-issue-id="${escapeAttr(issue.id)}">Retry</button>
+                                </div>
+                            ` : ''}
+                            ${allComments.length === 0 ? (commentsLoadFailed ? '' : `
                                 <div class="comments-empty">No comments yet</div>
-                            ` : allComments.map(comment => `
+                            `) : allComments.map(comment => `
                                 <div class="comment ${comment.is_attestation ? 'comment-attestation' : ''} ${comment.is_pending ? 'comment-attestation-pending' : ''}">
                                     <div class="comment-avatar ${comment.is_attestation ? 'avatar-attestation' : ''}">${comment.is_attestation ? (comment.is_pending ? '⏳' : '✓') : (comment.author_name || 'U').charAt(0).toUpperCase()}</div>
                                     <div class="comment-body">
@@ -1386,6 +1398,13 @@ function navigateAdjacentIssue(direction) {
 // ============================================================================
 
 registerActions({
+    'retry-issue-comments': (_event, data) => {
+        // Simplest correct fix (CHT-1224, mirrors documents.js's
+        // retry-document-comments): re-run the whole detail-view load rather
+        // than surgically re-fetching just comments and re-wiring whatever
+        // that section's own listeners would need.
+        viewIssue(data.issueId, false);
+    },
     'show-detail-dropdown': (event, data, target) => {
         showDetailDropdown(event, data.dropdownType, data.issueId, target);
     },
