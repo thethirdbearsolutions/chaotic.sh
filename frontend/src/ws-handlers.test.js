@@ -22,7 +22,9 @@ vi.mock('./dashboard.js', () => ({
     getMyIssues: vi.fn(() => []),
     setMyIssues: vi.fn(),
     renderMyIssues: vi.fn(),
+    loadMyIssues: vi.fn(() => Promise.resolve()),
     loadDashboardActivity: vi.fn(),
+    loadSprintStatus: vi.fn(() => Promise.resolve()),
 }));
 
 // Mock issue-list.js
@@ -30,15 +32,26 @@ vi.mock('./issue-list.js', () => ({
     renderIssues: vi.fn(),
 }));
 
+// Mock issues-view.js (CHT-1225: reconnect resync refetches, not just re-renders)
+vi.mock('./issues-view.js', () => ({
+    loadIssues: vi.fn(() => Promise.resolve()),
+}));
+
 // Mock board.js
 vi.mock('./board.js', () => ({
-    renderBoard: vi.fn(),
+    loadBoard: vi.fn(),
+    scheduleBoardRefresh: vi.fn(),
 }));
 
 // Mock sprints.js
 vi.mock('./sprints.js', () => ({
-    loadSprints: vi.fn(),
-    viewSprint: vi.fn(),
+    // Both return promises for real (refreshSprintView() .catch()es them) --
+    // previously bare vi.fn()s, which threw "Cannot read properties of
+    // undefined (reading 'catch')" whenever that branch actually ran (caught
+    // silently by ws.js's per-handler dispatch try/catch, so pre-existing
+    // tests never surfaced it).
+    loadSprints: vi.fn(() => Promise.resolve()),
+    viewSprint: vi.fn(() => Promise.resolve()),
     getCurrentSprintDetail: vi.fn(() => null),
     clearCachedCurrentSprintIds: vi.fn(),
 }));
@@ -81,13 +94,14 @@ vi.mock('./documents.js', () => ({
 
 // Mock epics.js (CHT-1226)
 vi.mock('./epics.js', () => ({
-    loadEpics: vi.fn(),
+    loadEpics: vi.fn(() => Promise.resolve()),
 }));
 
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
-import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
+import { getMyIssues, setMyIssues, renderMyIssues, loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
-import { renderBoard } from './board.js';
+import { loadIssues } from './issues-view.js';
+import { loadBoard, scheduleBoardRefresh } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
@@ -149,10 +163,22 @@ describe('ws-handlers.js', () => {
             expect(setMyIssues).toHaveBeenCalledWith([myIssue]);
         });
 
-        it('re-renders board on board view', () => {
+        // CHT-1225 item 1: board.js kept a private issue cache renderBoard()
+        // alone couldn't refresh -- must go through scheduleBoardRefresh(),
+        // which actually re-fetches (debounced).
+        it('schedules a board refresh on board view', () => {
             getCurrentView.mockReturnValue('board');
             dispatch({ type: 'created', entity: 'issue', data: newIssue });
-            expect(renderBoard).toHaveBeenCalled();
+            expect(scheduleBoardRefresh).toHaveBeenCalled();
+        });
+
+        // CHT-1225 item 5: the accompanying 'activity' broadcast for the
+        // same mutation already triggers this via handleActivity -- doing
+        // it here too would double-fetch on every single issue create.
+        it('does not double-fetch dashboard activity directly (left to the activity event)', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'created', entity: 'issue', data: newIssue });
+            expect(loadDashboardActivity).not.toHaveBeenCalled();
         });
 
         it('reloads sprints on sprints view (list)', () => {
@@ -211,10 +237,18 @@ describe('ws-handlers.js', () => {
             expect(renderMyIssues).toHaveBeenCalled();
         });
 
-        it('re-renders board view', () => {
+        // CHT-1225 item 5
+        it('does not double-fetch dashboard activity directly (left to the activity event)', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(loadDashboardActivity).not.toHaveBeenCalled();
+        });
+
+        // CHT-1225 item 1
+        it('schedules a board refresh on board view', () => {
             getCurrentView.mockReturnValue('board');
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
-            expect(renderBoard).toHaveBeenCalled();
+            expect(scheduleBoardRefresh).toHaveBeenCalled();
         });
 
         it('reloads sprints list on sprints view', () => {
@@ -323,6 +357,26 @@ describe('ws-handlers.js', () => {
             expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-2' }]);
             expect(setMyIssues).toHaveBeenCalledWith([]);
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1 deleted', 'info');
+        });
+
+        // CHT-1225 item 1: same board-staleness bug as created/updated.
+        it('schedules a board refresh on board view', () => {
+            getCurrentView.mockReturnValue('board');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(scheduleBoardRefresh).toHaveBeenCalled();
+        });
+
+        // delete_issue has no matching 'activity' broadcast (unlike
+        // created/updated), so this stays -- it's the only trigger for a
+        // delete-driven dashboard activity refresh, not the item 5 double-fetch.
+        it('still fetches dashboard activity on my-issues view (no matching activity event to rely on)', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([{ id: 'issue-1' }]);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(loadDashboardActivity).toHaveBeenCalled();
         });
 
         it('reloads sprints list on sprints view', () => {
@@ -552,6 +606,23 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
             expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
         });
+
+        // CHT-1225 item 4: issue/project lifecycle events show a toast;
+        // sprint events showed none at all.
+        it('shows a toast on sprint created', () => {
+            dispatch({ type: 'created', entity: 'sprint', data: { id: 's1', name: 'Sprint 3' } });
+            expect(showToast).toHaveBeenCalledWith('New sprint: Sprint 3', 'info');
+        });
+
+        it('shows a toast on sprint closed', () => {
+            dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Sprint 2' } });
+            expect(showToast).toHaveBeenCalledWith('Sprint Sprint 2 closed', 'info');
+        });
+
+        it('shows no toast on sprint updated', () => {
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1', name: 'Sprint 2' } });
+            expect(showToast).not.toHaveBeenCalled();
+        });
     });
 
     describe('attestation', () => {
@@ -616,6 +687,82 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'created', entity: 'unknown', data: {} });
             expect(setIssues).not.toHaveBeenCalled();
             expect(showToast).not.toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1225 item 3: resync on genuine reconnect. ws.js dispatches this
+    // synthetic event (never a real server message) only when the reconnect
+    // followed an actual outage, not a deliberate team switch.
+    describe('connection:reconnected', () => {
+        it('refetches the issues list on the issues view', () => {
+            getCurrentView.mockReturnValue('issues');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadIssues).toHaveBeenCalled();
+        });
+
+        it('refetches my-issues, sprint status, and dashboard activity on the my-issues view', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadMyIssues).toHaveBeenCalled();
+            expect(loadSprintStatus).toHaveBeenCalled();
+            expect(loadDashboardActivity).toHaveBeenCalled();
+        });
+
+        it('refreshes the board on the board view', () => {
+            getCurrentView.mockReturnValue('board');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadBoard).toHaveBeenCalled();
+        });
+
+        it('refreshes the sprints list on the sprints view with no detail open', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadSprints).toHaveBeenCalled();
+        });
+
+        it('refreshes the open sprint detail on the sprints view', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(viewSprint).toHaveBeenCalledWith('s1', false);
+        });
+
+        it('reloads epics on the epics view', () => {
+            getCurrentView.mockReturnValue('epics');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadEpics).toHaveBeenCalled();
+        });
+
+        it('refetches projects on the projects view', async () => {
+            getCurrentView.mockReturnValue('projects');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadProjects).toHaveBeenCalled();
+            await vi.waitFor(() => expect(renderProjects).toHaveBeenCalled());
+        });
+
+        it('refetches the documents list on the documents view', () => {
+            getCurrentView.mockReturnValue('documents');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(refreshDocumentsListIfActive).toHaveBeenCalled();
+        });
+
+        it('reloads gate approvals on the approvals view', () => {
+            getCurrentView.mockReturnValue('approvals');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(mockLoadGateApprovals).toHaveBeenCalled();
+        });
+
+        it('refreshes the open issue detail on the issue-detail view', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+
+        it('does nothing on an unrecognized view', () => {
+            getCurrentView.mockReturnValue('some-other-view');
+            expect(() => dispatch({ type: 'reconnected', entity: 'connection', data: {} })).not.toThrow();
         });
     });
 });

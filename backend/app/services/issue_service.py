@@ -488,7 +488,12 @@ class IssueService:
         is resolved. Bypasses ritual checks because the gate has already
         been resolved by the limbo lifecycle. Emits INTENT_CLEARED
         activity + broadcast as the canonical wake event for the agent's
-        await primitive.
+        await primitive, AND (CHT-1225) an 'issue' broadcast -- this is a
+        real status change, same as any direct PATCH, and board/issue-list/
+        sprints only listen for 'issue' events, not 'activity'. Before this
+        fix an agent-driven claim/close via the ritual/gate flow updated the
+        DB correctly but left every other client's board/list/sprints view
+        silently stale.
         """
         from app.enums import LimboType
         from app.schemas.issue import IssueUpdate
@@ -511,7 +516,7 @@ class IssueService:
         if issue.status == new_status:
             return
 
-        await self.update(
+        updated_issue = await self.update(
             issue,
             IssueUpdate(status=new_status),
             user_id=user_id,
@@ -519,9 +524,35 @@ class IssueService:
             skip_ritual_check=True,
         )
 
+        await self._broadcast_issue_updated(updated_issue)
+
         await self._emit_intent_event(
             issue, user_id, limbo_type, ActivityType.INTENT_CLEARED,
         )
+
+    async def _broadcast_issue_updated(self, issue) -> None:
+        """Broadcast an 'issue' updated event for a service-layer status
+        change (CHT-1225). Mirrors every direct-PATCH broadcast in
+        api/issues.py (issue_to_response + broadcast_issue_event); kept
+        best-effort/logged like every other broadcast helper in this file
+        so a transient websocket failure never fails the underlying
+        transition.
+        """
+        try:
+            from app.websocket import broadcast_issue_event
+            from app.api.issues import issue_to_response
+
+            project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+            if project is None:
+                return
+            response = issue_to_response(issue)
+            await broadcast_issue_event(
+                project.team_id, "updated", response.model_dump(mode="json"),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast issue update for issue=%s", issue.id,
+            )
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key."""

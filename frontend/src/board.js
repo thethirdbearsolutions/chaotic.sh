@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
-import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
+import { escapeHtml, escapeAttr, formatPriority, debounce } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
@@ -139,6 +139,16 @@ export async function loadBoard() {
         showApiError('load board', e);
     }
 }
+
+/**
+ * Debounced loadBoard() for WS-triggered refreshes (CHT-1225). ws-handlers.js
+ * calls this instead of loadBoard() directly for issue created/updated/
+ * deleted events -- a batch mutation (e.g. batch_update_issues) broadcasts
+ * one 'issue' event per issue, and without coalescing, N events in quick
+ * succession would fire N concurrent fetches. loadBoard()'s own request-id
+ * guard only discards stale RESPONSES; this coalesces the CALLS themselves.
+ */
+export const scheduleBoardRefresh = debounce(() => loadBoard(), 200);
 
 /**
  * Render the kanban board

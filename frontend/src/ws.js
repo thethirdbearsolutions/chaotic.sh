@@ -123,11 +123,25 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
         ws.onopen = () => {
             if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket connected');
-            if (wsFailCount > 0) {
+            // CHT-1225 item 3: wsFailCount > 0 here means this open followed
+            // a genuine outage (the reconnect loop preserves it across
+            // attempts) rather than a deliberate fresh connect/team switch
+            // (connectWebSocket() resets it to 0 up front for those, before
+            // this socket is even created) -- so this is exactly the signal
+            // ws-handlers.js needs to tell "resync" apart from "new view".
+            const wasReconnect = wsFailCount > 0;
+            if (wasReconnect) {
                 showToast('Live updates reconnected', 'success');
             }
             wsFailCount = 0;
             updateWsStatusIndicator();
+            if (wasReconnect) {
+                // Synthetic event (not a server message) -- mutations
+                // broadcast during the outage were otherwise silently
+                // dropped forever. dispatch() (not a direct import) avoids
+                // a circular ws.js <-> ws-handlers.js dependency.
+                dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            }
         };
 
         ws.onmessage = (event) => {

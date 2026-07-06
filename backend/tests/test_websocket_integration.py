@@ -189,6 +189,46 @@ async def test_document_comment_broadcast_includes_document_id(client, auth_head
         assert call_args[0][2]["document_id"] == test_document.id
 
 
+# === Sprint event broadcasting (CHT-1225) ===
+# create_sprint is a get-or-create no-op (see its docstring) -- it must
+# still broadcast 'created' the first time it actually brings a project's
+# first sprint into existence, matching update/close, but must not spam a
+# false 'created' event on every idempotent re-call.
+
+
+@pytest.mark.asyncio
+async def test_create_sprint_broadcasts_created_event(client, auth_headers, test_project):
+    """POST /projects/{id}/sprints should broadcast 'created' the first time
+    it actually creates the project's first sprint."""
+    with patch("app.api.sprints.broadcast_sprint_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.post(
+            f"/api/projects/{test_project.id}/sprints",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+
+        mock_broadcast.assert_awaited_once()
+        call_args = mock_broadcast.call_args
+        assert call_args[0][0] == test_project.team_id
+        assert call_args[0][1] == "created"
+        assert call_args[0][2]["project_id"] == test_project.id
+
+
+@pytest.mark.asyncio
+async def test_repeat_create_sprint_does_not_rebroadcast(client, auth_headers, test_project):
+    """A second (idempotent) POST against a project that already has a
+    current sprint must not broadcast another 'created' event."""
+    await client.post(f"/api/projects/{test_project.id}/sprints", headers=auth_headers)
+
+    with patch("app.api.sprints.broadcast_sprint_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.post(
+            f"/api/projects/{test_project.id}/sprints",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        mock_broadcast.assert_not_awaited()
+
+
 # === Batch update broadcasting ===
 
 

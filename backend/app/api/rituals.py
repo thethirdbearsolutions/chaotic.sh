@@ -593,6 +593,10 @@ async def attest_ritual_for_issue(
         )
 
     try:
+        # CHT-1200: attest_for_issue() itself broadcasts 'ritual_attested'
+        # (CHT-1187 moved this into the service layer so internal callers
+        # are observable too) -- an API-layer 'attested' broadcast here
+        # would double-fire for every HTTP attest. Do not re-add one.
         attestation = await ritual_service.attest_for_issue(
             ritual=ritual,
             issue_id=issue_id,
@@ -604,14 +608,6 @@ async def attest_ritual_for_issue(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-    try:
-        await broadcast_attestation_event(
-            project.team_id, "attested",
-            {"ritual_id": ritual_id, "issue_id": issue_id},
-        )
-    except Exception:
-        pass
 
     return attestation
 
@@ -783,20 +779,15 @@ async def approve_issue_attestation(
         )
 
     try:
+        # Same duplicate-broadcast shape as CHT-1200 (attest): approve_for_issue()
+        # already broadcasts 'ritual_approved' internally, so an API-layer
+        # 'approved' broadcast here would double-fire for every HTTP approve.
         attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-    try:
-        await broadcast_attestation_event(
-            project.team_id, "approved",
-            {"ritual_id": ritual_id, "issue_id": issue_id},
-        )
-    except Exception:
-        pass
 
     return attestation
 

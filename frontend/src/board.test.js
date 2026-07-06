@@ -24,11 +24,17 @@ vi.mock('./url-helpers.js', () => ({
     updateUrlWithProject: vi.fn(),
 }));
 
-vi.mock('./utils.js', () => ({
-    escapeHtml: vi.fn((text) => text),
-    escapeAttr: vi.fn((text) => text),
-    formatPriority: vi.fn((p) => p),
-}));
+// Real debounce() is kept (via importOriginal) so scheduleBoardRefresh's
+// coalescing behavior (CHT-1225) can actually be exercised below.
+vi.mock('./utils.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        escapeHtml: vi.fn((text) => text),
+        escapeAttr: vi.fn((text) => text),
+        formatPriority: vi.fn((p) => p),
+    };
+});
 
 vi.mock('./event-delegation.js', () => ({
     registerActions: vi.fn(),
@@ -49,6 +55,7 @@ import {
     setBoardIssues,
     loadBoard,
     renderBoard,
+    scheduleBoardRefresh,
     handleDragStart,
     handleDragEnd,
     handleDrop,
@@ -297,6 +304,56 @@ describe('board', () => {
 
                 expect(getSelectedBoardIndex()).toBe(-1);
             });
+        });
+    });
+
+    // CHT-1225 items 1/6: ws-handlers.js calls scheduleBoardRefresh() (not
+    // loadBoard() directly) for issue created/updated/deleted so a batch
+    // mutation broadcasting one event per issue doesn't fire one concurrent
+    // fetch per event.
+    describe('scheduleBoardRefresh', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('coalesces rapid calls into a single loadBoard()', async () => {
+            api.getIssues.mockResolvedValue([]);
+            // Set currentProject while NOT on the board view, then switch to
+            // board -- avoids the pre-existing CHT-1083 reactive subscriber
+            // (board.js's own `subscribe((key) => ... loadBoard())`) firing
+            // an unrelated immediate loadBoard() on the currentProject write
+            // itself, which would confound this debounce assertion.
+            setState('currentView', 'issues');
+            setState('currentProject', 'project-123');
+            setState('currentView', 'board');
+            api.getIssues.mockClear();
+
+            scheduleBoardRefresh();
+            scheduleBoardRefresh();
+            scheduleBoardRefresh();
+
+            expect(api.getIssues).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(200);
+
+            expect(api.getIssues).toHaveBeenCalledTimes(1);
+        });
+
+        it('eventually calls loadBoard()', async () => {
+            const mockIssues = [{ id: '1', title: 'Issue 1', status: 'todo' }];
+            api.getIssues.mockResolvedValue(mockIssues);
+            setState('currentView', 'issues');
+            setState('currentProject', 'project-123');
+            setState('currentView', 'board');
+
+            scheduleBoardRefresh();
+            await vi.advanceTimersByTimeAsync(200);
+
+            expect(getBoardIssues()).toEqual(mockIssues);
         });
     });
 

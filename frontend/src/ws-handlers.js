@@ -7,9 +7,10 @@
 
 import { subscribe } from './ws.js';
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
-import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
+import { getMyIssues, setMyIssues, renderMyIssues, loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
-import { renderBoard } from './board.js';
+import { loadIssues } from './issues-view.js';
+import { loadBoard, scheduleBoardRefresh } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { loadEpics } from './epics.js';
@@ -69,6 +70,11 @@ export function registerWsHandlers() {
     // all on create/update/delete, so the list/detail view went stale until
     // a manual reload.
     subscribe('document', handleDocument);
+
+    // Reconnect resync (CHT-1225 item 3) — a synthetic event ws.js's onopen
+    // dispatches only on a genuine reconnect (never a deliberate team
+    // switch; see handleReconnected() below for why).
+    subscribe('connection:reconnected', handleReconnected);
 }
 
 function handleIssueCreated(data) {
@@ -116,13 +122,18 @@ function handleIssueCreated(data) {
         }
     }
 
-    if (getCurrentView() === 'my-issues') {
-        loadDashboardActivity({ showLoading: false });
-    }
+    // CHT-1225 item 5: dashboard activity refetch is deliberately NOT
+    // triggered here -- create_issue's broadcast_activity_event fires
+    // alongside broadcast_issue_event for the same mutation, and
+    // handleActivity() below already refetches on my-issues. Doing it in
+    // both handlers double-fetched on every single issue create/update.
 
-    // Re-render board/sprints when issues are created
+    // Re-render board/sprints when issues are created. Board goes through
+    // the debounced refresh (CHT-1225 item 1/6): board.js kept its own
+    // private issue cache that this used to just re-render without ever
+    // updating -- the board looked live but never reflected the new issue.
     if (getCurrentView() === 'board') {
-        renderBoard();
+        scheduleBoardRefresh();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'epics') {
@@ -154,14 +165,15 @@ function handleIssueUpdated(data) {
     if (navContext.some(i => i.id === data.id)) {
         setDetailNavContext(navContext.map(i => i.id === data.id ? data : i));
     }
-    // Re-render based on current view
+    // Re-render based on current view. Dashboard activity refetch
+    // deliberately omitted here (CHT-1225 item 5) -- see the comment in
+    // handleIssueCreated above; handleActivity() covers it.
     if (getCurrentView() === 'issues') {
         renderIssues();
     } else if (getCurrentView() === 'my-issues') {
         renderMyIssues();
-        loadDashboardActivity({ showLoading: false });
     } else if (getCurrentView() === 'board') {
-        renderBoard();
+        scheduleBoardRefresh();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'epics') {
@@ -197,14 +209,17 @@ function handleIssueDeleted(data) {
     if (navContext.some(i => i.id === data.id)) {
         setDetailNavContext(navContext.filter(i => i.id !== data.id));
     }
-    // Re-render
+    // Re-render. Unlike created/updated, delete_issue's broadcast has no
+    // matching 'activity' event (backend/app/api/issues.py), so this is the
+    // only trigger for a delete-driven dashboard activity refresh -- not
+    // the item 5 double-fetch (that's specifically created/updated).
     if (getCurrentView() === 'issues') {
         renderIssues();
     } else if (getCurrentView() === 'my-issues') {
         renderMyIssues();
         loadDashboardActivity({ showLoading: false });
     } else if (getCurrentView() === 'board') {
-        renderBoard();
+        scheduleBoardRefresh();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'epics') {
@@ -318,7 +333,7 @@ function refreshSprintView() {
     }
 }
 
-function handleSprint() {
+function handleSprint(data, { type } = {}) {
     // Another client completing/rotating a sprint changes which sprint is
     // "current" — drop the cached ids unconditionally (cheap, safe on any
     // view) so an Issues view filtering by Current Sprint re-resolves
@@ -328,5 +343,51 @@ function handleSprint() {
         refreshSprintView();
     } else if (getCurrentView() === 'my-issues') {
         loadSprintStatus();
+    }
+    // CHT-1225: issue/project lifecycle events show a toast (handleProject
+    // above); sprint events showed none at all, even for 'closed' -- a
+    // comparably significant lifecycle event other team members would want
+    // passive notice of.
+    if (type === 'created') {
+        showToast(`New sprint: ${data.name}`, 'info');
+    } else if (type === 'closed') {
+        showToast(`Sprint ${data.name} closed`, 'info');
+    }
+}
+
+/**
+ * Resync on WebSocket reconnect (CHT-1225 item 3). ws.js's onopen only
+ * dispatches 'connection:reconnected' when this was a genuine reconnect
+ * (wsFailCount was >0 going in) -- a deliberate team switch resets
+ * wsFailCount to 0 before the new socket even opens, so this never fires
+ * for that case. Any mutation broadcast during the disconnect window was
+ * otherwise silently dropped forever; this refetches whichever view is
+ * currently open instead of replaying every missed event.
+ */
+function handleReconnected() {
+    const view = getCurrentView();
+    if (view === 'issues') {
+        loadIssues().catch(e => console.error('Failed to resync issues:', e));
+    } else if (view === 'my-issues') {
+        loadMyIssues().catch(e => console.error('Failed to resync my issues:', e));
+        loadSprintStatus().catch(e => console.error('Failed to resync sprint status:', e));
+        loadDashboardActivity({ showLoading: false });
+    } else if (view === 'board') {
+        loadBoard();
+    } else if (view === 'sprints') {
+        refreshSprintView();
+    } else if (view === 'epics') {
+        loadEpics().catch(e => console.error('Failed to resync epics:', e));
+    } else if (view === 'projects') {
+        loadProjects().then(() => {
+            if (getCurrentView() === 'projects') renderProjects();
+        }).catch(e => console.error('Failed to resync projects:', e));
+    } else if (view === 'documents') {
+        refreshDocumentsListIfActive();
+    } else if (view === 'approvals') {
+        loadGateApprovals();
+    } else if (view === 'issue-detail') {
+        const issueId = getCurrentDetailIssue()?.id;
+        if (issueId) refreshOpenDetail(issueId);
     }
 }
