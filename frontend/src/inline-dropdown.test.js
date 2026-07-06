@@ -76,7 +76,7 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
-import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue } from './state.js';
+import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
 import { getAssigneeOptionList } from './assignees.js';
@@ -96,6 +96,7 @@ import {
     toggleCreateIssueLabelSelection,
     getCreateIssueLabelIds,
     setCreateIssueLabelIds,
+    renderCreateIssueLabelDropdown,
 } from './inline-dropdown.js';
 
 describe('inline-dropdown', () => {
@@ -517,6 +518,39 @@ describe('inline-dropdown', () => {
 
             expect(api.createLabel).toHaveBeenCalledWith('team-1', { name: 'Feature' });
             expect(getCreateIssueLabelIds()).toContain('new-label');
+        });
+    });
+
+    // CHT-1224: a fetch failure in toggleCreateIssueDropdown's labels branch
+    // used to render this same "No labels available" markup, indistinguishable
+    // from a team that has genuinely never created a label.
+    describe('renderCreateIssueLabelDropdown', () => {
+        let dropdown;
+
+        beforeEach(() => {
+            document.body.innerHTML = '<div class="inline-dropdown"></div>';
+            dropdown = document.querySelector('.inline-dropdown');
+        });
+
+        it('shows "No labels available" for a genuinely empty, non-failed load', () => {
+            getLabels.mockReturnValue([]);
+            renderCreateIssueLabelDropdown(dropdown);
+            expect(dropdown.innerHTML).toContain('No labels available');
+            expect(dropdown.innerHTML).not.toContain("Couldn't load labels");
+        });
+
+        it('shows a distinct "Couldn\'t load labels" message when failed is true', () => {
+            getLabels.mockReturnValue([]);
+            renderCreateIssueLabelDropdown(dropdown, { failed: true });
+            expect(dropdown.innerHTML).toContain("Couldn't load labels");
+            expect(dropdown.innerHTML).not.toContain('No labels available');
+        });
+
+        it('renders the labels list normally when labels exist, even if failed is true', () => {
+            getLabels.mockReturnValue([{ id: 'l1', name: 'Bug', color: '#f00' }]);
+            renderCreateIssueLabelDropdown(dropdown, { failed: true });
+            expect(dropdown.innerHTML).toContain('Bug');
+            expect(dropdown.innerHTML).not.toContain("Couldn't load labels");
         });
     });
 });

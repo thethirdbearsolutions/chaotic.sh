@@ -969,6 +969,28 @@ describe('issue-creation', () => {
             expect(renderCreateIssueLabelDropdown).toHaveBeenCalled();
         });
 
+        // CHT-1224: a fetch failure used to fall through silently and render
+        // the same "No labels available" markup as a team with genuinely no
+        // labels — pass a distinct failed flag so the render layer can tell
+        // the two apart.
+        it('tells renderCreateIssueLabelDropdown the fetch failed, distinct from genuinely-empty', async () => {
+            getLabels.mockReturnValue([]);
+            api.getLabels.mockRejectedValue(new Error('Network error'));
+            const btn = document.querySelector('[data-dropdown-type="labels"]');
+            await toggleCreateIssueDropdown('labels', { currentTarget: btn });
+
+            expect(renderCreateIssueLabelDropdown).toHaveBeenCalledWith(expect.anything(), { failed: true });
+        });
+
+        it('does not flag failure when labels load successfully', async () => {
+            getLabels.mockReturnValue([]);
+            api.getLabels.mockResolvedValue([{ id: 'l1', name: 'Bug' }]);
+            const btn = document.querySelector('[data-dropdown-type="labels"]');
+            await toggleCreateIssueDropdown('labels', { currentTarget: btn });
+
+            expect(renderCreateIssueLabelDropdown).toHaveBeenCalledWith(expect.anything(), { failed: false });
+        });
+
         it('uses cached labels when available', async () => {
             getLabels.mockReturnValue([{ id: 'l1', name: 'Bug' }]);
             const btn = document.querySelector('[data-dropdown-type="labels"]');

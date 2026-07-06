@@ -351,15 +351,20 @@ export async function toggleCreateIssueDropdown(type, event, anchorEl) {
             dropdown.innerHTML = `<div class="dropdown-header">Select a team first</div>`;
         } else {
             let labels = getLabels();
+            let labelsLoadFailed = false;
             if (labels.length === 0) {
                 try {
                     labels = await api.getLabels(getCurrentTeam().id);
                     setLabels(labels);
                 } catch (e) {
+                    // CHT-1224: was console.error-only, then fell through to
+                    // render against the still-empty labels array — identical
+                    // UI to a team that has genuinely never created a label.
                     console.error('Failed to load labels:', e);
+                    labelsLoadFailed = true;
                 }
             }
-            renderCreateIssueLabelDropdown(dropdown);
+            renderCreateIssueLabelDropdown(dropdown, { failed: labelsLoadFailed });
 
             document.body.appendChild(dropdown);
             requestAnimationFrame(() => {
