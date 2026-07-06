@@ -11,6 +11,7 @@ vi.mock('./api.js', () => ({
         getTeamIssues: vi.fn(),
         getTeamActivities: vi.fn(),
         getIssues: vi.fn(),
+        getCurrentSprint: vi.fn(),
     },
 }));
 
@@ -23,6 +24,7 @@ vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
     escapeAttr: vi.fn((text) => text ? String(text).replace(/[&<>"']/g, '') : ''),
     formatTimeAgo: vi.fn(() => '2h ago'),
+    formatStatus: vi.fn((s) => s),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -61,6 +63,8 @@ import { showApiError } from './ui.js';
 import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, setDetailNavContext } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
+import { registerActions } from './event-delegation.js';
+import { setProjects } from './projects.js';
 import {
     getMyIssues,
     setMyIssues,
@@ -68,11 +72,16 @@ import {
     setDashboardActivities,
     loadMyIssues,
     loadDashboardActivity,
+    loadSprintStatus,
+    renderSprintStatus,
     renderMyIssues,
     renderDashboardActivity,
     showMyIssuesLoadingSkeleton,
     filterMyIssues,
 } from './dashboard.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const dashboardActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('dashboard module', () => {
     beforeEach(() => {
@@ -80,6 +89,7 @@ describe('dashboard module', () => {
         document.body.innerHTML = `
             <div id="my-issues-list"></div>
             <div id="dashboard-activity-list"></div>
+            <div id="dashboard-sprint-status"></div>
             <select id="dashboard-project-filter">
                 <option value="">All Projects</option>
                 <option value="proj-1">Project 1</option>
@@ -97,6 +107,8 @@ describe('dashboard module', () => {
         // Reset state
         setMyIssues([]);
         setDashboardActivities([]);
+        setProjects([]);
+        getCurrentProject.mockReturnValue(null);
 
         // Reset mocks
         vi.clearAllMocks();
@@ -208,6 +220,28 @@ describe('dashboard module', () => {
             expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
+        // CHT-1224: the loading skeleton must not be left stuck on screen
+        // forever when the fetch fails.
+        it('replaces the stuck loading skeleton with a persistent error + Retry cta on failure', async () => {
+            api.getTeamIssues.mockRejectedValue(new Error('Network error'));
+
+            await loadMyIssues();
+
+            const list = document.getElementById('my-issues-list');
+            expect(list.innerHTML).toContain('Failed to load issues');
+            expect(list.innerHTML).toContain('data-action="retry-load-my-issues"');
+        });
+
+        it('wires the retry-load-my-issues action to re-run loadMyIssues()', async () => {
+            api.getTeamIssues.mockRejectedValue(new Error('Network error'));
+            await loadMyIssues();
+            api.getTeamIssues.mockResolvedValue([]);
+
+            await dashboardActions['retry-load-my-issues']();
+
+            expect(api.getTeamIssues).toHaveBeenCalledTimes(2);
+        });
+
         it('does nothing if no current team', async () => {
             getCurrentTeam.mockReturnValue(null);
 
@@ -302,6 +336,87 @@ describe('dashboard module', () => {
             await loadDashboardActivity();
 
             expect(api.getTeamActivities).not.toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1224: dashboard.js:234-256 (loadSprintStatus) — outer catch used to
+    // blank the whole section with zero indication, and a per-project sprint
+    // fetch failure was indistinguishable from "no active sprint".
+    describe('loadSprintStatus', () => {
+        beforeEach(() => {
+            setProjects([{ id: 'proj-1', name: 'Project 1' }]);
+        });
+
+        it('renders sprint cards for projects with an active sprint', async () => {
+            api.getCurrentSprint.mockResolvedValue({ id: 'sprint-1', name: 'Sprint 1', budget: 10, points_spent: 2 });
+            api.getIssues.mockResolvedValue([{ status: 'todo' }]);
+
+            await loadSprintStatus();
+
+            const container = document.getElementById('dashboard-sprint-status');
+            expect(container.innerHTML).toContain('Sprint 1');
+        });
+
+        it('logs and omits the project card when getCurrentSprint fails, instead of looking like "no active sprint"', async () => {
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            api.getCurrentSprint.mockRejectedValue(new Error('boom'));
+
+            await loadSprintStatus();
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to load current sprint'), expect.any(Error));
+            expect(document.getElementById('dashboard-sprint-status').innerHTML).toBe('');
+            consoleErrorSpy.mockRestore();
+        });
+
+        it('logs when the per-sprint issue-count fetch fails but still renders the sprint card', async () => {
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            api.getCurrentSprint.mockResolvedValue({ id: 'sprint-1', name: 'Sprint 1', budget: 10, points_spent: 2 });
+            api.getIssues.mockRejectedValue(new Error('boom'));
+
+            await loadSprintStatus();
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to load issue counts'), expect.any(Error));
+            const container = document.getElementById('dashboard-sprint-status');
+            expect(container.innerHTML).toContain('Sprint 1');
+            consoleErrorSpy.mockRestore();
+        });
+
+        // Realistic per-project failures are all swallowed by the inner
+        // try/catch above (by design — one bad project shouldn't blank the
+        // whole widget), so the outer catch only fires on an unexpected
+        // failure in the aggregation/render step itself. Force that directly
+        // by making Promise.all reject, to verify the fallback rendering.
+        it('renders a persistent error + Retry cta instead of blanking the section when the aggregation step itself fails', async () => {
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const promiseAllSpy = vi.spyOn(Promise, 'all').mockRejectedValueOnce(new Error('unexpected'));
+            api.getCurrentSprint.mockResolvedValue({ id: 'sprint-1', name: 'Sprint 1' });
+
+            await loadSprintStatus();
+
+            const container = document.getElementById('dashboard-sprint-status');
+            // The utils.js mock's escapeHtml strips apostrophes, so assert on
+            // the substring unaffected by that stubbing.
+            expect(container.innerHTML).toContain('load sprint status');
+            expect(container.innerHTML).toContain('data-action="retry-load-sprint-status"');
+            promiseAllSpy.mockRestore();
+            consoleErrorSpy.mockRestore();
+        });
+
+        it('wires the retry-load-sprint-status action to re-run loadSprintStatus()', async () => {
+            api.getCurrentSprint.mockResolvedValue(null);
+
+            await dashboardActions['retry-load-sprint-status']();
+
+            expect(api.getCurrentSprint).toHaveBeenCalled();
+        });
+
+        it('clears the section with no projects (not a failure state)', async () => {
+            setProjects([]);
+            document.getElementById('dashboard-sprint-status').innerHTML = '<div>stale</div>';
+
+            await loadSprintStatus();
+
+            expect(document.getElementById('dashboard-sprint-status').innerHTML).toBe('');
         });
     });
 

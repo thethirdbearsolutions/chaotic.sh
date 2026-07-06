@@ -97,7 +97,9 @@ export async function loadSprints() {
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
-        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again' });
+        // CHT-1224: the copy said "try again" but shipped no button — add the
+        // cta the helper already supports, wired to re-run loadSprints().
+        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' } });
         showApiError('load sprints', e);
     }
 }
@@ -281,8 +283,11 @@ export async function viewSprint(sprintId, pushHistory = true) {
         const teamId = getCurrentTeam()?.id;
         const [issues, transactions, documents] = await Promise.all([
             api.getIssues({ sprint_id: sprintId, limit: 500 }),
-            api.getSprintTransactions(sprintId).catch(() => []),
-            teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(() => []) : [],
+            // CHT-1224: was a bare `.catch(() => [])` — a failed fetch silently
+            // degraded to "sprint has no transactions", indistinguishable from
+            // the true empty case. Logging at minimum makes it debuggable.
+            api.getSprintTransactions(sprintId).catch(e => { console.error('Failed to load sprint transactions:', e); return []; }),
+            teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(e => { console.error('Failed to load sprint documents:', e); return []; }) : [],
         ]);
         if (requestId !== viewSprintRequestId) return; // guard again — a newer request may have started during the awaits above
 
@@ -963,6 +968,7 @@ export function clearCachedCurrentSprintIds() {
 // ============================================================================
 
 registerActions({
+    'retry-load-sprints': () => loadSprints(),
     'view-sprint': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
             window.open(data.sprintUrl, '_blank');

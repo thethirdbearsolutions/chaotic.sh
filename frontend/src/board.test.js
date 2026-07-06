@@ -41,6 +41,7 @@ vi.mock('./issue-detail-view.js', () => ({
 import { setState, getSelectedBoardIndex, setSelectedBoardIndex, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
+import { registerActions } from './event-delegation.js';
 import {
     BOARD_STATUSES,
     getBoardIssues,
@@ -52,6 +53,9 @@ import {
     handleDrop,
     reorderBoardIssues,
 } from './board.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const boardActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('board', () => {
     beforeEach(() => {
@@ -119,6 +123,21 @@ describe('board', () => {
             await loadBoard();
 
             expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
+        });
+
+        // CHT-1224: the error copy said "try again" but shipped no button.
+        it('renders a Retry cta on failure and wires it to reload the board', async () => {
+            api.getIssues.mockRejectedValue(new Error('API Error'));
+            setState('currentProject', 'project-123');
+
+            await loadBoard();
+
+            const board = document.getElementById('kanban-board');
+            expect(board.innerHTML).toContain('data-action="retry-load-board"');
+
+            api.getIssues.mockResolvedValue([]);
+            await boardActions['retry-load-board']();
+            expect(api.getIssues).toHaveBeenCalledTimes(2);
         });
 
         // CHT-1211 item 2: issue-detail prev/next should page through the

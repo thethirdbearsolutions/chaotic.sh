@@ -1241,6 +1241,24 @@ describe('issues-view', () => {
             expect(showApiError).toHaveBeenCalledWith('load issues', expect.objectContaining({ message: 'Network error' }));
         });
 
+        // CHT-1224: the loading skeleton must not be left stuck on screen
+        // forever when the fetch fails.
+        it('replaces the stuck loading skeleton with a persistent error + Retry cta on failure', async () => {
+            api.getIssues.mockRejectedValue(new Error('Network error'));
+            await loadIssues();
+            const list = document.getElementById('issues-list');
+            expect(list.innerHTML).toContain('Failed to load issues');
+            expect(list.innerHTML).toContain('data-action="retry-load-issues"');
+        });
+
+        it('wires the retry-load-issues action to re-run loadIssues()', async () => {
+            api.getIssues.mockRejectedValue(new Error('Network error'));
+            await loadIssues();
+            api.getIssues.mockResolvedValue([]);
+            await issuesViewActions['retry-load-issues']();
+            expect(api.getIssues).toHaveBeenCalledTimes(2);
+        });
+
         // CHT-1212: sub-2-char search used to silently no-op even though the
         // backend only requires min_length=1
         it('includes a 1-character search query in params', async () => {

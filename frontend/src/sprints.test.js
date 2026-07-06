@@ -73,6 +73,7 @@ vi.mock('./utils.js', () => ({
 import { setCurrentTeam, setState, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { registerActions } from './event-delegation.js';
 import {
     getSprints,
     setSprints,
@@ -95,6 +96,9 @@ import {
     setCachedCurrentSprintId,
     clearCachedCurrentSprintIds,
 } from './sprints.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const sprintsActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -243,6 +247,23 @@ describe('loadSprints', () => {
 
         expect(showApiError).toHaveBeenCalledWith('load sprints', expect.objectContaining({ message: 'network' }));
     });
+
+    // CHT-1224: the error copy said "try again" but shipped no button.
+    it('renders a Retry cta on failure and wires it to reload sprints', async () => {
+        api.getCurrentSprint.mockRejectedValue(new Error('network'));
+        setState('currentProject', 'p1');
+
+        await loadSprints();
+
+        const html = document.getElementById('sprints-list').innerHTML;
+        expect(html).toContain('data-action="retry-load-sprints"');
+
+        api.getCurrentSprint.mockResolvedValue({ id: 's1' });
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        await sprintsActions['retry-load-sprints']();
+        expect(api.getSprints).toHaveBeenCalledWith('p1');
+    });
 });
 
 describe('renderSprints', () => {
@@ -347,6 +368,37 @@ describe('viewSprint', () => {
         await viewSprint('s1');
 
         expect(showToast).toHaveBeenCalledWith('Failed to load sprint', 'error');
+    });
+
+    // CHT-1224: sprints.js:271-272 — these used to be bare `.catch(() => [])`
+    // with zero logging, so a failed fetch silently looked like "sprint has
+    // no transactions/documents" instead of a real failure.
+    it('logs (but still renders) when the sprint transactions fetch fails', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', project_id: 'p1' });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockRejectedValue(new Error('boom'));
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load sprint transactions:', expect.any(Error));
+        expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 1');
+        consoleErrorSpy.mockRestore();
+    });
+
+    it('logs (but still renders) when the sprint documents fetch fails', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', project_id: 'p1' });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockRejectedValue(new Error('boom'));
+
+        await viewSprint('s1');
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load sprint documents:', expect.any(Error));
+        expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 1');
+        consoleErrorSpy.mockRestore();
     });
 
     it('renders documents section when documents exist', async () => {
