@@ -275,7 +275,7 @@ export function filterDocuments() {
 /**
  * Re-fetch documents from server with current project filter, then re-render.
  */
-async function fetchDocumentsForCurrentProject() {
+export async function fetchDocumentsForCurrentProject() {
   const teamId = currentTeamId || getCurrentTeam()?.id;
   if (!teamId) return;
 
@@ -284,6 +284,18 @@ async function fetchDocumentsForCurrentProject() {
     documents = await api.getDocuments(teamId, projectFilter);
     filterDocuments();
   } catch (e) {
+    // CHT-1224: was showApiError-only — the stale skeleton/list stayed on
+    // screen with no indication the refresh failed. Render a persistent
+    // error + Retry cta like loadDocuments() does.
+    const errEl = document.getElementById('documents-list');
+    if (errEl) {
+      errEl.innerHTML = renderEmptyState({
+        icon: EMPTY_ICONS.documents,
+        heading: 'Failed to load documents',
+        description: 'Check your connection and try again',
+        cta: { label: 'Retry', action: 'retry-load-documents' },
+      });
+    }
     showApiError('load documents', e);
   }
 }
@@ -342,9 +354,19 @@ export async function loadDocuments(teamId, projectId = null) {
 
     filterDocuments();  // Apply search/sort and render
   } catch (e) {
-    // Clear skeleton on error (CHT-1047)
+    // CHT-1224: was clearing the skeleton to '' (CHT-1047) — worse than the
+    // skeleton, since it left no message at all once the 3s toast passed,
+    // indistinguishable from a team with zero documents. Render a persistent
+    // error + Retry cta instead.
     const errEl = document.getElementById('documents-list');
-    if (errEl) errEl.innerHTML = '';
+    if (errEl) {
+      errEl.innerHTML = renderEmptyState({
+        icon: EMPTY_ICONS.documents,
+        heading: 'Failed to load documents',
+        description: 'Check your connection and try again',
+        cta: { label: 'Retry', action: 'retry-load-documents' },
+      });
+    }
     showApiError('load documents', e);
   }
 }
@@ -694,7 +716,10 @@ export async function handleBulkMove(event) {
   const docIds = Array.from(selectedDocIds);
 
   let successCount = 0;
-  let errorCount = 0;
+  // CHT-1224: track which documents failed (by title) so the summary toast
+  // identifies them instead of just a bare count — on a large multi-select
+  // the user otherwise has to manually diff the resulting list to find them.
+  const failedTitles = [];
 
   for (const docId of docIds) {
     try {
@@ -702,17 +727,17 @@ export async function handleBulkMove(event) {
       successCount++;
     } catch (e) {
       console.error(`Failed to move document ${docId}:`, e);
-      errorCount++;
+      failedTitles.push(documents.find(d => d.id === docId)?.title || docId);
     }
   }
 
   closeModal();
   clearDocSelection();
 
-  if (errorCount === 0) {
+  if (failedTitles.length === 0) {
     showToast(`Moved ${successCount} document${successCount > 1 ? 's' : ''}!`, 'success');
   } else {
-    showToast(`Moved ${successCount}, failed ${errorCount}`, 'warning');
+    showToast(`Moved ${successCount}, failed to move: ${failedTitles.join(', ')}`, 'warning');
   }
 
   // Reload documents
@@ -738,7 +763,8 @@ export async function bulkDeleteDocuments() {
 
   const docIds = Array.from(selectedDocIds);
   let successCount = 0;
-  let errorCount = 0;
+  // CHT-1224: same identify-the-failures fix as handleBulkMove above.
+  const failedTitles = [];
 
   for (const docId of docIds) {
     try {
@@ -746,16 +772,16 @@ export async function bulkDeleteDocuments() {
       successCount++;
     } catch (e) {
       console.error(`Failed to delete document ${docId}:`, e);
-      errorCount++;
+      failedTitles.push(documents.find(d => d.id === docId)?.title || docId);
     }
   }
 
   exitSelectionMode();
 
-  if (errorCount === 0) {
+  if (failedTitles.length === 0) {
     showToast(`Deleted ${successCount} document${successCount > 1 ? 's' : ''}!`, 'success');
   } else {
-    showToast(`Deleted ${successCount}, failed ${errorCount}`, 'warning');
+    showToast(`Deleted ${successCount}, failed to delete: ${failedTitles.join(', ')}`, 'warning');
   }
 
   // Reload documents
@@ -879,6 +905,9 @@ export async function viewDocument(documentId, pushHistory = true) {
     // Look up project and sprint names
     let projectName = null;
     let sprintName = null;
+    // CHT-1224: distinguishes "sprint lookup failed" from "no sprint set" —
+    // both used to render as the sprint row simply being omitted.
+    let sprintLoadFailed = false;
     if (doc.project_id) {
       const projects = getProjects();
       const project = projects.find(p => p.id === doc.project_id);
@@ -888,8 +917,9 @@ export async function viewDocument(documentId, pushHistory = true) {
         try {
           const sprint = await api.getSprint(doc.sprint_id);
           sprintName = sprint ? sprint.name : null;
-        } catch {
-          // Sprint lookup failed, ignore
+        } catch (e) {
+          console.error('Failed to load sprint name:', e);
+          sprintLoadFailed = true;
         }
       }
     }
@@ -937,8 +967,12 @@ export async function viewDocument(documentId, pushHistory = true) {
           </div>
         `).join('');
       }
-    } catch {
-      // Silently ignore
+    } catch (e) {
+      // CHT-1224: was silently ignored — indistinguishable from a document
+      // with genuinely no linked issues. Log it and render a distinct
+      // "couldn't load" marker in the sidebar slot instead.
+      console.error('Failed to load linked issues:', e);
+      sidebarLinkedHtml = '<span class="text-muted">Couldn\'t load linked issues</span>';
     }
 
     detailView.querySelector('#document-detail-content').innerHTML = `
@@ -979,10 +1013,10 @@ export async function viewDocument(documentId, pushHistory = true) {
               <span class="property-value-static">${projectName ? escapeHtml(projectName) : '<span class="text-muted">Global</span>'}</span>
             </div>
 
-            ${sprintName ? `
+            ${sprintName || sprintLoadFailed ? `
             <div class="property-row">
               <span class="property-label">Sprint</span>
-              <span class="property-value-static">${escapeHtml(sprintName)}</span>
+              <span class="property-value-static">${sprintLoadFailed ? '<span class="text-muted">Couldn\'t load</span>' : escapeHtml(sprintName)}</span>
             </div>
             ` : ''}
 
@@ -1748,6 +1782,9 @@ registerActions({
     },
     'set-doc-editor-mode': (_event, data) => {
         setDocEditorMode(data.target, data.mode);
+    },
+    'retry-load-documents': () => {
+        loadDocuments(currentTeamId);
     },
     'retry-document-comments': (_event, data) => {
         // Simplest correct fix for the comments-fetch failure: re-run the
