@@ -414,8 +414,9 @@ describe('renderTeamMembers', () => {
     setCurrentTeam(null);
   });
 
-  it('shows remove button for non-owner members who are not current user', async () => {
+  it('shows remove button for non-owner members who are not current user, when the viewer is an admin', async () => {
     const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
       { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
@@ -430,6 +431,7 @@ describe('renderTeamMembers', () => {
 
   it('does not show remove button for owner', async () => {
     const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
       { id: 'user-1', user_id: 'other-user', user_name: 'Owner', role: 'owner' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
@@ -439,6 +441,63 @@ describe('renderTeamMembers', () => {
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  // CHT-1226: renderTeamMembers() only hid Remove for the viewer's own row
+  // or an owner row -- it had no notion of the viewer's own role, so any
+  // 'member'-role user saw live Remove buttons that would always 403.
+  it('hides remove button for every other member when the viewer is not an admin', async () => {
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'member' },
+      { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).not.toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  it('shows remove button when the viewer is the owner', async () => {
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'owner' },
+      { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  it('hides the Invite Member button for non-admin viewers', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn"></button>';
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+    setCurrentTeam(null);
+  });
+
+  it('shows the Invite Member button for admin/owner viewers', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn" class="hidden"></button>';
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(false);
     setCurrentTeam(null);
   });
 });

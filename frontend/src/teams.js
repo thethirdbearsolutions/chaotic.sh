@@ -196,10 +196,36 @@ export async function loadTeamMembers() {
 }
 
 /**
+ * Whether the current viewer is an admin (or owner) of the currently-loaded
+ * team's member list -- derived client-side from the same TeamMemberResponse
+ * data the members list already fetched (CHT-1226). Backend gates
+ * remove-member/invite-member on `is_team_admin` (admin OR owner,
+ * team_service.py:197-202) -- mirrored here so the frontend can hide
+ * affordances that would otherwise always 403.
+ */
+function isCurrentUserAdmin() {
+  const currentUserId = getCurrentUser()?.id;
+  const self = members.find((m) => m.user_id === currentUserId);
+  return self?.role === 'admin' || self?.role === 'owner';
+}
+
+/**
+ * Show/hide the Invite Member button based on the viewer's own role. Called
+ * after members load, since that's the only source of the viewer's role
+ * (CHT-1226).
+ */
+function updateInviteButtonVisibility() {
+  const inviteBtn = document.getElementById('invite-member-btn');
+  if (inviteBtn) inviteBtn.classList.toggle('hidden', !isCurrentUserAdmin());
+}
+
+/**
  * Render the team members list
  */
 export function renderTeamMembers() {
   const list = document.getElementById('team-members-list');
+  const canManageMembers = isCurrentUserAdmin();
+  updateInviteButtonVisibility();
   list.innerHTML = members
     .map(
       (member) => `
@@ -214,6 +240,7 @@ export function renderTeamMembers() {
             <div style="display: flex; align-items: center; gap: 0.5rem;">
                 <span class="member-role">${member.role}</span>
                 ${
+                  canManageMembers &&
                   member.user_id !== getCurrentUser().id &&
                   member.role !== 'owner'
                     ? `
