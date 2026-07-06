@@ -134,6 +134,7 @@ describe('rituals-view', () => {
             let capturedDuringLoad = null;
             loadProjectSettingsRituals.mockImplementation(async () => {
                 capturedDuringLoad = document.getElementById('rituals-content').innerHTML;
+                return true;
             });
 
             await loadRitualsView();
@@ -143,21 +144,90 @@ describe('rituals-view', () => {
             setState('currentProject', null);
         });
 
-        it('shows a standardized error state with retry on fetch failure', async () => {
+        // CHT-1226 PR #212 review: loadProjectSettingsRituals() swallows API
+        // failures internally (toast + return false, no rethrow) — failure is
+        // signalled via the return value, so the previous try/catch error
+        // branch here was dead code and a failed fetch left the skeleton up
+        // forever.
+        it('shows a standardized error state with retry when the fetch fails (returns false)', async () => {
             const { setState } = await import('./state.js');
             setState('currentProject', 'p1');
             document.body.innerHTML = `<div id="rituals-content"></div>`;
-            loadProjectSettingsRituals.mockRejectedValue(new Error('boom'));
+            loadProjectSettingsRituals.mockResolvedValue(false);
 
             await loadRitualsView();
 
             const content = document.getElementById('rituals-content');
             expect(content.innerHTML).toContain('empty-state-icon');
             expect(content.innerHTML).toContain('Failed to load rituals');
-            expect(content.innerHTML).not.toContain('boom');
+            expect(content.innerHTML).not.toContain('skeleton-list-item');
             expect(content.innerHTML).toContain('data-action="retry-load-rituals"');
-            expect(showApiError).toHaveBeenCalledWith('load rituals', expect.any(Error));
             setState('currentProject', null);
+        });
+
+        it('does not render the error state on success', async () => {
+            const { setState } = await import('./state.js');
+            setState('currentProject', 'p1');
+            document.body.innerHTML = `<div id="rituals-content"></div>`;
+            loadProjectSettingsRituals.mockResolvedValue(true);
+
+            await loadRitualsView();
+
+            const content = document.getElementById('rituals-content');
+            expect(content.innerHTML).not.toContain('Failed to load rituals');
+            setState('currentProject', null);
+        });
+
+        // CHT-1226 PR #212 review finding 1: loadRitualsForProject() is both
+        // a project-change subscriber and Retry-able — overlapping calls must
+        // not let a stale completion paint over the fresh one.
+        describe('request sequencing (out-of-order completions)', () => {
+            it('drops a stale failure that completes after a newer successful load', async () => {
+                const { setState } = await import('./state.js');
+                setState('currentProject', 'p1');
+                document.body.innerHTML = `<div id="rituals-content"></div>`;
+
+                let failFirst;
+                loadProjectSettingsRituals.mockReturnValueOnce(
+                    new Promise(resolve => { failFirst = () => resolve(false); })
+                );
+                const firstLoad = loadRitualsView(); // in flight, will fail late
+
+                loadProjectSettingsRituals.mockResolvedValueOnce(true);
+                await loadRitualsView(); // newer request completes first
+                const freshHtml = document.getElementById('rituals-content').innerHTML;
+
+                failFirst();
+                await firstLoad;
+
+                // The stale failure must not paint its error state over the fresh result
+                expect(document.getElementById('rituals-content').innerHTML).toBe(freshHtml);
+                expect(document.getElementById('rituals-content').innerHTML).not.toContain('Failed to load rituals');
+                setState('currentProject', null);
+            });
+
+            it('drops a stale success that completes after a newer failed load', async () => {
+                const { setState } = await import('./state.js');
+                setState('currentProject', 'p1');
+                document.body.innerHTML = `<div id="rituals-content"></div>`;
+
+                let succeedFirst;
+                loadProjectSettingsRituals.mockReturnValueOnce(
+                    new Promise(resolve => { succeedFirst = () => resolve(true); })
+                );
+                const firstLoad = loadRitualsView(); // in flight, will succeed late
+
+                loadProjectSettingsRituals.mockResolvedValueOnce(false);
+                await loadRitualsView(); // newer request fails first
+                expect(document.getElementById('rituals-content').innerHTML).toContain('Failed to load rituals');
+
+                succeedFirst();
+                await firstLoad;
+
+                // The newer failure's error state must survive the stale success
+                expect(document.getElementById('rituals-content').innerHTML).toContain('Failed to load rituals');
+                setState('currentProject', null);
+            });
         });
     });
 

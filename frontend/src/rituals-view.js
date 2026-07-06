@@ -33,12 +33,20 @@ subscribe((key) => {
     loadRitualsForProject();
 });
 
+// Monotonic request id — lets loadRitualsForProject() drop a completion from
+// a superseded request (rapid project switching via the subscriber above, or
+// a double-clicked Retry) instead of painting a stale error state over fresh
+// data (CHT-1226 PR #212 review finding 1; same pattern as teams.js's loaders).
+let loadRitualsRequestId = 0;
+
 /**
  * Load rituals for the currently selected project.
  */
 async function loadRitualsForProject() {
     const projectId = getCurrentProject();
     const container = document.getElementById('rituals-content');
+
+    const requestId = ++loadRitualsRequestId;
 
     if (!projectId) {
         const tabs = document.getElementById('rituals-tabs');
@@ -69,20 +77,25 @@ async function loadRitualsForProject() {
         </div>
     `).join('');
 
-    try {
-        await loadProjectSettingsRituals();
-        // renderRitualsView() is called via the _onRitualsChanged callback
-    } catch (e) {
+    // loadProjectSettingsRituals() swallows API failures internally (toast +
+    // return false, no rethrow) — so failure is detected via the return
+    // value, not try/catch. Without this check the error branch was dead
+    // code and a failed fetch left the skeleton up forever (CHT-1226 PR #212
+    // review). On success, rendering happens via the _onRitualsChanged
+    // callback inside the call.
+    const ok = await loadProjectSettingsRituals();
+    if (requestId !== loadRitualsRequestId) return; // a newer loadRitualsForProject() has since started — drop this stale completion
+    if (!ok && container) {
         // CHT-1226: was a raw div exposing the raw exception message
-        // directly, unlike every other list view post-PR#200.
-        if (container) container.innerHTML = renderEmptyState({
+        // directly, unlike every other list view post-PR#200. The toast is
+        // already fired inside loadProjectSettingsRituals().
+        container.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.rituals,
             heading: 'Failed to load rituals',
             description: 'Check your connection and try again',
             cta: { label: 'Retry', action: 'retry-load-rituals' },
             variant: 'error',
         });
-        showApiError('load rituals', e);
     }
 }
 

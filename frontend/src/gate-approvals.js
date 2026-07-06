@@ -209,6 +209,12 @@ subscribe((key) => {
 // Sprint limbo rituals shown in the approvals view (CHT-905)
 let sprintLimboApprovals = [];
 
+// Monotonic request id — lets loadGateApprovals() drop a response from a
+// superseded request (rapid project switching via the subscriber above, or
+// a double-clicked Retry) instead of painting stale data over fresh data
+// (CHT-1226 PR #212 review finding 1; same pattern as teams.js's loaders).
+let loadGateApprovalsRequestId = 0;
+
 /**
  * Load all pending gate approvals across projects.
  */
@@ -217,6 +223,8 @@ export async function loadGateApprovals() {
 
     const container = document.getElementById('approvals-list');
     if (!container) return;
+
+    const requestId = ++loadGateApprovalsRequestId;
 
     // CHT-1226: loading skeleton, matching every other list view post-CHT-1160
     // (was plain 'Loading pending approvals...' text).
@@ -245,6 +253,8 @@ export async function loadGateApprovals() {
             return { project, approvals, limbo };
         }));
 
+        if (requestId !== loadGateApprovalsRequestId) return; // a newer loadGateApprovals() has since started — drop this stale response
+
         const allApprovals = [];
         const allLimbo = [];
         for (const { project, approvals, limbo } of results) {
@@ -263,6 +273,7 @@ export async function loadGateApprovals() {
         sprintLimboApprovals = allLimbo;
         renderGateApprovals();
     } catch (e) {
+        if (requestId !== loadGateApprovalsRequestId) return;
         // CHT-1226: was a raw icon-less div exposing the raw backend
         // exception string -- Approvals blocks work, so a business-critical
         // page deserves the same generic, standardized failure copy (plus

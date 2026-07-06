@@ -24,6 +24,8 @@ import {
   handleCreateProjectRitual,
   showEditProjectRitualModal,
   deleteProjectRitual,
+  loadProjectSettingsRituals,
+  setCurrentSettingsProjectId,
 } from './projects.js';
 import { api } from './api.js';
 
@@ -708,6 +710,39 @@ describe('saveProjectSettingsGeneral', () => {
 describe('clearProjectSettingsState', () => {
   it('clears state without error', () => {
     expect(() => clearProjectSettingsState()).not.toThrow();
+  });
+});
+
+// CHT-1226 PR #212 review: rituals-view.js detects failure via the return
+// value (this function swallows API errors internally — toast, no rethrow),
+// so the boolean contract is load-bearing.
+describe('loadProjectSettingsRituals return contract', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="rituals-sprint-list"></div>
+      <div id="rituals-close-list"></div>
+      <div id="rituals-claim-list"></div>
+    `;
+  });
+
+  afterEach(() => {
+    clearProjectSettingsState();
+  });
+
+  it('returns true on success', async () => {
+    setCurrentSettingsProjectId('p1');
+    api.getRituals.mockResolvedValue([]);
+    await expect(loadProjectSettingsRituals()).resolves.toBe(true);
+  });
+
+  it('returns false on API failure (error is swallowed into a toast)', async () => {
+    setCurrentSettingsProjectId('p1');
+    api.getRituals.mockRejectedValue(new Error('boom'));
+    await expect(loadProjectSettingsRituals()).resolves.toBe(false);
+  });
+
+  it('returns false when no settings project is set', async () => {
+    await expect(loadProjectSettingsRituals()).resolves.toBe(false);
   });
 });
 
