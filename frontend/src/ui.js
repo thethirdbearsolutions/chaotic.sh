@@ -137,12 +137,17 @@ export function extractErrorMessage(error) {
 
 /**
  * Show a toast for an API/action error with consistent formatting.
+ * CHT-1224: appends a (network)/(server) tag when api.js's error shape lets
+ * us tell them apart, so a flaky connection doesn't read as an app bug and
+ * vice versa. Errors with neither (e.g. plain thrown Errors in tests, or
+ * errors from code that doesn't go through api.js) render exactly as before.
  * @param {string} context - What was being attempted (e.g. "load issues", "delete agent")
  * @param {Error|Object} error - The caught error
  */
 export function showApiError(context, error) {
     const msg = extractErrorMessage(error);
-    showToast(`Failed to ${context}: ${msg}`, 'error');
+    const tag = error?.isNetworkError ? ' (network)' : (error?.status >= 500 ? ' (server)' : '');
+    showToast(`Failed to ${context}: ${msg}${tag}`, 'error');
 }
 
 /**

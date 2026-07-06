@@ -472,4 +472,31 @@ describe('showApiError', () => {
     const toast = document.querySelector('.toast-error');
     expect(toast.textContent).toBe('Failed to update sprint: Sprint is in limbo');
   });
+
+  // CHT-1224: api.js now flags network failures (isNetworkError, no .status)
+  // distinctly from HTTP errors (.status set) — showApiError surfaces that
+  // distinction instead of rendering them identically.
+  it('tags a network error distinctly', () => {
+    const error = new Error('Network error - check your connection');
+    error.isNetworkError = true;
+    showApiError('load issues', error);
+    const toast = document.querySelector('.toast-error');
+    expect(toast.textContent).toBe('Failed to load issues: Network error - check your connection (network)');
+  });
+
+  it('tags a 5xx server error distinctly', () => {
+    const error = new Error('Internal error');
+    error.status = 500;
+    showApiError('load issues', error);
+    const toast = document.querySelector('.toast-error');
+    expect(toast.textContent).toBe('Failed to load issues: Internal error (server)');
+  });
+
+  it('does not tag a 4xx error', () => {
+    const error = new Error('Not found');
+    error.status = 404;
+    showApiError('load issue', error);
+    const toast = document.querySelector('.toast-error');
+    expect(toast.textContent).toBe('Failed to load issue: Not found');
+  });
 });
