@@ -306,7 +306,7 @@ class TestIssueListAllProjects:
         result = cli_runner.invoke(cli, ["issue", "list", "--all-projects", "--json"])
 
         assert result.exit_code == 0
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         assert [i["identifier"] for i in payload] == ["CHT-1", "WR-7"]
 
     def test_all_projects_empty_result(self, cli_runner, mock_dependencies):

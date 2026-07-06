@@ -1253,6 +1253,179 @@ class TestAwaitSprintScope:
 
 
 # ---------------------------------------------------------------------------
+# await issues --project / await project / await team: keys, not just IDs
+# (CHT-1222)
+# ---------------------------------------------------------------------------
+
+
+class TestAwaitScopeKeyResolution:
+    """`await issues --project`, `await project`, and `await team`'s own
+    --help text and README examples document accepting a team/project
+    *key* (e.g. "CHT"), not just a raw ID. Previously none of the three
+    call sites resolved the key — the raw string was passed straight
+    through as project_id/team_id."""
+
+    def _root(self):
+        import click
+
+        @click.group()
+        def root():
+            pass
+
+        await_cmd.register(root)
+        return root
+
+    def _patch_await_event(self, monkeypatch):
+        captured = {}
+
+        def fake_await_event(**kwargs):
+            captured.update(kwargs)
+            raise SystemExit(124)
+
+        monkeypatch.setattr(await_cmd, "_await_event", fake_await_event)
+        return captured
+
+    def test_issues_project_flag_resolves_key(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {
+                "resolve_project_id": staticmethod(lambda v: "proj_resolved"),
+            }),
+        )
+
+        result = CliRunner().invoke(
+            self._root(), ["await", "issues", "--project", "CHT"],
+        )
+        assert result.exit_code == 124
+        assert captured["project_id"] == "proj_resolved"
+
+    def test_issues_without_project_flag_uses_current_project(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_require_current_project", lambda: "proj_current",
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "issues"])
+        assert result.exit_code == 124
+        assert captured["project_id"] == "proj_current"
+
+    def test_issues_project_flag_not_found_exits_1(self, monkeypatch):
+        from click.testing import CliRunner
+        import click as click_mod
+
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+
+        def boom(v):
+            raise click_mod.ClickException(f"Project not found: '{v}'")
+
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {"resolve_project_id": staticmethod(boom)}),
+        )
+
+        result = CliRunner().invoke(
+            self._root(), ["await", "issues", "--project", "NOPE"],
+        )
+        assert result.exit_code == 1
+        assert "Project not found" in result.output
+
+    def test_project_positional_resolves_key(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {
+                "resolve_project_id": staticmethod(lambda v: f"resolved_{v}"),
+            }),
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "project", "CHT"])
+        assert result.exit_code == 124
+        assert captured["project_id"] == "resolved_CHT"
+
+    def test_project_without_positional_uses_current_project(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+        monkeypatch.setattr(
+            await_cmd, "_require_current_project", lambda: "proj_current",
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "project"])
+        assert result.exit_code == 124
+        assert captured["project_id"] == "proj_current"
+
+    def test_project_key_not_found_exits_1(self, monkeypatch):
+        from click.testing import CliRunner
+        import click as click_mod
+
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_1")
+
+        def boom(v):
+            raise click_mod.ClickException(f"Project not found: '{v}'")
+
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {"resolve_project_id": staticmethod(boom)}),
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "project", "NOPE"])
+        assert result.exit_code == 1
+        assert "Project not found" in result.output
+
+    def test_team_positional_resolves_key(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {
+                "resolve_team_id": staticmethod(lambda v: f"resolved_{v}"),
+            }),
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "team", "platform"])
+        assert result.exit_code == 124
+        assert captured["team_id"] == "resolved_platform"
+
+    def test_team_without_positional_uses_current_team(self, monkeypatch):
+        from click.testing import CliRunner
+
+        captured = self._patch_await_event(monkeypatch)
+        monkeypatch.setattr(await_cmd, "_require_current_team", lambda: "team_current")
+
+        result = CliRunner().invoke(self._root(), ["await", "team"])
+        assert result.exit_code == 124
+        assert captured["team_id"] == "team_current"
+
+    def test_team_key_not_found_exits_1(self, monkeypatch):
+        from click.testing import CliRunner
+        import click as click_mod
+
+        def boom(v):
+            raise click_mod.ClickException(f"Team not found: '{v}'")
+
+        monkeypatch.setattr(
+            await_cmd, "_main",
+            lambda: type("M", (), {"resolve_team_id": staticmethod(boom)}),
+        )
+
+        result = CliRunner().invoke(self._root(), ["await", "team", "nope"])
+        assert result.exit_code == 1
+        assert "Team not found" in result.output
+
+
+# ---------------------------------------------------------------------------
 # Signal and pipe handling
 # ---------------------------------------------------------------------------
 

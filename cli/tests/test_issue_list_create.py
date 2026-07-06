@@ -3,6 +3,7 @@
 These are the major untested issue commands that make up the largest
 coverage gaps in main.py.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -243,6 +244,39 @@ class TestIssueMine:
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
 
+    def test_mine_batches_sprint_lookups_by_project_not_per_sprint(self, cli_runner):
+        """issue mine used to call get_sprint() once per unique sprint id
+        (N+1 across however many sprints the result set touches). Now
+        batches one get_sprints() call per distinct project, mirroring
+        issue_list --all-projects's existing fix for the identical shape
+        (CHT-1222)."""
+        from cli.main import cli, client
+
+        issues_across_projects = [
+            {"identifier": "CHT-1", "title": "A", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-1", "sprint_id": "sprint-1"},
+            {"identifier": "CHT-2", "title": "B", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-1", "sprint_id": "sprint-2"},
+            {"identifier": "CHT-3", "title": "C", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-2", "sprint_id": "sprint-3"},
+        ]
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_issues = MagicMock(return_value=issues_across_projects)
+        client.get_sprint = MagicMock(side_effect=AssertionError("get_sprint (singular, per-sprint) must not be called"))
+        client.get_sprints = MagicMock(side_effect=lambda project_id: {
+            "proj-1": [{"id": "sprint-1", "name": "Sprint One"}, {"id": "sprint-2", "name": "Sprint Two"}],
+            "proj-2": [{"id": "sprint-3", "name": "Sprint Three"}],
+        }[project_id])
+
+        result = cli_runner.invoke(cli, ['issue', 'mine'])
+
+        assert result.exit_code == 0, result.output
+        # One get_sprints() call per distinct project (2), not per sprint (3).
+        assert client.get_sprints.call_count == 2
+        assert 'Sprint One' in result.output
+        assert 'Sprint Two' in result.output
+        assert 'Sprint Three' in result.output
+
 
 class TestIssueSearch:
     """Tests for issue search command."""
@@ -383,6 +417,37 @@ class TestIssueCreate:
 
         assert result.exit_code != 0
 
+    def test_create_no_project_selected_json_outputs_error_json(self, cli_runner):
+        """The 'No project selected' guard used to console.print + raise
+        SystemExit(1) directly, bypassing handle_error's --json formatting
+        entirely (CHT-1222) -- under --json this produced a raw ANSI string
+        on stdout instead of {"error": ...} JSON. Now routes through
+        click.ClickException like every other validation error in this
+        function."""
+        from cli.main import cli
+
+        with patch('cli.main.get_current_project', return_value=None):
+            result = cli_runner.invoke(cli, ['issue', 'create', 'Title', '--json'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no project selected' in data['error'].lower()
+
+    def test_create_label_not_found_json_outputs_error_json(self, cli_runner):
+        """--label naming a nonexistent label used to bypass handle_error
+        the same way (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'create', 'Title', '--label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()
+
     def test_create_json(self, cli_runner):
         """issue create --json outputs JSON."""
         from cli.main import cli, client
@@ -397,6 +462,65 @@ class TestIssueCreate:
 
         assert result.exit_code == 0
         assert 'CHT-200' in result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-200'
+
+    def test_create_json_stdout_is_pure_single_json_value(self, cli_runner):
+        """stdout must be exactly one JSON value under --json (CHT-1222):
+        the human-readable "Issue created" status line must not leak onto
+        stdout alongside the JSON payload."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={
+            "id": "new-id",
+            "identifier": "CHT-200",
+            "title": "JSON Issue",
+        })
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'JSON Issue', '--json'])
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)  # raises if stdout isn't pure JSON
+        assert data['identifier'] == 'CHT-200'
+        assert 'created' in result.stderr.lower()
+
+    def test_create_json_includes_blocked_by_and_relates_to_relations(self, cli_runner):
+        """issue create --json used to silently discard --blocked-by/
+        --relates-to (early return before the relation-creation loop);
+        the relations must now actually be created AND reported in the
+        JSON output (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={
+            "id": "new-id", "identifier": "CHT-200", "title": "JSON Issue",
+        })
+
+        def fake_get_issue_by_identifier(identifier):
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue_by_identifier)
+        client.create_relation = MagicMock(side_effect=lambda a, b, t: {
+            "id": f"rel-{a}-{b}", "relation_type": t,
+        })
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'create', 'JSON Issue',
+            '--blocked-by', 'CHT-1', '--relates-to', 'CHT-2', '--json',
+        ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-200'
+
+        # The relations were actually created against the API, not skipped.
+        assert client.create_relation.call_count == 2
+        blocks_call = client.create_relation.call_args_list[0]
+        assert blocks_call.args == ("id-CHT-1", "new-id", "blocks")
+        relates_call = client.create_relation.call_args_list[1]
+        assert relates_call.args == ("new-id", "id-CHT-2", "relates_to")
+
+        # And surfaced in the JSON payload so a caller can see what happened.
+        assert len(data['relations_created']) == 2
 
     def test_create_with_parent(self, cli_runner):
         """issue create --parent creates sub-issue."""

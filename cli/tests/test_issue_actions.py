@@ -3,6 +3,7 @@
 Tests cover: issue delete, sub-issues, relations, block, unblock, duplicate,
 assign, move, close, wontfix, claim, rituals, escalate, deescalate.
 """
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -523,3 +524,369 @@ class TestIssueDeescalate:
 
         assert result.exit_code == 0
         assert 'already' in result.output.lower()
+
+
+class TestIssueActionsJsonOutput:
+    """State-transition/mutation commands across the issue group previously
+    had no --json support at all (CHT-1222). Each now emits the affected
+    entity as a single JSON object on stdout, with status lines redirected
+    to stderr by the shared JsonAwareConsole -- verified here via
+    result.stdout (pure stdout) rather than result.output (mixed)."""
+
+    def test_delete_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {"deleted": True, "id": "issue-uuid-123", "identifier": "CHT-100"}
+        assert 'deleted' in result.stderr.lower()
+
+    def test_block_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "issue-1", "identifier": "CHT-100"},
+            {"id": "issue-2", "identifier": "CHT-200"},
+        ])
+        client.create_relation = MagicMock(return_value={"id": "rel-1", "relation_type": "blocks"})
+
+        result = cli_runner.invoke(cli, ['issue', 'block', 'CHT-100', 'CHT-200', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {"id": "rel-1", "relation_type": "blocks"}
+
+    def test_unblock_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_relation = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'unblock', 'CHT-100', 'rel-uuid-123', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['deleted'] is True
+        assert data['id'] == 'rel-uuid-123'
+
+    def test_duplicate_json(self, cli_runner):
+        from cli.main import cli, client
+
+        final_dup = {"id": "dup-id", "identifier": "CHT-101", "status": "canceled"}
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "dup-id", "identifier": "CHT-101", "status": "in_progress"},
+            {"id": "orig-id", "identifier": "CHT-100", "status": "in_progress"},
+            final_dup,  # json_result's refetch after the mutation
+        ])
+        client.create_relation = MagicMock()
+        client.create_comment = MagicMock()
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'duplicate', 'CHT-101', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == final_dup
+
+    def test_assign_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        with patch('cli.main.resolve_assignee_id', return_value='user-uuid-456'):
+            result = cli_runner.invoke(cli, ['issue', 'assign', 'CHT-100', 'alice', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_move_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'move', 'CHT-100', 'done', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+        assert 'moved' in result.stderr.lower()
+
+    def test_close_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'close', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_complete_alias_json_emits_exactly_once(self, cli_runner, mock_issue):
+        """complete delegates to close.callback(); this must NOT double-emit
+        the JSON payload (CHT-1222) -- stdout must still be exactly one
+        JSON value."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'complete', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)  # raises if more than one value present
+        assert data['identifier'] == 'CHT-100'
+
+    def test_wontfix_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'wontfix', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_wontfix_already_canceled_json_still_emits_json(self, cli_runner):
+        """The early-return-if-already-canceled path must still honor
+        --json (return the current issue) rather than leaving stdout
+        empty."""
+        from cli.main import cli, client
+
+        canceled_issue = {"id": "issue-uuid-123", "identifier": "CHT-100", "status": "canceled"}
+        client.get_issue_by_identifier = MagicMock(return_value=canceled_issue)
+
+        result = cli_runner.invoke(cli, ['issue', 'wontfix', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['status'] == 'canceled'
+
+    def test_cancel_alias_json_emits_exactly_once(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'cancel', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_claim_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'claim', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_start_alias_json_emits_exactly_once(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'start', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_rituals_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        ritual_status = {
+            "pending_rituals": [{"name": "run-tests", "approval_mode": "auto"}],
+            "completed_rituals": [],
+        }
+        client.get_pending_issue_rituals = MagicMock(return_value=ritual_status)
+
+        result = cli_runner.invoke(cli, ['issue', 'rituals', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == ritual_status
+
+    def test_escalate_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "issue-uuid-123", "identifier": "CHT-100", "priority": "medium",
+        })
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'escalate', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+    def test_deescalate_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "issue-uuid-123", "identifier": "CHT-100", "priority": "high",
+        })
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'deescalate', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+
+
+class TestConfirmationPromptContract:
+    """Drive the REAL click.confirm() path — no confirm_action mocking —
+    via CliRunner input streams (CHT-1222 review finding #2). Previously,
+    click.confirm's default err=False leaked the raw prompt text onto
+    stdout, breaking the one-JSON-value contract on every delete-style
+    command; and under --json with empty stdin the prompt text WAS the
+    entire stdout."""
+
+    def test_json_without_yes_never_prompts_emits_json_error(self, cli_runner, mock_issue):
+        """Under --json with no --yes: no prompt at all (a machine consumer
+        can't answer a TTY), {"error": ...} directing the caller to --yes,
+        exit 2, mutation not performed."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100', '--json'], input='')
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)  # raises if the prompt leaked to stdout
+        assert '--yes' in data['error']
+        client.delete_issue.assert_not_called()
+
+    def test_json_with_yes_proceeds(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['--yes', 'issue', 'delete', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['deleted'] is True
+        client.delete_issue.assert_called_once_with('issue-uuid-123')
+
+    def test_interactive_prompt_goes_to_stderr_not_stdout(self, cli_runner, mock_issue):
+        """Outside --json, the confirmation prompt itself belongs on
+        stderr — stdout stays reserved for command output."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100'], input='y\n')
+
+        assert result.exit_code == 0
+        assert 'Are you sure' in result.stderr
+        assert 'Are you sure' not in result.stdout
+        client.delete_issue.assert_called_once()
+
+    def test_interactive_decline_aborts_without_mutation(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100'], input='n\n')
+
+        assert result.exit_code == 0
+        client.delete_issue.assert_not_called()
+
+    def test_comment_delete_json_without_yes_same_contract(self, cli_runner, mock_issue):
+        """Same guarantee on the other confirmation-gated commands this
+        branch wired --json onto."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_comment = MagicMock()
+
+        result = cli_runner.invoke(
+            cli, ['issue', 'comment-delete', 'CHT-100', 'comment-1', '--json'], input='',
+        )
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert '--yes' in data['error']
+        client.delete_comment.assert_not_called()
+
+
+class TestIssueCommentJsonOutput:
+    """issue comment/comment-edit/comment-delete previously had no --json
+    at all, so an agent had no parseable way to learn a comment's id
+    without a follow-up `issue show --json` (CHT-1222)."""
+
+    def test_comment_json_includes_comment_id(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.create_comment = MagicMock(return_value={
+            "id": "comment-1", "content": "hello", "issue_id": "issue-uuid-123",
+        })
+
+        result = cli_runner.invoke(cli, ['issue', 'comment', 'CHT-100', 'hello', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['id'] == 'comment-1'
+        assert 'added' in result.stderr.lower()
+
+    def test_comment_edit_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_comment = MagicMock(return_value={"id": "comment-1", "content": "edited"})
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'comment-edit', 'CHT-100', 'comment-1', 'edited', '--json',
+        ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['id'] == 'comment-1'
+        assert data['content'] == 'edited'
+
+    def test_comment_delete_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_comment = MagicMock()
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, [
+                'issue', 'comment-delete', 'CHT-100', 'comment-1', '--json',
+            ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {
+            "deleted": True, "id": "comment-1",
+            "issue_id": "issue-uuid-123", "identifier": "CHT-100",
+        }

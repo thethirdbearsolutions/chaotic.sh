@@ -147,7 +147,7 @@ class TestEpicList:
         result = cli_runner.invoke(cli, ['epic', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert len(data) == 1
         assert data[0]['sub_issues'] == [{"id": "s1", "status": "done"}]
 
@@ -234,7 +234,7 @@ class TestEpicShow:
         result = cli_runner.invoke(cli, ['epic', 'show', 'CHT-50', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data['identifier'] == 'CHT-50'
         assert len(data['sub_issues']) == 3
 

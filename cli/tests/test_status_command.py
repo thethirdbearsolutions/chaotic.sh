@@ -233,7 +233,7 @@ class TestStatus:
             result = cli_runner.invoke(cli, ['status', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data['authenticated'] is True
         assert data['profile'] == 'default'
         assert data['user']['name'] == 'Alice'

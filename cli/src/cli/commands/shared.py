@@ -11,7 +11,61 @@ import sys
 import click
 from rich.console import Console
 
-console = Console()
+
+class _JsonAwareConsole:
+    """Proxy that redirects Rich output to stderr while --json mode is
+    active (CHT-1222), so no command's status lines/tables/panels can leak
+    onto the single-JSON-value stdout contract.
+
+    This is the ONE place that decision is made: individual command call
+    sites keep calling plain ``console.print(...)`` and get stdout-purity
+    under --json for free, without gating each call behind an
+    ``is_json_output()`` check. Structured JSON payloads never go through
+    this console — they're written directly via ``cli.main.output_json``
+    (a plain ``click.echo`` to stdout) — so this proxy can never suppress
+    the actual JSON output, only the human-readable chatter around it.
+
+    Rich's ``Console.print()`` has no per-call ``file=`` override (the
+    file is bound at Console construction), so this holds two real
+    Console instances — one bound to stdout, one to stderr — and picks
+    per call. Only the output methods commands are expected to use are
+    exposed (``print``/``log``/``rule``/``print_json``/``status``), each
+    routed through the same stream selection. There is deliberately no
+    ``__getattr__`` fallback: any other Console method raises
+    AttributeError at dev time (fail loud) instead of silently picking
+    the wrong stream in production — a future command imitating existing
+    chatter with a new Rich method must be added here, where it will get
+    the redirection for free.
+    """
+
+    def __init__(self):
+        self._stdout_console = Console()
+        self._stderr_console = Console(stderr=True)
+
+    @property
+    def _target(self):
+        return self._stderr_console if _is_json_output() else self._stdout_console
+
+    def print(self, *args, **kwargs):
+        self._target.print(*args, **kwargs)
+
+    def log(self, *args, **kwargs):
+        self._target.log(*args, **kwargs)
+
+    def rule(self, *args, **kwargs):
+        self._target.rule(*args, **kwargs)
+
+    def print_json(self, *args, **kwargs):
+        # NOTE: this is Rich chatter (pretty-printed, human-facing), not
+        # the machine contract — the actual --json payload always goes
+        # through cli.main.output_json to stdout.
+        self._target.print_json(*args, **kwargs)
+
+    def status(self, *args, **kwargs):
+        return self._target.status(*args, **kwargs)
+
+
+console = _JsonAwareConsole()
 
 
 def _client():
@@ -21,6 +75,11 @@ def _client():
     rather than binding it at import time via ``from ..client import client``.
     """
     return sys.modules['cli.main'].client
+
+
+def _is_json_output() -> bool:
+    """Late-bind to cli.main.is_json_output (same rationale as _client())."""
+    return sys.modules['cli.main'].is_json_output()
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
@@ -41,6 +100,50 @@ def print_ritual_prompt(prompt):
     from rich.markdown import Markdown
     from rich.padding import Padding
     console.print(Padding(Markdown(prompt), (0, 0, 0, 6)))
+
+
+# ── Click parameter callbacks ────────────────────────────────────────────────
+
+
+def resolve_content_value(ctx, param, value):
+    """Click callback: resolve a long-text option value via curl-style conventions.
+
+    Resolution rules:
+      ``-``           read stdin to EOF
+      ``@@<rest>``    literal ``@<rest>`` (escape; only the leading ``@@`` is
+                      unescaped, so ``@@@foo`` becomes ``@@foo``)
+      ``@<path>``     read text from file at ``<path>``; missing or unreadable
+                      file raises ``UsageError``
+      anything else   pass through unchanged (including ``None`` and ``""``)
+
+    Stdin is consumed only once per invocation; if multiple options on the same
+    command both pass ``-``, the second sees EOF and gets an empty string.
+    """
+    if value in (None, ""):
+        return value
+    if value == "-":
+        return sys.stdin.read()
+    if value.startswith("@@"):
+        return "@" + value[2:]
+    if value.startswith("@"):
+        path = value[1:]
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except UnicodeDecodeError as exc:
+            # e.g. --description @screenshot.png — not OSError (it's a
+            # ValueError subclass), and this fires during Click's
+            # parameter-callback phase, outside every command decorator's
+            # reach; UsageError routes it through the Group-level --json
+            # handling (CHT-1222).
+            raise click.UsageError(
+                f"Could not read content from {path!r}: not valid UTF-8 text ({exc})"
+            )
+        except OSError as exc:
+            raise click.UsageError(
+                f"Could not read content from {path!r}: {exc.strerror or exc}"
+            )
+    return value
 
 
 def get_status_color(status: str) -> str:
