@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, print_ritual_prompt
+from .shared import _client, console, print_ritual_prompt, resolve_content_value
 
 
 def _main():
@@ -70,32 +70,50 @@ def register(cli):
     @click.option("--no-sprint", "no_sprint", is_flag=True, help="Show only issues not assigned to any sprint")
     @click.option("--epic", "--parent", help="Filter by epic/parent issue (e.g., CHT-12)")
     @click.option("--label", "-l", help="Filter by label name. Comma-separated for multiple (issues must have ALL labels).")
+    @click.option("--exclude-label", "exclude_label", help="Exclude issues that have any of these labels. Comma-separated for multiple.")
+    @click.option("--exclude-status", "exclude_status", help="Exclude issues with these statuses. Comma-separated for multiple.")
+    @click.option("--exclude-priority", "exclude_priority", help="Exclude issues with these priorities. Comma-separated for multiple.")
+    @click.option("--exclude-type", "exclude_issue_type", help="Exclude issues with these types. Comma-separated for multiple.")
+    @click.option("--exclude-assignee", "exclude_assignee", help="Exclude issues assigned to this user ('me', a name, user ID, or 'unassigned'). Comma-separated for multiple.")
     @click.option("--assignee", help="Filter by assignee ('me', a name, or user ID)")
     @click.option("--search", help="Search in title, description, and identifier.")
     @click.option("--limit", "-n", type=int, default=50, help="Maximum number of issues to show (default: 50)")
     @click.option("--skip", type=int, default=0, help="Number of issues to skip (for pagination)")
     @click.option("--sort-by", "--sort", "-s", type=click.Choice(["created", "updated", "priority", "status", "title", "estimate", "random"], case_sensitive=False), default="random", help="Sort field (default: random)")
     @click.option("--order", "-o", type=click.Choice(["asc", "desc"], case_sensitive=False), default="desc", help="Sort direction (default: desc)")
+    @click.option("--all-projects", "all_projects", is_flag=True, help="List issues across all projects in the team (adds a Project column)")
     @_main().json_option
-    @_main().require_project
+    @_main().require_team
     @_main().handle_error
-    def issue_list(status, priority, sprint, no_sprint, epic, label, assignee, search, limit, skip, sort_by, order):
-        """List issues in current project."""
+    def issue_list(status, priority, sprint, no_sprint, epic, label, exclude_label, exclude_status, exclude_priority, exclude_issue_type, exclude_assignee, assignee, search, limit, skip, sort_by, order, all_projects):
+        """List issues in current project (or team-wide with --all-projects)."""
         m = _main()
+        if not all_projects and not m.get_current_project():
+            raise click.ClickException(
+                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+            )
         # Validate status values if provided (CHT-502)
+        valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
         if status:
-            valid_statuses = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"]
             statuses = [s.strip().lower() for s in status.split(",")]
             for s in statuses:
                 if s not in valid_statuses:
                     raise click.BadParameter(f"Invalid status: {s}. Must be one of: {', '.join(valid_statuses)}")
+        if exclude_status:
+            for s in (v.strip().lower() for v in exclude_status.split(",")):
+                if s and s not in valid_statuses:
+                    raise click.BadParameter(f"Invalid status: {s}. Must be one of: {', '.join(valid_statuses)}")
 
         # Validate priority values if provided
+        valid_priorities = ["urgent", "high", "medium", "low", "no_priority"]
         if priority:
-            valid_priorities = ["urgent", "high", "medium", "low", "no_priority"]
             priorities = [p.strip().lower() for p in priority.split(",")]
             for p in priorities:
                 if p not in valid_priorities:
+                    raise click.BadParameter(f"Invalid priority: {p}. Must be one of: {', '.join(valid_priorities)}")
+        if exclude_priority:
+            for p in (v.strip().lower() for v in exclude_priority.split(",")):
+                if p and p not in valid_priorities:
                     raise click.BadParameter(f"Invalid priority: {p}. Must be one of: {', '.join(valid_priorities)}")
 
         # Resolve assignee filter
@@ -103,20 +121,45 @@ def register(cli):
         if assignee:
             assignee_id = m.resolve_assignee_id(assignee)
 
-        project_id = m.get_current_project()
+        # Resolve exclude_assignee — accepts comma-separated names / 'me' / 'unassigned' / IDs
+        exclude_assignee_id = None
+        if exclude_assignee:
+            resolved = []
+            for token in (v.strip() for v in exclude_assignee.split(",")):
+                if not token:
+                    continue
+                if token.lower() == "unassigned":
+                    resolved.append("unassigned")
+                else:
+                    resolved.append(m.resolve_assignee_id(token))
+            exclude_assignee_id = ",".join(resolved) if resolved else None
+
+        project_id = None if all_projects else m.get_current_project()
+        team_id = m.get_current_team() if all_projects else None
         parent_id = None
         if epic:
             epic_issue = _client().get_issue_by_identifier(epic)
             parent_id = epic_issue["id"]
         if sprint and no_sprint:
             raise click.UsageError("Cannot use both --sprint and --no-sprint")
+        if sprint and all_projects:
+            raise click.UsageError("Cannot use --sprint with --all-projects (sprints are project-scoped)")
         if no_sprint:
             sprint_id = "no_sprint"
         elif sprint:
             sprint_id = m.resolve_sprint_id(sprint, project_id)
         else:
             sprint_id = None
-        issues = _client().get_issues(project_id=project_id, status=status, priority=priority, sprint_id=sprint_id, limit=limit, parent_id=parent_id, sort_by=sort_by, order=order, label=label, search=search, skip=skip or None, assignee_id=assignee_id)
+        issues = _client().get_issues(
+            project_id=project_id, team_id=team_id, status=status, priority=priority,
+            sprint_id=sprint_id, limit=limit, parent_id=parent_id,
+            sort_by=sort_by, order=order, label=label, search=search,
+            skip=skip or None, assignee_id=assignee_id,
+            exclude_label=exclude_label, exclude_status=exclude_status,
+            exclude_priority=exclude_priority,
+            exclude_issue_type=exclude_issue_type,
+            exclude_assignee_id=exclude_assignee_id,
+        )
 
         # JSON output mode (CHT-170)
         if m.is_json_output():
@@ -127,13 +170,27 @@ def register(cli):
             console.print("[yellow]No issues found.[/yellow]")
             return
 
-        # Build sprint ID -> name map
-        sprints = _client().get_sprints(project_id)
-        sprint_names = {s["id"]: s["name"] for s in sprints}
+        # Build project/sprint lookup maps
+        project_keys = {}
+        if all_projects:
+            # One projects call for the Project column; sprints are
+            # project-scoped, so fetch once per project that has sprinted
+            # issues (bounded by project count, no per-issue calls)
+            projects = _client().get_projects(team_id)
+            project_keys = {p["id"]: p["key"] for p in projects}
+            sprint_names = {}
+            for pid in {i["project_id"] for i in issues if i.get("sprint_id")}:
+                for s in _client().get_sprints(pid):
+                    sprint_names[s["id"]] = s["name"]
+        else:
+            sprints = _client().get_sprints(project_id)
+            sprint_names = {s["id"]: s["name"] for s in sprints}
 
-        table = Table(title="Issues")
+        table = Table(title="Issues (all projects)" if all_projects else "Issues")
         table.add_column("ID")
         table.add_column("Title")
+        if all_projects:
+            table.add_column("Project")
         table.add_column("Status")
         table.add_column("Priority")
         table.add_column("Type")
@@ -141,15 +198,20 @@ def register(cli):
         table.add_column("Sprint")
 
         for i in issues:
-            table.add_row(
+            row = [
                 i["identifier"],
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
+            ]
+            if all_projects:
+                row.append(project_keys.get(i.get("project_id"), "-"))
+            row.extend([
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
                 str(i.get("estimate") or "-"),
-                sprint_names.get(i.get("sprint_id"), "-")
-            )
+                sprint_names.get(i.get("sprint_id"), "-"),
+            ])
+            table.add_row(*row)
 
         console.print(table)
 
@@ -189,16 +251,30 @@ def register(cli):
             console.print("[yellow]No issues assigned to you.[/yellow]")
             return
 
-        # Build sprint ID -> name map from unique sprint IDs in results
+        # Build sprint ID -> name map. issue mine can span multiple
+        # projects (it's not project-scoped), so batch one get_sprints()
+        # call per distinct project represented in the results instead of
+        # one get_sprint() call per unique sprint id -- same fix
+        # issue_list --all-projects already applies for the identical
+        # N+1 shape (CHT-1222).
         sprint_names = {}
+        project_ids = {
+            i["project_id"] for i in issues
+            if i.get("sprint_id") and i.get("project_id")
+        }
+        for pid in project_ids:
+            try:
+                for s in _client().get_sprints(pid):
+                    sprint_names[s["id"]] = s["name"]
+            except m.APIError:
+                pass
+        # Fall back to a truncated id for any sprint id that didn't
+        # resolve (project_id missing on the issue, or that project's
+        # sprint fetch failed).
         for i in issues:
             sid = i.get("sprint_id")
             if sid and sid not in sprint_names:
-                try:
-                    s = _client().get_sprint(sid)
-                    sprint_names[sid] = s["name"]
-                except m.APIError:
-                    sprint_names[sid] = sid[:8] + "..."
+                sprint_names[sid] = sid[:8] + "..."
 
         table = Table(title="My Issues")
         table.add_column("ID")
@@ -277,7 +353,7 @@ def register(cli):
     @issue.command("create")
     @click.argument("title", required=False)
     @click.option("--title", "-t", "title_opt", help="Issue title (alternative to positional argument)")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
@@ -306,8 +382,9 @@ def register(cli):
         else:
             project_id = m.get_current_project()
             if not project_id:
-                console.print("[red]No project selected. Use --project or run 'chaotic project use <project_id>' first.[/red]")
-                raise SystemExit(1)
+                raise click.ClickException(
+                    "No project selected. Use --project or run 'chaotic project use <project_id>' first."
+                )
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
         if estimate:
@@ -328,8 +405,9 @@ def register(cli):
             for label_name in labels:
                 label = next((l for l in all_labels if l["name"].lower() == label_name.lower()), None)
                 if not label:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 label_ids.append(label["id"])
             data["label_ids"] = label_ids
         if sprint is not None:
@@ -339,10 +417,6 @@ def register(cli):
                 data["sprint_id"] = m.resolve_sprint_id(sprint, project_id)
         result = _client().create_issue(project_id, title, **data)
 
-        if m.is_json_output():
-            m.output_json(result)
-            return
-
         if parent:
             console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
         elif epic:
@@ -350,15 +424,25 @@ def register(cli):
         else:
             console.print(f"[green]Issue created: {result['identifier']} - {result['title']}[/green]")
 
-        # Create relations if specified
+        # Create relations if specified. Must run unconditionally, before
+        # any --json return, or --json silently drops --blocked-by/--relates-to
+        # entirely (CHT-1222).
+        relations_created = []
         for blocker_id in blocked_by:
             blocker = _client().get_issue_by_identifier(blocker_id)
-            _client().create_relation(blocker["id"], result["id"], "blocks")
+            relation = _client().create_relation(blocker["id"], result["id"], "blocks")
+            relations_created.append(relation)
             console.print(f"[dim]  Blocked by {blocker_id}[/dim]")
         for related_id in relates_to:
             related = _client().get_issue_by_identifier(related_id)
-            _client().create_relation(result["id"], related["id"], "relates_to")
+            relation = _client().create_relation(result["id"], related["id"], "relates_to")
+            relations_created.append(relation)
             console.print(f"[dim]  Related to {related_id}[/dim]")
+
+        if m.is_json_output():
+            if relations_created:
+                result["relations_created"] = relations_created
+            m.output_json(result)
 
     @issue.command("show")
     @click.argument("identifiers", nargs=-1)
@@ -544,7 +628,7 @@ def register(cli):
     @issue.command("update")
     @click.argument("identifier")
     @click.option("--title")
-    @click.option("--description")
+    @click.option("--description", callback=resolve_content_value)
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
     @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
@@ -559,7 +643,7 @@ def register(cli):
     @click.option("--relates-to", "relates_to", multiple=True, help="Add relates-to relation(s) (can be used multiple times)")
     @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
                   help="Auto-attest all pending ticket rituals (requires --note)")
-    @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)")
+    @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
@@ -613,8 +697,9 @@ def register(cli):
             for label_name in add_labels:
                 label_id = label_lookup.get(label_name.lower())
                 if not label_id:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 _client().add_label_to_issue(iss["id"], label_id)
                 console.print(f"[dim]Added label: {label_name}[/dim]")
                 labels_modified = True
@@ -623,8 +708,9 @@ def register(cli):
             for label_name in remove_labels:
                 label_id = label_lookup.get(label_name.lower())
                 if not label_id:
-                    console.print(f"[red]Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}[/red]")
-                    raise SystemExit(1)
+                    raise click.ClickException(
+                        f"Label '{label_name}' not found. Available labels: {', '.join(l['name'] for l in all_labels)}"
+                    )
                 _client().remove_label_from_issue(iss["id"], label_id)
                 console.print(f"[dim]Removed label: {label_name}[/dim]")
                 labels_modified = True
@@ -694,39 +780,47 @@ def register(cli):
     @issue.command("comment")
     @click.argument("identifier")
     @click.argument("content")
-    @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)")
+    @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)", callback=resolve_content_value)
     @click.option("--assign-to", help="Also assign the issue (use 'me', a user ID, or name/email)")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment(identifier, content, note, assign_to):
         """Add a comment to an issue."""
         m = _main()
         body = "\n".join([content, note]) if note else content
         iss = _client().get_issue_by_identifier(identifier)
-        _client().create_comment(iss["id"], body)
+        comment = _client().create_comment(iss["id"], body)
         console.print(f"[green]Comment added to {identifier}.[/green]")
         if assign_to:
             assignee_id = m.resolve_assignee_id(assign_to)
             _client().update_issue(iss["id"], assignee_id=assignee_id)
             console.print(f"[green]Issue {identifier} assigned.[/green]")
+        return comment
 
     @issue.command("comment-edit")
     @click.argument("identifier")
     @click.argument("comment_id")
     @click.argument("content")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment_edit(identifier, comment_id, content):
         """Edit a comment on an issue."""
         iss = _client().get_issue_by_identifier(identifier)
-        _client().update_comment(iss["id"], comment_id, content)
+        comment = _client().update_comment(iss["id"], comment_id, content)
         console.print(f"[green]Comment updated on {identifier}.[/green]")
+        return comment
 
     @issue.command("comment-delete")
     @click.argument("identifier")
     @click.argument("comment_id")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment_delete(identifier, comment_id):
         """Delete a comment on an issue."""
         m = _main()
@@ -735,11 +829,14 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_comment(iss["id"], comment_id)
         console.print(f"[green]Comment deleted from {identifier}.[/green]")
+        return {"deleted": True, "id": comment_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("delete")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_delete(identifier):
         """Delete an issue."""
         m = _main()
@@ -748,6 +845,7 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_issue(iss["id"])
         console.print(f"[green]Issue {identifier} deleted.[/green]")
+        return {"deleted": True, "id": iss["id"], "identifier": identifier}
 
     @issue.command("sub-issues")
     @click.argument("identifier")
@@ -825,8 +923,10 @@ def register(cli):
     @click.option("--type", "relation_type", default="blocks",
                   type=click.Choice(["blocks", "relates_to", "duplicates"]),
                   help="Type of relation")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_block(identifier, blocked_identifier, relation_type):
         """Create a relation between issues.
 
@@ -834,7 +934,7 @@ def register(cli):
         """
         iss = _client().get_issue_by_identifier(identifier)
         blocked = _client().get_issue_by_identifier(blocked_identifier)
-        _client().create_relation(iss["id"], blocked["id"], relation_type)
+        relation = _client().create_relation(iss["id"], blocked["id"], relation_type)
 
         if relation_type == "blocks":
             console.print(f"[green]{identifier} now blocks {blocked_identifier}.[/green]")
@@ -842,23 +942,29 @@ def register(cli):
             console.print(f"[green]{identifier} marked as duplicate of {blocked_identifier}.[/green]")
         else:
             console.print(f"[green]{identifier} related to {blocked_identifier}.[/green]")
+        return relation
 
     @issue.command("unblock")
     @click.argument("identifier")
     @click.argument("relation_id")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_unblock(identifier, relation_id):
         """Remove a relation from an issue."""
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_relation(iss["id"], relation_id)
         console.print(f"[green]Relation removed from {identifier}.[/green]")
+        return {"deleted": True, "id": relation_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("duplicate")
     @click.argument("duplicate_identifier")
     @click.argument("original_identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda duplicate_identifier, **_: _client().get_issue_by_identifier(duplicate_identifier))
     def issue_duplicate(duplicate_identifier, original_identifier):
         """Mark an issue as a duplicate of another and close it.
 
@@ -901,9 +1007,11 @@ def register(cli):
     @issue.command("assign")
     @click.argument("identifier")
     @click.argument("assignee", required=False)
-    @click.option("--comment", "comment_text", help="Also add a comment to the issue")
+    @click.option("--comment", "comment_text", help="Also add a comment to the issue", callback=resolve_content_value)
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_assign(identifier, assignee, comment_text):
         """Assign an issue to a user.
 
@@ -927,8 +1035,10 @@ def register(cli):
     @issue.command("move")
     @click.argument("identifier")
     @click.argument("status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_move(identifier, status):
         """Move an issue to a different status.
 
@@ -940,8 +1050,10 @@ def register(cli):
 
     @issue.command("close")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_close(identifier):
         """Close an issue (move to done).
 
@@ -953,6 +1065,7 @@ def register(cli):
 
     @issue.command("complete")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_complete(identifier):
@@ -960,12 +1073,19 @@ def register(cli):
 
         Alias for 'issue close IDENTIFIER'.
         """
+        # No @json_result here: issue_close.callback(...) below runs
+        # close's own full decorator stack (including its json_result),
+        # which already sees --json via the shared ctx.obj this command's
+        # own @json_option just set. Adding a second json_result here
+        # would double-emit the JSON payload (CHT-1222).
         issue_close.callback(identifier)
 
     @issue.command("wontfix")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_wontfix(identifier):
         """Mark an issue as wontfix (canceled).
 
@@ -975,12 +1095,13 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         if iss["status"] == "canceled":
             console.print(f"[dim]Issue {identifier} is already canceled.[/dim]")
-            return
+            return iss
         _client().update_issue(iss["id"], status="canceled")
         console.print(f"[green]Issue {identifier} marked as wontfix (canceled).[/green]")
 
     @issue.command("cancel")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_cancel(identifier):
@@ -988,12 +1109,16 @@ def register(cli):
 
         Alias for 'issue wontfix IDENTIFIER'.
         """
+        # See issue_complete's comment: no @json_result here, delegates
+        # to wontfix's own (CHT-1222).
         issue_wontfix.callback(identifier)
 
     @issue.command("claim")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_claim(identifier):
         """Assign an issue to yourself and move to in_progress.
 
@@ -1006,6 +1131,7 @@ def register(cli):
 
     @issue.command("start")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_start(identifier):
@@ -1013,10 +1139,13 @@ def register(cli):
 
         Alias for 'issue claim IDENTIFIER'.
         """
+        # See issue_complete's comment: no @json_result here, delegates
+        # to claim's own (CHT-1222).
         issue_claim.callback(identifier)
 
     @issue.command("rituals")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_rituals(identifier):
@@ -1030,6 +1159,10 @@ def register(cli):
         status = _client().get_pending_issue_rituals(iss["id"])
         pending = status.get("pending_rituals", [])
         completed = status.get("completed_rituals", [])
+
+        if m.is_json_output():
+            m.output_json(status)
+            return
 
         if not pending and not completed:
             console.print(f"[dim]No ticket-level rituals configured for this project.[/dim]")
@@ -1066,8 +1199,10 @@ def register(cli):
 
     @issue.command("escalate")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_escalate(identifier):
         """Bump issue priority up one level.
 
@@ -1094,8 +1229,10 @@ def register(cli):
 
     @issue.command("deescalate")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_deescalate(identifier):
         """Bump issue priority down one level.
 

@@ -38,7 +38,7 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
-import { setState } from './state.js';
+import { setState, getSelectedBoardIndex, setSelectedBoardIndex, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import {
@@ -58,6 +58,10 @@ describe('board', () => {
         // Reset board state
         setBoardIssues([]);
         vi.clearAllMocks();
+
+        // Reset shared state the CHT-1211 nav-context tests touch
+        setState('currentView', 'board');
+        setState('detailNavContext', []);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -115,6 +119,136 @@ describe('board', () => {
             await loadBoard();
 
             expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
+        });
+
+        // CHT-1211 item 2: issue-detail prev/next should page through the
+        // Board's own list when opened from Board, not the stale/empty
+        // Issues-view-only global issues array.
+        it('sets the detail nav context to the board issue list', async () => {
+            const mockIssues = [
+                { id: '1', title: 'Issue 1', status: 'todo' },
+                { id: '2', title: 'Issue 2', status: 'done' },
+            ];
+            api.getIssues.mockResolvedValue(mockIssues);
+            setState('currentProject', 'project-123');
+            setState('currentView', 'board');
+
+            await loadBoard();
+
+            expect(getDetailNavContext()).toEqual(mockIssues);
+        });
+
+        // CHT-1211 review #2: the request id only orders loadBoard() against
+        // itself — the context write must also require Board to still be the
+        // current view when the response arrives.
+        it('does not write the detail nav context when the user has navigated away', async () => {
+            const boardIssuesList = [{ id: 'b1', title: 'B1', status: 'todo' }];
+            api.getIssues.mockResolvedValue(boardIssuesList);
+            setState('currentProject', 'project-123');
+            setState('currentView', 'issues'); // user is no longer on Board
+
+            await loadBoard();
+
+            expect(getDetailNavContext()).toEqual([]);
+            // Board's own local state still updates
+            expect(getBoardIssues()).toEqual(boardIssuesList);
+        });
+
+        // CHT-1211 item 7: a stale response from a superseded loadBoard()
+        // call (rapid project switching) must not overwrite newer data.
+        describe('request sequencing (out-of-order responses)', () => {
+            it('drops a slow response from an earlier project switch', async () => {
+                let resolveFirst;
+                const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+                const projectAIssues = [{ id: 'a1', title: 'A1', status: 'todo' }];
+                const projectBIssues = [{ id: 'b1', title: 'B1', status: 'todo' }];
+
+                api.getIssues.mockImplementationOnce(() => firstRequest);
+                setState('currentProject', 'project-A');
+                const firstLoad = loadBoard(); // in flight, slow
+
+                api.getIssues.mockImplementationOnce(() => Promise.resolve(projectBIssues));
+                setState('currentProject', 'project-B');
+                await loadBoard(); // resolves first (faster)
+
+                expect(getBoardIssues()).toEqual(projectBIssues);
+
+                // The slow first request now resolves — must be dropped, not
+                // overwrite the already-current Project B data.
+                resolveFirst(projectAIssues);
+                await firstLoad;
+
+                expect(getBoardIssues()).toEqual(projectBIssues);
+            });
+
+            // CHT-1211 review #2: the board→issues cross-view race. A slow
+            // loadBoard() response passes its own request-id check (nobody
+            // called loadBoard() again) but must NOT clobber the fresher
+            // context the Issues view wrote in the meantime.
+            it('does not clobber another view\'s context with a slow cross-view response', async () => {
+                let resolveBoard;
+                const slowBoardRequest = new Promise((resolve) => { resolveBoard = resolve; });
+                const boardIssuesList = [{ id: 'b1', title: 'Board 1', status: 'todo' }];
+                const issuesList = [{ id: 'i1', title: 'Issue 1', status: 'todo' }];
+
+                // User on Board, project switch fires a slow loadBoard()
+                setState('currentView', 'board');
+                setState('currentProject', 'project-A');
+                api.getIssues.mockImplementationOnce(() => slowBoardRequest);
+                const boardLoad = loadBoard();
+
+                // User navigates to Issues; its loader resolves fast and
+                // writes the correct context (simulated directly here)
+                setState('currentView', 'issues');
+                setState('detailNavContext', issuesList);
+
+                // Board's stale response finally arrives — request id still
+                // matches (no newer loadBoard()), but the view has changed
+                resolveBoard(boardIssuesList);
+                await boardLoad;
+
+                expect(getDetailNavContext()).toEqual(issuesList);
+            });
+        });
+
+        // CHT-1215 review finding 3: the skeleton wipe destroys the
+        // .keyboard-selected card before renderBoard() can re-find it by id,
+        // so the stale index would positionally clamp into the NEW project's
+        // cards — Enter could then open the wrong issue.
+        describe('keyboard cursor reset (project/view switch)', () => {
+            it('resets the board cursor before loading a new project', async () => {
+                // Project A: select card index 2 (id '3')
+                setBoardIssues([
+                    { id: '1', title: 'A1', status: 'todo', identifier: 'A-1', priority: 'low' },
+                    { id: '2', title: 'A2', status: 'todo', identifier: 'A-2', priority: 'low' },
+                    { id: '3', title: 'A3', status: 'done', identifier: 'A-3', priority: 'low' },
+                ]);
+                renderBoard();
+                setSelectedBoardIndex(2);
+                document.querySelector('.kanban-card[data-id="3"]').classList.add('keyboard-selected');
+
+                // Switch to Project B with different cards
+                api.getIssues.mockResolvedValue([
+                    { id: 'b1', title: 'B1', status: 'todo', identifier: 'B-1', priority: 'low' },
+                    { id: 'b2', title: 'B2', status: 'todo', identifier: 'B-2', priority: 'low' },
+                    { id: 'b3', title: 'B3', status: 'todo', identifier: 'B-3', priority: 'low' },
+                ]);
+                setState('currentProject', 'project-B');
+                await loadBoard();
+
+                // No card in Project B inherits Project A's positional cursor
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
+
+            it('resets the cursor even when the new project has no board element content', async () => {
+                setSelectedBoardIndex(1);
+                setState('currentProject', null);
+
+                await loadBoard();
+
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
         });
     });
 
@@ -177,6 +311,89 @@ describe('board', () => {
             expect(cards[0].textContent).toContain('First');
             expect(cards[1].textContent).toContain('Second');
             expect(cards[2].textContent).toContain('Third');
+        });
+
+        // CHT-1215: renderBoard() rebuilds #kanban-board innerHTML from
+        // scratch on every call (drag/drop, websocket updates) — same
+        // staleness bug as issue-list.js's renderIssues() had for the j/k
+        // cursor, fixed here proactively alongside adding the new cursor.
+        describe('keyboard selection survives a re-render', () => {
+            const issues = [
+                { id: '1', title: 'First', status: 'todo', identifier: 'TEST-1', priority: 'high' },
+                { id: '2', title: 'Second', status: 'todo', identifier: 'TEST-2', priority: 'low' },
+                { id: '3', title: 'Third', status: 'done', identifier: 'TEST-3', priority: 'medium' },
+            ];
+
+            beforeEach(() => {
+                setSelectedBoardIndex(-1);
+            });
+
+            function selectCardById(id, index) {
+                setSelectedBoardIndex(index);
+                document.querySelector(`.kanban-card[data-id="${id}"]`)?.classList.add('keyboard-selected');
+            }
+
+            it('does nothing when no card was previously selected', () => {
+                setBoardIssues(issues);
+                renderBoard();
+
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
+
+            it('re-applies the highlight at the same card after an in-place re-render', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('2', 1);
+
+                renderBoard(); // e.g. a websocket-triggered re-render, same issues
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+                expect(getSelectedBoardIndex()).toBe(1);
+            });
+
+            it('follows the selected card by id across a column move', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('2', 1);
+
+                // Card 2 moves from todo -> done (e.g. drag/drop or remote update)
+                const moved = issues.map(i => i.id === '2' ? { ...i, status: 'done' } : i);
+                setBoardIssues(moved);
+                renderBoard();
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+            });
+
+            it('clamps to the new last card when the selected card is removed', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('3', 2);
+
+                setBoardIssues([issues[0], issues[1]]);
+                renderBoard();
+
+                const selected = document.querySelectorAll('.kanban-card.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.id).toBe('2');
+                expect(getSelectedBoardIndex()).toBe(1);
+            });
+
+            it('resets to -1 when the re-render leaves no cards', () => {
+                setBoardIssues(issues);
+                renderBoard();
+                selectCardById('1', 0);
+
+                setBoardIssues([]);
+                renderBoard();
+
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
         });
     });
 

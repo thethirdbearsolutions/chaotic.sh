@@ -5,7 +5,7 @@ import click
 from rich.table import Table
 from rich.panel import Panel
 
-from .shared import _client, console
+from .shared import _client, console, resolve_content_value
 
 
 def _main():
@@ -52,7 +52,7 @@ def register(cli):
     @team.command("create")
     @click.argument("name")
     @click.argument("key")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @_main().json_option
     @_main().require_auth
     @_main().handle_error

@@ -668,4 +668,4 @@ async def test_team_service_decline_invitation(db, test_team, test_user):
     )
 
     await service.decline_invitation(invitation)
-    assert invitation.status == InvitationStatus.DECLINED.name
+    assert invitation.status == InvitationStatus.DECLINED

@@ -9,9 +9,9 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getEstimateScaleHint } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
-import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext } from './state.js';
 import { registerActions } from './event-delegation.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { approveRitual, completeGateRitual } from './rituals-view.js';
@@ -252,10 +252,23 @@ function renderSprintBurndown(sprint) {
 // Sprint Detail View (CHT-464)
 // ============================================================================
 
+// Monotonic request id — lets viewSprint() drop a response from a superseded
+// request (rapid navigation between sprints) instead of overwriting newer
+// data with stale data (CHT-1211 review #3).
+let viewSprintRequestId = 0;
+
 export async function viewSprint(sprintId, pushHistory = true) {
     try {
+        // Record the list's scroll position before we replace it with detail
+        // content, so Back can restore it (CHT-1211 item 1).
+        if (pushHistory) saveScrollPosition();
+
+        const requestId = ++viewSprintRequestId;
+        const viewAtEntry = getCurrentView();
+
         // Fetch sprint details
         const sprint = await api.getSprint(sprintId);
+        if (requestId !== viewSprintRequestId) return; // a newer viewSprint() has since started — drop this stale response
         if (!sprint) {
             showToast('Sprint not found', 'error');
             navigateTo('sprints');
@@ -271,9 +284,21 @@ export async function viewSprint(sprintId, pushHistory = true) {
             api.getSprintTransactions(sprintId).catch(() => []),
             teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(() => []) : [],
         ]);
+        if (requestId !== viewSprintRequestId) return; // guard again — a newer request may have started during the awaits above
+
         currentSprintIssues = issues;
         currentSprintTransactions = transactions;
         currentSprintDocuments = documents;
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
+        // opened from a sprint's issue list should page through this list,
+        // not the Issues-view-only global issues array. The request id only
+        // orders viewSprint() against itself — also require that the user
+        // hasn't navigated to a different view while the fetches were in
+        // flight, or this slow response would clobber the fresher context
+        // that view has since written (CHT-1211 review #2).
+        if (getCurrentView() === viewAtEntry) {
+            setDetailNavContext(currentSprintIssues);
+        }
 
         // Update URL and history
         if (pushHistory) {
@@ -322,6 +347,11 @@ function renderSprintDetail() {
     }
     view.classList.remove('hidden');
 
+    // Compute where Back should return to, the same way issue/epic detail do
+    // (CHT-1211 item 3/4) — was hardcoded to 'sprints', a dead end when a
+    // sprint is opened from elsewhere (e.g. a future Dashboard link).
+    const backView = getCurrentView() || 'sprints';
+
     // Separate issues by status
     const openIssues = issues.filter(i => OPEN_STATUSES.includes(i.status));
     const closedIssues = issues.filter(i => i.status === 'done');
@@ -348,7 +378,7 @@ function renderSprintDetail() {
     view.innerHTML = `
         <div class="sprint-detail-header">
             <div class="sprint-detail-nav">
-                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="sprints">
+                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                     \u2190 Back to Sprints
                 </button>
             </div>
@@ -386,9 +416,11 @@ function renderSprintDetail() {
         <div class="sprint-detail-sections">
             <div class="sprint-detail-section">
                 <h3>Open Issues (${openIssues.length})</h3>
-                ${openIssues.length === 0 ? `
-                    <div class="empty-state-small">No open issues in this sprint</div>
-                ` : `
+                ${openIssues.length === 0 ? renderEmptyState({
+                    icon: EMPTY_ICONS.issues,
+                    heading: 'No open issues',
+                    description: 'All issues in this sprint are completed',
+                }) : `
                     <div class="sprint-issues-list">
                         ${openIssues.map(issue => renderSprintIssueRow(issue)).join('')}
                     </div>
@@ -397,9 +429,11 @@ function renderSprintDetail() {
 
             <details class="sprint-detail-section" ${closedIssues.length > 0 ? 'open' : ''}>
                 <summary><h3>Completed Issues (${closedIssues.length})</h3></summary>
-                ${closedIssues.length === 0 ? `
-                    <div class="empty-state-small">No completed issues yet</div>
-                ` : `
+                ${closedIssues.length === 0 ? renderEmptyState({
+                    icon: EMPTY_ICONS.issues,
+                    heading: 'No completed issues',
+                    description: 'Issues will appear here once marked done',
+                }) : `
                     <div class="sprint-issues-list">
                         ${closedIssues.map(issue => renderSprintIssueRow(issue)).join('')}
                     </div>
@@ -424,9 +458,11 @@ function renderSprintDetail() {
                     <div class="sprint-issues-list">
                         ${currentSprintDocuments.map(doc => renderSprintDocumentRow(doc)).join('')}
                     </div>
-                ` : `
-                    <div class="empty-state-small">No documents in this sprint yet</div>
-                `}
+                ` : renderEmptyState({
+                    icon: EMPTY_ICONS.documents,
+                    heading: 'No documents yet',
+                    description: 'Create a sprint document to get started',
+                })}
             </div>
         </div>
     `;
@@ -654,6 +690,10 @@ export async function completeSprint(sprintId) {
     try {
         const result = await api.closeSprint(sprintId);
         await loadSprints();
+        // Completing a sprint can change which sprint is "current" for its
+        // project — clear the cached current-sprint id so the next lookup
+        // re-resolves instead of pointing at the now-completed sprint (CHT-1212)
+        clearCachedCurrentSprintIds();
 
         if (result.limbo) {
             showLimboModal(result);
@@ -875,11 +915,47 @@ export function invalidateSprintCache() {
     currentSprintIssues = [];
     currentSprintTransactions = [];
     currentSprintDocuments = [];
+    currentSprintIdByProject = {};
 }
 
 export function updateSprintCacheForProject(projectId, sprintList) {
     sprintList.forEach(s => { sprintCache[s.id] = s; });
     sprintCacheLoadedProjects.add(projectId);
+}
+
+// ============================================================================
+// Current (active) Sprint id cache, per project (CHT-1212)
+//
+// The Issues filter's "Current Sprint" option re-resolved the active sprint
+// id from scratch on every loadIssues() call — including every 300ms
+// debounce tick while typing in search — even though updateSprintFilter()
+// (issues-render.js) already resolves this same value moments earlier and
+// it essentially never changes mid-session. Cache it here, keyed by
+// project, so loadIssues() can reuse it instead of re-fetching sprints.
+// ============================================================================
+
+let currentSprintIdByProject = {}; // project_id -> active sprint id, or null if none
+
+/**
+ * Returns the cached active-sprint id for a project, `null` if the project
+ * was checked and has no active sprint, or `undefined` if not yet cached.
+ */
+export function getCachedCurrentSprintId(projectId) {
+    return currentSprintIdByProject[projectId];
+}
+
+export function setCachedCurrentSprintId(projectId, sprintId) {
+    currentSprintIdByProject[projectId] = sprintId ?? null;
+}
+
+/**
+ * Drop all cached current-sprint ids so the next lookup re-resolves.
+ * Called when any sprint changes — locally (completeSprint) or remotely
+ * (ws-handlers' sprint events), since a sprint completing/rotating in
+ * another client can change which sprint is "current" here too (CHT-1212).
+ */
+export function clearCachedCurrentSprintIds() {
+    currentSprintIdByProject = {};
 }
 
 // ============================================================================

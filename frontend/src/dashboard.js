@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus } from './utils.js';
-import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import { navigateToIssueByIdentifier } from './router.js';
@@ -58,6 +58,11 @@ export function setDashboardActivities(activities) {
     dashboardActivities = activities;
 }
 
+// Monotonic request id — lets loadMyIssues() drop a response from a
+// superseded request (rapid project/status-filter switching) instead of
+// overwriting newer data with stale data (CHT-1211 review #3).
+let loadMyIssuesRequestId = 0;
+
 /**
  * Load issues assigned to the current user.
  */
@@ -67,6 +72,7 @@ export async function loadMyIssues() {
 
     if (!currentTeam || !currentUser) return;
 
+    const requestId = ++loadMyIssuesRequestId;
     const statusFilter = document.getElementById('my-issues-status-filter')?.value;
     const projectFilter = getCurrentProject();
 
@@ -86,9 +92,22 @@ export async function loadMyIssues() {
         } else {
             issues = await api.getTeamIssues(currentTeam.id, params);
         }
+        if (requestId !== loadMyIssuesRequestId) return; // a newer loadMyIssues() has since started — drop this stale response
+
         myIssues = issues;
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
+        // opened from the Dashboard should page through this list, not the
+        // Issues-view-only global issues array. The request id only orders
+        // loadMyIssues() against itself — also require that the Dashboard is
+        // still the current view at response time, or a slow response
+        // landing after the user navigated to another view would clobber
+        // that view's fresher context (CHT-1211 review #2).
+        if (getCurrentView() === 'my-issues') {
+            setDetailNavContext(myIssues);
+        }
         renderMyIssues();
     } catch (e) {
+        if (requestId !== loadMyIssuesRequestId) return;
         showApiError('load issues', e);
     }
 }
@@ -121,7 +140,11 @@ export async function loadDashboardActivity({ showLoading = true } = {}) {
         renderDashboardActivity();
     } catch {
         if (container) {
-            container.innerHTML = `<div class="activity-empty">Failed to load activity</div>`;
+            container.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.activity,
+                heading: 'Failed to load activity',
+                description: 'Check your connection and try again',
+            });
         }
     }
 }
@@ -134,7 +157,11 @@ export function renderDashboardActivity() {
     if (!container) return;
 
     if (!dashboardActivities.length) {
-        container.innerHTML = `<div class="activity-empty">No recent activity. Create or update issues to see activity here.</div>`;
+        container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.activity,
+            heading: 'No recent activity',
+            description: 'Create or update issues to see activity here',
+        });
         return;
     }
 

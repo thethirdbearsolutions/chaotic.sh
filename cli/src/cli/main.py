@@ -53,9 +53,25 @@ def is_yes_mode() -> bool:
 
 
 def confirm_action(prompt: str, **kwargs) -> bool:
-    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436)."""
+    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436).
+
+    Under --json, never prompts (CHT-1222): a machine consumer can't answer
+    a TTY prompt, and click.confirm would leak the prompt text onto stdout,
+    breaking the one-JSON-value contract. Without --yes, --json gets a clean
+    {"error": ...} + exit 2 telling the caller to pass --yes.
+
+    Interactive prompts go to stderr (err=True) so stdout stays reserved for
+    command output even outside --json mode.
+    """
     if is_yes_mode():
         return True
+    if is_json_output():
+        output_json({
+            "error": f"Confirmation required: {prompt} "
+                     "Pass --yes to proceed under --json (prompts are disabled in JSON mode).",
+        })
+        raise SystemExit(2)
+    kwargs.setdefault("err", True)
     return click.confirm(prompt, **kwargs)
 
 
@@ -75,8 +91,10 @@ def json_option(f):
             ctx.ensure_object(dict)
             ctx.obj['json'] = True
         return f(*args, **kwargs)
-    return click.option('--json', 'json_output', is_flag=True, hidden=True,
-                        help='Output as JSON instead of formatted text.')(wrapper)
+    # CHT-1222: was hidden=True, making --json (the CLI's core machine-output
+    # feature) undiscoverable via --help on every subcommand that has it.
+    return click.option('--json', 'json_output', is_flag=True,
+                        help='Output as JSON instead of formatted text; all other output goes to stderr.')(wrapper)
 
 
 def output_json(data):
@@ -84,11 +102,62 @@ def output_json(data):
     click.echo(json.dumps(data, indent=2, default=str))
 
 
+def json_result(build=None):
+    """The CLI's one sanctioned pattern for wiring --json onto a mutation
+    or state-transition command (CHT-1222).
+
+    After the wrapped command body runs, if --json is active, emits a
+    single JSON object on stdout:
+
+    * If the command function returned a non-None value, that value is
+      emitted directly — use this when the mutation itself already
+      produces the payload worth reporting (a freshly created comment,
+      an updated issue from ``update_issue``'s own response, a relation).
+    * Otherwise ``build(*args, **kwargs)`` is called with the exact
+      positional/keyword arguments Click passed to the command, and its
+      return value is emitted — typically a small lambda that re-fetches
+      the affected entity by identifier.
+
+    Usage — must sit innermost in the decorator stack, directly above
+    ``def``, *below* @handle_error, so a failure raised by the command
+    body OR by ``build`` still reaches handle_error's --json error
+    formatting instead of escaping raw::
+
+        @issue.command("move")
+        @click.argument("identifier")
+        @click.argument("status")
+        @_main().json_option
+        @_main().require_auth
+        @_main().handle_error
+        @_main().json_result(lambda identifier, status: _client().update_issue(...))
+        def issue_move(identifier, status):
+            ...
+
+    Command console.print status lines don't need to be gated — the
+    shared ``console`` object (commands/shared.py) already redirects all
+    chatter to stderr while --json is active, so this decorator only
+    needs to own the stdout JSON payload.
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            ret = f(*args, **kwargs)
+            if is_json_output():
+                payload = ret if ret is not None else (build(*args, **kwargs) if build else None)
+                output_json(payload)
+            return ret
+        return wrapper
+    return decorator
+
+
 def require_auth(f):
     """Decorator to require authentication."""
     def wrapper(*args, **kwargs):
         if not get_token() and not get_api_key():
-            console.print("[red]Not authenticated. Run 'chaotic auth login' or 'chaotic auth set-key' first.[/red]")
+            console.print(
+                "[red]Not authenticated.[/red] Run 'chaotic auth login' or 'chaotic auth set-key' "
+                "first, or 'chaotic quickstart' to get set up."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -101,7 +170,10 @@ def require_team(f):
     @require_auth
     def wrapper(*args, **kwargs):
         if not get_current_team():
-            console.print("[red]No team selected. Run 'chaotic team use <team_id>' first.[/red]")
+            console.print(
+                "[red]No team selected.[/red] Run 'chaotic team list' to see available teams, "
+                "or 'chaotic quickstart' if you don't have one yet."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -114,7 +186,10 @@ def require_project(f):
     @require_team
     def wrapper(*args, **kwargs):
         if not get_current_project():
-            console.print("[red]No project selected. Run 'chaotic project use <project_id>' first.[/red]")
+            console.print(
+                "[red]No project selected.[/red] Run 'chaotic project list' to see available "
+                "projects, or 'chaotic quickstart' if you don't have one yet."
+            )
             raise SystemExit(1)
         return f(*args, **kwargs)
     wrapper.__name__ = f.__name__
@@ -136,7 +211,11 @@ def handle_error(f):
         except click.ClickException as e:
             if is_json_output():
                 output_json({"error": e.format_message()})
-                raise SystemExit(1)
+                # Preserve whatever exit code the non-JSON path would have
+                # produced (UsageError/BadParameter use 2, everything else
+                # ClickException's default of 1) instead of collapsing
+                # every ClickException to 1 under --json (CHT-1222).
+                raise SystemExit(getattr(e, "exit_code", 1)) from e
             raise
         except httpx.ConnectError:
             msg = f"Could not connect to server at {get_api_url()}. Is the server running?"
@@ -310,6 +389,9 @@ class ProfileGroup(click.Group):
     is NOT handled here because it collides with subcommand flags (e.g.,
     ``agent create -p``).  ``-p`` still works in the normal Click position
     (before the subcommand name).
+
+    Also owns the --json contract for parse-time failures (CHT-1222): see
+    ``main()`` below.
     """
 
     _profile_from_args = None  # set by parse_args, read by cli()
@@ -335,6 +417,53 @@ class ProfileGroup(click.Group):
             # Stash so cli() knows not to override with envvar fallback
             ProfileGroup._profile_from_args = profile_val
         return super().parse_args(ctx, new_args)
+
+    def main(self, args=None, *main_args, standalone_mode=True, **extra):
+        """Guarantee ``{"error": ...}`` on stdout for parse-time failures
+        under --json (CHT-1222).
+
+        Click's own parameter validation — ``type=click.Choice(...)``,
+        missing required arguments, unknown flags — happens in
+        ``Command.parse_args()``/``make_context()``, entirely before any
+        command callback (and therefore before every decorator in the
+        json_option/handle_error stack) runs. Handling it per-command is
+        impossible; this is the one chokepoint that sees those errors.
+
+        Because parsing failed, ctx params are unusable — --json is
+        detected by scanning the raw argv. Non-JSON invocations take the
+        stock Click standalone path unchanged.
+        """
+        if not standalone_mode:
+            # Caller explicitly asked for exceptions to propagate; don't
+            # interpose.
+            return super().main(args, *main_args, standalone_mode=False, **extra)
+
+        raw_args = list(args) if args is not None else sys.argv[1:]
+        if '--json' not in raw_args:
+            return super().main(raw_args, *main_args, standalone_mode=True, **extra)
+
+        try:
+            rv = super().main(raw_args, *main_args, standalone_mode=False, **extra)
+        except click.ClickException as e:
+            # Parse-time UsageError/BadParameter (or a body-level
+            # ClickException re-raised by handle_error's non-JSON branch —
+            # unreachable here since --json is set, but harmless).
+            output_json({"error": e.format_message()})
+            e.show()  # usage + error text; writes to stderr
+            sys.exit(e.exit_code)
+        except click.exceptions.Abort:
+            # SIGINT / EOF on a prompt. Keep the one-JSON-value contract.
+            output_json({"error": "Aborted."})
+            click.echo("Aborted!", err=True)
+            sys.exit(1)
+        else:
+            # Normal completion. With standalone_mode=False, click returns
+            # either the callback's return value (a dict/None for our
+            # commands — not an exit code) or, when ctx.exit(code) was
+            # raised (--help/--version), that code as an int. Command
+            # bodies signal failure via SystemExit, which propagates past
+            # this handler untouched.
+            sys.exit(rv if isinstance(rv, int) and not isinstance(rv, bool) else 0)
 
 
 # Main CLI group
@@ -1036,6 +1165,13 @@ def status():
     else:
         console.print("  [dim]-[/dim] No project selected")
 
+    # CHT-1221: bare `chaotic` already points a zero-state user at quickstart
+    # (main.py's no-subcommand branch) -- `status` gave the same information
+    # with no next step. Match it.
+    if not (get_token() or get_api_key()) and not team_id and not project_id:
+        console.print()
+        console.print("Run [bold cyan]chaotic quickstart[/bold cyan] to get set up.")
+
     # Pending approvals (GATE and REVIEW)
     if project_id:
         try:
@@ -1106,6 +1242,7 @@ from .commands import doc as _doc_mod
 from .commands import sprint_cmd as _sprint_mod
 from .commands import ritual_cmd as _ritual_mod
 from .commands import issue_cmd as _issue_mod
+from .commands import await_cmd as _await_mod
 
 _config_mod.register(cli)
 _profile_mod.register(cli)
@@ -1119,6 +1256,7 @@ _doc_mod.register(cli)
 _sprint_mod.register(cli)
 _ritual_mod.register(cli)
 _issue_mod.register(cli)
+_await_mod.register(cli)
 
 cli.add_command(system)
 

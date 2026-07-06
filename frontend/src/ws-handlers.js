@@ -6,11 +6,11 @@
  */
 
 import { subscribe } from './ws.js';
-import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
+import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -118,6 +118,13 @@ function handleIssueUpdated(data) {
     if (currentMyIssues.some(i => i.id === data.id)) {
         setMyIssues(currentMyIssues.map(i => i.id === data.id ? data : i));
     }
+    // Keep the issue-detail prev/next context live too — it's a snapshot of
+    // whichever list a detail view was opened from, so without this a remote
+    // update leaves stale data behind the nav arrows (CHT-1211 review #1).
+    const navContext = getDetailNavContext();
+    if (navContext.some(i => i.id === data.id)) {
+        setDetailNavContext(navContext.map(i => i.id === data.id ? data : i));
+    }
     // Re-render based on current view
     if (getCurrentView() === 'issues') {
         renderIssues();
@@ -140,6 +147,12 @@ function handleIssueDeleted(data) {
     // Remove from local arrays
     setIssues(getIssues().filter(i => i.id !== data.id));
     setMyIssues(getMyIssues().filter(i => i.id !== data.id));
+    // Drop from the issue-detail prev/next context too, so a deleted sibling
+    // isn't reachable via Next/Prev on an open detail view (CHT-1211 review #1)
+    const navContext = getDetailNavContext();
+    if (navContext.some(i => i.id === data.id)) {
+        setDetailNavContext(navContext.filter(i => i.id !== data.id));
+    }
     // Re-render
     if (getCurrentView() === 'issues') {
         renderIssues();
@@ -220,6 +233,11 @@ function refreshSprintView() {
 }
 
 function handleSprint() {
+    // Another client completing/rotating a sprint changes which sprint is
+    // "current" — drop the cached ids unconditionally (cheap, safe on any
+    // view) so an Issues view filtering by Current Sprint re-resolves
+    // instead of silently querying the now-completed sprint (CHT-1212).
+    clearCachedCurrentSprintIds();
     if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'my-issues') {

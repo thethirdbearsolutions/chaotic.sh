@@ -19,22 +19,26 @@ import {
     updatePriorityFilter,
     clearPriorityFilter,
     clearLabelFilter,
+    clearExcludeLabelFilter,
     updateLabelFilterLabel,
+    updateExcludeLabelFilterLabel,
     populateLabelFilter,
     loadFiltersFromUrl,
     toggleFilterMenu,
     toggleDisplayMenu,
+    closeAllFilterMenus,
     initFilterBar,
     updateSprintFilter,
     loadIssues,
     debounceSearch,
     filterIssues,
     updateGroupBy,
+    showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler } from './keyboard.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import {
     toggleTeamDropdown,
@@ -86,6 +90,8 @@ import {
     setSelectedIssueIndex,
     getSelectedDocIndex,
     setSelectedDocIndex,
+    getSelectedBoardIndex,
+    setSelectedBoardIndex,
     setCurrentUser,
     setCurrentProject,
     setCurrentDetailIssue,
@@ -123,6 +129,17 @@ configureRouter({
         }
         if (parts[0] === 'issue' && parts[1]) {
             viewIssueByPath(parts[1]);
+            return true;
+        }
+        if (parts[0] === 'issues' && parts[1]) {
+            // CHT-1182: alias /issues/<id> to canonical /issue/<id> — rewrite
+            // the URL only once the issue actually renders, preserving the
+            // query string; unknown ids keep the typed URL
+            const identifier = parts[1];
+            const search = window.location.search;
+            Promise.resolve(viewIssueByPath(identifier)).then((ok) => {
+                if (ok) history.replaceState({ view: 'issue', identifier }, '', `/issue/${identifier}${search}`);
+            });
             return true;
         }
         if (parts[0] === 'document' && parts[1]) {
@@ -167,6 +184,11 @@ registerViews({
         loadGateApprovals();
     },
     'issues': () => {
+        // Clear stale rows synchronously, before the async label/sprint
+        // filter population below — otherwise the previous project/view's
+        // #issues-list content stays visible until loadIssues() itself gets
+        // around to calling this, several awaits later (CHT-1211 item 8).
+        showIssuesLoadingSkeleton();
         // Load filters from URL if present
         loadFiltersFromUrl();
         // Initialize filter bar chips and badge
@@ -184,6 +206,17 @@ registerViews({
                         cb.checked = labelIds.includes(cb.value);
                     });
                     updateLabelFilterLabel();
+                }
+            }
+            const excludeLabelIds = urlParams.getAll('exclude_label');
+            if (excludeLabelIds.length > 0) {
+                const dropdown = document.getElementById('exclude-label-filter-dropdown');
+                if (dropdown) {
+                    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+                    checkboxes.forEach(cb => {
+                        cb.checked = excludeLabelIds.includes(cb.value);
+                    });
+                    updateExcludeLabelFilterLabel();
                 }
             }
         });
@@ -331,6 +364,8 @@ function initIssuesView() {
             btn.addEventListener('click', () => toggleMultiSelect('priority-filter-dropdown'));
         } else if (wrapper?.querySelector('#label-filter-dropdown')) {
             btn.addEventListener('click', () => toggleMultiSelect('label-filter-dropdown'));
+        } else if (wrapper?.querySelector('#exclude-label-filter-dropdown')) {
+            btn.addEventListener('click', () => toggleMultiSelect('exclude-label-filter-dropdown'));
         }
     });
 
@@ -359,6 +394,13 @@ function initIssuesView() {
     if (labelDropdown) {
         const clearBtn = labelDropdown.querySelector('.btn-small');
         if (clearBtn) clearBtn.addEventListener('click', () => clearLabelFilter());
+    }
+
+    // Exclude-label filter clear button
+    const excludeLabelDropdown = document.getElementById('exclude-label-filter-dropdown');
+    if (excludeLabelDropdown) {
+        const clearBtn = excludeLabelDropdown.querySelector('.btn-small');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearExcludeLabelFilter());
     }
 
     // Simple select filters
@@ -408,9 +450,11 @@ function initSidebarNav() {
     const createBtn = document.querySelector('.sidebar-create-btn');
     if (createBtn) createBtn.addEventListener('click', () => showCreateIssueModal());
 
-    // Navigation items — use data-view attribute
+    // Navigation items — use data-view attribute (CHT-1183: real hrefs;
+    // let modified clicks fall through to the browser for new-tab behavior)
     document.querySelectorAll('.sidebar-nav .nav-item[data-view]').forEach(item => {
         item.addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigateTo(item.dataset.view);
         });
@@ -532,6 +576,15 @@ async function viewDocumentByPath(docId) {
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
 
+// CHT-1215 (review finding 1): detail views hide the list via CSS but leave
+// currentView and the list DOM intact, so list/board nav handlers need an
+// explicit "a detail view is overlaying me" disengage check.
+const isAnyDetailViewActive = () =>
+    ['issue-detail-view', 'epic-detail-view', 'document-detail-view'].some((id) => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+    });
+
 // List navigation handlers registered BEFORE global shortcuts so
 // stopImmediatePropagation can block conflicts (e.g. 'p' = priority, not projects)
 document.addEventListener('keydown', createListNavigationHandler({
@@ -543,6 +596,7 @@ document.addEventListener('keydown', createListNavigationHandler({
     showInlineDropdown,
     isModalOpen,
     isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // j/k/Enter/e list navigation for documents
@@ -554,6 +608,18 @@ document.addEventListener('keydown', createDocListNavigationHandler({
     showEditDocumentModal,
     isModalOpen,
     isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
+}));
+
+// j/k/Enter card navigation for the Board (CHT-1215)
+document.addEventListener('keydown', createBoardNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedBoardIndex,
+    setSelectedIndex: setSelectedBoardIndex,
+    viewIssue,
+    isModalOpen,
+    isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // Keyboard shortcuts (logic in keyboard.js)
@@ -571,7 +637,11 @@ document.addEventListener('keydown', createKeyboardHandler({
     closeDropdowns: () => {
         document.getElementById('team-dropdown').classList.add('hidden');
         document.getElementById('user-dropdown').classList.add('hidden');
+        closeAllFilterMenus();
     },
+    // CHT-1215: lets bare 'p'/'c' defer to the issue detail view's own
+    // Priority/focus-comment-box actions instead of Projects/Create Issue.
+    isDetailViewActive: () => !document.getElementById('issue-detail-view')?.classList.contains('hidden'),
 }));
 
 // ============================================

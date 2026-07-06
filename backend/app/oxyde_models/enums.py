@@ -13,7 +13,7 @@ def DbEnum(enum_cls):
     """Annotated type for enum fields stored as .name in the DB.
 
     Usage:
-        class OxydeSprint(OxydeModel):
+        class OxydeSprint(Model):
             status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
     """
     def coerce(v):

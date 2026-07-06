@@ -25,9 +25,31 @@ export function setupMentionAutocomplete() {
     if (textarea.dataset.mentionsBound === 'true') return;
     textarea.dataset.mentionsBound = 'true';
 
+    // CHT-1215: which suggestion ArrowUp/ArrowDown has highlighted, so
+    // Enter/Tab can accept it without requiring the mouse.
+    let highlightedIndex = -1;
+
     const hide = () => {
         container.classList.add('hidden');
         container.innerHTML = '';
+        highlightedIndex = -1;
+    };
+
+    const setHighlighted = (index) => {
+        const buttons = container.querySelectorAll('.mention-suggestion');
+        if (buttons.length === 0) return;
+        highlightedIndex = ((index % buttons.length) + buttons.length) % buttons.length;
+        buttons.forEach((btn, i) => btn.classList.toggle('highlighted', i === highlightedIndex));
+        buttons[highlightedIndex].scrollIntoView?.({ block: 'nearest' });
+    };
+
+    const acceptSuggestion = (handle) => {
+        const caret = textarea.selectionStart || 0;
+        const before = textarea.value.slice(0, caret).replace(/@([a-zA-Z0-9._-]*)$/, `@${handle} `);
+        const after = textarea.value.slice(caret);
+        textarea.value = before + after;
+        textarea.focus();
+        hide();
     };
 
     const update = () => {
@@ -62,23 +84,47 @@ export function setupMentionAutocomplete() {
         `).join('');
         container.classList.remove('hidden');
 
-        container.querySelectorAll('.mention-suggestion').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const handle = btn.dataset.handle;
-                const before = textarea.value.slice(0, caret).replace(/@([a-zA-Z0-9._-]*)$/, `@${handle} `);
-                const after = textarea.value.slice(caret);
-                textarea.value = before + after;
-                textarea.focus();
-                hide();
-            });
+        container.querySelectorAll('.mention-suggestion').forEach((btn, i) => {
+            btn.addEventListener('click', () => acceptSuggestion(btn.dataset.handle));
+            // Keep keyboard highlight and mouse hover in sync (CHT-1215)
+            btn.addEventListener('mouseenter', () => setHighlighted(i));
         });
+
+        setHighlighted(0);
     };
 
     textarea.addEventListener('input', update);
     textarea.addEventListener('click', update);
     textarea.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
+        const suggestionsVisible = !container.classList.contains('hidden');
+
+        if (event.key === 'Escape' && suggestionsVisible) {
+            // Only dismiss the suggestion popup — don't let the keydown bubble
+            // to the global handler, which would also blur the textarea itself
+            // (CHT-1215), losing the comment's cursor position.
+            event.preventDefault();
+            event.stopPropagation();
             hide();
+            return;
+        }
+
+        if (!suggestionsVisible) return;
+
+        // CHT-1215: arrow-key/Enter/Tab selection — previously mouse-only,
+        // breaking the keyboard-only comment flow the rest of the app supports.
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setHighlighted(highlightedIndex + 1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setHighlighted(highlightedIndex - 1);
+        } else if (event.key === 'Enter' || event.key === 'Tab') {
+            const buttons = container.querySelectorAll('.mention-suggestion');
+            const target = buttons[highlightedIndex];
+            if (target) {
+                event.preventDefault();
+                acceptSuggestion(target.dataset.handle);
+            }
         }
     });
     textarea.addEventListener('blur', () => {

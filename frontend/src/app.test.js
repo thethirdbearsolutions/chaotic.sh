@@ -5,7 +5,7 @@
  * registerActions, setCommandPaletteCommands, and wires up keyboard handlers.
  * We test those registrations by capturing what was passed to the mock functions.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Track what was registered via captured mock call args
 let registeredViews = {};
@@ -78,12 +78,14 @@ vi.mock('./issues-view.js', () => ({
     loadFiltersFromUrl: vi.fn(),
     toggleFilterMenu: vi.fn(),
     toggleDisplayMenu: vi.fn(),
+    closeAllFilterMenus: vi.fn(),
     initFilterBar: vi.fn(),
     updateSprintFilter: vi.fn().mockResolvedValue(),
     loadIssues: vi.fn(),
     debounceSearch: vi.fn(),
     filterIssues: vi.fn(),
     updateGroupBy: vi.fn(),
+    showIssuesLoadingSkeleton: vi.fn(),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./epics.js', () => ({ showCreateEpicModal: vi.fn(), loadEpics: vi.fn() }));
@@ -93,6 +95,7 @@ vi.mock('./keyboard.js', () => ({
     createModifierKeyHandler: vi.fn().mockReturnValue(vi.fn()),
     createListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createDocListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
+    createBoardNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
@@ -156,6 +159,8 @@ vi.mock('./state.js', () => ({
     setSelectedIssueIndex: vi.fn(),
     getSelectedDocIndex: vi.fn(),
     setSelectedDocIndex: vi.fn(),
+    getSelectedBoardIndex: vi.fn(),
+    setSelectedBoardIndex: vi.fn(),
     setCurrentUser: vi.fn(),
     setCurrentProject: vi.fn(),
     setCurrentDetailIssue: vi.fn(),
@@ -189,7 +194,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showIssuesLoadingSkeleton } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
@@ -226,7 +231,7 @@ import { filterMyIssues } from './dashboard.js';
 import {
     toggleMultiSelect, updateStatusFilter, clearStatusFilter,
     updatePriorityFilter, clearPriorityFilter, clearLabelFilter,
-    toggleFilterMenu, toggleDisplayMenu, debounceSearch, filterIssues, updateGroupBy,
+    toggleFilterMenu, toggleDisplayMenu, closeAllFilterMenus, debounceSearch, filterIssues, updateGroupBy,
 } from './issues-view.js';
 import { switchProjectSettingsTab, saveProjectSettingsGeneral, saveProjectSettingsRules, showCreateProjectRitualModal } from './projects.js';
 import { switchRitualsTab } from './rituals-view.js';
@@ -272,6 +277,21 @@ describe('app.js view registrations', () => {
         expect(loadFiltersFromUrl).toHaveBeenCalled();
         expect(initFilterBar).toHaveBeenCalled();
         await vi.waitFor(() => expect(loadIssues).toHaveBeenCalled());
+    });
+
+    // CHT-1211 item 8: showIssuesLoadingSkeleton() used to only run inside
+    // loadIssues(), chained after populateLabelFilter()/updateSprintFilter()
+    // resolve — leaving the previous project/view's stale rows visible in
+    // #issues-list until then. It must run synchronously on view entry.
+    it('clears stale issue rows synchronously, before label/sprint filters resolve', () => {
+        // Never-resolving promises prove the skeleton call isn't waiting on
+        // these — if it were, this assertion would never see it happen.
+        populateLabelFilter.mockReturnValueOnce(new Promise(() => {}));
+        updateSprintFilter.mockReturnValueOnce(new Promise(() => {}));
+
+        registeredViews['issues']();
+
+        expect(showIssuesLoadingSkeleton).toHaveBeenCalled();
     });
 
     it('team view loads members, agents, and invitations', () => {
@@ -323,6 +343,47 @@ describe('app.js router configuration', () => {
         const result = routerConfig.detailRoute(['issue', 'CHT-123']);
         expect(result).toBe(true);
         expect(viewIssueByPath).toHaveBeenCalledWith('CHT-123');
+    });
+
+    // CHT-1182: /issues/<id> (plural) redirects to the canonical /issue/<id>
+    it('detailRoute aliases /issues/<id> to /issue/<id> once the issue renders', async () => {
+        viewIssueByPath.mockResolvedValue(true);
+        history.replaceState(null, '', '/issues/CHT-123');
+
+        const result = routerConfig.detailRoute(['issues', 'CHT-123']);
+        expect(result).toBe(true);
+        expect(viewIssueByPath).toHaveBeenCalledWith('CHT-123');
+
+        await new Promise(r => setTimeout(r, 0));
+        expect(window.location.pathname).toBe('/issue/CHT-123');
+        expect(history.state).toEqual({ view: 'issue', identifier: 'CHT-123' });
+    });
+
+    it('preserves the query string when canonicalizing /issues/<id>', async () => {
+        viewIssueByPath.mockResolvedValue(true);
+        history.replaceState(null, '', '/issues/CHT-123?project=proj-1');
+
+        routerConfig.detailRoute(['issues', 'CHT-123']);
+
+        await new Promise(r => setTimeout(r, 0));
+        expect(window.location.pathname + window.location.search).toBe('/issue/CHT-123?project=proj-1');
+    });
+
+    it('does not rewrite the URL when the issue lookup fails', async () => {
+        viewIssueByPath.mockResolvedValue(false);
+        history.replaceState(null, '', '/issues/JUNK-999');
+
+        const result = routerConfig.detailRoute(['issues', 'JUNK-999']);
+        expect(result).toBe(true);
+
+        await new Promise(r => setTimeout(r, 0));
+        expect(window.location.pathname).toBe('/issues/JUNK-999');
+    });
+
+    it('detailRoute leaves bare /issues (no id) to standard view routing', () => {
+        const result = routerConfig.detailRoute(['issues']);
+        expect(result).toBe(false);
+        expect(viewIssueByPath).not.toHaveBeenCalled();
     });
 
     it('configures detailRoute for epic paths', () => {
@@ -469,6 +530,34 @@ describe('app.js keyboard handler wiring', () => {
         expect(modifierHandlerConfig).toHaveProperty('isCommandPaletteOpen');
     });
 
+    // CHT-1212: Escape was a no-op on the Filter/Display popovers because
+    // closeDropdowns only ever touched team/user dropdowns.
+    describe('closeDropdowns (CHT-1212)', () => {
+        let container;
+
+        beforeEach(() => {
+            container = document.createElement('div');
+            container.innerHTML = `
+                <div id="team-dropdown"></div>
+                <div id="user-dropdown"></div>
+            `;
+            document.body.appendChild(container);
+        });
+
+        afterEach(() => container.remove());
+
+        it('hides the team and user dropdowns', () => {
+            keyboardHandlerConfig.closeDropdowns();
+            expect(document.getElementById('team-dropdown').classList.contains('hidden')).toBe(true);
+            expect(document.getElementById('user-dropdown').classList.contains('hidden')).toBe(true);
+        });
+
+        it('also closes the Filter/Display popovers', () => {
+            keyboardHandlerConfig.closeDropdowns();
+            expect(closeAllFilterMenus).toHaveBeenCalled();
+        });
+    });
+
     it('creates list navigation handlers for issues and documents', () => {
         expect(listNavCallCount).toBe(1);
         expect(docListNavCallCount).toBe(1);
@@ -568,8 +657,8 @@ describe('initSidebarNav DOM bindings', () => {
             <div class="team-selector"></div>
             <button class="sidebar-create-btn"></button>
             <nav class="sidebar-nav">
-                <a class="nav-item" data-view="issues" href="#">Issues</a>
-                <a class="nav-item" data-view="board" href="#">Board</a>
+                <a class="nav-item" data-view="issues" href="/issues">Issues</a>
+                <a class="nav-item" data-view="board" href="/board">Board</a>
             </nav>
             <div class="user-menu"></div>
             <div class="sidebar-backdrop"></div>
@@ -597,6 +686,55 @@ describe('initSidebarNav DOM bindings', () => {
     it('nav items call navigateTo with view', () => {
         container.querySelector('[data-view="issues"]').click();
         expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    // CHT-1183: real hrefs on nav items; modified clicks fall through to the browser
+    it('plain nav click prevents default so SPA routing handles it', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    it('cmd-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('ctrl-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('shift-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="board"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('alt-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="board"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('middle-click on nav item falls through to the browser', () => {
+        const link = container.querySelector('[data-view="issues"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 1 });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateTo).not.toHaveBeenCalled();
     });
 
     it('user menu click toggles dropdown', () => {

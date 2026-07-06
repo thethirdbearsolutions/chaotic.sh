@@ -66,7 +66,7 @@ class TestConfigShow:
             result = runner.invoke(cli, ['config', 'show', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data['profile'] == 'claude'
         assert data['api_url'] == 'http://example.com/api'
         assert data['local_config'] is None

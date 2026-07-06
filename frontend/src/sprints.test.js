@@ -1,7 +1,7 @@
 /**
  * Tests for sprints.js module
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./api.js', () => ({
     api: {
@@ -41,8 +41,10 @@ vi.mock('./event-delegation.js', () => ({
 }));
 
 const mockNavigateTo = vi.fn();
+const mockSaveScrollPosition = vi.fn();
 vi.mock('./router.js', () => ({
     navigateTo: (...args) => mockNavigateTo(...args),
+    saveScrollPosition: (...args) => mockSaveScrollPosition(...args),
 }));
 
 vi.mock('./gate-approvals.js', () => ({
@@ -68,13 +70,14 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn(s => s || ''),
 }));
 
-import { setCurrentTeam, setState } from './state.js';
+import { setCurrentTeam, setState, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
     getSprints,
     setSprints,
     getSprintCache,
+    getCurrentSprintDetail,
     getLimboStatus,
     loadSprints,
     renderSprints,
@@ -88,6 +91,9 @@ import {
     ensureSprintCacheForIssues,
     invalidateSprintCache,
     updateSprintCacheForProject,
+    getCachedCurrentSprintId,
+    setCachedCurrentSprintId,
+    clearCachedCurrentSprintIds,
 } from './sprints.js';
 
 beforeEach(() => {
@@ -163,6 +169,47 @@ describe('sprint cache', () => {
         updateSprintCacheForProject('p1', [{ id: 's1' }]);
         invalidateSprintCache();
         expect(getSprintCache()).toEqual({});
+    });
+});
+
+// CHT-1212: cached current (active) sprint id per project, so loadIssues()
+// doesn't re-resolve "current" -> a sprint id on every call.
+describe('current-sprint-id cache', () => {
+    it('is undefined (not yet cached) before anything sets it', () => {
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+    });
+
+    it('caches a resolved sprint id per project', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        expect(getCachedCurrentSprintId('p1')).toBe('s1');
+    });
+
+    it('caches null (not undefined) when there is no active sprint, distinguishing "checked, none active" from "not yet checked"', () => {
+        setCachedCurrentSprintId('p1', undefined);
+        expect(getCachedCurrentSprintId('p1')).toBeNull();
+    });
+
+    it('keys the cache independently per project', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        setCachedCurrentSprintId('p2', 's2');
+        expect(getCachedCurrentSprintId('p1')).toBe('s1');
+        expect(getCachedCurrentSprintId('p2')).toBe('s2');
+    });
+
+    it('invalidateSprintCache clears the current-sprint-id cache too', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        invalidateSprintCache();
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+    });
+
+    // CHT-1212 review: called from ws-handlers' handleSprint so remote
+    // sprint changes invalidate this client's cache regardless of view
+    it('clearCachedCurrentSprintIds drops all cached ids', () => {
+        setCachedCurrentSprintId('p1', 's1');
+        setCachedCurrentSprintId('p2', 's2');
+        clearCachedCurrentSprintIds();
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
+        expect(getCachedCurrentSprintId('p2')).toBeUndefined();
     });
 });
 
@@ -335,8 +382,29 @@ describe('viewSprint', () => {
 
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView.innerHTML).toContain('Documents (0)');
-        expect(detailView.innerHTML).toContain('No documents in this sprint yet');
+        expect(detailView.innerHTML).toContain('No documents yet');
+        expect(detailView.innerHTML).toContain('Create a sprint document to get started');
+        expect(detailView.innerHTML).toContain('empty-state');
         expect(detailView.innerHTML).toContain('+ New Document');
+    });
+
+    it('shows empty states for open and completed issues', async () => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        const detailView = document.getElementById('sprint-detail-view');
+        expect(detailView.innerHTML).toContain('No open issues');
+        expect(detailView.innerHTML).toContain('All issues in this sprint are completed');
+        expect(detailView.innerHTML).toContain('No completed issues');
+        expect(detailView.innerHTML).toContain('Issues will appear here once marked done');
+        expect(detailView.innerHTML).toContain('empty-state');
     });
 
     it('fetches documents with team and project context', async () => {
@@ -419,6 +487,142 @@ describe('viewSprint', () => {
         expect(api.getDocuments).not.toHaveBeenCalled();
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView).toBeTruthy();
+    });
+
+    // CHT-1211 item 1: scroll position must be saved before pushState
+    describe('scroll position', () => {
+        beforeEach(() => {
+            api.getSprint.mockResolvedValue({
+                id: 's1', name: 'Sprint 1', status: 'active',
+                budget: 20, points_spent: 5, project_id: 'p1',
+            });
+            api.getIssues.mockResolvedValue([]);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+            mockSaveScrollPosition.mockClear();
+        });
+
+        it('saves scroll position when pushHistory is true (default)', async () => {
+            await viewSprint('s1');
+            expect(mockSaveScrollPosition).toHaveBeenCalled();
+        });
+
+        it('does not save scroll position when pushHistory=false', async () => {
+            await viewSprint('s1', false);
+            expect(mockSaveScrollPosition).not.toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1211 item 2: prev/next issue-detail nav context should reflect the
+    // sprint's own issue list, not the Issues-view-only global array.
+    describe('detail nav context', () => {
+        it('sets the detail nav context to the sprint issue list', async () => {
+            api.getSprint.mockResolvedValue({
+                id: 's1', name: 'Sprint 1', status: 'active',
+                budget: 20, points_spent: 5, project_id: 'p1',
+            });
+            const sprintIssues = [
+                { id: 'i1', identifier: 'CHT-1', title: 'One', status: 'todo' },
+                { id: 'i2', identifier: 'CHT-2', title: 'Two', status: 'done' },
+            ];
+            api.getIssues.mockResolvedValue(sprintIssues);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            await viewSprint('s1');
+
+            expect(getDetailNavContext()).toEqual(sprintIssues);
+        });
+
+        // CHT-1211 review #2: a slow viewSprint() response landing after the
+        // user navigated to a different view must not clobber that view's
+        // fresher context.
+        it('does not write the context when the user navigated to another view mid-fetch', async () => {
+            setState('currentView', 'sprints');
+            setState('detailNavContext', []);
+            let resolveSprint;
+            api.getSprint.mockImplementationOnce(() => new Promise((resolve) => { resolveSprint = resolve; }));
+            const sprintIssues = [{ id: 'i1', identifier: 'CHT-1', title: 'One', status: 'todo' }];
+            api.getIssues.mockResolvedValue(sprintIssues);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            const load = viewSprint('s1'); // in flight, slow
+
+            // User navigates to Issues; its loader writes the correct context
+            const issuesList = [{ id: 'x1', identifier: 'CHT-9' }];
+            setState('currentView', 'issues');
+            setState('detailNavContext', issuesList);
+
+            resolveSprint({ id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 5, project_id: 'p1' });
+            await load;
+
+            expect(getDetailNavContext()).toEqual(issuesList);
+        });
+    });
+
+    // CHT-1211 review #3: same monotonic-request-id protection as
+    // loadIssues()/loadBoard() — rapid navigation between two sprints must
+    // not let the slower, earlier response win.
+    describe('request sequencing (out-of-order responses)', () => {
+        it('drops a slow response from an earlier sprint navigation', async () => {
+            let resolveFirst;
+            const sprint1 = { id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 5, project_id: 'p1' };
+            const sprint2 = { id: 's2', name: 'Sprint 2', status: 'planned', budget: 10, points_spent: 0, project_id: 'p1' };
+            api.getIssues.mockResolvedValue([]);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            api.getSprint.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+            const firstLoad = viewSprint('s1'); // in flight, slow
+
+            api.getSprint.mockImplementationOnce(() => Promise.resolve(sprint2));
+            await viewSprint('s2'); // resolves first (faster)
+
+            expect(getCurrentSprintDetail()).toEqual(sprint2);
+
+            // The slow first request now resolves — must be dropped, not
+            // replace the sprint the user is now looking at.
+            resolveFirst(sprint1);
+            await firstLoad;
+
+            expect(getCurrentSprintDetail()).toEqual(sprint2);
+            expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 2');
+        });
+    });
+});
+
+// CHT-1211 item 3/4: sprint detail 'Back' was hardcoded to 'sprints' instead
+// of computing backView from getCurrentView(), like issue/epic detail do.
+describe('sprint detail Back button', () => {
+    beforeEach(() => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        setState('currentView', 'my-issues');
+    });
+
+    it('defaults to sprints when there is no current view', async () => {
+        setState('currentView', null);
+        await viewSprint('s1');
+
+        const backBtn = document.querySelector('#sprint-detail-view [data-action="navigate-to"]');
+        expect(backBtn.dataset.view).toBe('sprints');
+    });
+
+    it('returns to the view the sprint was opened from', async () => {
+        setState('currentView', 'my-issues');
+        await viewSprint('s1');
+
+        const backBtn = document.querySelector('#sprint-detail-view [data-action="navigate-to"]');
+        expect(backBtn.dataset.view).toBe('my-issues');
     });
 });
 
@@ -546,6 +750,19 @@ describe('completeSprint', () => {
         await completeSprint('s1');
 
         expect(showApiError).toHaveBeenCalledWith('complete sprint', expect.objectContaining({ message: 'cannot close' }));
+    });
+
+    // CHT-1212: completing a sprint can change which sprint is "current"
+    it('clears the cached current-sprint id so the next lookup re-resolves', async () => {
+        setCachedCurrentSprintId('p1', 's1');
+        api.closeSprint.mockResolvedValue({ limbo: false });
+        api.getCurrentSprint.mockResolvedValue({});
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+        await completeSprint('s1');
+
+        expect(getCachedCurrentSprintId('p1')).toBeUndefined();
     });
 });
 

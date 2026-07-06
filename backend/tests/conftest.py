@@ -341,9 +341,11 @@ async def db(tmp_path):
     from app.config import get_settings
     get_settings.cache_clear()
 
-    from oxyde import AsyncDatabase, execute_raw, disconnect_all
+    from oxyde import AsyncDatabase, PoolSettings, execute_raw, disconnect_all
 
-    _db = AsyncDatabase(db_url, overwrite=True)
+    # Single connection: session-scoped PRAGMAs (foreign_keys OFF/ON in FK-corruption
+    # tests) must hit the same connection as the statements they bracket.
+    _db = AsyncDatabase(db_url, overwrite=True, settings=PoolSettings(max_connections=1))
     await _db.connect()
 
     # Import models so they register with Oxyde

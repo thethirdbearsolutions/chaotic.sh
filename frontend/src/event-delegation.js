@@ -44,6 +44,15 @@ function handleEvent(event) {
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     }
 
+    // A data-action element only triggers on click-like activation. keydown
+    // otherwise fired on ANY key — including Tab — while a data-action element
+    // itself had focus (e.g. a tabindex="-1" row), so tabbing away from one
+    // silently re-fired its action. Mirror native <button> semantics: only
+    // Enter/Space activate via keydown. (CHT-1206)
+    if (evtType === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
+        return;
+    }
+
     const actionName = target.dataset.action;
     const handler = actions[actionName];
     if (!handler) {

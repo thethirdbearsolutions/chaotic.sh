@@ -609,11 +609,17 @@ textarea {
     max-width: 150px;
 }
 
-.section-title {
-    margin-top: 2rem;
-    margin-bottom: 1rem;
-    font-size: 1rem;
+.section-header {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.section-header h3 {
+    font-size: var(--font-md);
+    font-weight: 600;
     color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 /* Icons */
@@ -881,7 +887,8 @@ textarea {
 }
 
 .filter-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — was beating the global
+       *:focus-visible ring by CSS specificity, killing it for keyboard users */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
 }
@@ -1103,7 +1110,8 @@ textarea {
     font-size: var(--font-base);
 }
 
-.mention-suggestion:hover {
+.mention-suggestion:hover,
+.mention-suggestion.highlighted {
     border-color: var(--border-color);
     background: var(--bg-tertiary);
 }
@@ -1683,7 +1691,7 @@ input, textarea, select, .command-input {
 }
 
 .inline-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -2120,6 +2128,20 @@ select:focus-visible {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+/* Search match highlighting (CHT-1212) */
+.search-match {
+    background: color-mix(in srgb, var(--accent-color) 30%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.issue-search-snippet {
+    color: var(--text-muted);
+    font-weight: normal;
+    font-size: var(--font-base);
+}
+
 /* Issue row highlighting for status changes */
 .list-item[data-status="done"] {
     opacity: 0.7;
@@ -2507,6 +2529,13 @@ input[type="checkbox"] {
 .kanban-card.drag-over {
     border-color: var(--accent-color);
     background: var(--bg-hover);
+}
+
+/* Keyboard navigation highlight (CHT-1215), matching .issue-row.keyboard-selected */
+.kanban-card.keyboard-selected {
+    border-color: var(--accent-color);
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
 }
 
 .kanban-card-title {
@@ -2995,7 +3024,7 @@ input[type="checkbox"] {
 }
 
 .label-create-input:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -3406,7 +3435,7 @@ input[type="checkbox"] {
 }
 
 .description-inline-editor textarea:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
 }
@@ -3472,14 +3501,6 @@ input[type="checkbox"] {
 
 .dashboard-sprint-status .section-header {
     margin-bottom: 12px;
-}
-
-.dashboard-sprint-status .section-header h3 {
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .sprint-status-cards {
@@ -3629,14 +3650,6 @@ input[type="checkbox"] {
 
 .dashboard-activity .section-header {
     margin-bottom: 12px;
-}
-
-.dashboard-activity .section-header h3 {
-    font-size: var(--font-md);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 /* Sidebar Properties */
@@ -4848,7 +4861,7 @@ input[type="checkbox"] {
 }
 
 .project-select:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
 }
 
@@ -4875,9 +4888,9 @@ input[type="checkbox"] {
     width: 100%;
 }
 
-.create-issue-title-input:focus {
-    outline: none;
-}
+/* .create-issue-title-input:focus { outline: none; } removed (CHT-1215) —
+   was beating the global *:focus-visible ring for keyboard users; browser
+   default focus indication + the global ring already cover this input. */
 
 .create-issue-title-input::placeholder {
     color: var(--text-muted);
@@ -7531,7 +7544,7 @@ input[type="checkbox"] {
 }
 
 .onboarding-step .form-input:focus {
-    outline: none;
+    /* outline: none removed (CHT-1215) — see .filter-select:focus above */
     border-color: var(--accent-color);
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
@@ -7885,4 +7898,66 @@ input[type="checkbox"] {
     color: white;
 }
 
+.quote-tooltip:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
 
+
+
+/* ============================================
+   Filter menu back navigation (CHT-1161)
+   ============================================ */
+
+/* Desktop shows both panes side by side; back button is mobile-only */
+.filter-options-back {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 8px;
+    margin-right: 4px;
+    font-size: var(--font-base);
+    border-radius: var(--radius-md);
+}
+
+.filter-options-back:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.filter-options-back:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    /* One pane at a time: category list first, options after picking one */
+    .filter-menu-dropdown .filter-menu-options {
+        display: none;
+    }
+
+    .filter-menu-dropdown.show-options .filter-menu-options {
+        display: block;
+    }
+
+    .filter-menu-dropdown.show-options .filter-menu-categories {
+        display: none;
+    }
+
+    .filter-options-back {
+        display: inline-flex;
+    }
+
+    .filter-options-header {
+        justify-content: flex-start;
+        gap: 4px;
+    }
+
+    .filter-options-header .filter-options-clear {
+        margin-left: auto;
+    }
+}

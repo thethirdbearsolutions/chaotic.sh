@@ -4,10 +4,10 @@
  */
 
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft } from './storage.js';
-import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getIssues } from './state.js';
+import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, subscribe } from './state.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
@@ -17,6 +17,7 @@ import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
 import { showDetailDropdown } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
@@ -535,6 +536,7 @@ export function renderTicketRituals(issueId) {
 /**
  * View issue by path (identifier or ID)
  * @param {string} identifier - Issue identifier or ID
+ * @returns {Promise<boolean>} true if the issue was found and rendered
  */
 export async function viewIssueByPath(identifier) {
     try {
@@ -547,13 +549,86 @@ export async function viewIssueByPath(identifier) {
         }
         if (issue) {
             await viewIssue(issue.id, false);
-        } else {
-            navigateTo('my-issues', false);
+            return true;
         }
+        navigateTo('my-issues', false);
+        return false;
     } catch {
         navigateTo('my-issues', false);
+        return false;
     }
 }
+
+/**
+ * Compute prev/next navigation for an issue from the detail nav context.
+ * @param {string} issueId - Issue ID
+ * @returns {{issueList: Array, currentIndex: number, prevIssue: Object|null, nextIssue: Object|null, inList: boolean}}
+ */
+function computeDetailNav(issueId) {
+    const issueList = getDetailNavContext();
+    const currentIndex = issueList.findIndex(i => i.id === issueId);
+    return {
+        issueList,
+        currentIndex,
+        prevIssue: currentIndex > 0 ? issueList[currentIndex - 1] : null,
+        nextIssue: currentIndex >= 0 && currentIndex < issueList.length - 1 ? issueList[currentIndex + 1] : null,
+        inList: currentIndex >= 0,
+    };
+}
+
+/**
+ * Render the prev/next arrows + counter strip, or '' when the issue isn't in
+ * the nav context list.
+ */
+function renderDetailNavArrows({ issueList, currentIndex, prevIssue, nextIssue, inList }) {
+    if (!inList) return '';
+    return `
+                        <div class="issue-nav-arrows">
+                            <button class="issue-nav-btn" ${prevIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(prevIssue.id)}" data-identifier="${escapeAttr(prevIssue.identifier)}"` : 'disabled'} title="Previous issue">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="issue-nav-counter">${currentIndex + 1} / ${issueList.length}</span>
+                            <button class="issue-nav-btn" ${nextIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(nextIssue.id)}" data-identifier="${escapeAttr(nextIssue.identifier)}"` : 'disabled'} title="Next issue">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                        </div>`;
+}
+
+/**
+ * Re-sync the prev/next strip after the detail nav context changes under an
+ * open detail view — ws-handlers.js patches the context on remote
+ * issue:updated/issue:deleted events, and without this the arrows keep
+ * pointing at (possibly deleted) snapshot entries (CHT-1211 review #1).
+ */
+function refreshDetailNavArrows() {
+    const detailView = document.getElementById('issue-detail-view');
+    if (!detailView || detailView.classList.contains('hidden')) return;
+    const issue = getCurrentDetailIssue();
+    if (!issue) return;
+
+    const nav = computeDetailNav(issue.id);
+    detailNavPrevId = nav.prevIssue ? nav.prevIssue.id : null;
+    detailNavNextId = nav.nextIssue ? nav.nextIssue.id : null;
+
+    const navContainer = detailView.querySelector('.issue-detail-nav');
+    if (!navContainer) return;
+    const existing = navContainer.querySelector('.issue-nav-arrows');
+    const html = renderDetailNavArrows(nav);
+    if (existing) {
+        if (html) {
+            existing.outerHTML = html;
+        } else {
+            existing.remove();
+        }
+    } else if (html) {
+        navContainer.querySelector('.back-link')?.insertAdjacentHTML('afterend', html);
+    }
+}
+
+subscribe((key) => {
+    if (key !== 'detailNavContext') return;
+    refreshDetailNavArrows();
+});
 
 /**
  * View issue detail
@@ -562,6 +637,10 @@ export async function viewIssueByPath(identifier) {
  */
 export async function viewIssue(issueId, pushHistory = true) {
     try {
+        // Record the list's scroll position before we replace it with detail
+        // content, so Back can restore it (CHT-1211 item 1).
+        if (pushHistory) saveScrollPosition();
+
         ticketRitualsCollapsed = true;
         const [issue, comments, activities, subIssues, relations, ritualStatus] = await Promise.all([
             api.getIssue(issueId),
@@ -628,12 +707,13 @@ export async function viewIssue(issueId, pushHistory = true) {
         const assigneeName = assignee ? formatAssigneeName(assignee) : null;
         const currentSprint = issue.sprint_id ? projectSprints.find(s => s.id === issue.sprint_id) : null;
 
-        // Compute prev/next navigation from current issue list
-        const issueList = getIssues();
-        const currentIndex = issueList.findIndex(i => i.id === issue.id);
-        const prevIssue = currentIndex > 0 ? issueList[currentIndex - 1] : null;
-        const nextIssue = currentIndex >= 0 && currentIndex < issueList.length - 1 ? issueList[currentIndex + 1] : null;
-        const inList = currentIndex >= 0;
+        // Compute prev/next navigation from the list the user actually
+        // navigated from (Issues/Board/Dashboard/Sprint each set this before
+        // routing into an issue) rather than the Issues-view-only global
+        // issues array, which was stale or empty when arriving from Board,
+        // Dashboard, or a Sprint (CHT-1211 item 2).
+        const nav = computeDetailNav(issue.id);
+        const { prevIssue, nextIssue } = nav;
 
         detailView.querySelector('#issue-detail-content').innerHTML = `
             <div class="detail-layout">
@@ -643,17 +723,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Back
                         </button>
-                        ${inList ? `
-                        <div class="issue-nav-arrows">
-                            <button class="issue-nav-btn" ${prevIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(prevIssue.id)}" data-identifier="${escapeAttr(prevIssue.identifier)}"` : 'disabled'} title="Previous issue">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-                            </button>
-                            <span class="issue-nav-counter">${currentIndex + 1} / ${issueList.length}</span>
-                            <button class="issue-nav-btn" ${nextIssue ? `data-action="navigate-issue" data-issue-id="${escapeAttr(nextIssue.id)}" data-identifier="${escapeAttr(nextIssue.identifier)}"` : 'disabled'} title="Next issue">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-                            </button>
-                        </div>
-                        ` : ''}
+                        ${renderDetailNavArrows(nav)}
                         <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(issue.identifier)}</span>
                     </div>
 
@@ -688,9 +758,11 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <div class="sub-issues-list">
-                            ${subIssues.length === 0 ? `
-                                <div class="sub-issues-empty">No sub-issues</div>
-                            ` : subIssues.map(subIssue => `
+                            ${subIssues.length === 0 ? renderEmptyState({
+                                icon: EMPTY_ICONS.issues,
+                                heading: 'No sub-issues',
+                                description: 'Break this issue down by creating sub-issues',
+                            }) : subIssues.map(subIssue => `
                                 <a href="/issue/${encodeURIComponent(subIssue.identifier)}" class="sub-issue-item" data-action="navigate-issue" data-issue-id="${escapeAttr(subIssue.id)}" data-identifier="${escapeAttr(subIssue.identifier)}">
                                     <span class="sub-issue-status">${getStatusIcon(subIssue.status)}</span>
                                     <span class="sub-issue-id">${subIssue.identifier}</span>
@@ -816,9 +888,11 @@ export async function viewIssue(issueId, pushHistory = true) {
                             </button>
                         </div>
                         <div class="activity-list section-collapsible-content collapsed">
-                            ${activities.length === 0 ? `
-                                <div class="activity-empty">No activity yet</div>
-                            ` : activities.map(activity => `
+                            ${activities.length === 0 ? renderEmptyState({
+                                icon: EMPTY_ICONS.activity,
+                                heading: 'No activity yet',
+                                description: 'Activity will appear here as the issue is updated',
+                            }) : activities.map(activity => `
                                 <div class="activity-item">
                                     <div class="activity-icon">${getActivityIcon(activity.activity_type)}</div>
                                     <div class="activity-content">
@@ -1367,8 +1441,8 @@ function navigateAdjacentIssue(direction) {
     const currentIssue = getCurrentDetailIssue();
     if (!currentIssue) return;
 
-    // Navigate within the current issues list (only works when navigated from issues view)
-    const issues = getIssues();
+    // Navigate within the list the user actually arrived from (CHT-1211 item 2)
+    const issues = getDetailNavContext();
     if (!issues || issues.length === 0) return;
 
     const currentIndex = issues.findIndex(i => i.id === currentIssue.id);

@@ -14,6 +14,12 @@ const initialState = {
     // Issues (project view)
     issues: [],
 
+    // Issue detail prev/next context: the last list of issues a detail view
+    // was actually opened from (Issues/Board/Dashboard/Sprint). Distinct from
+    // `issues` above, which is Issues-view-only state used for optimistic
+    // patching — this is nav-only and never used to render a list (CHT-1211).
+    detailNavContext: [],
+
     // Team members / assignees
     assignees: [],
 
@@ -24,6 +30,7 @@ const initialState = {
     activeFilterCategory: 'status',
     selectedIssueIndex: -1,
     selectedDocIndex: -1,
+    selectedBoardIndex: -1,
 
     // Pending gates for ritual completion
     pendingGates: [],
@@ -131,6 +138,9 @@ export const setCurrentView = (view) => setState('currentView', view);
 export const getIssues = () => state.issues;
 export const setIssues = (issues) => setState('issues', issues);
 
+export const getDetailNavContext = () => state.detailNavContext;
+export const setDetailNavContext = (issues) => setState('detailNavContext', issues);
+
 export const getAssignees = () => state.assignees;
 export const setAssignees = (assignees) => setState('assignees', assignees);
 
@@ -145,6 +155,9 @@ export const setSelectedIssueIndex = (index) => setState('selectedIssueIndex', i
 
 export const getSelectedDocIndex = () => state.selectedDocIndex;
 export const setSelectedDocIndex = (index) => setState('selectedDocIndex', index);
+
+export const getSelectedBoardIndex = () => state.selectedBoardIndex;
+export const setSelectedBoardIndex = (index) => setState('selectedBoardIndex', index);
 
 export const getPendingGates = () => state.pendingGates;
 export const setPendingGates = (gates) => setState('pendingGates', gates);

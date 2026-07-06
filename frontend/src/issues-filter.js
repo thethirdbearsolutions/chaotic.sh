@@ -35,6 +35,13 @@ export function getSelectedLabels() {
     return Array.from(checkboxes).map(cb => cb.value);
 }
 
+export function getExcludedLabels() {
+    const dropdown = document.getElementById('exclude-label-filter-dropdown');
+    if (!dropdown) return [];
+    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
 export function getGroupByValue() {
     const select = document.getElementById('group-by-select');
     return select ? select.value : '';
@@ -52,6 +59,7 @@ export const FILTER_CATEGORIES = [
     { key: 'assignee', label: 'Assignee' },
     { key: 'sprint', label: 'Sprint' },
     { key: 'labels', label: 'Labels' },
+    { key: 'exclude_labels', label: 'Exclude Labels' },
 ];
 
 export const CLOSED_STATUSES = ['done', 'canceled'];
@@ -76,6 +84,8 @@ export function getFilterCategoryCount(category) {
             return document.getElementById('sprint-filter')?.value ? 1 : 0;
         case 'labels':
             return getSelectedLabels().length;
+        case 'exclude_labels':
+            return getExcludedLabels().length;
         default:
             return 0;
     }
@@ -99,20 +109,26 @@ export function syncFiltersToUrl() {
     const statuses = getSelectedStatuses();
     const priorities = getSelectedPriorities();
     const labels = getSelectedLabels();
+    const excludedLabels = getExcludedLabels();
     const assignee = document.getElementById('assignee-filter')?.value;
     const project = getCurrentProject() || '';
     const sprint = document.getElementById('sprint-filter')?.value;
     const issueType = document.getElementById('issue-type-filter')?.value;
     const groupBy = document.getElementById('group-by-select')?.value;
+    const sort = document.getElementById('sort-by-select')?.value;
 
     statuses.forEach(s => params.append('status', s));
     priorities.forEach(p => params.append('priority', p));
     labels.forEach(l => params.append('label', l));
+    excludedLabels.forEach(l => params.append('exclude_label', l));
     if (assignee) params.set('assignee', assignee);
     if (project) params.set('project', project);
     if (sprint) params.set('sprint', sprint);
     if (issueType) params.set('issue_type', issueType);
     if (groupBy) params.set('groupBy', groupBy);
+    // Only persist non-default sort — 'created-desc' is the select's default,
+    // so omitting it keeps the URL/localStorage clean for the common case (CHT-1212)
+    if (sort && sort !== 'created-desc') params.set('sort', sort);
 
     const queryString = params.toString();
     const newUrl = queryString ? `/issues?${queryString}` : '/issues';
@@ -130,7 +146,7 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     let params = new URLSearchParams(window.location.search);
 
     // Fall back to saved filters if URL has no issue-specific filter params (CHT-1042, CHT-1085)
-    const FILTER_KEYS = ['status', 'priority', 'label', 'assignee', 'sprint', 'issue_type', 'groupBy', 'project'];
+    const FILTER_KEYS = ['status', 'priority', 'label', 'exclude_label', 'assignee', 'sprint', 'issue_type', 'groupBy', 'sort', 'project'];
     const hasFilterParams = FILTER_KEYS.some(k => params.has(k));
     if (!hasFilterParams) {
         const saved = getIssueFilters(getCurrentTeam()?.id);
@@ -209,11 +225,31 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
         }
     }
 
+    // Apply exclude-label filters
+    const excludedLabels = params.getAll('exclude_label');
+    if (excludedLabels.length > 0) {
+        const dropdown = document.getElementById('exclude-label-filter-dropdown');
+        if (dropdown) {
+            const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                cb.checked = excludedLabels.includes(cb.value);
+            });
+            updateExcludeLabelFilterLabel();
+        }
+    }
+
     // Apply group-by
     const groupBy = params.get('groupBy');
     if (groupBy) {
         const groupBySelect = document.getElementById('group-by-select');
         if (groupBySelect) groupBySelect.value = groupBy;
+    }
+
+    // Apply sort (CHT-1212)
+    const sort = params.get('sort');
+    if (sort) {
+        const sortSelect = document.getElementById('sort-by-select');
+        if (sortSelect) sortSelect.value = sort;
     }
 }
 
@@ -268,42 +304,77 @@ export function updateLabelFilterLabel() {
     }
 }
 
+export function updateExcludeLabelFilterLabel() {
+    const excluded = getExcludedLabels();
+    const dropdown = document.getElementById('exclude-label-filter-dropdown');
+    const label = dropdown?.querySelector('.multi-select-label');
+    if (!label) return;
+
+    if (excluded.length === 0) {
+        label.textContent = 'Exclude Labels';
+    } else if (excluded.length === 1) {
+        const checkbox = dropdown.querySelector(`input[value="${excluded[0]}"]`);
+        const labelName = checkbox?.closest('label')?.querySelector('.label-name')?.textContent || '1 Label';
+        label.textContent = `Excl: ${labelName}`;
+    } else {
+        label.textContent = `Excl: ${excluded.length} Labels`;
+    }
+}
+
 // ========================================
 // Label Filter Population
 // ========================================
 
 export async function populateLabelFilter() {
-    const dropdown = document.getElementById('label-filter-dropdown');
-    if (!dropdown || !getCurrentTeam()) return;
+    if (!getCurrentTeam()) return;
 
-    const optionsContainer = dropdown.querySelector('.multi-select-options');
+    let labels;
     try {
-        const labels = await api.getLabels(getCurrentTeam().id);
-
-        optionsContainer.innerHTML = '';
-
-        if (labels.length === 0) {
-            optionsContainer.innerHTML = '<div class="multi-select-empty">No labels available</div>';
-        } else {
-            labels.forEach(lbl => {
-                const option = document.createElement('label');
-                option.className = 'multi-select-option';
-                option.innerHTML = `
-                    <input type="checkbox" value="${lbl.id}" data-action="update-label-filter">
-                    <span class="label-badge" style="background: ${sanitizeColor(lbl.color)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
-                        <span class="label-name">${escapeHtml(lbl.name)}</span>
-                    </span>
-                `;
-                optionsContainer.appendChild(option);
-            });
-        }
-
-        // Add clear button back
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'multi-select-actions';
-        actionsDiv.innerHTML = '<button type="button" class="btn btn-small" data-action="clear-label-filter">Clear</button>';
-        optionsContainer.appendChild(actionsDiv);
+        labels = await api.getLabels(getCurrentTeam().id);
     } catch (e) {
         console.error('Failed to load labels for filter:', e);
+        return;
     }
+
+    _renderLabelFilterDropdown(
+        'label-filter-dropdown',
+        labels,
+        'update-label-filter',
+        'clear-label-filter',
+    );
+    _renderLabelFilterDropdown(
+        'exclude-label-filter-dropdown',
+        labels,
+        'update-exclude-label-filter',
+        'clear-exclude-label-filter',
+    );
+}
+
+function _renderLabelFilterDropdown(dropdownId, labels, updateAction, clearAction) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) return;
+
+    const optionsContainer = dropdown.querySelector('.multi-select-options');
+    optionsContainer.innerHTML = '';
+
+    if (labels.length === 0) {
+        optionsContainer.innerHTML = '<div class="multi-select-empty">No labels available</div>';
+    } else {
+        labels.forEach(lbl => {
+            const option = document.createElement('label');
+            option.className = 'multi-select-option';
+            option.innerHTML = `
+                <input type="checkbox" value="${lbl.id}" data-action="${updateAction}">
+                <span class="label-badge" style="background: ${sanitizeColor(lbl.color)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
+                    <span class="label-name">${escapeHtml(lbl.name)}</span>
+                </span>
+            `;
+            optionsContainer.appendChild(option);
+        });
+    }
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'multi-select-actions';
+    actionsDiv.innerHTML = `<button type="button" class="btn btn-small" data-action="${clearAction}">Clear</button>`;
+    optionsContainer.appendChild(actionsDiv);
 }

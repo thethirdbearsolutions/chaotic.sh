@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, get_status_color
+from .shared import _client, console, get_status_color, resolve_content_value
 
 
 def _main():
@@ -76,7 +76,7 @@ def register(cli):
     @doc.command("create")
     @click.argument("title_words", nargs=-1)
     @click.option("--title", "title_opt", help="Document title (alternative to positional argument)")
-    @click.option("--content", "--body", "--description", default="")
+    @click.option("--content", "--body", "--description", default="", callback=resolve_content_value)
     @click.option("--icon", default="")
     @click.option("--project", help="Project to attach doc to (ID, key, or name). Omit for global/team-wide.")
     @click.option("--sprint", help="Sprint to attach doc to (ID, name, or 'current')")
@@ -195,8 +195,10 @@ def register(cli):
     @doc.command("comment")
     @click.argument("document_id")
     @click.argument("content")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_comment(document_id, content):
         """Add a comment to a document.
 
@@ -205,15 +207,18 @@ def register(cli):
         m = _main()
         team_id = m.get_current_team()
         document_id = m.resolve_document_id(document_id, team_id)
-        _client().create_document_comment(document_id, content)
+        comment = _client().create_document_comment(document_id, content)
         console.print("[green]Comment added.[/green]")
+        return comment
 
     @doc.command("comment-edit")
     @click.argument("document_id")
     @click.argument("comment_id")
     @click.argument("content")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_comment_edit(document_id, comment_id, content):
         """Edit a comment on a document.
 
@@ -222,14 +227,17 @@ def register(cli):
         m = _main()
         team_id = m.get_current_team()
         document_id = m.resolve_document_id(document_id, team_id)
-        _client().update_document_comment(document_id, comment_id, content)
+        comment = _client().update_document_comment(document_id, comment_id, content)
         console.print("[green]Comment updated.[/green]")
+        return comment
 
     @doc.command("comment-delete")
     @click.argument("document_id")
     @click.argument("comment_id")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_comment_delete(document_id, comment_id):
         """Delete a comment on a document.
 
@@ -242,18 +250,21 @@ def register(cli):
         document_id = m.resolve_document_id(document_id, team_id)
         _client().delete_document_comment(document_id, comment_id)
         console.print("[green]Comment deleted.[/green]")
+        return {"deleted": True, "id": comment_id, "document_id": document_id}
 
     @doc.command("update")
     @click.argument("document_id")
     @click.option("--title")
-    @click.option("--content")
+    @click.option("--content", callback=resolve_content_value)
     @click.option("--icon")
     @click.option("--project", help="Move to project (ID, key, or name)")
     @click.option("--sprint", help="Attach to sprint (name, 'current', 'next', or ID)")
     @click.option("--no-sprint", "no_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--global", "is_global", is_flag=True, help="Make global (remove from project)")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_update(document_id, title, content, icon, project, sprint, no_sprint, is_global):
         """Update a document.
 
@@ -285,15 +296,18 @@ def register(cli):
 
         if not data:
             console.print("[yellow]No updates provided.[/yellow]")
-            return
+            return {"updated": False, "document_id": document_id}
 
-        _client().update_document(document_id, **data)
+        updated = _client().update_document(document_id, **data)
         console.print("[green]Document updated.[/green]")
+        return updated
 
     @doc.command("delete")
     @click.argument("document_id")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_delete(document_id):
         """Delete a document.
 
@@ -307,12 +321,15 @@ def register(cli):
 
         _client().delete_document(document_id)
         console.print("[green]Document deleted.[/green]")
+        return {"deleted": True, "id": document_id}
 
     @doc.command("link")
     @click.argument("document_id")
     @click.argument("issue_identifier")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_link(document_id, issue_identifier):
         """Link a document to an issue.
 
@@ -327,14 +344,19 @@ def register(cli):
         issue = _client().get_issue_by_identifier(issue_identifier)
         issue_id = issue['id']
 
-        _client().link_document_to_issue(document_id, issue_id)
+        result = _client().link_document_to_issue(document_id, issue_id)
         console.print(f"[green]Document linked to {issue_identifier}.[/green]")
+        return result if result is not None else {
+            "linked": True, "document_id": document_id, "issue_id": issue_id,
+        }
 
     @doc.command("unlink")
     @click.argument("document_id")
     @click.argument("issue_identifier")
+    @_main().json_option
     @_main().require_team
     @_main().handle_error
+    @_main().json_result()
     def doc_unlink(document_id, issue_identifier):
         """Unlink a document from an issue.
 
@@ -351,6 +373,7 @@ def register(cli):
 
         _client().unlink_document_from_issue(document_id, issue_id)
         console.print(f"[green]Document unlinked from {issue_identifier}.[/green]")
+        return {"unlinked": True, "document_id": document_id, "issue_id": issue_id}
 
     @doc.command("open")
     @click.argument("document_id")

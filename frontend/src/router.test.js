@@ -25,6 +25,7 @@ import {
     navigateToEpicByIdentifier,
     initRouter,
     resetRouter,
+    saveScrollPosition,
 } from './router.js';
 
 describe('router', () => {
@@ -170,6 +171,41 @@ describe('router', () => {
                 { view: 'sprints' },
                 '',
                 '/sprints?project=proj-456'
+            );
+        });
+
+        // CHT-1211 item 5: epics/documents/rituals/approvals/my-issues are
+        // project-scoped exactly like issues/board/sprints but were missing
+        // from the ?project= round-trip whitelist.
+        it.each([
+            ['epics', '/epics?project=proj-789'],
+            ['documents', '/documents?project=proj-789'],
+            ['rituals', '/rituals?project=proj-789'],
+            ['approvals', '/approvals?project=proj-789'],
+        ])('includes project param for %s view', (view, expectedUrl) => {
+            getProjectFromUrl.mockReturnValue('proj-789');
+            registerViews({ [view]: vi.fn() });
+            navigateTo(view);
+            expect(pushStateSpy).toHaveBeenCalledWith({ view }, '', expectedUrl);
+        });
+
+        it('includes project param for my-issues (served at /) URL', () => {
+            getProjectFromUrl.mockReturnValue('proj-999');
+            navigateTo('my-issues');
+            expect(pushStateSpy).toHaveBeenCalledWith(
+                { view: 'my-issues' },
+                '',
+                '/?project=proj-999'
+            );
+        });
+
+        it('uses plain / for my-issues when no project is set', () => {
+            getProjectFromUrl.mockReturnValue(null);
+            navigateTo('my-issues');
+            expect(pushStateSpy).toHaveBeenCalledWith(
+                { view: 'my-issues' },
+                '',
+                '/'
             );
         });
 
@@ -471,6 +507,56 @@ describe('router', () => {
             const thirdCallCount = addEventSpy.mock.calls.filter(c => c[0] === 'popstate').length;
             expect(thirdCallCount).toBe(firstCallCount + 1);
             addEventSpy.mockRestore();
+        });
+    });
+
+    describe('saveScrollPosition (CHT-1211 item 1)', () => {
+        it('records the current href scroll offset', () => {
+            window.location.href = 'http://localhost/issues';
+            Object.defineProperty(window, 'scrollY', { value: 240, configurable: true });
+
+            saveScrollPosition();
+
+            // Verified indirectly via the popstate restore path below —
+            // scrollPositions is a private module map.
+            registerViews({ 'issues': vi.fn() });
+            const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => cb());
+            const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+            initRouter();
+            window.dispatchEvent(new PopStateEvent('popstate', { state: { view: 'issues' } }));
+
+            expect(scrollToSpy).toHaveBeenCalledWith(0, 240);
+            rafSpy.mockRestore();
+            scrollToSpy.mockRestore();
+        });
+
+        // Behavioral test for the actual bug: a detail view (simulated here
+        // via a bare saveScrollPosition() call, mirroring what viewIssue/
+        // viewEpic/viewSprint/viewDocument now do) records the list's scroll
+        // position, and browser Back restores it instead of landing at the
+        // top of the list (CHT-1211 item 1).
+        it('restores list scroll position when browser Back returns from a detail view', () => {
+            registerViews({ 'issues': vi.fn() });
+            const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => cb());
+            const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+            initRouter();
+
+            // User is scrolled down the issues list...
+            window.location.href = 'http://localhost/issues';
+            Object.defineProperty(window, 'scrollY', { value: 480, configurable: true });
+
+            // ...opens a detail view, which saves scroll position before
+            // pushState (mirrors viewIssue()'s pushHistory branch)
+            saveScrollPosition();
+            window.location.href = 'http://localhost/issue/CHT-1';
+
+            // Browser Back returns to the issues list URL via popstate
+            window.location.href = 'http://localhost/issues';
+            window.dispatchEvent(new PopStateEvent('popstate', { state: { view: 'issues' } }));
+
+            expect(scrollToSpy).toHaveBeenCalledWith(0, 480);
+            rafSpy.mockRestore();
+            scrollToSpy.mockRestore();
         });
     });
 

@@ -63,7 +63,7 @@ class TestDocList:
         result = cli_runner.invoke(cli, ['doc', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list)
         assert data[0]['title'] == 'Sprint Report'
 
@@ -398,3 +398,135 @@ class TestDocOpen:
         assert result.exit_code == 0
         mock_wb.open.assert_called_once()
         assert 'doc-uuid-123' in mock_wb.open.call_args[0][0]
+
+
+class TestDocMutationsJsonOutput:
+    """doc comment/comment-edit/comment-delete/update/delete/link/unlink
+    previously had no --json support at all (CHT-1222). Each now emits a
+    single JSON object on stdout; verified via result.stdout (pure
+    stdout), not result.output (stdout+stderr mixed)."""
+
+    def test_comment_json_includes_comment_id(self, cli_runner):
+        from cli.main import cli, client
+
+        client.create_document_comment = MagicMock(return_value={
+            "id": "comment-1", "content": "Great doc!",
+        })
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'comment', 'doc-uuid-123', 'Great doc!', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['id'] == 'comment-1'
+        assert 'added' in result.stderr.lower()
+
+    def test_comment_edit_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_document_comment = MagicMock(return_value={
+            "id": "comment-1", "content": "edited",
+        })
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, [
+                'doc', 'comment-edit', 'doc-uuid-123', 'comment-1', 'edited', '--json',
+            ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['id'] == 'comment-1'
+        assert data['content'] == 'edited'
+
+    def test_comment_delete_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.delete_document_comment = MagicMock()
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'), \
+             patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, [
+                'doc', 'comment-delete', 'doc-uuid-123', 'comment-1', '--json',
+            ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {"deleted": True, "id": "comment-1", "document_id": "doc-uuid-123"}
+
+    def test_update_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.update_document = MagicMock(return_value={
+            "id": "doc-uuid-123", "title": "New Title",
+        })
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, [
+                'doc', 'update', 'doc-uuid-123', '--title', 'New Title', '--json',
+            ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['title'] == 'New Title'
+
+    def test_update_no_options_json_still_emits_single_json_value(self, cli_runner):
+        """The 'no updates provided' early return must still honor --json
+        instead of leaving stdout empty (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.update_document = MagicMock()
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'update', 'doc-uuid-123', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {"updated": False, "document_id": "doc-uuid-123"}
+        client.update_document.assert_not_called()
+
+    def test_delete_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.delete_document = MagicMock()
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'), \
+             patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['doc', 'delete', 'doc-uuid-123', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {"deleted": True, "id": "doc-uuid-123"}
+
+    def test_link_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "issue-uuid-123", "identifier": "CHT-100",
+        })
+        client.link_document_to_issue = MagicMock(return_value=None)
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'link', 'doc-uuid-123', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {
+            "linked": True, "document_id": "doc-uuid-123", "issue_id": "issue-uuid-123",
+        }
+
+    def test_unlink_json(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value={
+            "id": "issue-uuid-123", "identifier": "CHT-100",
+        })
+        client.unlink_document_from_issue = MagicMock()
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'unlink', 'doc-uuid-123', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data == {
+            "unlinked": True, "document_id": "doc-uuid-123", "issue_id": "issue-uuid-123",
+        }

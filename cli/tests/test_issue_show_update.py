@@ -324,7 +324,7 @@ class TestIssueShowJson:
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data['identifier'] == 'CHT-100'
         assert data['title'] == 'Fix the widget'
         assert data['sub_issues'] == [{"id": "sub-1", "status": "done"}]
@@ -340,7 +340,7 @@ class TestIssueShowJson:
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert len(data) == 2
         assert data[0]['identifier'] == 'CHT-100'
         assert data[1]['identifier'] == 'CHT-101'
@@ -749,3 +749,84 @@ class TestIssueUpdateJson:
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
+
+    def test_update_json_note_warning_does_not_leak_onto_stdout(self, cli_runner, mock_issue):
+        """--note without --unceremoniously-attest-all-rituals prints a
+        warning; under --json that warning must land on stderr, not mixed
+        onto stdout with the JSON payload (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--status', 'done',
+            '--note', 'Some note', '--json',
+        ])
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)  # raises if stdout isn't pure JSON
+        assert data['identifier'] == 'CHT-100'
+        assert 'no effect' in result.stderr.lower()
+
+    def test_update_json_label_and_relation_status_lines_go_to_stderr(self, cli_runner, mock_issue):
+        """--label/--blocked-by/--relates-to each print a status line as
+        they're applied; under --json none of those may land on stdout
+        (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+        client.add_label_to_issue = MagicMock()
+
+        def fake_get_by_id(identifier):
+            if identifier == "CHT-100":
+                return mock_issue
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_by_id)
+        client.create_relation = MagicMock(return_value={"id": "rel-1"})
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100',
+            '--label', 'bug', '--blocked-by', 'CHT-1', '--json',
+        ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['identifier'] == 'CHT-100'
+        assert 'added label' in result.stderr.lower()
+        assert 'blocked by' in result.stderr.lower()
+
+    def test_update_add_label_not_found_outputs_error_json(self, cli_runner, mock_issue):
+        """--label naming a nonexistent label used to console.print + raise
+        SystemExit(1) directly, bypassing handle_error's --json formatting
+        (CHT-1222). Now routes through click.ClickException."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()
+
+    def test_update_remove_label_not_found_outputs_error_json(self, cli_runner, mock_issue):
+        """Same bug, remove-label side (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_labels = MagicMock(return_value=[{"id": "l1", "name": "bug"}])
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100', '--remove-label', 'no-such-label', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'no-such-label' in data['error'].lower()

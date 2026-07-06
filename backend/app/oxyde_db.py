@@ -3,6 +3,7 @@ import os
 import typing
 import uuid
 from datetime import datetime, timezone
+from pydantic_core import PydanticUndefined
 from oxyde import AsyncDatabase
 from app.config import get_settings
 
@@ -112,30 +113,76 @@ def _patch_objects_create_to_apply_default_factory() -> None:
         if is_pk and ann is str:
             return True, str(uuid.uuid4())
 
-        # 4. Datetime fields: default to now(). Covers created_at /
+        # 4. Plain `default=` values (enums, bools, floats, None). Oxyde's
+        #    INSERT dump uses exclude_unset=True, so a defaulted-but-unset
+        #    column is omitted from the row entirely: NOT NULL columns with
+        #    no SQL-level default fail (e.g. rituals.trigger), and SQL
+        #    defaults that disagree with the model win (e.g.
+        #    rituals.approval_mode DEFAULT 'NONE' vs model default AUTO).
+        #    Model defaults are authoritative; None is passed explicitly so
+        #    optionals never fall through to the datetime fallback below.
+        default = getattr(info, "default", PydanticUndefined)
+        if default is not PydanticUndefined:
+            return True, default
+
+        # 5. Datetime fields: default to now(). Covers created_at /
         #    updated_at / joined_at / attested_at / requested_at and any
-        #    future timestamp added with default_factory.
-        if ann is datetime:
+        #    future timestamp added with default_factory. Fields are
+        #    annotated DateTimeUTC (Annotated[datetime, ...]) — unwrap.
+        base = typing.get_args(ann)[0] if hasattr(ann, "__metadata__") else ann
+        if base is datetime:
             return True, datetime.now(timezone.utc)
 
         return False, None
 
+    def _fill_defaults(model_cls, data: dict) -> dict:
+        for name, info in model_cls.model_fields.items():
+            if name in data:
+                continue
+            have, value = _default_for_field(name, info)
+            if have:
+                data[name] = value
+        return data
+
+    def _revalidate_full(model_cls, instance):
+        """Rebuild an instance from a full dump so every field counts as
+        \"set\" — oxyde 0.7 serializes INSERTs with exclude_unset, which
+        would otherwise drop Pydantic defaults from the row."""
+        return model_cls.model_validate(instance.model_dump())
+
     async def _create_with_default_factory(self, **kwargs):
         model_cls = _model_for_manager(self)
+        if kwargs.get("instance") is not None:
+            # create(instance=...) forbids extra field kwargs — injecting
+            # defaults here would raise ManagerError. Re-validate instead.
+            if model_cls is not None and isinstance(kwargs["instance"], model_cls):
+                kwargs["instance"] = _revalidate_full(model_cls, kwargs["instance"])
+            return await _original_create(self, **kwargs)
         if model_cls is not None:
             try:
-                for name, info in model_cls.model_fields.items():
-                    if name in kwargs:
-                        continue
-                    have, value = _default_for_field(name, info)
-                    if have:
-                        kwargs[name] = value
+                _fill_defaults(model_cls, kwargs)
             except Exception:
                 # Defensive: never block a create if introspection fails.
                 pass
         return await _original_create(self, **kwargs)
 
+    _original_bulk_create = QueryManager.bulk_create
+
+    async def _bulk_create_with_default_factory(self, objects, **kwargs):
+        # Same exclude_unset problem as create(): dict payloads get defaults
+        # injected, instances get re-validated from a full dump.
+        model_cls = _model_for_manager(self)
+        if model_cls is not None:
+            objects = [
+                _fill_defaults(model_cls, dict(obj)) if isinstance(obj, dict)
+                else _revalidate_full(model_cls, obj) if isinstance(obj, model_cls)
+                else obj
+                for obj in objects
+            ]
+        return await _original_bulk_create(self, objects, **kwargs)
+
     QueryManager.create = _create_with_default_factory
+    QueryManager.bulk_create = _bulk_create_with_default_factory
     QueryManager._chaotic_default_factory_patched = True
 
 
@@ -147,10 +194,21 @@ _patch_objects_create_to_apply_default_factory()
 
 
 async def init_oxyde() -> AsyncDatabase:
-    """Initialize the Oxyde database connection."""
+    """Initialize the Oxyde database connection.
+
+    OXYDE_MAX_CONNECTIONS caps the pool (test harnesses pin it to 1 so
+    per-connection PRAGMAs like foreign_keys apply deterministically).
+    """
     global _db
     url = _get_oxyde_url()
-    _db = AsyncDatabase(url, overwrite=True)
+    if max_conn := os.environ.get("OXYDE_MAX_CONNECTIONS"):
+        from oxyde import PoolSettings
+        _db = AsyncDatabase(
+            url, overwrite=True,
+            settings=PoolSettings(max_connections=int(max_conn)),
+        )
+    else:
+        _db = AsyncDatabase(url, overwrite=True)
     await _db.connect()
 
     # Import models so they register with Oxyde

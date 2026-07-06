@@ -1,14 +1,15 @@
 """Oxyde ORM Document models."""
 import uuid
 from datetime import datetime, timezone
-from oxyde import OxydeModel, Field
+from app.utils.datetimes import DateTimeUTC
+from oxyde import Model, Field
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.enums import DocumentActivityType
 from app.oxyde_models.enums import DbEnum
 
 
-class OxydeDocument(OxydeModel):
+class OxydeDocument(Model):
     """Document model for team documentation."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -19,8 +20,8 @@ class OxydeDocument(OxydeModel):
     title: str = Field()
     content: str | None = Field(default=None)
     icon: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeDocumentLabel")
 
     class Meta:
@@ -28,22 +29,22 @@ class OxydeDocument(OxydeModel):
         table_name = "documents"
 
 
-class OxydeDocumentComment(OxydeModel):
+class OxydeDocumentComment(Model):
     """Comment on a document."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     document_id: str = Field()
     author: OxydeUser | None = Field(default=None, db_on_delete="CASCADE")
     content: str = Field()
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
         table_name = "document_comments"
 
 
-class OxydeDocumentActivity(OxydeModel):
+class OxydeDocumentActivity(Model):
     """Activity log for documents."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
@@ -53,26 +54,26 @@ class OxydeDocumentActivity(OxydeModel):
     activity_type: DbEnum(DocumentActivityType) = Field()
     document_title: str | None = Field(default=None)
     document_icon: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
         table_name = "document_activities"
 
 
-class OxydeDocumentIssue(OxydeModel):
+class OxydeDocumentIssue(Model):
     """Junction table for document-issue links."""
 
     document_id: str = Field(db_pk=True)
     issue_id: str = Field(db_pk=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Meta:
         is_table = True
         table_name = "document_issues"
 
 
-class OxydeDocumentLabel(OxydeModel):
+class OxydeDocumentLabel(Model):
     """Junction table for document-label links."""
 
     document: OxydeDocument | None = Field(default=None, db_pk=True, db_on_delete="CASCADE")

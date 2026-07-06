@@ -3,7 +3,7 @@
  * Extracted from app.js for testability
  */
 
-import { getIssues } from './state.js';
+import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate, isOutOfScale } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -41,6 +41,13 @@ export function renderIssues() {
     const list = document.getElementById('issues-list');
     if (!list) return;
 
+    // CHT-1215: capture the currently keyboard-selected issue's id before the
+    // rebuild below replaces the DOM — the highlight and selectedIssueIndex
+    // otherwise survive independently of each other across a re-render (e.g.
+    // an incoming websocket event, or an inline field edit), so the visible
+    // cursor silently drifts from the tracked index.
+    const selectedIssueId = list.querySelector('.issue-row.keyboard-selected')?.dataset.issueId;
+
     list.classList.add('issue-list-linear');
 
     const issues = getIssues();
@@ -69,6 +76,7 @@ export function renderIssues() {
                 cta: { label: 'Create issue', action: 'showCreateIssueModal' },
             });
         }
+        setSelectedIssueIndex(-1);
         return;
     }
 
@@ -88,6 +96,40 @@ export function renderIssues() {
         // No grouping - render flat list with summary
         list.innerHTML = renderSummaryBar(issues) + issues.map(issue => renderIssueRow(issue)).join('');
     }
+
+    reapplyKeyboardSelection(selectedIssueId);
+}
+
+/**
+ * Re-apply the j/k keyboard-selection highlight after renderIssues() rebuilds
+ * the list's innerHTML from scratch (CHT-1215). Without this, the DOM
+ * highlight disappears on every re-render (websocket events, inline field
+ * edits, filter changes) while the tracked selectedIssueIndex silently drifts
+ * out of sync with what's visible.
+ * @param {string|undefined} selectedIssueId - id of the row that had
+ *   .keyboard-selected before the rebuild, if any
+ */
+function reapplyKeyboardSelection(selectedIssueId) {
+    const prevIndex = getSelectedIssueIndex();
+    if (prevIndex < 0) return;
+
+    const items = document.querySelectorAll('#issues-list .issue-row');
+    if (items.length === 0) {
+        setSelectedIssueIndex(-1);
+        return;
+    }
+
+    // Prefer re-finding the same issue by id (handles reordering/regrouping);
+    // fall back to clamping the old index if that issue is no longer present.
+    let newIndex = selectedIssueId
+        ? Array.prototype.findIndex.call(items, (item) => item.dataset.issueId === selectedIssueId)
+        : -1;
+    if (newIndex < 0) {
+        newIndex = Math.min(prevIndex, items.length - 1);
+    }
+
+    setSelectedIssueIndex(newIndex);
+    items[newIndex].classList.add('keyboard-selected');
 }
 
 function renderGroupedByStatus(list, issues) {
@@ -373,6 +415,38 @@ export function toggleGroup(groupId) {
  * @param {Object} issue - Issue data
  * @returns {string} HTML string
  */
+/**
+ * Wrap the first case-insensitive match of `query` in `text` with a
+ * <mark>, HTML-escaping the surrounding text. Falls back to plain escaped
+ * text when there's no query or no match (CHT-1212).
+ */
+export function highlightSearchMatch(text, query) {
+    if (!text) return '';
+    if (!query) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+    const before = text.slice(0, idx);
+    const match = text.slice(idx, idx + query.length);
+    const after = text.slice(idx + query.length);
+    return `${escapeHtml(before)}<mark class="search-match">${escapeHtml(match)}</mark>${escapeHtml(after)}`;
+}
+
+/**
+ * Build a highlighted excerpt of `description` centered on the first match
+ * of `query`, with ellipses where the excerpt was truncated. Returns null
+ * when there's no match (CHT-1212).
+ */
+export function getDescriptionSnippet(description, query, contextChars = 40) {
+    if (!description || !query) return null;
+    const idx = description.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return null;
+    const start = Math.max(0, idx - contextChars);
+    const end = Math.min(description.length, idx + query.length + contextChars);
+    const excerpt = description.slice(start, end);
+    const highlighted = highlightSearchMatch(excerpt, query);
+    return `${start > 0 ? '…' : ''}${highlighted}${end < description.length ? '…' : ''}`;
+}
+
 export function renderIssueRow(issue) {
     const assignee = issue.assignee_id ? getAssigneeById(issue.assignee_id) : null;
     const assigneeName = assignee ? formatAssigneeName(assignee) : null;
@@ -381,6 +455,17 @@ export function renderIssueRow(issue) {
     const outOfScale = isOutOfScale(issue.estimate, issue.project_id);
     const sprintInfo = issue.sprint_id ? getSprintCache()[issue.sprint_id] : null;
     const sprintName = sprintInfo ? sprintInfo.name : null;
+
+    // CHT-1212: search matches title, description, or identifier server-side,
+    // but a row that only matched on the (hidden) description looked
+    // unrelated to the query with no visible explanation. Highlight the
+    // title match when present; otherwise show a snippet of the description
+    // match so it's clear why the row is in the results.
+    const searchQuery = document.getElementById('issue-search')?.value?.trim();
+    const titleMatches = !!searchQuery && issue.title?.toLowerCase().includes(searchQuery.toLowerCase());
+    const descriptionSnippet = (searchQuery && !titleMatches)
+        ? getDescriptionSnippet(issue.description, searchQuery)
+        : null;
 
     return `
         <div class="issue-row" data-issue-id="${escapeAttr(issue.id)}" data-status="${issue.status}" data-priority="${issue.priority}" data-issue-type="${issue.issue_type || 'task'}" data-project-id="${escapeAttr(issue.project_id)}">
@@ -393,7 +478,7 @@ export function renderIssueRow(issue) {
                 </button>
                 <span class="issue-identifier">${issue.identifier}</span>
                 <span class="issue-type-badge type-${issue.issue_type || 'task'}">${formatIssueType(issue.issue_type)}</span>
-                <a class="issue-title" href="/issue/${encodeURIComponent(issue.identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(issue.id)}">${escapeHtml(issue.title)}</a>
+                <a class="issue-title" href="/issue/${encodeURIComponent(issue.identifier)}" data-action="navigate-issue" data-issue-id="${escapeAttr(issue.id)}">${highlightSearchMatch(issue.title, searchQuery)}${descriptionSnippet ? ` <span class="issue-search-snippet" title="Matched in description">— ${descriptionSnippet}</span>` : ''}</a>
             </div>
             <div class="issue-row-right">
                 ${issue.labels && issue.labels.length > 0 ? `

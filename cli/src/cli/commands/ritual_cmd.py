@@ -6,7 +6,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, format_ritual_line, print_ritual_prompt
+from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value
 
 
 def _main():
@@ -286,7 +286,7 @@ def register(cli):
 
     @ritual.command("attest")
     @click.argument("ritual_name")
-    @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)")
+    @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
     @_main().require_project
     @_main().handle_error
@@ -425,7 +425,7 @@ def register(cli):
 
     @ritual.command("update")
     @click.argument("ritual_name")
-    @click.option("--prompt", "new_prompt", help="New prompt text")
+    @click.option("--prompt", "new_prompt", help="New prompt text", callback=resolve_content_value)
     @click.option("--name", "new_name", help="New name for the ritual")
     @click.option("--mode", type=click.Choice(["auto", "review", "gate"]),
                   help="New approval mode")
@@ -678,7 +678,7 @@ def register(cli):
 
     @ritual.command("complete")
     @click.argument("ritual_name")
-    @click.option("--note", help="Optional note about completion")
+    @click.option("--note", help="Optional note about completion", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
     @_main().require_project
     @_main().handle_error

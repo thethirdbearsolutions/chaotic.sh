@@ -2,6 +2,7 @@
 
 Tests for sprint current, sprint show, sprint list, sprint budget, and sprint close.
 """
+import json
 from unittest.mock import patch, MagicMock
 import click
 import pytest
@@ -640,6 +641,89 @@ class TestSprintAdd:
         assert result.exit_code != 0
         assert 'No project selected' in result.output
 
+    def test_add_json(self, cli_runner):
+        """sprint add --json outputs a single JSON object with per-issue
+        results (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "issue-1", "identifier": "CHT-10"},
+            {"id": "issue-2", "identifier": "CHT-11"},
+        ])
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'add', 'CHT-10', 'CHT-11', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['sprint_id'] == 'sprint-1'
+        assert data['results'] == [
+            {"identifier": "CHT-10", "id": "issue-1", "success": True},
+            {"identifier": "CHT-11", "id": "issue-2", "success": True},
+        ]
+
+    def test_add_partial_failure_continues_and_reports_per_issue(self, cli_runner):
+        """A bad identifier used to abort the whole batch via handle_error
+        with no indication which issues (if any) had already succeeded.
+        Now continues past the failure and reports success/failure per
+        issue, in both text and --json (CHT-1222)."""
+        from cli.main import cli, client, APIError
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+
+        def fake_get_issue(identifier):
+            if identifier == "CHT-BAD":
+                raise APIError("Issue not found")
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'sprint', 'add', 'CHT-10', 'CHT-BAD', 'CHT-11', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert [r["identifier"] for r in data["results"]] == ["CHT-10", "CHT-BAD", "CHT-11"]
+        assert data["results"][0]["success"] is True
+        assert data["results"][1]["success"] is False
+        # CHT-11 (after the bad one) was still attempted -- not aborted.
+        assert data["results"][2]["success"] is True
+        assert client.update_issue.call_count == 2
+
+    def test_add_transport_error_mid_batch_reported_per_issue(self, cli_runner):
+        """A transient httpx transport failure (ConnectError/Timeout) mid-
+        batch is NOT an APIError; it used to escape to the outer
+        handle_error, discarding the per-issue results accumulated so far
+        (CHT-1222 review finding #6). Now it gets the same per-issue
+        reporting as data failures."""
+        import httpx
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+
+        def fake_get_issue(identifier):
+            if identifier == "CHT-NET":
+                raise httpx.ConnectError("connection refused")
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'sprint', 'add', 'CHT-10', 'CHT-NET', 'CHT-11', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["results"][0]["success"] is True
+        assert data["results"][1]["success"] is False
+        assert 'connection refused' in data["results"][1]["error"]
+        # The transport error didn't abort the batch.
+        assert data["results"][2]["success"] is True
+
 
 class TestSprintRemove:
     """Tests for chaotic sprint remove (CHT-830)."""
@@ -673,6 +757,47 @@ class TestSprintRemove:
         assert 'Removed CHT-10' in result.output
         assert 'Removed CHT-11' in result.output
         assert client.update_issue.call_count == 2
+
+    def test_remove_json(self, cli_runner):
+        """sprint remove --json outputs a single JSON object with
+        per-issue results (CHT-1222)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(side_effect=[
+            {"id": "issue-1", "identifier": "CHT-10"},
+            {"id": "issue-2", "identifier": "CHT-11"},
+        ])
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['sprint', 'remove', 'CHT-10', 'CHT-11', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['results'] == [
+            {"identifier": "CHT-10", "id": "issue-1", "success": True},
+            {"identifier": "CHT-11", "id": "issue-2", "success": True},
+        ]
+
+    def test_remove_partial_failure_continues_and_reports_per_issue(self, cli_runner):
+        """Same continue-past-failure fix as sprint add (CHT-1222)."""
+        from cli.main import cli, client, APIError
+
+        def fake_get_issue(identifier):
+            if identifier == "CHT-BAD":
+                raise APIError("Issue not found")
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'sprint', 'remove', 'CHT-10', 'CHT-BAD', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["results"][0]["success"] is True
+        assert data["results"][1]["success"] is False
 
 
 class TestSprintIssues:

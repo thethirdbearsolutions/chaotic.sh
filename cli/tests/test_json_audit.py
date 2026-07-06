@@ -32,7 +32,15 @@ SAMPLE_API_KEY = {"id": "k-1", "name": "test-key", "key_prefix": "ck_", "created
 
 
 def _parse_json(output):
-    """Parse JSON from CLI output, stripping any trailing whitespace."""
+    """Parse JSON from CLI stdout, stripping any trailing whitespace.
+
+    Callers pass ``result.stdout`` (pure stdout), not ``result.output``
+    (stdout+stderr mixed in write order) — under --json, stdout must be
+    exactly one JSON value with zero other bytes on it (CHT-1222); using
+    the mixed stream here would silently tolerate human-readable chatter
+    leaking onto stdout as long as it happened to still be valid JSON
+    once concatenated, which defeats the point of this file.
+    """
     return json.loads(output.strip())
 
 
@@ -42,7 +50,7 @@ class TestMeJson:
         client.get_me = MagicMock(return_value=SAMPLE_USER)
         result = cli_runner.invoke(cli, ['me', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['name'] == 'Test User'
 
     def test_whoami_json(self, cli_runner):
@@ -50,7 +58,7 @@ class TestMeJson:
         client.get_me = MagicMock(return_value=SAMPLE_USER)
         result = cli_runner.invoke(cli, ['auth', 'whoami', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['email'] == 'test@test.com'
 
 
@@ -60,7 +68,7 @@ class TestAuthKeysJson:
         client.list_api_keys = MagicMock(return_value=[SAMPLE_API_KEY])
         result = cli_runner.invoke(cli, ['auth', 'keys', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['name'] == 'test-key'
 
@@ -69,7 +77,7 @@ class TestAuthKeysJson:
         client.list_api_keys = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['auth', 'keys', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
 
@@ -79,7 +87,7 @@ class TestTeamJson:
         client.get_teams = MagicMock(return_value=[SAMPLE_TEAM])
         result = cli_runner.invoke(cli, ['team', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['key'] == 'TST'
 
@@ -88,7 +96,7 @@ class TestTeamJson:
         client.get_team = MagicMock(return_value=SAMPLE_TEAM)
         result = cli_runner.invoke(cli, ['team', 'show', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['name'] == 'Test Team'
 
     def test_team_members_json(self, cli_runner):
@@ -96,7 +104,7 @@ class TestTeamJson:
         client.get_team_members = MagicMock(return_value=[SAMPLE_MEMBER])
         result = cli_runner.invoke(cli, ['team', 'members', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['user_name'] == 'Test'
 
@@ -106,7 +114,7 @@ class TestTeamJson:
         with patch('cli.main.set_current_team'):
             result = cli_runner.invoke(cli, ['team', 'create', 'Test Team', 'TST', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['key'] == 'TST'
 
 
@@ -117,7 +125,7 @@ class TestProjectJson:
         with patch('cli.main.set_current_project'):
             result = cli_runner.invoke(cli, ['project', 'create', 'Chaotic', 'CHT', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['key'] == 'CHT'
 
 
@@ -128,7 +136,7 @@ class TestIssueJson:
         client.get_issues = MagicMock(return_value=[SAMPLE_ISSUE])
         result = cli_runner.invoke(cli, ['issue', 'mine', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['identifier'] == 'CHT-1'
 
@@ -138,7 +146,7 @@ class TestIssueJson:
         client.get_issues = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['issue', 'mine', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
     def test_issue_search_json(self, cli_runner):
@@ -146,7 +154,7 @@ class TestIssueJson:
         client.search_issues = MagicMock(return_value=[SAMPLE_ISSUE])
         result = cli_runner.invoke(cli, ['issue', 'search', 'test', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['title'] == 'Test Issue'
 
@@ -155,7 +163,7 @@ class TestIssueJson:
         client.search_issues = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['issue', 'search', 'nothing', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
     def test_issue_create_json(self, cli_runner):
@@ -163,7 +171,7 @@ class TestIssueJson:
         client.create_issue = MagicMock(return_value=SAMPLE_ISSUE)
         result = cli_runner.invoke(cli, ['issue', 'create', 'Test Issue', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['identifier'] == 'CHT-1'
 
     def test_issue_update_json(self, cli_runner):
@@ -172,7 +180,7 @@ class TestIssueJson:
         client.update_issue = MagicMock(return_value=SAMPLE_ISSUE)
         result = cli_runner.invoke(cli, ['issue', 'update', 'CHT-1', '--title', 'Updated', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['identifier'] == 'CHT-1'
 
     def test_issue_sub_issues_json(self, cli_runner):
@@ -181,7 +189,7 @@ class TestIssueJson:
         client.get_sub_issues = MagicMock(return_value=[SAMPLE_ISSUE])
         result = cli_runner.invoke(cli, ['issue', 'sub-issues', 'CHT-1', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
 
     def test_issue_sub_issues_empty_json(self, cli_runner):
@@ -190,7 +198,7 @@ class TestIssueJson:
         client.get_sub_issues = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['issue', 'sub-issues', 'CHT-1', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
     def test_issue_relations_json(self, cli_runner):
@@ -200,7 +208,7 @@ class TestIssueJson:
         client.get_relations = MagicMock(return_value=[relation])
         result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-1', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['relation_type'] == 'blocks'
 
@@ -211,7 +219,7 @@ class TestSprintJson:
         client.get_current_sprint = MagicMock(return_value=SAMPLE_SPRINT)
         result = cli_runner.invoke(cli, ['sprint', 'current', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['name'] == 'Sprint 1'
 
     def test_sprint_budget_json(self, cli_runner):
@@ -219,7 +227,7 @@ class TestSprintJson:
         client.get_current_sprint = MagicMock(return_value=SAMPLE_SPRINT)
         result = cli_runner.invoke(cli, ['sprint', 'budget', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['budget'] == 20
         assert data['points_spent'] == 5
 
@@ -230,7 +238,7 @@ class TestDocJson:
         client.get_documents = MagicMock(return_value=[SAMPLE_DOC])
         result = cli_runner.invoke(cli, ['doc', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['title'] == 'Test Doc'
 
@@ -239,7 +247,7 @@ class TestDocJson:
         client.get_documents = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['doc', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
     def test_doc_create_json(self, cli_runner):
@@ -247,7 +255,7 @@ class TestDocJson:
         client.create_document = MagicMock(return_value=SAMPLE_DOC)
         result = cli_runner.invoke(cli, ['doc', 'create', 'Test Doc', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['title'] == 'Test Doc'
 
     def test_doc_show_json(self, cli_runner):
@@ -258,7 +266,7 @@ class TestDocJson:
         client.get_document_comments = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['doc', 'show', 'd-1', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data['title'] == 'Test Doc'
         assert 'linked_issues' in data
 
@@ -271,7 +279,7 @@ class TestDocJson:
         client.get_document_comments = MagicMock(return_value=[comment])
         result = cli_runner.invoke(cli, ['doc', 'show', 'd-1', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert len(data['comments']) == 1
 
 
@@ -281,7 +289,7 @@ class TestLabelJson:
         client.get_labels = MagicMock(return_value=[SAMPLE_LABEL])
         result = cli_runner.invoke(cli, ['label', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['name'] == 'bug'
 
@@ -290,7 +298,7 @@ class TestLabelJson:
         client.get_labels = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['label', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []
 
 
@@ -300,7 +308,7 @@ class TestAgentJson:
         client.get_team_agents = MagicMock(return_value=[SAMPLE_AGENT])
         result = cli_runner.invoke(cli, ['agent', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert isinstance(data, list)
         assert data[0]['name'] == 'claude-bot'
 
@@ -309,5 +317,5 @@ class TestAgentJson:
         client.get_team_agents = MagicMock(return_value=[])
         result = cli_runner.invoke(cli, ['agent', 'list', '--json'])
         assert result.exit_code == 0
-        data = _parse_json(result.output)
+        data = _parse_json(result.stdout)
         assert data == []

@@ -1,7 +1,10 @@
 """System commands for self-hosted server management.
 
 The system commands manage the lifecycle of a local Chaotic server installation:
-install, start, stop, status, upgrade, migrate, logs, uninstall.
+install, status, start, stop, reconfigure, logs, upgrade, backup.
+
+There is no standalone `migrate` command -- migrations run automatically
+inside install/upgrade -- and no `uninstall` command.
 
 These commands orchestrate existing tools (git, systemd/launchd, just, uv)
 rather than bundling the server.
@@ -417,13 +420,20 @@ def is_service_running() -> bool:
             )
             if result.returncode != 0:
                 return False
-            # launchctl list <label> outputs "PID\tStatus\tLabel"
-            # PID is "-" when loaded but not running
-            stdout = (result.stdout or "").strip()
-            if not stdout:
-                return False
-            pid_field = stdout.split("\t")[0].strip('"')
-            return pid_field != "-" and pid_field.isdigit()
+            # `launchctl list <label>` returns a plist dict, e.g.:
+            #     {
+            #         "PID" = 12345;
+            #         "LastExitStatus" = 0;
+            #         "Label" = "com.chaotic.server";
+            #         ...
+            #     };
+            # The "PID" key is present (with an integer) when the job is
+            # currently running, and absent when the job is loaded but not
+            # running. The bare `launchctl list` (no label) uses the
+            # "PID\tStatus\tLabel" format with "-" for stopped jobs, but
+            # that format does NOT apply here.
+            stdout = result.stdout or ""
+            return re.search(r'"PID"\s*=\s*\d+\s*;', stdout) is not None
         else:
             return False
     except subprocess.CalledProcessError:
@@ -452,17 +462,22 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
-def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
-    """Poll the server health endpoint until it responds or timeout."""
-    import urllib.request
-    import urllib.error
-
+def _health_url(port: int, host: str = "localhost") -> str:
+    """Build the /health URL, normalizing wildcard binds and IPv6 hosts."""
     # Use localhost for wildcard binds (0.0.0.0/::) since they accept loopback
     check_host = "localhost" if host in ("0.0.0.0", "::") else host
     # Bracket IPv6 addresses for URL formatting
     if ":" in check_host and not check_host.startswith("["):
         check_host = f"[{check_host}]"
-    url = f"http://{check_host}:{port}/health"
+    return f"http://{check_host}:{port}/health"
+
+
+def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
+    """Poll the server health endpoint until it responds or timeout."""
+    import urllib.request
+    import urllib.error
+
+    url = _health_url(port, host)
     start = time.time()
 
     while time.time() - start < timeout:
@@ -475,6 +490,28 @@ def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
         time.sleep(1)
 
     return False
+
+
+def get_health(port: int, host: str = "localhost", timeout: int = 3) -> dict | None:
+    """Single GET against /health -- unlike health_check(), does not poll
+    or retry. Returns the parsed JSON body (status/db/version), or None if
+    the server didn't respond at all (network error, non-200, bad JSON).
+
+    Used by `chaotic system status` to distinguish process-alive (which
+    is_service_running() already checks) from app-actually-works.
+    """
+    import json
+    import urllib.request
+    import urllib.error
+
+    url = _health_url(port, host)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status == 200:
+                return json.loads(response.read().decode())
+    except (urllib.error.URLError, TimeoutError, ConnectionRefusedError, ValueError):
+        pass
+    return None
 
 
 def get_backup_path(timestamp: str | None = None) -> Path:
@@ -680,6 +717,48 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         return False, f"Migration failed: {e.stderr}"
 
 
+def rebuild_frontend() -> tuple[bool, str]:
+    """Install npm deps and rebuild the frontend bundle.
+
+    The upstream repo commits the built bundle (frontend/static/js/app.bundle.js)
+    so a fresh clone "just works." But if a PR forgets to commit the rebuilt
+    bundle alongside source changes, an in-place git pull/reset leaves source
+    files updated and the served bundle stale — the daemon then renders an
+    older UI than the code on disk implies. Rebuilding as part of the upgrade
+    closes that gap.
+
+    Uses `npm ci`, not `npm install`. `ci` reproducibly installs from
+    package-lock.json (wiping any stale node_modules) and refuses to mutate
+    the committed lockfile. That's the deploy-shaped install we want —
+    `npm install` would silently rewrite the lockfile, and combined with
+    a node_modules existence-guard would never reinstall after an upstream
+    lockfile bump, reproducing the exact silent-skew bug this function
+    exists to prevent (just at the deps layer instead of the bundle layer).
+
+    Best-effort: if node/npm is unavailable, skip with a message rather
+    than failing the upgrade. The committed bundle (if up to date) will
+    still be served.
+
+    Returns (success, message).
+    """
+    if shutil.which("npm") is None or shutil.which("node") is None:
+        return True, "skipped (node/npm not on PATH; serving committed bundle)"
+    frontend_dir = PROJECT_DIR / "frontend"
+    if not (frontend_dir / "package.json").exists():
+        return True, "skipped (no frontend/package.json)"
+    try:
+        # `npm ci` is idempotent and the only safe way to ensure
+        # node_modules matches the committed lockfile on disk.
+        run_command(["npm", "ci"], cwd=frontend_dir, timeout=600)
+        run_command(["npm", "run", "build"], cwd=frontend_dir, timeout=180)
+        return True, "rebuilt"
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        return False, f"npm ci/build failed: {stderr[:200]}"
+    except subprocess.TimeoutExpired:
+        return False, "npm ci/build timed out"
+
+
 # CLI Command Group
 @click.group()
 def system():
@@ -851,6 +930,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
     console.print(f"  [dim]{service_path}[/dim]")
 
     # Start service
+    started_ok = False
     if not no_start:
         # Check if port is already in use
         if is_port_in_use(port, host):
@@ -869,6 +949,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
             console.print("Waiting for health check...", end=" ")
             if health_check(port, host=host):
                 console.print("[green]OK[/green]")
+                started_ok = True
             else:
                 console.print("[yellow]TIMEOUT[/yellow]")
                 console.print("Server may still be starting. Check 'chaotic system status'.")
@@ -879,7 +960,10 @@ def system_install(git_version, host, port, no_start, repo, yes):
     set_api_url(local_url)
 
     console.print()
-    console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
+    if started_ok:
+        console.print(f"[bold green]Chaotic is running at http://{_display_host(host)}:{port}[/bold green]")
+    else:
+        console.print("[bold]Installed.[/bold] Run 'chaotic system start' when ready.")
     console.print("CLI configured to use local server.")
     console.print()
     console.print("[bold]Next steps:[/bold]")
@@ -911,6 +995,16 @@ def system_status():
         console.print()
         console.print("Run 'chaotic system start' to start the server.")
         return
+
+    # Process is alive per is_service_running() above -- that's not the same
+    # as the app actually working (e.g. an unmigrated DB). Hit /health too.
+    health = get_health(port, host=host)
+    if health is None:
+        console.print("  Health:   [red]unreachable[/red] (process is running but /health did not respond)")
+    elif health.get("db") == "error":
+        console.print("  Health:   [yellow]degraded[/yellow] (db: error -- check 'chaotic system logs')")
+    else:
+        console.print(f"  Health:   [green]ok[/green] (db: {health.get('db', 'unknown')})")
 
     # Try to get version from git
     try:
@@ -1094,7 +1188,7 @@ def system_reconfigure(host, port, yes):
         else:
             console.print("[red]Failed to restart server.[/red]")
             console.print(f"[dim]Previous config was: host={current_host} port={current_port}[/dim]")
-            console.print("Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
+            console.print(f"Run 'chaotic system reconfigure --host {current_host} --port {current_port}' to revert.")
             raise SystemExit(1)
     else:
         console.print("[dim]Server was not running; skipping restart.[/dim]")
@@ -1289,6 +1383,16 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
             if not start_service():
                 console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         raise SystemExit(1)
+
+    # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
+    # committed bundle (if a PR remembered to commit it) is still served.
+    console.print("Rebuilding frontend...")
+    fe_ok, fe_msg = rebuild_frontend()
+    if fe_ok:
+        console.print(f"  [dim]{fe_msg}[/dim]")
+    else:
+        console.print(f"  [yellow]{fe_msg}[/yellow]")
+        console.print("  [yellow]Continuing; UI may be stale until the next successful build.[/yellow]")
 
     # Start server
     if was_running:

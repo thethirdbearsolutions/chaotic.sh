@@ -11,10 +11,12 @@ import { getActiveFilterCategory, setActiveFilterCategory, getCurrentProject } f
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { OPEN_STATUSES } from './constants.js';
+import { setCachedCurrentSprintId } from './sprints.js';
 import {
     getSelectedStatuses,
     getSelectedPriorities,
     getSelectedLabels,
+    getExcludedLabels,
     getFilterCategoryCount,
     getTotalFilterCount,
     FILTER_CATEGORIES,
@@ -73,6 +75,8 @@ export function toggleFilterMenu() {
         document.removeEventListener('click', closeFilterMenuOnOutsideClick);
     } else {
         dropdown.classList.remove('hidden');
+        // CHT-1161: open on the category list (mobile shows one pane at a time)
+        dropdown.classList.remove('show-options');
         renderFilterMenuCategories();
         showFilterCategoryOptions(getActiveFilterCategory());
         setTimeout(() => {
@@ -145,9 +149,10 @@ export function renderFilterMenuCategories() {
         const isDisabled = cat.key === 'sprint' && !projectId;
         return `
             <div class="filter-menu-category ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}"
-                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}">
+                 data-action="show-filter-category" data-category="${escapeAttr(cat.key)}" tabindex="-1">
                 <span>${cat.label}</span>
-                ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : '<span class="filter-menu-category-arrow">\u2192</span>'}
+                ${count > 0 ? `<span class="filter-menu-category-count">${count}</span>` : ''}
+                <span class="filter-menu-category-arrow">\u2192</span>
             </div>
         `;
     }).join('');
@@ -182,7 +187,31 @@ export function showFilterCategoryOptions(category) {
         case 'labels':
             renderLabelOptions(container);
             break;
+        case 'exclude_labels':
+            renderExcludeLabelOptions(container);
+            break;
     }
+
+    // CHT-1161: explicit back to the category list (visible on mobile)
+    const header = container.querySelector('.filter-options-header');
+    if (header) {
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.className = 'filter-options-back';
+        back.dataset.action = 'filter-menu-back';
+        back.setAttribute('aria-label', 'Back to filter categories');
+        back.textContent = '←';
+        header.prepend(back);
+    }
+}
+
+/**
+ * Return to the category list pane (CHT-1161, mobile one-pane navigation).
+ */
+export function showFilterCategories() {
+    const dropdown = document.getElementById('filter-menu-dropdown');
+    if (dropdown) dropdown.classList.remove('show-options');
+    renderFilterMenuCategories();
 }
 
 // ========================================
@@ -424,6 +453,41 @@ function renderLabelOptions(container) {
     container.innerHTML = html;
 }
 
+function renderExcludeLabelOptions(container) {
+    const selected = getExcludedLabels();
+    const excludeDropdown = document.getElementById('exclude-label-filter-dropdown');
+    const labelCheckboxes = excludeDropdown?.querySelectorAll('.multi-select-option input[type="checkbox"]') || [];
+
+    let html = `
+        <div class="filter-options-header">
+            <span class="filter-options-title">Exclude Labels</span>
+            ${selected.length > 0 ? '<button class="filter-options-clear" data-action="clear-exclude-label-filter-new">Clear</button>' : ''}
+        </div>
+    `;
+
+    if (labelCheckboxes.length === 0) {
+        html += '<div class="filter-options-empty">No labels available</div>';
+    } else {
+        labelCheckboxes.forEach(cb => {
+            const labelEl = cb.closest('label');
+            const nameEl = labelEl?.querySelector('.label-name');
+            const badgeEl = labelEl?.querySelector('.label-badge');
+            const name = nameEl?.textContent || 'Label';
+            const color = badgeEl?.style.background || '#6366f1';
+
+            html += `
+                <label class="filter-option">
+                    <input type="checkbox" value="${escapeAttr(cb.value)}" ${selected.includes(cb.value) ? 'checked' : ''} data-action="toggle-exclude-label-option" data-filter-value="${escapeAttr(cb.value)}">
+                    <span class="filter-option-icon" style="width: 12px; height: 12px; border-radius: 3px; background: ${sanitizeColor(color)};"></span>
+                    <span class="filter-option-label">${escapeHtml(name)}</span>
+                </label>
+            `;
+        });
+    }
+
+    container.innerHTML = html;
+}
+
 // ========================================
 // Display Menu Rendering
 // ========================================
@@ -591,6 +655,26 @@ export function updateFilterChips() {
         });
     }
 
+    // Excluded labels chip
+    const excluded = getExcludedLabels();
+    if (excluded.length > 0) {
+        const dropdown = document.getElementById('exclude-label-filter-dropdown');
+        const names = excluded.map(id => {
+            const cb = dropdown?.querySelector(`input[value="${id}"]`);
+            const nameEl = cb?.closest('label')?.querySelector('.label-name');
+            return nameEl?.textContent || 'Label';
+        }).join(', ');
+        chips.push({
+            category: 'labels',
+            label: 'Excluded Labels',
+            value: names,
+            // Match the Labels chip: the "-new" action also re-renders the
+            // popover's option pane, so a still-open Exclude Labels pane
+            // reflects the change instead of going stale (CHT-1212)
+            clearAction: 'clear-exclude-label-filter-new'
+        });
+    }
+
     if (chips.length === 0) {
         container.classList.add('hidden');
         container.innerHTML = '';
@@ -660,6 +744,9 @@ export async function updateSprintFilter() {
         if (currentSprint) {
             options += `<option value="current">Current Sprint (${escapeHtml(currentSprint.name)})</option>`;
         }
+        // Cache the resolved id so loadIssues() doesn't re-fetch sprints just
+        // to resolve "current" on every filter/debounced-search reload (CHT-1212)
+        setCachedCurrentSprintId(projectId, currentSprint?.id);
         updateSprintBudgetBar(currentSprint || null);
         sprints.forEach(s => {
             const statusLabel = s.status === 'active' ? ' (Active)' : s.status === 'completed' ? ' (Done)' : '';

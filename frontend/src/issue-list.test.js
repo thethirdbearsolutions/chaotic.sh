@@ -4,9 +4,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock all dependency modules before importing issue-list
-vi.mock('./state.js', () => ({
-    getIssues: vi.fn(() => []),
-}));
+vi.mock('./state.js', () => {
+    // Stateful stand-in so setSelectedIssueIndex() calls are observable via
+    // getSelectedIssueIndex(), same as the real module (CHT-1215).
+    let _selectedIndex = -1;
+    return {
+        getIssues: vi.fn(() => []),
+        getSelectedIssueIndex: vi.fn(() => _selectedIndex),
+        setSelectedIssueIndex: vi.fn((i) => { _selectedIndex = i; }),
+    };
+});
 
 vi.mock('./assignees.js', () => ({
     getAssigneeById: vi.fn(() => null),
@@ -60,9 +67,11 @@ import {
     getPriorityIcon,
     getStatusIcon,
     sumEstimates,
+    highlightSearchMatch,
+    getDescriptionSnippet,
 } from './issue-list.js';
 
-import { getIssues } from './state.js';
+import { getIssues, getSelectedIssueIndex, setSelectedIssueIndex } from './state.js';
 import { getAssigneeById, formatAssigneeName, getAssigneeOptionList } from './assignees.js';
 import { formatEstimate } from './projects.js';
 import { getSprintCache } from './sprints.js';
@@ -98,6 +107,7 @@ describe('issue-list', () => {
         getAssigneeOptionList.mockReturnValue([]);
         getGroupByValue.mockReturnValue('');
         getTotalFilterCount.mockReturnValue(0);
+        setSelectedIssueIndex(-1);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -231,6 +241,88 @@ describe('issue-list', () => {
             const lowGroup = list.querySelector('.issue-group[data-group="low"]');
             expect(lowGroup.querySelectorAll('.issue-row')).toHaveLength(1);
         });
+
+        // CHT-1215: renderIssues() rebuilds #issues-list innerHTML from
+        // scratch on every call (websocket events, inline field edits,
+        // filter changes) — the j/k keyboard-selection highlight and the
+        // tracked selectedIssueIndex used to silently drift apart across
+        // that rebuild.
+        describe('keyboard selection survives a re-render', () => {
+            const issues = [
+                { id: '1', title: 'Issue 1', status: 'todo', priority: 'medium', identifier: 'TEST-1', project_id: 'p1' },
+                { id: '2', title: 'Issue 2', status: 'todo', priority: 'medium', identifier: 'TEST-2', project_id: 'p1' },
+                { id: '3', title: 'Issue 3', status: 'todo', priority: 'medium', identifier: 'TEST-3', project_id: 'p1' },
+            ];
+
+            function selectRowByIssueId(issueId, index) {
+                setSelectedIssueIndex(index);
+                document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.classList.add('keyboard-selected');
+            }
+
+            it('does nothing when no row was previously selected', () => {
+                setTestIssues(issues);
+                renderIssues();
+
+                expect(document.querySelectorAll('.issue-row.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedIssueIndex()).toBe(-1);
+            });
+
+            it('re-applies the highlight at the same index after an in-place re-render', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('2', 1);
+
+                // Simulate a websocket-triggered re-render with the same issues
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
+            it('follows the selected issue by id when the list is reordered', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('2', 1);
+
+                // Issue 2 moves to the front (e.g. re-sorted after an update)
+                setTestIssues([issues[1], issues[0], issues[2]]);
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(0);
+            });
+
+            it('clamps to the new last row when the selected issue is removed', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('3', 2);
+
+                // Issue 3 (last, selected) is removed by a filter change
+                setTestIssues([issues[0], issues[1]]);
+                renderIssues();
+
+                const selected = document.querySelectorAll('.issue-row.keyboard-selected');
+                expect(selected).toHaveLength(1);
+                expect(selected[0].dataset.issueId).toBe('2');
+                expect(getSelectedIssueIndex()).toBe(1);
+            });
+
+            it('resets to -1 when the re-render leaves an empty list', () => {
+                setTestIssues(issues);
+                renderIssues();
+                selectRowByIssueId('1', 0);
+
+                setTestIssues([]);
+                renderIssues();
+
+                expect(document.querySelectorAll('.issue-row.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedIssueIndex()).toBe(-1);
+            });
+        });
     });
 
     describe('renderIssueRow', () => {
@@ -340,6 +432,118 @@ describe('issue-list', () => {
 
             expect(html).toContain('3pt');
             expect(html).toContain('estimate-badge');
+        });
+
+        // CHT-1212: search results gave no indication when the match was
+        // only in the (hidden) description
+        describe('search match indication (CHT-1212)', () => {
+            it('renders plain escaped title when there is no search query', () => {
+                document.getElementById('issue-search').value = '';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('search-match');
+                expect(html).toContain('Fix login bug');
+            });
+
+            it('highlights the matched substring in the title', () => {
+                document.getElementById('issue-search').value = 'login';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).toContain('<mark class="search-match">login</mark>');
+            });
+
+            it('shows a description snippet when the title does not match but the description does', () => {
+                document.getElementById('issue-search').value = 'oauth';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Turns out the OAuth callback drops the state param.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).toContain('issue-search-snippet');
+                expect(html).toContain('<mark class="search-match">OAuth</mark>');
+            });
+
+            it('does not show a description snippet when the title already matches', () => {
+                document.getElementById('issue-search').value = 'login';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Some unrelated description mentioning login too.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('issue-search-snippet');
+            });
+
+            it('does not show a snippet when neither title nor description match (e.g. identifier-only match)', () => {
+                document.getElementById('issue-search').value = 'test-1';
+                const issue = {
+                    id: 'i-1', title: 'Fix login bug', identifier: 'TEST-1',
+                    description: 'Nothing relevant here.',
+                    status: 'todo', priority: 'medium', project_id: 'p1',
+                    created_at: '2024-01-15T10:00:00Z',
+                };
+                const html = renderIssueRow(issue);
+                expect(html).not.toContain('issue-search-snippet');
+            });
+        });
+    });
+
+    describe('highlightSearchMatch', () => {
+        it('returns escaped text unchanged when there is no query', () => {
+            expect(highlightSearchMatch('Fix login bug', '')).toBe('Fix login bug');
+        });
+
+        it('returns empty string for falsy text', () => {
+            expect(highlightSearchMatch('', 'login')).toBe('');
+            expect(highlightSearchMatch(null, 'login')).toBe('');
+        });
+
+        it('wraps the first case-insensitive match in <mark>', () => {
+            expect(highlightSearchMatch('Fix Login bug', 'login'))
+                .toBe('Fix <mark class="search-match">Login</mark> bug');
+        });
+
+        it('returns escaped text unchanged when there is no match', () => {
+            expect(highlightSearchMatch('Fix login bug', 'zzz')).toBe('Fix login bug');
+        });
+    });
+
+    describe('getDescriptionSnippet', () => {
+        it('returns null when there is no match', () => {
+            expect(getDescriptionSnippet('Nothing relevant here.', 'zzz')).toBeNull();
+        });
+
+        it('returns null for missing description or query', () => {
+            expect(getDescriptionSnippet('', 'login')).toBeNull();
+            expect(getDescriptionSnippet('Some text', '')).toBeNull();
+        });
+
+        it('highlights the match within the excerpt', () => {
+            const snippet = getDescriptionSnippet('Turns out the OAuth callback drops the state param.', 'oauth');
+            expect(snippet).toContain('<mark class="search-match">OAuth</mark>');
+        });
+
+        it('prefixes with an ellipsis when the match is not at the start', () => {
+            const description = 'x'.repeat(60) + 'oauth' + 'y'.repeat(60);
+            const snippet = getDescriptionSnippet(description, 'oauth', 10);
+            expect(snippet.startsWith('…')).toBe(true);
+            expect(snippet.endsWith('…')).toBe(true);
+        });
+
+        it('does not prefix with an ellipsis when the match is near the start', () => {
+            const snippet = getDescriptionSnippet('oauth callback drops state', 'oauth', 10);
+            expect(snippet.startsWith('…')).toBe(false);
         });
     });
 

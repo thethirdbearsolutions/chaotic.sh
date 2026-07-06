@@ -6,11 +6,11 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 
-from oxyde import OxydeModel
+from oxyde import Model
 from oxyde.queries import Query, QueryManager
 
 
-class OxydeIssue(OxydeModel):
+class OxydeIssue(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -35,7 +35,7 @@ class OxydeIssue(OxydeModel):
     creator_id: str | None
     objects: "OxydeIssueManager"
 
-class OxydeIssueComment(OxydeModel):
+class OxydeIssueComment(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -48,7 +48,7 @@ class OxydeIssueComment(OxydeModel):
     author_id: str | None
     objects: "OxydeIssueCommentManager"
 
-class OxydeIssueActivity(OxydeModel):
+class OxydeIssueActivity(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -64,7 +64,7 @@ class OxydeIssueActivity(OxydeModel):
     user_id: str | None
     objects: "OxydeIssueActivityManager"
 
-class OxydeIssueRelation(OxydeModel):
+class OxydeIssueRelation(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -75,7 +75,7 @@ class OxydeIssueRelation(OxydeModel):
     created_at: datetime
     objects: "OxydeIssueRelationManager"
 
-class OxydeIssueLabel(OxydeModel):
+class OxydeIssueLabel(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -85,7 +85,7 @@ class OxydeIssueLabel(OxydeModel):
     label_id: str | None
     objects: "OxydeIssueLabelManager"
 
-class OxydeTicketLimbo(OxydeModel):
+class OxydeTicketLimbo(Model):
     class Meta:
         is_table: bool
         table_name: str
@@ -99,7 +99,7 @@ class OxydeTicketLimbo(OxydeModel):
     cleared_by_id: str | None
     objects: "OxydeTicketLimboManager"
 
-class OxydeBudgetTransaction(OxydeModel):
+class OxydeBudgetTransaction(Model):
     class Meta:
         is_table: bool
         table_name: str

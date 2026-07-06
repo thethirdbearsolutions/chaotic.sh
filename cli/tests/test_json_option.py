@@ -32,7 +32,7 @@ class TestJsonAfterSubcommand:
             result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list)
         assert data[0]['identifier'] == 'CHT-1'
 
@@ -50,7 +50,7 @@ class TestJsonAfterSubcommand:
             result = cli_runner.invoke(cli, ['status', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert 'authenticated' in data
 
     def test_project_list_json_after_subcommand(self, cli_runner):
@@ -65,7 +65,7 @@ class TestJsonAfterSubcommand:
             result = cli_runner.invoke(cli, ['project', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list)
         assert data[0]['id'] == 'p-1'
 
@@ -85,21 +85,43 @@ class TestJsonErrorHandling:
             result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent'])
 
         assert result.exit_code == 1
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert 'error' in data
         assert 'not found' in data['error'].lower()
 
-    def test_bad_parameter_outputs_json(self, cli_runner):
-        """BadParameter errors from validation should output JSON when --json is enabled."""
+    def test_body_level_bad_parameter_outputs_json(self, cli_runner):
+        """BadParameter raised inside a command's own body (issue list's
+        hand-validated --status is a plain string option, not a
+        click.Choice) outputs JSON via handle_error and preserves exit
+        code 2 (CHT-1222). This is the BODY-level path only; the
+        parse-time paths (real click.Choice, missing args, unknown flags)
+        never reach handle_error and are covered by
+        TestParseTimeJsonErrorHandling below."""
         from cli.main import cli
 
         with patch('cli.main.get_current_project', return_value='test-project-123'):
             result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--status', 'invalid_status'])
 
-        assert result.exit_code == 1
-        data = json.loads(result.output)
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
         assert 'error' in data
         assert 'invalid status' in data['error'].lower()
+
+    def test_plain_click_exception_still_exits_1_under_json(self, cli_runner):
+        """A plain click.ClickException (not UsageError) keeps exit code 1
+        under --json — only the UsageError/BadParameter 2 is preserved."""
+        from cli.main import cli, client
+
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "s1", "name": "Sprint 1"},
+        ])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--sprint', 'nonexistent'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'error' in data
 
     def test_click_exception_still_works_without_json(self, cli_runner):
         """ClickExceptions should still produce normal text when --json is not used."""
@@ -116,7 +138,90 @@ class TestJsonErrorHandling:
         assert 'not found' in result.output.lower()
         # Should NOT be JSON
         with pytest.raises(json.JSONDecodeError):
-            json.loads(result.output)
+            json.loads(result.stdout)
+
+
+class TestParseTimeJsonErrorHandling:
+    """Click's own parameter validation — type=click.Choice(...), missing
+    required arguments, unknown flags — fires in parse_args()/make_context(),
+    entirely BEFORE any command callback (and therefore before every
+    decorator in the json_option/handle_error stack) runs. These used to
+    exit 2 with completely EMPTY stdout under --json, hard-crashing any
+    harness doing json.loads(check_output(...)). ProfileGroup.main() now
+    owns this path (CHT-1222): {"error": ...} on stdout, usage text on
+    stderr, exit code 2 preserved."""
+
+    def test_click_choice_validation_outputs_json(self, cli_runner):
+        """A real click.Choice-typed option (issue update --status) with a
+        bogus value — the overwhelmingly common way a usage error actually
+        happens, and the exact repro from the oppositional review."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-1', '--status', 'bogus', '--json',
+        ])
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert 'bogus' in data['error']
+        assert 'Invalid value' in data['error']
+        # Usage text still on stderr for the human reading over the
+        # harness's shoulder.
+        assert 'Usage:' in result.stderr
+
+    def test_missing_required_argument_outputs_json(self, cli_runner):
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['issue', 'comment', 'CHT-1', '--json'])
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert 'CONTENT' in data['error']
+
+    def test_unknown_flag_outputs_json(self, cli_runner):
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--bogus-flag', '--json'])
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert 'bogus-flag' in data['error']
+
+    def test_choice_validation_without_json_unchanged(self, cli_runner):
+        """Without --json, parse-time errors keep stock Click behavior:
+        usage + error text (stderr), empty stdout, exit 2."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-1', '--status', 'bogus',
+        ])
+
+        assert result.exit_code == 2
+        assert result.stdout == ''
+        assert 'Invalid value' in result.stderr
+
+    def test_json_success_path_still_exits_0(self, cli_runner):
+        """The ProfileGroup.main interposition (standalone_mode=False +
+        manual exit handling) must not change successful --json exits."""
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[])
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'):
+            result = cli_runner.invoke(cli, ['issue', 'list', '--json'])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == []
+
+    def test_json_help_still_exits_0(self, cli_runner):
+        """--help under --json uses ctx.exit() internally (click Exit) —
+        the interposed exit handling must map that to exit code 0."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--json', '--help'])
+
+        assert result.exit_code == 0
+        assert 'Usage:' in result.output
 
 
 class TestJsonBeforeSubcommand:
@@ -136,7 +241,7 @@ class TestJsonBeforeSubcommand:
             result = cli_runner.invoke(cli, ['--json', 'status'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert 'authenticated' in data
 
 

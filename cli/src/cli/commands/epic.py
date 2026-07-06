@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console
+from .shared import _client, console, resolve_content_value
 
 
 def _main():
@@ -25,7 +25,7 @@ def register(cli):
     @epic.command("create")
     @click.argument("title", required=False)
     @click.option("--title", "title_opt", help="Epic title (alternative to positional argument)")
-    @click.option("--description", default="")
+    @click.option("--description", default="", callback=resolve_content_value)
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--estimate", type=int)

@@ -671,12 +671,18 @@ async def complete_gate_ritual_for_issue(
             detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use 'chaotic ritual attest' instead.",
         )
 
-    attestation = await ritual_service.complete_gate_ritual_for_issue(
-        ritual=ritual,
-        issue_id=issue_id,
-        user_id=current_user.id,
-        note=attestation_in.note,
-    )
+    try:
+        attestation = await ritual_service.complete_gate_ritual_for_issue(
+            ritual=ritual,
+            issue_id=issue_id,
+            user_id=current_user.id,
+            note=attestation_in.note,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     try:
         await broadcast_attestation_event(
@@ -766,7 +772,13 @@ async def approve_issue_attestation(
             detail="Attestation already approved",
         )
 
-    attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
+    try:
+        attestation = await ritual_service.approve_for_issue(attestation, current_user.id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     try:
         await broadcast_attestation_event(
@@ -1054,7 +1066,7 @@ async def delete_ritual(
 
     project_id = ritual.project_id
 
-    await ritual_service.delete(ritual)
+    await ritual_service.delete(ritual, deleted_by_id=current_user.id)
 
     await ritual_service.maybe_clear_limbo_for_project(project_id)
 
@@ -1193,7 +1205,13 @@ async def approve_attestation(
             detail="Attestation already approved",
         )
 
-    attestation = await ritual_service.approve(attestation, current_user.id)
+    try:
+        attestation = await ritual_service.approve(attestation, current_user.id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     return attestation
 
 
@@ -1260,10 +1278,16 @@ async def complete_gate_ritual(
             detail=f"Ritual '{ritual.name}' is not a GATE mode ritual. Use attest instead.",
         )
 
-    attestation = await ritual_service.complete_gate_ritual(
-        ritual=ritual,
-        sprint_id=limbo_sprint.id,
-        user_id=current_user.id,
-        note=attestation_in.note,
-    )
+    try:
+        attestation = await ritual_service.complete_gate_ritual(
+            ritual=ritual,
+            sprint_id=limbo_sprint.id,
+            user_id=current_user.id,
+            note=attestation_in.note,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     return attestation

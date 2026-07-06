@@ -16,6 +16,11 @@
  * @param {Function} actions.isModalOpen - Returns true if a modal is currently open
  * @param {Function} actions.focusSearch - Focus the issue search input
  * @param {Function} actions.closeDropdowns - Close any open dropdown menus
+ * @param {Function} [actions.isDetailViewActive] - Returns true if the issue
+ *   detail view is currently showing. Detail view's own hotkey listener is
+ *   registered dynamically per-view (always AFTER this global one), so bare
+ *   'p'/'c' here would otherwise fire first and preempt the documented
+ *   detail-view actions (Priority, focus comment box) with Projects/Create.
  * @returns {Function} The keydown event handler
  */
 export function createKeyboardHandler(actions) {
@@ -64,12 +69,25 @@ export function createKeyboardHandler(actions) {
         if (waitingForNavKey) {
             waitingForNavKey = false;
             clearTimeout(navKeyTimeout);
+            // CHT-1215 (review finding 2): 5 of the g-prefix targets collide
+            // with the issue detail view's own s/p/a/e/t shortcut map (its
+            // listener is registered later and would double-fire against the
+            // page being navigated away — startViewTransition defers the DOM
+            // swap past this synchronous dispatch). Same policy as the bare
+            // 'p'/'c' cases below: no-op here so the detail listener wins.
+            if (actions.isDetailViewActive?.() && ['p', 's', 't', 'e', 'a'].includes(e.key)) {
+                return;
+            }
             switch (e.key) {
                 case 'i': actions.navigateTo('issues'); break;
                 case 'p': actions.navigateTo('projects'); break;
                 case 's': actions.navigateTo('sprints'); break;
                 case 'd': actions.navigateTo('documents'); break;
                 case 't': actions.navigateTo('team'); break;
+                case 'e': actions.navigateTo('epics'); break;
+                case 'r': actions.navigateTo('rituals'); break;
+                case 'a': actions.navigateTo('approvals'); break;
+                case ',': actions.navigateTo('settings'); break;
             }
             return;
         }
@@ -77,6 +95,10 @@ export function createKeyboardHandler(actions) {
         // Direct shortcuts
         switch (e.key) {
             case 'c':
+                // CHT-1215: detail view's own 'c' (focus comment box) can never
+                // preempt this via registration order — no-op here instead so
+                // its listener (which runs after this one) gets the keystroke.
+                if (actions.isDetailViewActive?.()) break;
                 e.preventDefault();
                 actions.showCreateIssueModal();
                 break;
@@ -93,6 +115,9 @@ export function createKeyboardHandler(actions) {
                 actions.navigateTo('board');
                 break;
             case 'p':
+                // CHT-1215: same as 'c' above — detail view's 'p' (Priority)
+                // takes precedence over the global Projects shortcut.
+                if (actions.isDetailViewActive?.()) break;
                 e.preventDefault();
                 actions.navigateTo('projects');
                 break;
@@ -157,7 +182,10 @@ export function createModifierKeyHandler(actions) {
             e.preventDefault();
             if (actions.isCommandPaletteOpen()) {
                 actions.closeCommandPalette();
-            } else {
+            } else if (!actions.isModalOpen()) {
+                // CHT-1215: don't stack the palette on top of an open modal —
+                // Escape's priority (modal > sidebar > dropdowns) would then
+                // close the modal underneath instead of the topmost palette.
                 actions.openCommandPalette();
             }
         }
@@ -196,6 +224,9 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
  * @param {Function} actions.showInlineDropdown - Opens an inline dropdown for a field
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
  * @returns {Function} The keydown event handler
  */
 export function createListNavigationHandler(actions) {
@@ -222,6 +253,13 @@ export function createListNavigationHandler(actions) {
 
     return function handleListNavigation(e) {
         if (actions.getCurrentView() !== 'issues') return;
+        // CHT-1215 (review finding 1): opening a detail view hides the list
+        // via CSS but leaves currentView === 'issues' and the .issue-row
+        // elements in the DOM, so without this guard the handler stays live
+        // against the hidden list — its stopImmediatePropagation for
+        // p/s/a fires before the detail view's own listener (registered
+        // later) ever sees the key, killing the documented detail shortcuts.
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
@@ -288,12 +326,19 @@ export function createListNavigationHandler(actions) {
  * @param {Function} actions.showEditDocumentModal - Opens edit modal for a document
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
  * @returns {Function} The keydown event handler
  */
 export function createDocListNavigationHandler(actions) {
     const selector = '#documents-list .list-item, #documents-list .grid-item';
     return function handleDocListNavigation(e) {
         if (actions.getCurrentView() !== 'documents') return;
+        // CHT-1215 (review finding 1): same disengage as the issues list —
+        // document detail leaves currentView === 'documents' and the hidden
+        // .list-item elements in the DOM.
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
@@ -323,6 +368,74 @@ export function createDocListNavigationHandler(actions) {
                     e.preventDefault();
                     const docId = items[selectedIndex].dataset.documentId;
                     if (docId && actions.showEditDocumentModal) actions.showEditDocumentModal(docId);
+                }
+                break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    actions.setSelectedIndex(-1);
+                }
+                break;
+        }
+    };
+}
+
+/**
+ * Creates a handler for j/k/Enter/Escape card navigation on the Board (kanban)
+ * view (CHT-1215). The Board had zero keyboard support despite being one of
+ * the core triage surfaces alongside Issues/Documents, which both already
+ * have this grammar.
+ *
+ * This is a linear cursor over cards in DOM order (column 1 top-to-bottom,
+ * then column 2, ...) — not column-aware left/right movement between
+ * statuses. That's a materially bigger lift (2D grid navigation is new logic,
+ * not a wiring fix); this ships the coverage gap's cursor + Enter-to-open
+ * core first.
+ *
+ * @param {Object} actions
+ * @param {Function} actions.getCurrentView - Returns the current view name
+ * @param {Function} actions.getSelectedIndex - Returns the currently selected index
+ * @param {Function} actions.setSelectedIndex - Sets the selected index
+ * @param {Function} actions.viewIssue - Opens an issue by ID
+ * @param {Function} actions.isModalOpen - Returns true if a modal is open
+ * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
+ * @returns {Function} The keydown event handler
+ */
+export function createBoardNavigationHandler(actions) {
+    const selector = '#kanban-board .kanban-card';
+    return function handleBoardNavigation(e) {
+        if (actions.getCurrentView() !== 'board') return;
+        // CHT-1215 (review finding 1): same disengage as the issues list —
+        // opening a card's issue detail leaves currentView === 'board' and
+        // the hidden .kanban-card elements in the DOM; without this, Enter
+        // on the detail view would re-open the stale board selection.
+        if (actions.isDetailViewActive?.()) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (actions.isModalOpen()) return;
+        if (actions.isCommandPaletteOpen()) return;
+
+        const items = document.querySelectorAll(selector);
+        if (items.length === 0) return;
+
+        const selectedIndex = actions.getSelectedIndex();
+        switch (e.key) {
+            case 'j':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
+                break;
+            case 'k':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
+                break;
+            case 'Enter':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    const issueId = items[selectedIndex].dataset.id;
+                    if (issueId) actions.viewIssue(issueId);
                 }
                 break;
             case 'Escape':

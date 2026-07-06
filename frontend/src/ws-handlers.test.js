@@ -7,6 +7,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('./state.js', () => ({
     getIssues: vi.fn(() => []),
     setIssues: vi.fn(),
+    getDetailNavContext: vi.fn(() => []),
+    setDetailNavContext: vi.fn(),
     getCurrentUser: vi.fn(() => null),
     getCurrentView: vi.fn(() => 'my-issues'),
     getWebsocket: vi.fn(() => null),
@@ -38,6 +40,7 @@ vi.mock('./sprints.js', () => ({
     loadSprints: vi.fn(),
     viewSprint: vi.fn(),
     getCurrentSprintDetail: vi.fn(() => null),
+    clearCachedCurrentSprintIds: vi.fn(),
 }));
 
 // Mock projects.js
@@ -68,11 +71,11 @@ vi.mock('./gate-approvals.js', () => ({
     loadGateApprovals: (...args) => mockLoadGateApprovals(...args),
 }));
 
-import { getIssues, setIssues, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
+import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
-import { loadSprints, viewSprint, getCurrentSprintDetail } from './sprints.js';
+import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
@@ -88,6 +91,7 @@ describe('ws-handlers.js', () => {
 
         getIssues.mockReturnValue([]);
         getMyIssues.mockReturnValue([]);
+        getDetailNavContext.mockReturnValue([]);
         getCurrentView.mockReturnValue('my-issues');
         getCurrentUser.mockReturnValue({ id: 'user-1' });
         getCurrentDetailIssue.mockReturnValue(null);
@@ -214,6 +218,33 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(viewIssue).toHaveBeenCalledWith('issue-1');
         });
+
+        // CHT-1211 review #1: the detail nav context is a snapshot — remote
+        // updates must patch it too, or Prev/Next on an open detail view
+        // keeps serving stale entries.
+        it('patches the updated issue into the detail nav context', () => {
+            getDetailNavContext.mockReturnValue([
+                { id: 'issue-0', title: 'Before' },
+                { id: 'issue-1', title: 'Old' },
+                { id: 'issue-2', title: 'After' },
+            ]);
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+
+            expect(setDetailNavContext).toHaveBeenCalledWith([
+                { id: 'issue-0', title: 'Before' },
+                updatedIssue,
+                { id: 'issue-2', title: 'After' },
+            ]);
+        });
+
+        it('leaves the detail nav context alone when the issue is not in it', () => {
+            getDetailNavContext.mockReturnValue([{ id: 'other-issue' }]);
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+
+            expect(setDetailNavContext).not.toHaveBeenCalled();
+        });
     });
 
     describe('issue:deleted', () => {
@@ -260,6 +291,32 @@ describe('ws-handlers.js', () => {
 
             expect(navigateTo).toHaveBeenCalledWith('my-issues');
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1 was deleted', 'warning');
+        });
+
+        // CHT-1211 review #1: without this a deleted sibling remained
+        // reachable via Next/Prev on an open detail view (delete-while-
+        // detail-open scenario).
+        it('removes the deleted issue from the detail nav context', () => {
+            getDetailNavContext.mockReturnValue([
+                { id: 'issue-0' },
+                { id: 'issue-1' },
+                { id: 'issue-2' },
+            ]);
+
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+
+            expect(setDetailNavContext).toHaveBeenCalledWith([
+                { id: 'issue-0' },
+                { id: 'issue-2' },
+            ]);
+        });
+
+        it('leaves the detail nav context alone when the deleted issue is not in it', () => {
+            getDetailNavContext.mockReturnValue([{ id: 'other-issue' }]);
+
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+
+            expect(setDetailNavContext).not.toHaveBeenCalled();
         });
     });
 
@@ -332,6 +389,29 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
             expect(loadSprints).not.toHaveBeenCalled();
             expect(viewSprint).not.toHaveBeenCalled();
+        });
+
+        // CHT-1212: a sprint completing/rotating in another client changes
+        // which sprint is "current" — the cached id must be dropped even
+        // when this client is NOT on the sprints view (e.g. sitting on
+        // Issues with the Current Sprint filter active).
+        it('clears the cached current-sprint ids even when on the issues view', () => {
+            getCurrentView.mockReturnValue('issues');
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
+        });
+
+        it('clears the cached current-sprint ids on the sprints view too', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue(null);
+            dispatch({ type: 'created', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
+        });
+
+        it('clears the cached current-sprint ids on the my-issues view', () => {
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
         });
     });
 
