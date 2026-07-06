@@ -20,6 +20,21 @@ let reconnectTimer = null;
 const subscribers = new Map();
 
 /**
+ * Show/hide the persistent WS-outage badge (CHT-1224).
+ *
+ * The 'disconnected'/'reconnected' toasts only bracket an outage with two
+ * transient 3s messages — a user who glances away mid-toast has no ongoing
+ * way to tell the app is running stale/offline for however long the
+ * reconnect backoff (up to 30s) takes. This badge stays visible for the
+ * whole outage instead of auto-dismissing.
+ */
+function updateWsStatusIndicator() {
+    const badge = document.getElementById('ws-status-badge');
+    if (!badge) return;
+    badge.classList.toggle('hidden', wsFailCount === 0);
+}
+
+/**
  * Subscribe to WebSocket events.
  * @param {string} pattern - Event pattern: "entity" (all types) or "entity:type" (specific type)
  * @param {Function} handler - Called with (data, { type, entity }) on matching events
@@ -79,6 +94,7 @@ export function connectWebSocket(teamId) {
                 showToast('Live updates reconnected', 'success');
             }
             wsFailCount = 0;
+            updateWsStatusIndicator();
         };
 
         ws.onmessage = (event) => {
@@ -99,6 +115,7 @@ export function connectWebSocket(teamId) {
             if (wsFailCount === 1) {
                 showToast('Live updates disconnected. Reconnecting...', 'warning');
             }
+            updateWsStatusIndicator();
             // CHT-1038: Exponential backoff with jitter
             const delay = getReconnectDelay(wsFailCount - 1);
             reconnectTimer = setTimeout(() => {
@@ -171,6 +188,7 @@ export function dispatch(message) {
  */
 export function resetWsState() {
     wsFailCount = 0;
+    updateWsStatusIndicator();
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

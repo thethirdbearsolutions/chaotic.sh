@@ -59,10 +59,12 @@ describe('ws.js', () => {
                 close: vi.fn(),
             }));
             global.WebSocket = MockWebSocket;
+            document.body.innerHTML = '<span id="ws-status-badge" class="ws-status-badge hidden"></span>';
         });
 
         afterEach(() => {
             delete global.WebSocket;
+            document.body.innerHTML = '';
         });
 
         it('creates a WebSocket connection with correct URL', () => {
@@ -110,6 +112,59 @@ describe('ws.js', () => {
             const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
             ws2.onopen();
             expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
+        });
+
+        // CHT-1224: the disconnect/reconnect toasts only bracket an outage
+        // with two transient 3s messages, which can vanish long before a
+        // backoff-delayed reconnect (up to 30s) actually resolves. A
+        // persistent badge should stay visible for the whole outage.
+        describe('persistent WS-status badge (CHT-1224)', () => {
+            it('is hidden while connected', () => {
+                connectWebSocket('team-1');
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('becomes visible on the first disconnect', () => {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+            });
+
+            it('stays visible through subsequent disconnects in the same outage (unlike the toast, which only fires once)', () => {
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws.onclose();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                    vi.advanceTimersByTime(1500);
+                    const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws2.onclose();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('hides again once the connection is reestablished', () => {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                ws.onopen();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('does not throw when the badge element is not in the DOM', () => {
+                document.body.innerHTML = '';
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                expect(() => ws.onclose()).not.toThrow();
+                expect(() => ws.onopen()).not.toThrow();
+            });
         });
 
         it('handles WebSocket constructor errors', () => {

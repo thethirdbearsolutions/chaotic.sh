@@ -412,6 +412,25 @@ textarea {
     background: var(--bg-hover);
 }
 
+/* CHT-1224: persistent WS-outage indicator, shown for as long as the
+   reconnect loop is running (see ws.js's onclose/onopen). */
+.ws-status-badge {
+    display: inline-block;
+    margin: 0 0.5rem 0.5rem;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--warning-color, #f59e0b);
+    border: 1px solid var(--warning-color, #f59e0b);
+    border-radius: var(--radius-md);
+}
+
+.ws-status-badge.hidden {
+    display: none;
+}
+
 .sidebar-nav {
     flex: 1;
     padding: 1rem 0;
