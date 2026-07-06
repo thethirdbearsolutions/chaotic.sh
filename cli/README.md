@@ -46,6 +46,53 @@ Check current context (user, team, project):
 chaotic status
 ```
 
+## JSON output
+
+Most commands accept a `--json` flag — the CLI's machine-output mode, for
+scripts and agent harnesses. It works both before and after the
+subcommand name:
+
+```bash
+chaotic --json issue list          # equivalent
+chaotic issue list --json          # equivalent
+```
+
+Under `--json`:
+
+- **stdout carries exactly one JSON value** — the result of the command
+  (the created/updated/affected entity, a list, or `{"error": ...}` on
+  failure). Nothing else is written to stdout.
+- **Everything else — status lines, progress messages, tables, panels —
+  goes to stderr.** A caller doing
+  `data = json.loads(subprocess.check_output([...]))` never has to worry
+  about human-readable chatter breaking the parse.
+- Mutation and state-transition commands (`issue create`, `issue move`,
+  `issue block`, `doc update`, `sprint add`, etc.) emit the
+  created/affected entity's id as part of the JSON payload, so a caller
+  doesn't need a follow-up `issue show --json` just to learn what
+  happened.
+
+Run `chaotic <command> --help` to check whether a given command supports
+`--json` — it's listed in the flag help text, not hidden.
+
+`chaotic await` has its own richer JSON contract (a normalized event
+schema, not just "whatever the entity looks like") — see the
+[Await](#await) section below.
+
+## Exit codes
+
+| Code | Meaning                                                              |
+|------|-----------------------------------------------------------------------|
+| 0    | Success                                                                |
+| 1    | Runtime/API error (network failure, 4xx/5xx from the server, a `ClickException` raised by command logic) |
+| 2    | Usage error — bad flags/arguments (Click's own `UsageError`/`BadParameter`, e.g. an invalid `--status` value) |
+
+This holds under `--json` too: a usage error still exits 2 (with
+`{"error": ...}` on stdout), not collapsed to 1. `chaotic await` extends
+this with its own additional codes (124 timeout, 130 SIGINT, 143
+SIGTERM) — see the [Await](#await) exit-code table below, which is more
+specific than this general contract.
+
 ## Long-text values from a file or stdin
 
 Every long-text flag in the CLI (`--description`, `--body`, `--content`,
@@ -147,7 +194,8 @@ chaotic issue relations CHT-123            # Show issue relations
 chaotic issue block CHT-1 CHT-2            # CHT-1 blocks CHT-2
 chaotic issue block CHT-1 CHT-2 --type duplicates  # Mark as duplicate
 chaotic issue block CHT-1 CHT-2 --type relates_to  # Related issues
-chaotic issue unblock CHT-1 CHT-2          # Remove relation
+chaotic issue relations CHT-1              # Find the relation ID to remove
+chaotic issue unblock CHT-1 <relation-id>  # Remove relation (relation ID, not an issue identifier)
 ```
 
 ### Deleting
@@ -161,8 +209,14 @@ chaotic issue delete CHT-123
 chaotic sprint list            # List sprints in current project
 chaotic sprint current         # Get or create the current sprint
 chaotic sprint close <id>      # Close the current sprint
-chaotic sprint delete <id>     # Delete a sprint
+chaotic sprint add CHT-1 CHT-2 # Add issues to the current sprint
+chaotic sprint remove CHT-1    # Remove an issue from its sprint
 ```
+
+There is no `sprint delete` command — sprints aren't deletable at any
+layer (no client method, no backend route). If you need this, file a
+ticket rather than trying the command; it will error with "No such
+command".
 
 ## Labels
 
