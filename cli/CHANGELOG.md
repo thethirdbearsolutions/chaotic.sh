@@ -5,7 +5,51 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
-## [0.1.0a16] - 2026-05-16
+## [0.1.0a16] - 2026-07-05
+
+_Drafted 2026-05-16, expanded 2026-07-05 before first publish; a16 never
+shipped in between, so everything below lands together._
+
+### Added (2026-07-05)
+
+- **`chaotic await`** — block until matching activity arrives, then exit with the
+  event. `await issue <id>`, `await ritual <name>`, `await sprint`, `await issues`,
+  `await team/project`, with `--type` filters, `--until` predicates, `--timeout`
+  (exit 124), `--include-self`, `--json`. The agent-harness primitive for "park
+  this process until something I care about happens."
+- **`--json` on every mutation and state-transition command** — a single JSON
+  value on stdout (created/affected entity ids included), all human output on
+  stderr. Holds even for parse-time errors (bad flags, invalid choices) and
+  confirmation refusals. Exit-code contract documented in the README:
+  0 success / 1 error / 2 usage / 124 await-timeout.
+- Heredoc/`@file`/stdin input for long-text flags (descriptions, comments, docs).
+- `chaotic issue list --all-projects`; server-side label filtering (`--label a,b`
+  = ALL, now pinned by tests).
+- `/health` verifies a real DB round-trip and reports `db` + `version`;
+  `chaotic system status` distinguishes ok / degraded / unreachable.
+
+### Fixed (2026-07-05)
+
+- `system install` no longer prints a success banner when the server didn't
+  start; `system reconfigure` failure-path recovery instructions render actual
+  values instead of literal placeholders.
+- `is_service_running()` parses real `launchctl` output on macOS (every caller
+  previously saw False-while-running).
+- `system upgrade` rebuilds the frontend bundle.
+- Validation errors no longer echo submitted values (e.g. passwords) back to
+  the terminal, and render readably instead of as a raw Python repr.
+- Confirmation prompts go to stderr; under `--json` without `--yes`, commands
+  refuse with a machine-readable error instead of hanging on a prompt.
+- `issue mine` / `sprint add` / `sprint remove` no longer make N+1 HTTP calls.
+
+### Changed (2026-07-05) — upgrade server and CLI together
+
+- The CLI targets the server's path-nested routes (`/teams/{id}/projects`,
+  `/projects/{id}/issues`, ...); the old flat query-param routes were removed
+  server-side in the same release. `chaotic system upgrade` updates both sides.
+- Backend ORM upgraded (oxyde 0.3.1 → 0.7.x) with data migrations 0006–0008
+  (datetime + enum storage normalization, uniqueness backstops). `system
+  upgrade` backs up the DB before applying, as always.
 
 ### Fixed
 
