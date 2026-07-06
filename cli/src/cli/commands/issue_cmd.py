@@ -768,37 +768,45 @@ def register(cli):
     @click.argument("content")
     @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)", callback=resolve_content_value)
     @click.option("--assign-to", help="Also assign the issue (use 'me', a user ID, or name/email)")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment(identifier, content, note, assign_to):
         """Add a comment to an issue."""
         m = _main()
         body = "\n".join([content, note]) if note else content
         iss = _client().get_issue_by_identifier(identifier)
-        _client().create_comment(iss["id"], body)
+        comment = _client().create_comment(iss["id"], body)
         console.print(f"[green]Comment added to {identifier}.[/green]")
         if assign_to:
             assignee_id = m.resolve_assignee_id(assign_to)
             _client().update_issue(iss["id"], assignee_id=assignee_id)
             console.print(f"[green]Issue {identifier} assigned.[/green]")
+        return comment
 
     @issue.command("comment-edit")
     @click.argument("identifier")
     @click.argument("comment_id")
     @click.argument("content")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment_edit(identifier, comment_id, content):
         """Edit a comment on an issue."""
         iss = _client().get_issue_by_identifier(identifier)
-        _client().update_comment(iss["id"], comment_id, content)
+        comment = _client().update_comment(iss["id"], comment_id, content)
         console.print(f"[green]Comment updated on {identifier}.[/green]")
+        return comment
 
     @issue.command("comment-delete")
     @click.argument("identifier")
     @click.argument("comment_id")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_comment_delete(identifier, comment_id):
         """Delete a comment on an issue."""
         m = _main()
@@ -807,11 +815,14 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_comment(iss["id"], comment_id)
         console.print(f"[green]Comment deleted from {identifier}.[/green]")
+        return {"deleted": True, "id": comment_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("delete")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_delete(identifier):
         """Delete an issue."""
         m = _main()
@@ -820,6 +831,7 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_issue(iss["id"])
         console.print(f"[green]Issue {identifier} deleted.[/green]")
+        return {"deleted": True, "id": iss["id"], "identifier": identifier}
 
     @issue.command("sub-issues")
     @click.argument("identifier")
@@ -897,8 +909,10 @@ def register(cli):
     @click.option("--type", "relation_type", default="blocks",
                   type=click.Choice(["blocks", "relates_to", "duplicates"]),
                   help="Type of relation")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_block(identifier, blocked_identifier, relation_type):
         """Create a relation between issues.
 
@@ -906,7 +920,7 @@ def register(cli):
         """
         iss = _client().get_issue_by_identifier(identifier)
         blocked = _client().get_issue_by_identifier(blocked_identifier)
-        _client().create_relation(iss["id"], blocked["id"], relation_type)
+        relation = _client().create_relation(iss["id"], blocked["id"], relation_type)
 
         if relation_type == "blocks":
             console.print(f"[green]{identifier} now blocks {blocked_identifier}.[/green]")
@@ -914,23 +928,29 @@ def register(cli):
             console.print(f"[green]{identifier} marked as duplicate of {blocked_identifier}.[/green]")
         else:
             console.print(f"[green]{identifier} related to {blocked_identifier}.[/green]")
+        return relation
 
     @issue.command("unblock")
     @click.argument("identifier")
     @click.argument("relation_id")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_unblock(identifier, relation_id):
         """Remove a relation from an issue."""
         iss = _client().get_issue_by_identifier(identifier)
         _client().delete_relation(iss["id"], relation_id)
         console.print(f"[green]Relation removed from {identifier}.[/green]")
+        return {"deleted": True, "id": relation_id, "issue_id": iss["id"], "identifier": identifier}
 
     @issue.command("duplicate")
     @click.argument("duplicate_identifier")
     @click.argument("original_identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda duplicate_identifier, **_: _client().get_issue_by_identifier(duplicate_identifier))
     def issue_duplicate(duplicate_identifier, original_identifier):
         """Mark an issue as a duplicate of another and close it.
 
@@ -974,8 +994,10 @@ def register(cli):
     @click.argument("identifier")
     @click.argument("assignee", required=False)
     @click.option("--comment", "comment_text", help="Also add a comment to the issue", callback=resolve_content_value)
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_assign(identifier, assignee, comment_text):
         """Assign an issue to a user.
 
@@ -999,8 +1021,10 @@ def register(cli):
     @issue.command("move")
     @click.argument("identifier")
     @click.argument("status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_move(identifier, status):
         """Move an issue to a different status.
 
@@ -1012,8 +1036,10 @@ def register(cli):
 
     @issue.command("close")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_close(identifier):
         """Close an issue (move to done).
 
@@ -1025,6 +1051,7 @@ def register(cli):
 
     @issue.command("complete")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_complete(identifier):
@@ -1032,12 +1059,19 @@ def register(cli):
 
         Alias for 'issue close IDENTIFIER'.
         """
+        # No @json_result here: issue_close.callback(...) below runs
+        # close's own full decorator stack (including its json_result),
+        # which already sees --json via the shared ctx.obj this command's
+        # own @json_option just set. Adding a second json_result here
+        # would double-emit the JSON payload (CHT-1222).
         issue_close.callback(identifier)
 
     @issue.command("wontfix")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_wontfix(identifier):
         """Mark an issue as wontfix (canceled).
 
@@ -1047,12 +1081,13 @@ def register(cli):
         iss = _client().get_issue_by_identifier(identifier)
         if iss["status"] == "canceled":
             console.print(f"[dim]Issue {identifier} is already canceled.[/dim]")
-            return
+            return iss
         _client().update_issue(iss["id"], status="canceled")
         console.print(f"[green]Issue {identifier} marked as wontfix (canceled).[/green]")
 
     @issue.command("cancel")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_cancel(identifier):
@@ -1060,12 +1095,16 @@ def register(cli):
 
         Alias for 'issue wontfix IDENTIFIER'.
         """
+        # See issue_complete's comment: no @json_result here, delegates
+        # to wontfix's own (CHT-1222).
         issue_wontfix.callback(identifier)
 
     @issue.command("claim")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_claim(identifier):
         """Assign an issue to yourself and move to in_progress.
 
@@ -1078,6 +1117,7 @@ def register(cli):
 
     @issue.command("start")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_start(identifier):
@@ -1085,10 +1125,13 @@ def register(cli):
 
         Alias for 'issue claim IDENTIFIER'.
         """
+        # See issue_complete's comment: no @json_result here, delegates
+        # to claim's own (CHT-1222).
         issue_claim.callback(identifier)
 
     @issue.command("rituals")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
     def issue_rituals(identifier):
@@ -1102,6 +1145,10 @@ def register(cli):
         status = _client().get_pending_issue_rituals(iss["id"])
         pending = status.get("pending_rituals", [])
         completed = status.get("completed_rituals", [])
+
+        if m.is_json_output():
+            m.output_json(status)
+            return
 
         if not pending and not completed:
             console.print(f"[dim]No ticket-level rituals configured for this project.[/dim]")
@@ -1138,8 +1185,10 @@ def register(cli):
 
     @issue.command("escalate")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_escalate(identifier):
         """Bump issue priority up one level.
 
@@ -1166,8 +1215,10 @@ def register(cli):
 
     @issue.command("deescalate")
     @click.argument("identifier")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
     def issue_deescalate(identifier):
         """Bump issue priority down one level.
 
