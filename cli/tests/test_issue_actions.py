@@ -757,6 +757,87 @@ class TestIssueActionsJsonOutput:
         assert data['identifier'] == 'CHT-100'
 
 
+class TestConfirmationPromptContract:
+    """Drive the REAL click.confirm() path — no confirm_action mocking —
+    via CliRunner input streams (CHT-1222 review finding #2). Previously,
+    click.confirm's default err=False leaked the raw prompt text onto
+    stdout, breaking the one-JSON-value contract on every delete-style
+    command; and under --json with empty stdin the prompt text WAS the
+    entire stdout."""
+
+    def test_json_without_yes_never_prompts_emits_json_error(self, cli_runner, mock_issue):
+        """Under --json with no --yes: no prompt at all (a machine consumer
+        can't answer a TTY), {"error": ...} directing the caller to --yes,
+        exit 2, mutation not performed."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100', '--json'], input='')
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)  # raises if the prompt leaked to stdout
+        assert '--yes' in data['error']
+        client.delete_issue.assert_not_called()
+
+    def test_json_with_yes_proceeds(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['--yes', 'issue', 'delete', 'CHT-100', '--json'])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data['deleted'] is True
+        client.delete_issue.assert_called_once_with('issue-uuid-123')
+
+    def test_interactive_prompt_goes_to_stderr_not_stdout(self, cli_runner, mock_issue):
+        """Outside --json, the confirmation prompt itself belongs on
+        stderr — stdout stays reserved for command output."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100'], input='y\n')
+
+        assert result.exit_code == 0
+        assert 'Are you sure' in result.stderr
+        assert 'Are you sure' not in result.stdout
+        client.delete_issue.assert_called_once()
+
+    def test_interactive_decline_aborts_without_mutation(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'delete', 'CHT-100'], input='n\n')
+
+        assert result.exit_code == 0
+        client.delete_issue.assert_not_called()
+
+    def test_comment_delete_json_without_yes_same_contract(self, cli_runner, mock_issue):
+        """Same guarantee on the other confirmation-gated commands this
+        branch wired --json onto."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.delete_comment = MagicMock()
+
+        result = cli_runner.invoke(
+            cli, ['issue', 'comment-delete', 'CHT-100', 'comment-1', '--json'], input='',
+        )
+
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert '--yes' in data['error']
+        client.delete_comment.assert_not_called()
+
+
 class TestIssueCommentJsonOutput:
     """issue comment/comment-edit/comment-delete previously had no --json
     at all, so an agent had no parseable way to learn a comment's id

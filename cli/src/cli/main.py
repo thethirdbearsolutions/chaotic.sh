@@ -53,9 +53,25 @@ def is_yes_mode() -> bool:
 
 
 def confirm_action(prompt: str, **kwargs) -> bool:
-    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436)."""
+    """Prompt for confirmation, auto-accepting if --yes flag is set (CHT-436).
+
+    Under --json, never prompts (CHT-1222): a machine consumer can't answer
+    a TTY prompt, and click.confirm would leak the prompt text onto stdout,
+    breaking the one-JSON-value contract. Without --yes, --json gets a clean
+    {"error": ...} + exit 2 telling the caller to pass --yes.
+
+    Interactive prompts go to stderr (err=True) so stdout stays reserved for
+    command output even outside --json mode.
+    """
     if is_yes_mode():
         return True
+    if is_json_output():
+        output_json({
+            "error": f"Confirmation required: {prompt} "
+                     "Pass --yes to proceed under --json (prompts are disabled in JSON mode).",
+        })
+        raise SystemExit(2)
+    kwargs.setdefault("err", True)
     return click.confirm(prompt, **kwargs)
 
 
@@ -373,6 +389,9 @@ class ProfileGroup(click.Group):
     is NOT handled here because it collides with subcommand flags (e.g.,
     ``agent create -p``).  ``-p`` still works in the normal Click position
     (before the subcommand name).
+
+    Also owns the --json contract for parse-time failures (CHT-1222): see
+    ``main()`` below.
     """
 
     _profile_from_args = None  # set by parse_args, read by cli()
@@ -398,6 +417,53 @@ class ProfileGroup(click.Group):
             # Stash so cli() knows not to override with envvar fallback
             ProfileGroup._profile_from_args = profile_val
         return super().parse_args(ctx, new_args)
+
+    def main(self, args=None, *main_args, standalone_mode=True, **extra):
+        """Guarantee ``{"error": ...}`` on stdout for parse-time failures
+        under --json (CHT-1222).
+
+        Click's own parameter validation — ``type=click.Choice(...)``,
+        missing required arguments, unknown flags — happens in
+        ``Command.parse_args()``/``make_context()``, entirely before any
+        command callback (and therefore before every decorator in the
+        json_option/handle_error stack) runs. Handling it per-command is
+        impossible; this is the one chokepoint that sees those errors.
+
+        Because parsing failed, ctx params are unusable — --json is
+        detected by scanning the raw argv. Non-JSON invocations take the
+        stock Click standalone path unchanged.
+        """
+        if not standalone_mode:
+            # Caller explicitly asked for exceptions to propagate; don't
+            # interpose.
+            return super().main(args, *main_args, standalone_mode=False, **extra)
+
+        raw_args = list(args) if args is not None else sys.argv[1:]
+        if '--json' not in raw_args:
+            return super().main(raw_args, *main_args, standalone_mode=True, **extra)
+
+        try:
+            rv = super().main(raw_args, *main_args, standalone_mode=False, **extra)
+        except click.ClickException as e:
+            # Parse-time UsageError/BadParameter (or a body-level
+            # ClickException re-raised by handle_error's non-JSON branch —
+            # unreachable here since --json is set, but harmless).
+            output_json({"error": e.format_message()})
+            e.show()  # usage + error text; writes to stderr
+            sys.exit(e.exit_code)
+        except click.exceptions.Abort:
+            # SIGINT / EOF on a prompt. Keep the one-JSON-value contract.
+            output_json({"error": "Aborted."})
+            click.echo("Aborted!", err=True)
+            sys.exit(1)
+        else:
+            # Normal completion. With standalone_mode=False, click returns
+            # either the callback's return value (a dict/None for our
+            # commands — not an exit code) or, when ctx.exit(code) was
+            # raised (--help/--version), that code as an int. Command
+            # bodies signal failure via SystemExit, which propagates past
+            # this handler untouched.
+            sys.exit(rv if isinstance(rv, int) and not isinstance(rv, bool) else 0)
 
 
 # Main CLI group

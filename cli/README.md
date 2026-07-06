@@ -71,6 +71,15 @@ Under `--json`:
   created/affected entity's id as part of the JSON payload, so a caller
   doesn't need a follow-up `issue show --json` just to learn what
   happened.
+- **Confirmation-gated commands (`issue delete`, `doc delete`, etc.)
+  never prompt under `--json`** — a machine consumer can't answer a TTY
+  prompt. Pass `--yes` (`chaotic --yes issue delete ... --json`) to
+  proceed; without it they emit `{"error": ...}` and exit 2 instead of
+  hanging on (or leaking) a prompt.
+- This holds even for errors Click raises before your command runs — an
+  invalid choice value (`--status bogus`), a missing required argument,
+  an unknown flag all produce `{"error": ...}` on stdout (exit 2), with
+  the usage text on stderr.
 
 Run `chaotic <command> --help` to check whether a given command supports
 `--json` — it's listed in the flag help text, not hidden.
