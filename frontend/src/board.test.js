@@ -38,7 +38,7 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
-import { setState, getSelectedBoardIndex, setSelectedBoardIndex } from './state.js';
+import { setState, getSelectedBoardIndex, setSelectedBoardIndex, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import {
@@ -115,6 +115,50 @@ describe('board', () => {
             await loadBoard();
 
             expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
+        });
+
+        // CHT-1211 item 2: issue-detail prev/next should page through the
+        // Board's own list when opened from Board, not the stale/empty
+        // Issues-view-only global issues array.
+        it('sets the detail nav context to the board issue list', async () => {
+            const mockIssues = [
+                { id: '1', title: 'Issue 1', status: 'todo' },
+                { id: '2', title: 'Issue 2', status: 'done' },
+            ];
+            api.getIssues.mockResolvedValue(mockIssues);
+            setState('currentProject', 'project-123');
+
+            await loadBoard();
+
+            expect(getDetailNavContext()).toEqual(mockIssues);
+        });
+
+        // CHT-1211 item 7: a stale response from a superseded loadBoard()
+        // call (rapid project switching) must not overwrite newer data.
+        describe('request sequencing (out-of-order responses)', () => {
+            it('drops a slow response from an earlier project switch', async () => {
+                let resolveFirst;
+                const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+                const projectAIssues = [{ id: 'a1', title: 'A1', status: 'todo' }];
+                const projectBIssues = [{ id: 'b1', title: 'B1', status: 'todo' }];
+
+                api.getIssues.mockImplementationOnce(() => firstRequest);
+                setState('currentProject', 'project-A');
+                const firstLoad = loadBoard(); // in flight, slow
+
+                api.getIssues.mockImplementationOnce(() => Promise.resolve(projectBIssues));
+                setState('currentProject', 'project-B');
+                await loadBoard(); // resolves first (faster)
+
+                expect(getBoardIssues()).toEqual(projectBIssues);
+
+                // The slow first request now resolves — must be dropped, not
+                // overwrite the already-current Project B data.
+                resolveFirst(projectAIssues);
+                await firstLoad;
+
+                expect(getBoardIssues()).toEqual(projectBIssues);
+            });
         });
 
         // CHT-1215 review finding 3: the skeleton wipe destroys the
