@@ -31,6 +31,28 @@ let detailNavPrevId = null;
 let detailNavNextId = null;
 let detailAbortController = null;
 
+// Remote activity that arrived while the description editor was open
+// (CHT-1214, PR #209 review finding 3). ws-handlers.js suppresses the
+// destructive viewIssue() re-render while the editor is up, but records it
+// here instead of dropping it: Cancel resyncs the view from the server, and
+// Save checks the stashed fresh issue for a remote description change so it
+// can warn instead of silently last-write-winning over someone else's edit.
+let pendingRemoteRefresh = false;
+let remoteIssueDuringEdit = null;
+
+/**
+ * Called by ws-handlers.js when a websocket event for the currently-open
+ * issue was NOT allowed to re-render the detail view because the inline
+ * description editor is open.
+ * @param {Object|null} freshIssue - the full issue payload for issue:updated
+ *   events (null for comment/relation/attestation/activity events, which
+ *   carry no issue body)
+ */
+export function noteSkippedDetailRefresh(freshIssue = null) {
+    pendingRemoteRefresh = true;
+    if (freshIssue) remoteIssueDuringEdit = freshIssue;
+}
+
 /**
  * Get ticketRitualsCollapsed state
  * @returns {boolean}
@@ -700,6 +722,11 @@ export async function viewIssue(issueId, pushHistory = true) {
         setCurrentDetailIssue(issue);
         setCurrentDetailSprints(projectSprints);
 
+        // A full render is by definition up to date — clear any remote
+        // activity stashed while an editor was open (CHT-1214).
+        pendingRemoteRefresh = false;
+        remoteIssueDuringEdit = null;
+
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         const detailView = document.getElementById('issue-detail-view');
         detailView.classList.remove('hidden');
@@ -1257,12 +1284,18 @@ export async function editDescription(issueId) {
         }
         if (e.key === 'Escape') {
             e.preventDefault();
+            // Don't let the keydown continue to keyboard.js's document-level
+            // handler, whose input-field branch blurs the textarea on Escape
+            // — after a declined discard-confirm ("keep editing") that blur
+            // would leave an open editor with no focus (PR #209 review
+            // finding 4).
+            e.stopPropagation();
             document.getElementById('cancel-description-edit')?.click();
         }
     });
     textarea.focus();
 
-    // Cancel — restore original content, but only silently discard when
+    // Cancel — restore the read-only view, but only silently discard when
     // there's nothing to lose. If the textarea differs from the saved
     // description, confirm before wiping it (and the recovery draft) —
     // mirroring the confirm() gate deleteIssue already uses for destructive
@@ -1274,6 +1307,15 @@ export async function editDescription(issueId) {
             return;
         }
         setDescriptionDraft(issueId, null);
+        // Remote activity (comments, attestations, an issue:updated) may
+        // have been suppressed while this editor was open — resync the whole
+        // view from the server instead of restoring the pre-edit snapshot,
+        // which would leave that activity invisible indefinitely (PR #209
+        // review finding 3).
+        if (pendingRemoteRefresh) {
+            viewIssue(issueId, false);
+            return;
+        }
         if (header) header.style.display = '';
         contentDiv.className = `description-content markdown-body ${!issue.description ? 'empty' : ''}`;
         contentDiv.setAttribute('data-action', 'edit-description');
@@ -1290,10 +1332,28 @@ export async function editDescription(issueId) {
     // Save — guarded against double-submit (CHT-1214; CHT-1101 only covered
     // the comment form). Scroll position and focus are restored after
     // viewIssue()'s full re-render, which would otherwise drop both.
+    //
+    // If a remote issue:updated arrived while this editor was open and it
+    // changed the description, the first Save is intercepted with the same
+    // conflict warning the stale-draft path uses — this is the live-session
+    // variant of exactly that scenario, which would otherwise silently
+    // last-write-win over the other person's edit (PR #209 review finding 3).
+    // Saving again proceeds as an explicit overwrite.
+    let remoteConflictAcknowledged = false;
     document.getElementById('save-description-edit').addEventListener('click', async () => {
         if (descriptionSubmitting) return;
         const description = document.getElementById('edit-description')?.value;
         if (description === undefined) return;
+        const remoteDescription = remoteIssueDuringEdit ? (remoteIssueDuringEdit.description || '') : null;
+        if (remoteDescription !== null && remoteDescription !== (issue.description || '') && !remoteConflictAcknowledged) {
+            remoteConflictAcknowledged = true;
+            const warnEl = document.getElementById('description-draft-warning');
+            if (warnEl) {
+                warnEl.textContent = 'This description was changed by someone else while you were editing — review your text, then Save again to overwrite their version.';
+                warnEl.classList.remove('hidden');
+            }
+            return;
+        }
         const saveBtn = document.getElementById('save-description-edit');
         descriptionSubmitting = true;
         if (saveBtn) saveBtn.disabled = true;

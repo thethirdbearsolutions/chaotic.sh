@@ -132,6 +132,7 @@ import {
     handleAddRelation,
     deleteRelation,
     loadTicketRituals,
+    noteSkippedDetailRefresh,
 } from './issue-detail-view.js';
 
 // Combine every registerActions({...}) call this module made at import time
@@ -1326,6 +1327,188 @@ describe('issue-detail-view', () => {
                 const warning = document.getElementById('description-draft-warning');
                 expect(warning.classList.contains('hidden')).toBe(true);
             });
+        });
+    });
+
+    // PR #209 review finding 3: ws-handlers.js suppresses viewIssue() while
+    // the description editor is open — but the suppressed activity must be
+    // deferred, not dropped: Cancel resyncs the view, and Save detects a
+    // remote description change instead of silently last-write-winning.
+    describe('remote activity during description edit (CHT-1214, PR #209 finding 3)', () => {
+        const mockIssue = {
+            id: 'issue-1',
+            identifier: 'TEST-1',
+            title: 'Test Issue',
+            description: 'Test description',
+            status: 'todo',
+            priority: 'medium',
+            issue_type: 'task',
+            project_id: 'project-1',
+            created_at: '2024-01-15T10:00:00Z',
+        };
+
+        beforeEach(() => {
+            api.getIssue.mockResolvedValue(mockIssue);
+            getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
+        });
+
+        it('a comment that arrived mid-edit appears after Cancel (view resyncs from the server)', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            expect(document.getElementById('edit-description')).toBeTruthy();
+
+            // Simulate ws-handlers deferring a comment event while editing
+            noteSkippedDetailRefresh();
+            api.getComments.mockResolvedValue([
+                { id: 'c1', author_name: 'Bob', content: 'a fresh remote comment', created_at: '2024-01-16T10:00:00Z' },
+            ]);
+
+            // Textarea unchanged → no confirm gate; Cancel triggers the resync
+            document.getElementById('cancel-description-edit').click();
+            await vi.waitFor(() => {
+                expect(document.getElementById('issue-detail-content').innerHTML).toContain('a fresh remote comment');
+            });
+        });
+
+        it('Cancel without any deferred remote activity does NOT re-fetch (fast local restore)', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            api.getIssue.mockClear();
+
+            document.getElementById('cancel-description-edit').click();
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(api.getIssue).not.toHaveBeenCalled();
+            expect(document.getElementById('edit-description')).toBeFalsy();
+        });
+
+        it('a declined discard-confirm keeps the editor AND the pending resync for later', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            noteSkippedDetailRefresh();
+            global.confirm = vi.fn(() => false);
+            api.getIssue.mockClear();
+
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            document.getElementById('cancel-description-edit').click();
+            await new Promise(r => setTimeout(r, 10));
+
+            // Editor intact, no re-render happened
+            expect(document.getElementById('edit-description')).toBeTruthy();
+            expect(api.getIssue).not.toHaveBeenCalled();
+
+            // A later accepted Cancel still resyncs
+            global.confirm = vi.fn(() => true);
+            document.getElementById('cancel-description-edit').click();
+            await vi.waitFor(() => expect(api.getIssue).toHaveBeenCalled());
+        });
+
+        it('a remote description change mid-edit blocks the first Save with a conflict warning', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, description: 'their new description' });
+            document.getElementById('edit-description').value = 'my version';
+            document.getElementById('save-description-edit').click();
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).not.toHaveBeenCalled();
+            const warning = document.getElementById('description-draft-warning');
+            expect(warning.classList.contains('hidden')).toBe(false);
+            expect(warning.textContent).toContain('changed by someone else');
+            // Editor still open with the user's text
+            expect(document.getElementById('edit-description').value).toBe('my version');
+        });
+
+        it('Save again after the conflict warning proceeds as an explicit overwrite', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, description: 'their new description' });
+            document.getElementById('edit-description').value = 'my version';
+            const saveBtn = document.getElementById('save-description-edit');
+            saveBtn.click(); // blocked, warns
+            await new Promise(r => setTimeout(r, 0));
+            saveBtn.click(); // explicit overwrite
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).toHaveBeenCalledTimes(1);
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { description: 'my version' });
+        });
+
+        it('a remote update that did NOT touch the description does not block Save', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, title: 'Retitled remotely' });
+            document.getElementById('edit-description').value = 'my version';
+            document.getElementById('save-description-edit').click();
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { description: 'my version' });
+        });
+    });
+
+    // PR #209 review finding 4: the textarea's Escape handler must stop the
+    // event from reaching keyboard.js's document-level handler, whose
+    // input-field branch blurs any focused textarea on Escape — after a
+    // declined discard-confirm that blur left an open editor with no focus.
+    describe('Escape propagation from the description editor (CHT-1214, PR #209 finding 4)', () => {
+        let globalEscapeBlur;
+
+        beforeEach(() => {
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header">
+                        <h3>Description</h3>
+                        <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="i1">Edit</button>
+                    </div>
+                    <div class="description-content markdown-body">Current desc</div>
+                </div>
+            `;
+            // Stand-in for keyboard.js's global handler: blurs any focused
+            // textarea on Escape (keyboard.js:31-42's input-bypass branch).
+            globalEscapeBlur = vi.fn((e) => {
+                if (e.key === 'Escape' && e.target.tagName === 'TEXTAREA') e.target.blur();
+            });
+            document.addEventListener('keydown', globalEscapeBlur);
+        });
+
+        afterEach(() => {
+            document.removeEventListener('keydown', globalEscapeBlur);
+        });
+
+        it('keep-editing after Escape leaves focus in the textarea (event never reaches the global blur)', async () => {
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+            global.confirm = vi.fn(() => false); // decline the discard
+
+            await editDescription('i1');
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            textarea.focus();
+
+            textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+            expect(global.confirm).toHaveBeenCalled();
+            expect(globalEscapeBlur).not.toHaveBeenCalled();
+            expect(document.getElementById('edit-description')).toBeTruthy();
+            expect(document.activeElement).toBe(textarea);
+        });
+
+        it('accepted Escape still closes the editor and moves focus to the Edit affordance', async () => {
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+            global.confirm = vi.fn(() => true);
+
+            await editDescription('i1');
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            textarea.focus();
+
+            textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+            expect(document.getElementById('edit-description')).toBeFalsy();
+            expect(document.activeElement.getAttribute('data-action')).toBe('edit-description');
         });
     });
 
