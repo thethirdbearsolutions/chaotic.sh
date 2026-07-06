@@ -14,7 +14,7 @@ from app.schemas.document import (
 )
 from app.schemas.issue import IssueResponse, LabelResponse
 from app.services.document_service import DocumentService
-from app.websocket import broadcast_comment_event
+from app.websocket import broadcast_comment_event, broadcast_document_event
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.services.issue_service import IssueService
@@ -102,7 +102,9 @@ async def create_document(
             )
 
     document = await document_service.create(document_in, team_id, current_user.id)
-    return build_document_response(document, author_name=current_user.name)
+    response = build_document_response(document, author_name=current_user.name)
+    await broadcast_document_event(team_id, "created", response.model_dump(mode="json"))
+    return response
 
 
 async def list_documents(
@@ -250,7 +252,9 @@ async def update_document(
             )
 
     document = await document_service.update(document, document_in, current_user.id)
-    return build_document_response(document)
+    response = build_document_response(document)
+    await broadcast_document_event(document.team_id, "updated", response.model_dump(mode="json"))
+    return response
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -282,7 +286,10 @@ async def delete_document(document_id: str, current_user: CurrentUser):
             detail="Only author or admin can delete document",
         )
 
+    team_id = document.team_id
+    document_data = {"id": document.id, "title": document.title}
     await document_service.delete(document, current_user.id)
+    await broadcast_document_event(team_id, "deleted", document_data)
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])

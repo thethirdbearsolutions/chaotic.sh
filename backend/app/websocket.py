@@ -73,6 +73,21 @@ async def broadcast_comment_event(team_id: str, event_type: str, comment_data: d
     })
 
 
+async def broadcast_document_event(team_id: str, event_type: str, document_data: dict):
+    """Broadcast a document event to all team members (CHT-1213).
+
+    Documents previously broadcast nothing on create/update/delete — every
+    other entity (issue, project, sprint, comment) does. Document *comments*
+    already broadcast via broadcast_comment_event above; this covers the
+    document itself.
+    """
+    await manager.broadcast_to_team(team_id, {
+        "type": event_type,
+        "entity": "document",
+        "data": document_data
+    })
+
+
 async def broadcast_activity_event(team_id: str, event_type: str, activity_data: dict):
     """Broadcast an activity event to all team members (CHT-359)."""
     await manager.broadcast_to_team(team_id, {

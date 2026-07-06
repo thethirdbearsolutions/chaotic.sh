@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setCurrentTeam, setState } from './state.js';
+import { setCurrentTeam, setState, setCurrentView } from './state.js';
 import {
   getDocuments,
   loadDocuments,
@@ -10,8 +10,12 @@ import {
   showEditDocumentModal,
   handleUpdateDocument,
   deleteDocument,
+  refreshDocumentsListIfActive,
+  refreshDocumentDetailIfViewing,
 } from './documents.js';
 import { api } from './api.js';
+import { getDocumentDraft, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
+import { registerActions } from './event-delegation.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -56,6 +60,25 @@ vi.mock('./projects.js', () => ({
 vi.mock('./gate-approvals.js', () => ({
   renderMarkdown: vi.fn((c) => c),
 }));
+
+// Mock mention-autocomplete.js and quote-comment.js (CHT-1213) — documents.js
+// now wires both onto its comment box, but the wiring itself (not these
+// modules' own logic, which has its own test files) is what's under test here.
+const mockSetupMentionAutocomplete = vi.fn();
+vi.mock('./mention-autocomplete.js', () => ({
+  setupMentionAutocomplete: (...args) => mockSetupMentionAutocomplete(...args),
+}));
+const mockSetupQuoteComment = vi.fn();
+const mockQuoteSelectionIntoComment = vi.fn(() => false);
+vi.mock('./quote-comment.js', () => ({
+  setupQuoteComment: (...args) => mockSetupQuoteComment(...args),
+  quoteSelectionIntoComment: (...args) => mockQuoteSelectionIntoComment(...args),
+}));
+
+// Combine every registerActions({...}) call documents.js made at import time
+// into one lookup, so tests can invoke a delegated handler directly (CHT-1213
+// — mirrors the pattern already used in issue-detail-view.test.js).
+const documentActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('getDocuments', () => {
   it('returns empty array initially', () => {
@@ -468,5 +491,376 @@ describe('deleteDocument', () => {
     await deleteDocument('doc-1');
     expect(api.deleteDocument).toHaveBeenCalledWith('doc-1');
     expect(mockNavigateTo).toHaveBeenCalledWith('documents');
+  });
+});
+
+// CHT-1213: doc-edit polish — comment box Cmd/Ctrl+Enter, draft persistence,
+// @mention autocomplete, quote-and-comment, keyboard prev/next, auto-linked
+// issue IDs, and a visible+retryable comments-fetch failure. All of these
+// already existed on the issue detail view; documents had none of them.
+describe('viewDocument (CHT-1213 polish)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div class="view"></div>
+      <div id="document-detail-view" class="hidden">
+        <div id="document-detail-content"></div>
+      </div>
+    `;
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  describe('comment form', () => {
+    it('shows a platform-aware Cmd/Ctrl+Enter hint in the placeholder', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      const textarea = document.getElementById('new-doc-comment');
+      expect(textarea.placeholder).toMatch(/Enter to submit/);
+    });
+
+    it('submits the form on Cmd/Ctrl+Enter', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      const textarea = document.getElementById('new-doc-comment');
+      const form = textarea.closest('form');
+      const requestSubmitSpy = vi.spyOn(form, 'requestSubmit').mockImplementation(() => {});
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(requestSubmitSpy).toHaveBeenCalled();
+    });
+
+    it('restores a saved comment draft on open', async () => {
+      setCommentDraft('doc-1', 'an abandoned comment');
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      expect(document.getElementById('new-doc-comment').value).toBe('an abandoned comment');
+    });
+
+    it('saves the comment draft on input', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      const textarea = document.getElementById('new-doc-comment');
+      textarea.value = 'typing a comment';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(getCommentDraft('doc-1')).toBe('typing a comment');
+    });
+
+    it('wires up @mention autocomplete on the comment textarea', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      expect(mockSetupMentionAutocomplete).toHaveBeenCalledWith('new-doc-comment', 'doc-mention-suggestions');
+    });
+  });
+
+  describe('quote-and-comment', () => {
+    it('wires up setupQuoteComment against the document container/textarea', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      expect(mockSetupQuoteComment).toHaveBeenCalledWith(expect.objectContaining({
+        containerId: 'document-detail-content',
+        textareaId: 'new-doc-comment',
+      }));
+    });
+
+    it('Cmd/Ctrl+Shift+. triggers quoteSelectionIntoComment targeting the doc comment box', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '.', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      expect(mockQuoteSelectionIntoComment).toHaveBeenCalledWith('new-doc-comment');
+    });
+  });
+
+  describe('keyboard prev/next', () => {
+    beforeEach(async () => {
+      api.getDocument.mockImplementation((id) => Promise.resolve({ id, title: `Doc ${id}`, updated_at: '2024-01-01' }));
+      api.getDocumentComments.mockResolvedValue([]);
+      // Populate the module's documents list so prev/next resolve (CHT-1095's
+      // existing computation, keyed off getDocuments()).
+      setCurrentTeam({ id: 'team-1' });
+      api.getDocuments.mockResolvedValue([
+        { id: 'doc-1', title: 'Doc 1', updated_at: '2024-01-01' },
+        { id: 'doc-2', title: 'Doc 2', updated_at: '2024-01-01' },
+        { id: 'doc-3', title: 'Doc 3', updated_at: '2024-01-01' },
+      ]);
+      await loadDocuments('team-1');
+    });
+
+    afterEach(() => {
+      setCurrentTeam(null);
+    });
+
+    it('ArrowRight navigates to the next document', async () => {
+      await viewDocument('doc-2');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      // Let the resulting viewDocument('doc-3') promise settle
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(api.getDocument).toHaveBeenCalledWith('doc-3');
+    });
+
+    it('ArrowLeft navigates to the previous document', async () => {
+      await viewDocument('doc-2');
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(api.getDocument).toHaveBeenCalledWith('doc-1');
+    });
+
+    it('does not navigate when focus is in a text input', async () => {
+      await viewDocument('doc-2');
+      api.getDocument.mockClear();
+      const textarea = document.getElementById('new-doc-comment');
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      expect(api.getDocument).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('comments-fetch failure', () => {
+    it('shows an inline error with a Retry action instead of silently omitting the section', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockRejectedValue(new Error('network down'));
+      await viewDocument('doc-1');
+      const content = document.getElementById('document-detail-content');
+      expect(content.querySelector('.comments-error')).toBeTruthy();
+      const retryBtn = content.querySelector('[data-action="retry-document-comments"]');
+      expect(retryBtn).toBeTruthy();
+      expect(retryBtn.dataset.documentId).toBe('doc-1');
+    });
+
+    it('retry re-loads the document detail view', async () => {
+      const retryAction = documentActions['retry-document-comments'];
+      expect(retryAction).toBeTypeOf('function');
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      api.getDocument.mockClear();
+      await retryAction(null, { documentId: 'doc-1' });
+      expect(api.getDocument).toHaveBeenCalledWith('doc-1');
+    });
+
+    it('still renders the comment list normally when the fetch succeeds', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([{ id: 'c1', author_name: 'Alice', content: 'Hi', created_at: '2024-01-01' }]);
+      await viewDocument('doc-1');
+      const content = document.getElementById('document-detail-content');
+      expect(content.querySelector('.comments-error')).toBeNull();
+      expect(content.textContent).toContain('Alice');
+    });
+  });
+
+  describe('auto-linked issue IDs', () => {
+    it('links a bare issue ID in the document body', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', content: 'see CHT-402 for context', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      const body = document.querySelector('.document-content');
+      const link = body.querySelector('a.issue-link');
+      expect(link).toBeTruthy();
+      expect(link.textContent).toBe('CHT-402');
+    });
+
+    it('links a bare issue ID in a document comment', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([{ id: 'c1', author_name: 'Alice', content: 'blocked by CHT-11', created_at: '2024-01-01' }]);
+      await viewDocument('doc-1');
+      const commentBody = document.querySelector('.comment-content');
+      const link = commentBody.querySelector('a.issue-link');
+      expect(link).toBeTruthy();
+      expect(link.textContent).toBe('CHT-11');
+    });
+  });
+});
+
+describe('document draft persistence (CHT-1213)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('restores a create-modal draft on open', () => {
+    setDocumentDraft('new', { title: 'Draft title', content: 'Draft content', icon: '📝' });
+    showCreateDocumentModal();
+    expect(document.getElementById('doc-title').value).toBe('Draft title');
+    expect(document.getElementById('doc-content').value).toBe('Draft content');
+    expect(document.getElementById('doc-icon').value).toBe('📝');
+  });
+
+  it('saves a create-modal draft on input', () => {
+    showCreateDocumentModal();
+    document.getElementById('doc-title').value = 'New title';
+    document.getElementById('doc-title').dispatchEvent(new Event('input', { bubbles: true }));
+    expect(getDocumentDraft('new')).toEqual(expect.objectContaining({ title: 'New title' }));
+  });
+
+  it('clears the create-modal draft after a successful create', async () => {
+    setDocumentDraft('new', { title: 'Draft title' });
+    document.body.innerHTML = `
+      <input id="doc-title" value="Draft title">
+      <select id="doc-project"><option value="" selected>Global</option></select>
+      <select id="doc-sprint" disabled><option value="">Select project first</option></select>
+      <textarea id="doc-content"></textarea>
+      <input id="doc-icon" value="">
+      <div id="documents-list"></div>
+    `;
+    setCurrentTeam({ id: 'team-1' });
+    api.createDocument.mockResolvedValue({});
+    api.getDocuments.mockResolvedValue([]);
+    await handleCreateDocument({ preventDefault: vi.fn() });
+    expect(getDocumentDraft('new')).toBeNull();
+    setCurrentTeam(null);
+  });
+
+  it('restores an edit-modal draft keyed by document id', async () => {
+    setDocumentDraft('doc-1', { content: 'Recovered edit' });
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Existing', content: 'Server content' });
+    await showEditDocumentModal('doc-1');
+    expect(document.getElementById('edit-doc-content').value).toBe('Recovered edit');
+  });
+
+  it('clears the edit-modal draft after a successful update', async () => {
+    setDocumentDraft('doc-1', { content: 'Recovered edit' });
+    document.body.innerHTML = `
+      <input id="edit-doc-title" value="Updated Title">
+      <select id="edit-doc-project"><option value="" selected>Global</option></select>
+      <select id="edit-doc-sprint" disabled><option value="">None</option></select>
+      <textarea id="edit-doc-content">Updated content</textarea>
+      <input id="edit-doc-icon" value="">
+      <div class="view"></div>
+      <div id="document-detail-view" class="hidden"><div id="document-detail-content"></div></div>
+    `;
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+    api.updateDocument.mockResolvedValue({});
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Updated', updated_at: '2024-01-01' });
+    api.getDocumentComments.mockResolvedValue([]);
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(getDocumentDraft('doc-1')).toBeNull();
+    vi.restoreAllMocks();
+  });
+});
+
+describe('document create/edit modal Write/Preview toggle (CHT-1213)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    vi.clearAllMocks();
+  });
+
+  it('renders Write/Preview tabs and a preview pane', () => {
+    showCreateDocumentModal();
+    expect(document.getElementById('doc-content-tab-write')).toBeTruthy();
+    expect(document.getElementById('doc-content-tab-preview')).toBeTruthy();
+    expect(document.getElementById('doc-content-preview')).toBeTruthy();
+  });
+
+  it('switching to preview renders the markdown and hides the textarea', () => {
+    showCreateDocumentModal();
+    document.getElementById('doc-content').value = 'Some **markdown**';
+    const setModeAction = documentActions['set-doc-editor-mode'];
+    expect(setModeAction).toBeTypeOf('function');
+    setModeAction(null, { target: 'doc-content', mode: 'preview' });
+
+    const textarea = document.getElementById('doc-content');
+    const preview = document.getElementById('doc-content-preview');
+    expect(textarea.style.display).toBe('none');
+    expect(preview.style.display).toBe('block');
+    expect(preview.innerHTML).toContain('Some **markdown**');
+  });
+
+  it('switching back to write restores the textarea', () => {
+    showCreateDocumentModal();
+    const setModeAction = documentActions['set-doc-editor-mode'];
+    setModeAction(null, { target: 'doc-content', mode: 'preview' });
+    setModeAction(null, { target: 'doc-content', mode: 'write' });
+
+    const textarea = document.getElementById('doc-content');
+    const preview = document.getElementById('doc-content-preview');
+    expect(textarea.style.display).toBe('block');
+    expect(preview.style.display).toBe('none');
+  });
+
+  it('works for the edit modal with its own textarea id', async () => {
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Existing', content: 'Body text' });
+    await showEditDocumentModal('doc-1');
+    expect(document.getElementById('edit-doc-content-tab-write')).toBeTruthy();
+    expect(document.getElementById('edit-doc-content-preview')).toBeTruthy();
+  });
+});
+
+describe('refreshDocumentsListIfActive / refreshDocumentDetailIfViewing (CHT-1213)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div class="view"></div>
+      <div id="documents-list"></div>
+      <div id="document-detail-view" class="hidden">
+        <div id="document-detail-content"></div>
+      </div>
+    `;
+    vi.clearAllMocks();
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setCurrentView('my-issues');
+    setCurrentTeam(null);
+  });
+
+  it('refreshDocumentsListIfActive re-fetches when the documents view is active', () => {
+    setCurrentTeam({ id: 'team-1' });
+    setCurrentView('documents');
+    api.getDocuments.mockResolvedValue([]);
+    refreshDocumentsListIfActive();
+    expect(api.getDocuments).toHaveBeenCalled();
+  });
+
+  it('refreshDocumentsListIfActive does nothing on a different view', () => {
+    setCurrentTeam({ id: 'team-1' });
+    setCurrentView('issues');
+    api.getDocuments.mockClear();
+    refreshDocumentsListIfActive();
+    expect(api.getDocuments).not.toHaveBeenCalled();
+  });
+
+  it('refreshDocumentDetailIfViewing refreshes only the currently-open document', async () => {
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+    api.getDocumentComments.mockResolvedValue([]);
+    await viewDocument('doc-1');
+    api.getDocument.mockClear();
+
+    refreshDocumentDetailIfViewing('doc-2'); // a different document
+    await Promise.resolve();
+    expect(api.getDocument).not.toHaveBeenCalled();
+
+    refreshDocumentDetailIfViewing('doc-1'); // the one that's open
+    await Promise.resolve();
+    expect(api.getDocument).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('refreshDocumentDetailIfViewing does nothing when no document detail is open', () => {
+    api.getDocument.mockClear();
+    refreshDocumentDetailIfViewing('doc-1');
+    expect(api.getDocument).not.toHaveBeenCalled();
   });
 });

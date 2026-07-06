@@ -71,6 +71,13 @@ const SHORTCUT_GROUPS = [
         ],
     },
     {
+        title: 'Document Detail',
+        shortcuts: [
+            { key: '← / →', description: 'Previous / next document' },
+            { key: '⌘⇧.', description: 'Quote selection into comment' },
+        ],
+    },
+    {
         title: 'Board',
         shortcuts: [
             { key: 'j / k', description: 'Navigate cards' },

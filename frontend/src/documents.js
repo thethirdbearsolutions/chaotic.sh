@@ -6,14 +6,21 @@
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
-import { getDocViewMode, setDocViewMode as persistDocViewMode } from './storage.js';
+import {
+    getDocViewMode, setDocViewMode as persistDocViewMode,
+    getCommentDraft, setCommentDraft,
+    getDocumentDraft, setDocumentDraft,
+} from './storage.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderMarkdown } from './gate-approvals.js';
+import { renderCommentContent, renderDescriptionContent } from './rich-text.js';
 import { marked } from 'marked';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { navigateTo, saveScrollPosition } from './router.js';
+import { setupMentionAutocomplete } from './mention-autocomplete.js';
+import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 
 /**
  * Strip markdown syntax from text for plain preview display
@@ -44,6 +51,22 @@ let currentViewMode = 'list';  // 'list' or 'grid'
 let isSelectionMode = false;  // Selection mode for bulk operations
 let searchDebounceTimer = null;  // Debounce timer for search
 let docDetailAbortController = null;  // Cleanup for document detail listeners (CHT-1102)
+let detailNavPrevId = null;  // Prev document id for keyboard nav (CHT-1213)
+let detailNavNextId = null;  // Next document id for keyboard nav (CHT-1213)
+
+// Which document is currently open in the detail view, if any (CHT-1213).
+// Used by ws-handlers.js to decide whether to live-refresh the open detail
+// on a remote change, WITHOUT the getCurrentView() === '<x>-detail' dead-code
+// trap the rest of the app has (getCurrentView() is only ever set by
+// navigateTo()'s standard view switch — detail routes bypass it entirely, so
+// that check is never true in production; see CHT-1213 doc-edit audit).
+let currentDetailDocumentId = null;
+
+function isViewingDocumentDetail(documentId) {
+    if (currentDetailDocumentId !== documentId) return false;
+    const el = document.getElementById('document-detail-view');
+    return !!el && !el.classList.contains('hidden');
+}
 
 // Initialize view mode from storage
 const savedViewMode = getDocViewMode();
@@ -325,6 +348,37 @@ export async function loadDocuments(teamId, projectId = null) {
     if (errEl) errEl.innerHTML = '';
     showApiError('load documents', e);
   }
+}
+
+/**
+ * Re-fetch the documents list if it's the currently-active view (CHT-1213).
+ * Called by ws-handlers.js on a remote document create/update/delete —
+ * documents previously broadcast nothing at all, so another tab's changes
+ * went stale until a manual reload.
+ */
+export function refreshDocumentsListIfActive() {
+  if (getCurrentView() !== 'documents') return;
+  const teamId = currentTeamId || getCurrentTeam()?.id;
+  if (!teamId) return;
+  loadDocuments(teamId).catch(e => console.error('Failed to refresh documents list:', e));
+}
+
+/**
+ * Re-render the open document detail view if it's currently showing the
+ * given document (CHT-1213). Called by ws-handlers.js for both document and
+ * document-comment events.
+ *
+ * Deliberately does NOT reuse the `getCurrentView() === '<x>-detail'` pattern
+ * the rest of the app has for this check — that state is only ever set by
+ * navigateTo()'s standard view switch, and detail routes bypass it entirely
+ * (router.test.js asserts this), so the equivalent check would silently never
+ * fire in production. isViewingDocumentDetail() instead compares against the
+ * document id actually loaded into this view and its DOM visibility.
+ * @param {string} documentId
+ */
+export function refreshDocumentDetailIfViewing(documentId) {
+  if (!isViewingDocumentDetail(documentId)) return;
+  viewDocument(documentId, false).catch(e => console.error('Failed to refresh document detail:', e));
 }
 
 /**
@@ -689,6 +743,90 @@ export async function bulkDeleteDocuments() {
 }
 
 /**
+ * Render the comments section of a document detail view: the comment list
+ * plus the add-comment form. On a fetch failure, renders an inline error
+ * with a Retry action instead of silently omitting the whole section (CHT-1213)
+ * — previously a comments-fetch error left no comment list AND no way to
+ * comment at all, with zero user-visible indication anything had gone wrong.
+ * @param {object} doc - The document being viewed
+ * @returns {Promise<string>} HTML for the comments section
+ */
+async function renderDocumentCommentsSection(doc) {
+  const platformHint = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
+  try {
+    const comments = await api.getDocumentComments(doc.id);
+    const commentsListHtml = comments.length === 0
+      ? '<div class="comments-empty">No comments yet</div>'
+      : comments.map(comment => `
+          <div class="comment" data-comment-id="${escapeAttr(comment.id)}">
+            <div class="comment-avatar">${comment.author_name?.charAt(0)?.toUpperCase() || 'U'}</div>
+            <div class="comment-body">
+              <div class="comment-header">
+                <span class="comment-author">${escapeHtml(comment.author_name || 'Unknown')}</span>
+                <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
+              </div>
+              <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>
+            </div>
+          </div>
+        `).join('');
+
+    return `
+      <div class="comments-section" id="doc-comments-section">
+        <h3>Comments</h3>
+        <div class="comments-list">${commentsListHtml}</div>
+        <form class="comment-form comment-form-sticky" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
+          <textarea id="new-doc-comment" placeholder="Write a comment... (${platformHint}+Enter to submit)" rows="1"></textarea>
+          <div id="doc-mention-suggestions" class="mention-suggestions hidden"></div>
+          <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
+        </form>
+      </div>
+    `;
+  } catch (e) {
+    console.error('Failed to load comments:', e);
+    return `
+      <div class="comments-section" id="doc-comments-section">
+        <h3>Comments</h3>
+        <div class="comments-error">
+          Couldn't load comments.
+          <button type="button" class="btn btn-secondary btn-sm" data-action="retry-document-comments" data-document-id="${escapeAttr(doc.id)}">Retry</button>
+        </div>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Wire up the document comment form: Cmd/Ctrl+Enter submit, localStorage
+ * draft persistence, @mention autocomplete, and quote-into-comment target
+ * (CHT-1213 — all four already exist for the issue comment box; documents
+ * had none of them). No-ops if the comments section failed to load and the
+ * form isn't in the DOM.
+ * @param {string} documentId
+ * @param {AbortSignal} signal - detail-view lifecycle signal (CHT-1102)
+ */
+function wireDocumentCommentForm(documentId, signal) {
+  const commentTextarea = document.getElementById('new-doc-comment');
+  if (!commentTextarea) return;
+
+  // Restore draft comment if available (CHT-1213; mirrors CHT-1041 for issues)
+  const savedDraft = getCommentDraft(documentId);
+  if (savedDraft) {
+    commentTextarea.value = savedDraft;
+  }
+  commentTextarea.addEventListener('input', () => {
+    setCommentDraft(documentId, commentTextarea.value);
+  }, { signal });
+  commentTextarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      commentTextarea.closest('form')?.requestSubmit();
+    }
+  }, { signal });
+
+  setupMentionAutocomplete('new-doc-comment', 'doc-mention-suggestions');
+}
+
+/**
  * View a single document
  * @param {string} documentId - Document ID
  * @param {boolean} pushHistory - Whether to update browser history
@@ -702,6 +840,7 @@ export async function viewDocument(documentId, pushHistory = true) {
     if (pushHistory) saveScrollPosition();
 
     const doc = await api.getDocument(documentId);
+    currentDetailDocumentId = doc.id;
 
     // Update URL
     if (pushHistory) {
@@ -712,38 +851,9 @@ export async function viewDocument(documentId, pushHistory = true) {
     const detailView = document.getElementById('document-detail-view');
     detailView.classList.remove('hidden');
 
-    // Fetch comments
-    let commentsHtml = '';
-    try {
-      const comments = await api.getDocumentComments(doc.id);
-      const commentsListHtml = comments.length === 0
-        ? '<div class="comments-empty">No comments yet</div>'
-        : comments.map(comment => `
-            <div class="comment" data-comment-id="${escapeAttr(comment.id)}">
-              <div class="comment-avatar">${comment.author_name?.charAt(0)?.toUpperCase() || 'U'}</div>
-              <div class="comment-body">
-                <div class="comment-header">
-                  <span class="comment-author">${escapeHtml(comment.author_name || 'Unknown')}</span>
-                  <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
-                </div>
-                <div class="comment-content markdown-body">${renderMarkdown(comment.content)}</div>
-              </div>
-            </div>
-          `).join('');
-
-      commentsHtml = `
-        <div class="comments-section">
-          <h3>Comments</h3>
-          <div class="comments-list">${commentsListHtml}</div>
-          <form class="comment-form comment-form-sticky" data-action="add-document-comment" data-document-id="${escapeAttr(doc.id)}">
-            <textarea id="new-doc-comment" placeholder="Write a comment..." rows="1"></textarea>
-            <button type="submit" class="btn btn-primary">Comment</button>
-          </form>
-        </div>
-      `;
-    } catch (e) {
-      console.error('Failed to load comments:', e);
-    }
+    // Fetch comments (renders an inline error + Retry on failure, CHT-1213 —
+    // previously this silently omitted the whole section)
+    const commentsHtml = await renderDocumentCommentsSection(doc);
 
     // Look up project and sprint names
     let projectName = null;
@@ -834,7 +944,7 @@ export async function viewDocument(documentId, pushHistory = true) {
 
           <h1 class="issue-detail-title">${doc.icon ? escapeHtml(doc.icon) + ' ' : ''}${escapeHtml(doc.title)}</h1>
 
-          <div class="document-content markdown-body">${contentToRender ? renderMarkdown(contentToRender) : '<p class="text-muted">No content</p>'}</div>
+          <div class="document-content markdown-body">${contentToRender ? renderDescriptionContent(contentToRender) : '<p class="text-muted">No content</p>'}</div>
 
           ${commentsHtml}
         </div>
@@ -938,6 +1048,40 @@ export async function viewDocument(documentId, pushHistory = true) {
         }
       }, { signal: docDetailSignal });
     }
+
+    // Comment form: Cmd/Ctrl+Enter submit, draft persistence, @mention
+    // autocomplete (CHT-1213 — all already exist on the issue comment box)
+    wireDocumentCommentForm(doc.id, docDetailSignal);
+
+    // Quote-and-comment (CHT-1173 was scoped to "issue detail view" only;
+    // CHT-1213 generalizes it to also cover the document body/comments)
+    setupQuoteComment({ containerId: 'document-detail-content', textareaId: 'new-doc-comment', signal: docDetailSignal });
+
+    // Keyboard prev/next nav (CHT-1095 shipped the buttons but never the
+    // hotkey — mirrors issue-detail-view.js's ArrowLeft/ArrowRight handler)
+    // and the quote-selection hotkey (CHT-1213).
+    detailNavPrevId = prevDoc ? prevDoc.id : null;
+    detailNavNextId = nextDoc ? nextDoc.id : null;
+    const detailKeyHandler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '>' || e.key === '.' || e.code === 'Period')) {
+        if (quoteSelectionIntoComment('new-doc-comment')) {
+          e.preventDefault();
+          return;
+        }
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.getElementById('document-detail-view').classList.contains('hidden')) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+      if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+      if (e.key === 'ArrowLeft' && detailNavPrevId) {
+        e.preventDefault();
+        viewDocument(detailNavPrevId);
+      } else if (e.key === 'ArrowRight' && detailNavNextId) {
+        e.preventDefault();
+        viewDocument(detailNavNextId);
+      }
+    };
+    document.addEventListener('keydown', detailKeyHandler, { signal: docDetailSignal });
   } catch (e) {
     showApiError('load document', e);
   }
@@ -981,6 +1125,82 @@ async function updateSprintDropdown(selectId, projectId, selectedSprintId = null
 }
 
 /**
+ * Markup for the create/edit document modal's Content field: a Write/Preview
+ * toggle plus live preview pane, mirroring the issue description inline
+ * editor's editor-tabs pattern (CHT-1213 — the modal previously had a bare
+ * textarea with no way to check markdown rendering before saving).
+ * @param {string} textareaId - 'doc-content' (create) or 'edit-doc-content' (edit)
+ * @param {string} [initialValue] - pre-filled content (edit modal only)
+ */
+function docContentEditorHtml(textareaId, initialValue = '') {
+  return `
+    <div class="form-group">
+      <label for="${textareaId}">Content</label>
+      <div class="editor-tabs">
+        <button type="button" class="editor-tab active" id="${textareaId}-tab-write" data-action="set-doc-editor-mode" data-target="${textareaId}" data-mode="write">Write</button>
+        <button type="button" class="editor-tab" id="${textareaId}-tab-preview" data-action="set-doc-editor-mode" data-target="${textareaId}" data-mode="preview">Preview</button>
+      </div>
+      <textarea id="${textareaId}" style="min-height: 200px">${escapeHtml(initialValue)}</textarea>
+      <div id="${textareaId}-preview" class="markdown-body editor-preview" style="display: none;"></div>
+    </div>
+  `;
+}
+
+/**
+ * Switch a document modal's content editor between write and preview modes.
+ * @param {string} textareaId - which editor (create vs. edit modal)
+ * @param {string} mode - 'write' or 'preview'
+ */
+function setDocEditorMode(textareaId, mode) {
+  const writeTab = document.getElementById(`${textareaId}-tab-write`);
+  const previewTab = document.getElementById(`${textareaId}-tab-preview`);
+  const textarea = document.getElementById(textareaId);
+  const preview = document.getElementById(`${textareaId}-preview`);
+  if (!writeTab || !previewTab || !textarea || !preview) return;
+
+  const isPreview = mode === 'preview';
+  writeTab.classList.toggle('active', !isPreview);
+  previewTab.classList.toggle('active', isPreview);
+  textarea.style.display = isPreview ? 'none' : 'block';
+  preview.style.display = isPreview ? 'block' : 'none';
+
+  if (isPreview) {
+    const value = textarea.value.trim();
+    preview.innerHTML = value ? renderMarkdown(value) : '<span class="text-muted">Nothing to preview.</span>';
+  }
+}
+
+/**
+ * Wire draft persistence for a document modal's title/content/icon fields —
+ * restore any abandoned draft on open, save on every input (CHT-1213; CHT-1041
+ * explicitly didn't cover documents). Mirrors issue-creation.js's
+ * restore-on-open/save-on-input/clear-on-success pattern.
+ * @param {string} key - 'new' for the create modal, documentId for edit
+ * @param {object} [ids] - field ids; defaults to the create modal's ids
+ */
+function wireDocumentModalDraft(key, ids = { title: 'doc-title', content: 'doc-content', icon: 'doc-icon' }) {
+  const titleInput = document.getElementById(ids.title);
+  const contentInput = document.getElementById(ids.content);
+  const iconInput = document.getElementById(ids.icon);
+
+  const draft = getDocumentDraft(key);
+  if (draft) {
+    if (draft.title && titleInput) titleInput.value = draft.title;
+    if (draft.content && contentInput) contentInput.value = draft.content;
+    if (draft.icon && iconInput) iconInput.value = draft.icon;
+  }
+
+  const saveDraft = () => {
+    setDocumentDraft(key, {
+      title: titleInput?.value || '',
+      content: contentInput?.value || '',
+      icon: iconInput?.value || '',
+    });
+  };
+  [titleInput, contentInput, iconInput].forEach(el => el?.addEventListener('input', saveDraft));
+}
+
+/**
  * Show the create document modal
  */
 export async function showCreateDocumentModal() {
@@ -1014,10 +1234,7 @@ export async function showCreateDocumentModal() {
           <option value="">Select project first</option>
         </select>
       </div>
-      <div class="form-group">
-        <label for="doc-content">Content</label>
-        <textarea id="doc-content" style="min-height: 200px"></textarea>
-      </div>
+      ${docContentEditorHtml('doc-content')}
       <div class="form-group">
         <label for="doc-icon">Icon (emoji)</label>
         <input type="text" id="doc-icon" placeholder="\u{1F4C4}" maxlength="2">
@@ -1026,6 +1243,7 @@ export async function showCreateDocumentModal() {
     </form>
   `;
   showModal();
+  wireDocumentModalDraft('new');
 
   // If a project is pre-selected, load its sprints with active sprint selected
   if (currentProjectId) {
@@ -1072,10 +1290,7 @@ export async function showCreateSprintDocumentModal(sprintId, projectId, onCreat
           <option value="">Loading sprints...</option>
         </select>
       </div>
-      <div class="form-group">
-        <label for="doc-content">Content</label>
-        <textarea id="doc-content" style="min-height: 200px"></textarea>
-      </div>
+      ${docContentEditorHtml('doc-content')}
       <div class="form-group">
         <label for="doc-icon">Icon (emoji)</label>
         <input type="text" id="doc-icon" placeholder="\u{1F4C4}" maxlength="2">
@@ -1084,6 +1299,7 @@ export async function showCreateSprintDocumentModal(sprintId, projectId, onCreat
     </form>
   `;
   showModal();
+  wireDocumentModalDraft('new');
 
   // Pre-select the sprint
   if (projectId) {
@@ -1116,6 +1332,7 @@ export async function handleCreateDocument(event) {
 
   try {
     await api.createDocument(teamId, data);
+    setDocumentDraft('new', null);
     await loadDocuments(teamId);
     closeModal();
     showToast('Document created!', 'success');
@@ -1164,10 +1381,7 @@ export async function showEditDocumentModal(documentId) {
             <option value="">${!doc.project_id ? 'Select project first' : 'None'}</option>
           </select>
         </div>
-        <div class="form-group">
-          <label for="edit-doc-content">Content</label>
-          <textarea id="edit-doc-content" style="min-height: 200px">${escapeHtml(doc.content || '')}</textarea>
-        </div>
+        ${docContentEditorHtml('edit-doc-content', doc.content || '')}
         <div class="form-group">
           <label for="edit-doc-icon">Icon (emoji)</label>
           <input type="text" id="edit-doc-icon" value="${escapeAttr(doc.icon || '')}" maxlength="2">
@@ -1176,6 +1390,7 @@ export async function showEditDocumentModal(documentId) {
       </form>
     `;
     showModal();
+    wireDocumentModalDraft(documentId, { title: 'edit-doc-title', content: 'edit-doc-content', icon: 'edit-doc-icon' });
 
     // Load sprints for current project if document has one
     if (doc.project_id) {
@@ -1188,6 +1403,17 @@ export async function showEditDocumentModal(documentId) {
 
 /**
  * Handle update document form submission
+ *
+ * NOTE (CHT-1213 doc-edit audit item 10): this sends a full snapshot with no
+ * version/updated_at precondition, so two concurrent edits silently
+ * last-write-win with no warning. Deliberately NOT fixed here — the unlanded
+ * claude/auto-versioning-docs-g0FRc branch already adds a
+ * `document_revisions.version` field plus a diff viewer, which is the real
+ * source of truth for a future "this changed since you started editing"
+ * check. A bespoke timestamp-based guard now would conflict with that
+ * branch's data model when it merges, so this is tracked as a known gap
+ * rather than patched ad hoc.
+ *
  * @param {Event} event - Form submit event
  * @param {string} documentId - Document ID to update
  */
@@ -1206,6 +1432,7 @@ export async function handleUpdateDocument(event, documentId) {
 
   try {
     await api.updateDocument(documentId, data);
+    setDocumentDraft(documentId, null);
     closeModal();
     await viewDocument(documentId);
     showToast('Document updated!', 'success');
@@ -1434,6 +1661,17 @@ registerActions({
     'view-document': (event, data) => {
         event.preventDefault();
         viewDocument(data.documentId);
+    },
+    'set-doc-editor-mode': (_event, data) => {
+        setDocEditorMode(data.target, data.mode);
+    },
+    'retry-document-comments': (_event, data) => {
+        // Simplest correct fix for the comments-fetch failure: re-run the
+        // whole detail-view load (CHT-1213). A surgical "just re-fetch
+        // comments and patch the DOM" version would also need to re-wire the
+        // form's Cmd+Enter/draft/mention listeners it just replaced — full
+        // reload gets that for free via the same path every other load takes.
+        viewDocument(data.documentId, false);
     },
     'toggle-doc-selection': (_event, data) => {
         toggleDocSelection(data.docId);
