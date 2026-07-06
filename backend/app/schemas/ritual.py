@@ -406,3 +406,21 @@ class PendingApprovalIssueResponse(BaseModel):
     project_id: str
     project_name: str
     pending_approvals: list[PendingApprovalRitualInfo]
+
+
+class LimboClearedResponse(BaseModel):
+    """Schema for force_clear_limbo's response (CHT-1223).
+
+    Same fields the handler already returned as an ad hoc dict; this just
+    documents/validates the shape (additive, no field removed or renamed).
+    """
+
+    message: str
+    next_sprint_name: str | None = None
+
+
+class TicketLimboClearedResponse(BaseModel):
+    """Schema for force_clear_ticket_limbo's response (CHT-1223)."""
+
+    message: str
+    cleared_count: int

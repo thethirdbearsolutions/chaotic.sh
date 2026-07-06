@@ -68,3 +68,22 @@ class DocumentCommentResponse(BaseModel):
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentLinkedResponse(BaseModel):
+    """Schema for link_document_to_issue's response (CHT-1223).
+
+    Documents/validates the existing ad hoc {"message": ...} shape --
+    schema only, same field, no wire change. (Standardizing this
+    link/add-label pair to 204 like their unlink/remove siblings is a
+    breaking body-shape change for any client reading `.message` today;
+    left for a follow-up per the taste-pass spec.)
+    """
+
+    message: str
+
+
+class LabelAddedResponse(BaseModel):
+    """Schema for add_label_to_document's response (CHT-1223)."""
+
+    message: str

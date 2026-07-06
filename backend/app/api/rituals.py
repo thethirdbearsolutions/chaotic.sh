@@ -19,6 +19,8 @@ from app.schemas.ritual import (
     RitualGroupResponse,
     PendingGateIssueResponse,
     PendingApprovalIssueResponse,
+    LimboClearedResponse,
+    TicketLimboClearedResponse,
 )
 from app.services.issue_service import IssueService
 from app.services.ritual_service import RitualService
@@ -287,7 +289,7 @@ async def get_issues_with_pending_approvals(
     return [PendingApprovalIssueResponse(**issue) for issue in issues]
 
 
-@router.post("/force-clear-limbo", status_code=status.HTTP_200_OK)
+@router.post("/force-clear-limbo", response_model=LimboClearedResponse, status_code=status.HTTP_200_OK)
 async def force_clear_limbo(
     project_id: str,
     current_user: CurrentUser,
@@ -329,7 +331,7 @@ async def force_clear_limbo(
     }
 
 
-@router.post("/force-clear-ticket-limbo", status_code=status.HTTP_200_OK)
+@router.post("/force-clear-ticket-limbo", response_model=TicketLimboClearedResponse, status_code=status.HTTP_200_OK)
 async def force_clear_ticket_limbo(
     issue_id: str,
     current_user: CurrentUser,

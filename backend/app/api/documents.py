@@ -9,6 +9,8 @@ from app.schemas.document import (
     DocumentCommentCreate,
     DocumentCommentUpdate,
     DocumentCommentResponse,
+    DocumentLinkedResponse,
+    LabelAddedResponse,
 )
 from app.schemas.issue import IssueResponse, LabelResponse
 from app.services.document_service import DocumentService
@@ -330,7 +332,7 @@ async def get_document_issues(document_id: str, current_user: CurrentUser):
     ]
 
 
-@router.post("/{document_id}/issues/{issue_id}", status_code=status.HTTP_201_CREATED)
+@router.post("/{document_id}/issues/{issue_id}", response_model=DocumentLinkedResponse, status_code=status.HTTP_201_CREATED)
 async def link_document_to_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
 ):
@@ -484,7 +486,7 @@ async def get_document_labels(document_id: str, current_user: CurrentUser):
     ]
 
 
-@router.post("/{document_id}/labels/{label_id}", status_code=status.HTTP_201_CREATED)
+@router.post("/{document_id}/labels/{label_id}", response_model=LabelAddedResponse, status_code=status.HTTP_201_CREATED)
 async def add_label_to_document(
     document_id: str, label_id: str, current_user: CurrentUser
 ):
