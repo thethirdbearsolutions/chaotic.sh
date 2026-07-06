@@ -20,6 +20,7 @@ import {
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
 import { getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // ========================================
 // Rituals top-level view
@@ -32,6 +33,12 @@ subscribe((key) => {
     loadRitualsForProject();
 });
 
+// Monotonic request id — lets loadRitualsForProject() drop a completion from
+// a superseded request (rapid project switching via the subscriber above, or
+// a double-clicked Retry) instead of painting a stale error state over fresh
+// data (CHT-1226 PR #212 review finding 1; same pattern as teams.js's loaders).
+let loadRitualsRequestId = 0;
+
 /**
  * Load rituals for the currently selected project.
  */
@@ -39,23 +46,56 @@ async function loadRitualsForProject() {
     const projectId = getCurrentProject();
     const container = document.getElementById('rituals-content');
 
+    const requestId = ++loadRitualsRequestId;
+
     if (!projectId) {
         const tabs = document.getElementById('rituals-tabs');
         if (tabs) tabs.classList.add('hidden');
-        if (container) container.innerHTML = '<div class="empty-state">Select a project to view and manage rituals.</div>';
+        // CHT-1226: was a raw icon-less div, missed by CHT-1169.
+        if (container) container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.projects,
+            heading: 'Select a project',
+            description: 'Choose a project to view and manage its rituals',
+        });
         return;
     }
 
     // Set the project context so create/edit/delete functions work
     setCurrentSettingsProjectId(projectId);
 
-    if (container) container.innerHTML = '<div class="loading">Loading rituals...</div>';
+    // CHT-1226: loading skeleton, matching epics.js/board.js's pattern —
+    // was plain 'Loading rituals...' text.
+    if (container) container.innerHTML = Array(3).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <div class="skeleton skeleton-badge"></div>
+                    <div class="skeleton skeleton-badge" style="width: 100px"></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 
-    try {
-        await loadProjectSettingsRituals();
-        // renderRitualsView() is called via the _onRitualsChanged callback
-    } catch (e) {
-        if (container) container.innerHTML = `<div class="empty-state">Error loading rituals: ${escapeHtml(e.message)}</div>`;
+    // loadProjectSettingsRituals() swallows API failures internally (toast +
+    // return false, no rethrow) — so failure is detected via the return
+    // value, not try/catch. Without this check the error branch was dead
+    // code and a failed fetch left the skeleton up forever (CHT-1226 PR #212
+    // review). On success, rendering happens via the _onRitualsChanged
+    // callback inside the call.
+    const ok = await loadProjectSettingsRituals();
+    if (requestId !== loadRitualsRequestId) return; // a newer loadRitualsForProject() has since started — drop this stale completion
+    if (!ok && container) {
+        // CHT-1226: was a raw div exposing the raw exception message
+        // directly, unlike every other list view post-PR#200. The toast is
+        // already fired inside loadProjectSettingsRituals().
+        container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.rituals,
+            heading: 'Failed to load rituals',
+            description: 'Check your connection and try again',
+            cta: { label: 'Retry', action: 'retry-load-rituals' },
+            variant: 'error',
+        });
     }
 }
 
@@ -320,4 +360,5 @@ registerActions({
     'attest-ticket-ritual': (_event, data) => {
         attestTicketRitual(data.ritualId, data.issueId);
     },
+    'retry-load-rituals': () => loadRitualsForProject(),
 });

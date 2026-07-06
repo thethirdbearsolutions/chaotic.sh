@@ -60,7 +60,14 @@ export async function loadEpics() {
     try {
         if (!getCurrentTeam()?.id) {
             currentEpics = [];
-            listEl.innerHTML = '<div class="empty-state">Select a team to view epics.</div>';
+            // CHT-1226: this branch and the catch below still skipped
+            // renderEmptyState even though the no-epics-found branch two
+            // lines down already uses it correctly.
+            listEl.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.projects,
+                heading: 'Select a team',
+                description: 'Choose a team to view its epics',
+            });
             return;
         }
 
@@ -104,7 +111,15 @@ export async function loadEpics() {
         renderEpics(epicsWithProgress, listEl);
     } catch (e) {
         if (requestId !== loadEpicsRequestId) return;
-        listEl.innerHTML = `<div class="empty-state">Failed to load epics: ${escapeHtml(e.message || String(e))}</div>`;
+        // CHT-1226: was a raw div exposing the raw exception message.
+        listEl.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.epics,
+            heading: 'Failed to load epics',
+            description: 'Check your connection and try again',
+            cta: { label: 'Retry', action: 'retry-load-epics' },
+            variant: 'error',
+        });
+        showApiError('load epics', e);
     }
 }
 

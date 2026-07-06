@@ -10,6 +10,7 @@ import {
   toggleUserDropdown,
   loadTeamMembersQuiet,
   loadTeamMembers,
+  loadTeamAgents,
   loadTeamInvitations,
   loadLabels,
   showInviteModal,
@@ -304,6 +305,116 @@ describe('loadTeamMembers', () => {
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).toContain('Test User');
   });
+
+  // CHT-1226: none of the three team lists showed a loading state before —
+  // the DOM just sat at whatever it last rendered while the fetch was in flight.
+  it('shows a loading skeleton while fetching', async () => {
+    let capturedDuringLoad = null;
+    api.getTeamMembers.mockImplementation(async () => {
+      capturedDuringLoad = document.getElementById('team-members-list').innerHTML;
+      return [];
+    });
+    await loadTeamMembers();
+    expect(capturedDuringLoad).toContain('skeleton-list-item');
+  });
+
+  // CHT-1226: was showApiError()-only (a toast) — the list itself was left
+  // blank/stale with zero in-page indication anything went wrong.
+  it('shows a standardized error state with retry on fetch failure', async () => {
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).toContain("Couldn't load members");
+    expect(list.innerHTML).toContain('empty-state-error');
+    expect(list.innerHTML).toContain('data-action="retry-load-team-members"');
+    expect(showApiError).toHaveBeenCalledWith('load team members', expect.any(Error));
+  });
+
+  it('wires the retry-load-team-members action to re-run loadTeamMembers()', async () => {
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+
+    api.getTeamMembers.mockResolvedValue([]);
+    await teamsActions['retry-load-team-members']();
+
+    expect(api.getTeamMembers).toHaveBeenCalledTimes(2);
+  });
+
+  // CHT-1226 PR #212 review finding 2: the permission gate must fail
+  // closed. The Invite button is hidden by default in the template and only
+  // revealed on a confirmed admin role -- a members-fetch failure must
+  // (re-)hide it, not leave whatever visibility state it last had.
+  it('hides the Invite Member button when the members fetch fails', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn"></button>'; // worst case: visible
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+
+    await loadTeamMembers();
+
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+  });
+
+  it('re-hides the Invite Member button if a refetch fails after a successful admin load', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn" class="hidden"></button>';
+    api.getTeamMembers.mockResolvedValue([
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
+    ]);
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(false);
+
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('loadTeamAgents', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="team-agents-list"></div>';
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+  });
+
+  it('fetches and renders agents', async () => {
+    const agents = [{ id: 'agent-1', name: 'Bot', parent_user_name: 'Alice' }];
+    api.getTeamAgents.mockResolvedValue(agents);
+    await loadTeamAgents();
+    const list = document.getElementById('team-agents-list');
+    expect(list.innerHTML).toContain('Bot');
+  });
+
+  it('shows a loading skeleton while fetching', async () => {
+    let capturedDuringLoad = null;
+    api.getTeamAgents.mockImplementation(async () => {
+      capturedDuringLoad = document.getElementById('team-agents-list').innerHTML;
+      return [];
+    });
+    await loadTeamAgents();
+    expect(capturedDuringLoad).toContain('skeleton-list-item');
+  });
+
+  it('shows a standardized error state with retry on fetch failure', async () => {
+    api.getTeamAgents.mockRejectedValue(new Error('network down'));
+    await loadTeamAgents();
+    const list = document.getElementById('team-agents-list');
+    expect(list.innerHTML).toContain("Couldn't load agents");
+    expect(list.innerHTML).toContain('empty-state-error');
+    expect(list.innerHTML).toContain('data-action="retry-load-team-agents"');
+    expect(showApiError).toHaveBeenCalledWith('load team agents', expect.any(Error));
+  });
+
+  it('wires the retry-load-team-agents action to re-run loadTeamAgents()', async () => {
+    api.getTeamAgents.mockRejectedValue(new Error('network down'));
+    await loadTeamAgents();
+
+    api.getTeamAgents.mockResolvedValue([]);
+    await teamsActions['retry-load-team-agents']();
+
+    expect(api.getTeamAgents).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('renderTeamMembers', () => {
@@ -329,8 +440,9 @@ describe('renderTeamMembers', () => {
     setCurrentTeam(null);
   });
 
-  it('shows remove button for non-owner members who are not current user', async () => {
+  it('shows remove button for non-owner members who are not current user, when the viewer is an admin', async () => {
     const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
       { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
@@ -345,6 +457,7 @@ describe('renderTeamMembers', () => {
 
   it('does not show remove button for owner', async () => {
     const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
       { id: 'user-1', user_id: 'other-user', user_name: 'Owner', role: 'owner' },
     ];
     api.getTeamMembers.mockResolvedValue(members);
@@ -354,6 +467,63 @@ describe('renderTeamMembers', () => {
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).not.toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  // CHT-1226: renderTeamMembers() only hid Remove for the viewer's own row
+  // or an owner row -- it had no notion of the viewer's own role, so any
+  // 'member'-role user saw live Remove buttons that would always 403.
+  it('hides remove button for every other member when the viewer is not an admin', async () => {
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'member' },
+      { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).not.toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  it('shows remove button when the viewer is the owner', async () => {
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'owner' },
+      { id: 'user-1', user_id: 'other-user', user_name: 'Other', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).toContain('Remove');
+    setCurrentTeam(null);
+  });
+
+  it('hides the Invite Member button for non-admin viewers', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn"></button>';
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'member' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+    setCurrentTeam(null);
+  });
+
+  it('shows the Invite Member button for admin/owner viewers', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn" class="hidden"></button>';
+    const members = [
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
+    ];
+    api.getTeamMembers.mockResolvedValue(members);
+    setCurrentTeam({ id: 'team-1' });
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(false);
     setCurrentTeam(null);
   });
 });
@@ -412,6 +582,37 @@ describe('loadTeamInvitations', () => {
     await loadTeamInvitations();
     const list = document.getElementById('team-invitations-list');
     expect(list.innerHTML).toContain('test@example.com');
+  });
+
+  // CHT-1226 PR #212 review finding 3: Cancel gets the same admin gate as
+  // Remove/Invite. Usually masked by the list endpoint 403ing non-admins,
+  // but the gate must not rely on that backend policy (and covers a demoted
+  // admin whose stale invitations list is still on screen).
+  it('shows the Cancel button when the viewer is an admin', async () => {
+    setCurrentUser({ id: 'current-user' });
+    setMembers([{ id: 'self', user_id: 'current-user', role: 'admin' }]);
+    api.getTeamInvitations.mockResolvedValue([
+      { id: 'inv-1', email: 'test@example.com', role: 'member', expires_at: '2024-12-31' },
+    ]);
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('data-action="delete-invitation"');
+    setMembers([]);
+    setCurrentUser(null);
+  });
+
+  it('hides the Cancel button when the viewer is not an admin', async () => {
+    setCurrentUser({ id: 'current-user' });
+    setMembers([{ id: 'self', user_id: 'current-user', role: 'member' }]);
+    api.getTeamInvitations.mockResolvedValue([
+      { id: 'inv-1', email: 'test@example.com', role: 'member', expires_at: '2024-12-31' },
+    ]);
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('test@example.com');
+    expect(list.innerHTML).not.toContain('data-action="delete-invitation"');
+    setMembers([]);
+    setCurrentUser(null);
   });
 
   it('shows empty state when no invitations', async () => {

@@ -42,6 +42,7 @@ import { setState, getSelectedBoardIndex, setSelectedBoardIndex, getDetailNavCon
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
+import { getProjects } from './projects.js';
 import {
     BOARD_STATUSES,
     getBoardIssues,
@@ -51,7 +52,9 @@ import {
     handleDragStart,
     handleDragEnd,
     handleDrop,
-    reorderBoardIssues,
+    handleCardDrop,
+    handleDragOver,
+    handleCardDragOver,
 } from './board.js';
 
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
@@ -140,6 +143,30 @@ describe('board', () => {
             api.getIssues.mockResolvedValue([]);
             await boardActions['retry-load-board']();
             expect(api.getIssues).toHaveBeenCalledTimes(2);
+        });
+
+        // CHT-1226: board.js didn't distinguish "no project selected" from
+        // "zero projects exist" the way issues-view.js does.
+        it('shows a "no projects yet" CTA when no project is selected and the team has zero projects', async () => {
+            setState('currentProject', null);
+            getProjects.mockReturnValueOnce([]);
+
+            await loadBoard();
+
+            const board = document.getElementById('kanban-board');
+            expect(board.innerHTML).toContain('No projects yet');
+            expect(board.innerHTML).toContain('data-action="showCreateProjectModal"');
+        });
+
+        it('shows the generic "select a project" state when projects exist but none is selected', async () => {
+            setState('currentProject', null);
+            getProjects.mockReturnValueOnce([{ id: 'p1' }, { id: 'p2' }]);
+
+            await loadBoard();
+
+            const board = document.getElementById('kanban-board');
+            expect(board.innerHTML).toContain('Select a project');
+            expect(board.innerHTML).not.toContain('No projects yet');
         });
 
         // CHT-1211 item 2: issue-detail prev/next should page through the
@@ -446,41 +473,87 @@ describe('board', () => {
         });
     });
 
-    describe('reorderBoardIssues', () => {
-        it('moves issue to end of column when no target', () => {
+    // CHT-1226: intra-column drag-to-reorder was cosmetic only (no
+    // persisted order field on Issue) -- same-column drops are now
+    // disabled/no-ops instead of pretending to reorder. reorderBoardIssues()
+    // itself was removed along with the affordance.
+    describe('same-column drag is disabled (CHT-1226)', () => {
+        beforeEach(() => {
             setBoardIssues([
-                { id: '1', status: 'todo' },
-                { id: '2', status: 'todo' },
-                { id: '3', status: 'done' },
+                { id: '1', title: 'Test', status: 'todo', identifier: 'TEST-1', priority: 'medium' },
+                { id: '2', title: 'Other', status: 'todo', identifier: 'TEST-2', priority: 'medium' },
             ]);
-
-            // Move issue 1 to 'done' status (it was already set as done externally before calling)
-            const issues = getBoardIssues();
-            issues.find(i => i.id === '1').status = 'done';
-            setBoardIssues(issues);
-
-            reorderBoardIssues('done', '1');
-
-            const doneIssues = getBoardIssues().filter(i => i.status === 'done');
-            expect(doneIssues.map(i => i.id)).toEqual(['3', '1']);
         });
 
-        it('inserts issue before target when target specified', () => {
-            setBoardIssues([
-                { id: '1', status: 'done' },
-                { id: '2', status: 'done' },
-                { id: '3', status: 'todo' },
-            ]);
+        it('handleDrop is a no-op when dropped on its own column', async () => {
+            const mockTarget = {
+                dataset: { status: 'todo' },
+                classList: { remove: vi.fn() },
+            };
+            const mockEvent = {
+                preventDefault: vi.fn(),
+                dataTransfer: { getData: vi.fn(() => '1') },
+            };
 
-            // Move issue 3 to 'done' before issue 2
-            const issues = getBoardIssues();
-            issues.find(i => i.id === '3').status = 'done';
-            setBoardIssues(issues);
+            await handleDrop(mockEvent, mockTarget);
 
-            reorderBoardIssues('done', '3', '2');
+            expect(api.updateIssue).not.toHaveBeenCalled();
+        });
 
-            const doneIssues = getBoardIssues().filter(i => i.status === 'done');
-            expect(doneIssues.map(i => i.id)).toEqual(['1', '3', '2']);
+        it('handleCardDrop is a no-op when dropped on a card in the same column', async () => {
+            handleDragStart({ dataTransfer: { setData: vi.fn() } }, { dataset: { id: '1' }, classList: { add: vi.fn() } });
+            const mockTarget = {
+                dataset: { id: '2' },
+                classList: { remove: vi.fn() },
+                closest: () => ({ dataset: { status: 'todo' } }),
+            };
+            const mockEvent = { preventDefault: vi.fn(), dataTransfer: { getData: vi.fn(() => '1') } };
+
+            await handleCardDrop(mockEvent, mockTarget);
+
+            expect(api.updateIssue).not.toHaveBeenCalled();
+        });
+
+        it('handleCardDrop still persists a cross-column drop-on-card', async () => {
+            api.updateIssue.mockResolvedValue({ id: '1', status: 'done' });
+            handleDragStart({ dataTransfer: { setData: vi.fn() } }, { dataset: { id: '1' }, classList: { add: vi.fn() } });
+            const mockTarget = {
+                dataset: { id: '2' },
+                classList: { remove: vi.fn() },
+                closest: () => ({ dataset: { status: 'done' } }),
+            };
+            const mockEvent = { preventDefault: vi.fn(), dataTransfer: { getData: vi.fn(() => '1') } };
+
+            await handleCardDrop(mockEvent, mockTarget);
+
+            expect(api.updateIssue).toHaveBeenCalledWith('1', { status: 'done' });
+        });
+
+        it('handleDragOver withholds the drag-over affordance for a same-column target', () => {
+            handleDragStart({ dataTransfer: { setData: vi.fn() } }, { dataset: { id: '1' }, classList: { add: vi.fn() } });
+            const mockTarget = { dataset: { status: 'todo' }, classList: { add: vi.fn() } };
+
+            handleDragOver({ preventDefault: vi.fn() }, mockTarget);
+
+            expect(mockTarget.classList.add).not.toHaveBeenCalledWith('drag-over');
+        });
+
+        it('handleDragOver shows the drag-over affordance for a different column', () => {
+            handleDragStart({ dataTransfer: { setData: vi.fn() } }, { dataset: { id: '1' }, classList: { add: vi.fn() } });
+            const mockTarget = { dataset: { status: 'done' }, classList: { add: vi.fn() } };
+
+            handleDragOver({ preventDefault: vi.fn() }, mockTarget);
+
+            expect(mockTarget.classList.add).toHaveBeenCalledWith('drag-over');
+        });
+
+        it('handleCardDragOver withholds the drag-over affordance for a card in the same column', () => {
+            handleDragStart({ dataTransfer: { setData: vi.fn() } }, { dataset: { id: '1' }, classList: { add: vi.fn() } });
+            const mockTarget = { dataset: { id: '2' }, classList: { add: vi.fn() } };
+
+            handleCardDragOver({ preventDefault: vi.fn() }, mockTarget);
+
+            expect(mockTarget.classList.add).not.toHaveBeenCalledWith('drag-over');
         });
     });
 

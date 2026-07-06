@@ -12,6 +12,7 @@ import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
+import { loadEpics } from './epics.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
@@ -124,6 +125,10 @@ function handleIssueCreated(data) {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
+    } else if (getCurrentView() === 'epics') {
+        // CHT-1226: a new sub-issue under a visible epic used to leave its
+        // progress bar stale until the user navigated away and back.
+        loadEpics();
     }
 
     // Refresh issue detail if a child issue was created
@@ -159,6 +164,10 @@ function handleIssueUpdated(data) {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
+    } else if (getCurrentView() === 'epics') {
+        // CHT-1226: a sub-issue closing/reopening under a visible epic
+        // (progress bar is done/total sub-issues) used to go stale.
+        loadEpics();
     } else if (getCurrentView() === 'issue-detail') {
         // Was gated on detailContent.dataset.issueId, an attribute production
         // code never sets — remote updates to the open issue (including a
@@ -198,6 +207,10 @@ function handleIssueDeleted(data) {
         renderBoard();
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
+    } else if (getCurrentView() === 'epics') {
+        // CHT-1226: a sub-issue being deleted under a visible epic used to
+        // leave its progress bar stale (denominator never shrank).
+        loadEpics();
     }
     showToast(`Issue ${data.identifier} deleted`, 'info');
 

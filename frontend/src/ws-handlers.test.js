@@ -79,6 +79,11 @@ vi.mock('./documents.js', () => ({
     handleRemoteDocumentDeleted: vi.fn(),
 }));
 
+// Mock epics.js (CHT-1226)
+vi.mock('./epics.js', () => ({
+    loadEpics: vi.fn(),
+}));
+
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadDashboardActivity } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
@@ -87,6 +92,7 @@ import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSpri
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
+import { loadEpics } from './epics.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch, resetWsState } from './ws.js';
@@ -156,6 +162,14 @@ describe('ws-handlers.js', () => {
             expect(loadSprints).toHaveBeenCalled();
         });
 
+        // CHT-1226: epics view had no case at all — a new sub-issue under a
+        // visible epic left its progress bar stale until navigating away and back.
+        it('reloads epics on epics view', () => {
+            getCurrentView.mockReturnValue('epics');
+            dispatch({ type: 'created', entity: 'issue', data: newIssue });
+            expect(loadEpics).toHaveBeenCalled();
+        });
+
         it('refreshes sprint detail on sprints view (CHT-325)', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
@@ -209,6 +223,14 @@ describe('ws-handlers.js', () => {
             getCurrentSprintDetail.mockReturnValue(null);
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(loadSprints).toHaveBeenCalled();
+        });
+
+        // CHT-1226: a sub-issue's status changing under a visible epic
+        // used to leave its progress bar stale.
+        it('reloads epics on epics view', () => {
+            getCurrentView.mockReturnValue('epics');
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(loadEpics).toHaveBeenCalled();
         });
 
         it('refreshes sprint detail on sprints view (CHT-325)', () => {
@@ -310,6 +332,16 @@ describe('ws-handlers.js', () => {
             getCurrentSprintDetail.mockReturnValue(null);
             dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
             expect(loadSprints).toHaveBeenCalled();
+        });
+
+        // CHT-1226: a sub-issue being deleted under a visible epic used to
+        // leave its progress bar's denominator stale.
+        it('reloads epics on epics view', () => {
+            getCurrentView.mockReturnValue('epics');
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            getMyIssues.mockReturnValue([]);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(loadEpics).toHaveBeenCalled();
         });
 
         it('refreshes sprint detail on sprints view (CHT-325)', () => {

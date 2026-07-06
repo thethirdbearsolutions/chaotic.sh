@@ -673,10 +673,15 @@ export async function saveProjectSettingsRules() {
 let projectRituals = [];
 
 /**
- * Load rituals for the current project settings page
+ * Load rituals for the current project settings page.
+ *
+ * @returns {Promise<boolean>} true on success — the catch below swallows
+ *   API failures (toast only, no rethrow), so callers that need to render
+ *   their own in-page error state (rituals-view.js, CHT-1226 PR #212
+ *   review) must check the return value rather than try/catch.
  */
 export async function loadProjectSettingsRituals() {
-  if (!currentSettingsProjectId) return;
+  if (!currentSettingsProjectId) return false;
 
   try {
     projectRituals = await api.getRituals(currentSettingsProjectId);
@@ -685,8 +690,10 @@ export async function loadProjectSettingsRituals() {
     if (typeof _onRitualsChangedCallback === 'function') {
       _onRitualsChangedCallback();
     }
+    return true;
   } catch (e) {
     showApiError('load rituals', e);
+    return false;
   }
 }
 
