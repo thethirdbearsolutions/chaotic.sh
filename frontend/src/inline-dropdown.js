@@ -532,9 +532,11 @@ export function renderCreateIssueLabelDropdown(dropdown, { failed = false } = {}
         ${labels.length === 0 ? (
             // CHT-1224: a fetch failure used to fall through to this same
             // "No labels available" markup — identical to a team that has
-            // genuinely never created a label. Render a distinct message.
+            // genuinely never created a label. Render a distinct message,
+            // error-tinted (PR #211 review finding 3) rather than just
+            // differently worded.
             failed
-                ? '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>Couldn\'t load labels</span></div>'
+                ? '<div class="dropdown-option dropdown-option-error" style="pointer-events: none"><span>Couldn\'t load labels</span></div>'
                 : '<div class="dropdown-option" style="opacity: 0.5; pointer-events: none"><span>No labels available</span></div>'
         ) : ''}
         ${labels.map(label => {

@@ -1907,6 +1907,17 @@ select:focus-visible {
     color: var(--error-color);
 }
 
+/* CHT-1224 (PR #211 review finding 3): error-tinted inline failure markers
+   for the small non-empty-state surfaces — dropdown options and sidebar
+   slots — where a failed lookup must not look like genuinely-empty data. */
+.dropdown-option-error {
+    color: var(--error-color);
+}
+
+.sidebar-load-error {
+    color: var(--error-color);
+}
+
 /* Quick create bar */
 .quick-create {
     display: flex;

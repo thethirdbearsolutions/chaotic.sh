@@ -544,6 +544,14 @@ describe('inline-dropdown', () => {
             renderCreateIssueLabelDropdown(dropdown, { failed: true });
             expect(dropdown.innerHTML).toContain("Couldn't load labels");
             expect(dropdown.innerHTML).not.toContain('No labels available');
+            // PR #211 review finding 3: error-tinted, not just reworded
+            expect(dropdown.innerHTML).toContain('dropdown-option-error');
+        });
+
+        it('does not error-tint the genuinely-empty case', () => {
+            getLabels.mockReturnValue([]);
+            renderCreateIssueLabelDropdown(dropdown);
+            expect(dropdown.innerHTML).not.toContain('dropdown-option-error');
         });
 
         it('renders the labels list normally when labels exist, even if failed is true', () => {
