@@ -33,6 +33,7 @@ import {
     debounceSearch,
     filterIssues,
     updateGroupBy,
+    showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
@@ -183,6 +184,11 @@ registerViews({
         loadGateApprovals();
     },
     'issues': () => {
+        // Clear stale rows synchronously, before the async label/sprint
+        // filter population below — otherwise the previous project/view's
+        // #issues-list content stays visible until loadIssues() itself gets
+        // around to calling this, several awaits later (CHT-1211 item 8).
+        showIssuesLoadingSkeleton();
         // Load filters from URL if present
         loadFiltersFromUrl();
         // Initialize filter bar chips and badge

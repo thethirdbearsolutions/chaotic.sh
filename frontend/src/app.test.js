@@ -85,6 +85,7 @@ vi.mock('./issues-view.js', () => ({
     debounceSearch: vi.fn(),
     filterIssues: vi.fn(),
     updateGroupBy: vi.fn(),
+    showIssuesLoadingSkeleton: vi.fn(),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
 vi.mock('./epics.js', () => ({ showCreateEpicModal: vi.fn(), loadEpics: vi.fn() }));
@@ -193,7 +194,7 @@ vi.mock('./utils.js', () => ({
 
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
-import { initFilterBar, loadIssues, loadFiltersFromUrl } from './issues-view.js';
+import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showIssuesLoadingSkeleton } from './issues-view.js';
 import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
@@ -276,6 +277,21 @@ describe('app.js view registrations', () => {
         expect(loadFiltersFromUrl).toHaveBeenCalled();
         expect(initFilterBar).toHaveBeenCalled();
         await vi.waitFor(() => expect(loadIssues).toHaveBeenCalled());
+    });
+
+    // CHT-1211 item 8: showIssuesLoadingSkeleton() used to only run inside
+    // loadIssues(), chained after populateLabelFilter()/updateSprintFilter()
+    // resolve — leaving the previous project/view's stale rows visible in
+    // #issues-list until then. It must run synchronously on view entry.
+    it('clears stale issue rows synchronously, before label/sprint filters resolve', () => {
+        // Never-resolving promises prove the skeleton call isn't waiting on
+        // these — if it were, this assertion would never see it happen.
+        populateLabelFilter.mockReturnValueOnce(new Promise(() => {}));
+        updateSprintFilter.mockReturnValueOnce(new Promise(() => {}));
+
+        registeredViews['issues']();
+
+        expect(showIssuesLoadingSkeleton).toHaveBeenCalled();
     });
 
     it('team view loads members, agents, and invitations', () => {
