@@ -25,6 +25,11 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./router.js', () => ({
     navigateTo: vi.fn(),
+    saveScrollPosition: vi.fn(),
+}));
+
+vi.mock('./epics.js', () => ({
+    getCurrentEpics: vi.fn(() => []),
 }));
 
 vi.mock('./projects.js', () => ({
@@ -68,13 +73,18 @@ vi.mock('./issue-detail-view.js', () => ({
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
 import { showApiError } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
+import { getCurrentEpics } from './epics.js';
+import { registerActions } from './event-delegation.js';
 import {
     viewEpic,
     viewEpicByPath,
 } from './epic-detail-view.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const epicDetailActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('epic-detail-view', () => {
     const makeEpic = (overrides = {}) => ({
@@ -360,6 +370,87 @@ describe('epic-detail-view', () => {
 
             const content = document.getElementById('epic-detail-content').innerHTML;
             expect(content).not.toContain('issue-detail-description');
+        });
+
+        // CHT-1211 item 1: scroll position must be saved before pushState
+        describe('scroll position', () => {
+            it('saves scroll position when pushHistory is true (default)', async () => {
+                await viewEpic('epic-1');
+                expect(saveScrollPosition).toHaveBeenCalled();
+            });
+
+            it('does not save scroll position when pushHistory=false', async () => {
+                await viewEpic('epic-1', false);
+                expect(saveScrollPosition).not.toHaveBeenCalled();
+            });
+
+            // CHT-1211 review #4: must run synchronously before the first
+            // await — proven by it firing even when the fetch rejects.
+            it('saves scroll position before the fetch (still saved on fetch failure)', async () => {
+                api.getIssue.mockRejectedValue(new Error('slow network died'));
+                await viewEpic('epic-1');
+                expect(saveScrollPosition).toHaveBeenCalled();
+            });
+        });
+
+        // CHT-1211 item 6: epic detail lacked prev/next parity with issue detail
+        describe('prev/next navigation', () => {
+            const epicList = [
+                { id: 'epic-a', identifier: 'CHT-90', title: 'First' },
+                { id: 'epic-1', identifier: 'CHT-100', title: 'Middle' },
+                { id: 'epic-c', identifier: 'CHT-110', title: 'Last' },
+            ];
+
+            it('renders prev/next buttons when epic is in the last-loaded list', async () => {
+                getCurrentEpics.mockReturnValue(epicList);
+                await viewEpic('epic-1');
+
+                const content = document.getElementById('epic-detail-content').innerHTML;
+                expect(content).toContain('issue-nav-arrows');
+                expect(content).toContain('2 / 3');
+            });
+
+            it('hides nav arrows when epic is not in the list', async () => {
+                getCurrentEpics.mockReturnValue([]);
+                await viewEpic('epic-1');
+
+                const content = document.getElementById('epic-detail-content').innerHTML;
+                expect(content).not.toContain('issue-nav-arrows');
+            });
+
+            it('disables prev button on first epic', async () => {
+                getCurrentEpics.mockReturnValue(epicList);
+                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-a', identifier: 'CHT-90' }));
+                await viewEpic('epic-a');
+
+                const content = document.getElementById('epic-detail-content').innerHTML;
+                const prevMatch = content.match(/<button[^>]*title="Previous epic"[^>]*>/);
+                expect(prevMatch[0]).toContain('disabled');
+            });
+
+            it('disables next button on last epic', async () => {
+                getCurrentEpics.mockReturnValue(epicList);
+                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-c', identifier: 'CHT-110' }));
+                await viewEpic('epic-c');
+
+                const content = document.getElementById('epic-detail-content').innerHTML;
+                const nextMatch = content.match(/<button[^>]*title="Next epic"[^>]*>/);
+                expect(nextMatch[0]).toContain('disabled');
+            });
+
+            it('next button navigates to the next epic in the list', async () => {
+                getCurrentEpics.mockReturnValue(epicList);
+                await viewEpic('epic-1');
+                api.getIssue.mockClear();
+                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-c', identifier: 'CHT-110' }));
+
+                // event-delegation.js is mocked (no real click routing) — invoke
+                // the registered handler directly, like issues-view.test.js does.
+                epicDetailActions['navigate-epic']({}, { epicId: 'epic-c' });
+                await new Promise(r => setTimeout(r, 0));
+
+                expect(api.getIssue).toHaveBeenCalledWith('epic-c');
+            });
         });
     });
 

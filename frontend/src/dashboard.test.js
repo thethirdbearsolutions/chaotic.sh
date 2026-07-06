@@ -35,6 +35,7 @@ vi.mock('./state.js', () => ({
     getCurrentProject: vi.fn(() => null),
     getCurrentView: vi.fn(() => 'dashboard'),
     subscribe: vi.fn(),
+    setDetailNavContext: vi.fn(),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -57,7 +58,7 @@ vi.mock('./documents.js', () => ({
 
 import { api } from './api.js';
 import { showApiError } from './ui.js';
-import { getCurrentUser, getCurrentTeam, getCurrentProject } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, setDetailNavContext } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import {
@@ -120,6 +121,61 @@ describe('dashboard module', () => {
                 limit: 1000,
             });
             expect(getMyIssues()).toEqual(mockIssues);
+        });
+
+        // CHT-1211 item 2: issue-detail prev/next should page through the
+        // Dashboard's own list when opened from My Issues, not the stale/
+        // empty Issues-view-only global issues array.
+        it('sets the detail nav context to the my-issues list', async () => {
+            const mockIssues = [
+                { id: 'issue-1', title: 'Test Issue', status: 'todo' },
+            ];
+            api.getTeamIssues.mockResolvedValue(mockIssues);
+            getCurrentView.mockReturnValue('my-issues');
+
+            await loadMyIssues();
+
+            expect(setDetailNavContext).toHaveBeenCalledWith(mockIssues);
+        });
+
+        // CHT-1211 review #2: a slow loadMyIssues() response landing after
+        // the user navigated to another view must not clobber that view's
+        // fresher context.
+        it('does not write the detail nav context when the user has navigated away', async () => {
+            api.getTeamIssues.mockResolvedValue([{ id: 'issue-1' }]);
+            getCurrentView.mockReturnValue('issues'); // no longer on the Dashboard
+
+            await loadMyIssues();
+
+            expect(setDetailNavContext).not.toHaveBeenCalled();
+            // Dashboard's own local state still updates
+            expect(getMyIssues()).toEqual([{ id: 'issue-1' }]);
+        });
+
+        // CHT-1211 review #3: same monotonic-request-id protection as
+        // loadIssues()/loadBoard() — a stale response from a superseded
+        // loadMyIssues() call must be dropped.
+        describe('request sequencing (out-of-order responses)', () => {
+            it('drops a slow response from an earlier filter change', async () => {
+                let resolveFirst;
+                const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+                const staleIssues = [{ id: 'stale' }];
+                const freshIssues = [{ id: 'fresh' }];
+
+                api.getTeamIssues.mockImplementationOnce(() => firstRequest);
+                const firstLoad = loadMyIssues(); // in flight, slow
+
+                api.getTeamIssues.mockImplementationOnce(() => Promise.resolve(freshIssues));
+                await loadMyIssues(); // resolves first (faster)
+
+                expect(getMyIssues()).toEqual(freshIssues);
+
+                // The slow first request now resolves — must be dropped
+                resolveFirst(staleIssues);
+                await firstLoad;
+
+                expect(getMyIssues()).toEqual(freshIssues);
+            });
         });
 
         it('applies status filter from dropdown', async () => {

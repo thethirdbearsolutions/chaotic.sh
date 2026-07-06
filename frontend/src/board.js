@@ -8,7 +8,7 @@ import { showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
-import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex } from './state.js';
+import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex, setDetailNavContext } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Board status configuration
@@ -23,6 +23,10 @@ export const BOARD_STATUSES = [
 // Module state
 let boardIssues = [];
 let draggingIssueId = null;
+// Monotonic request id — lets loadBoard() drop a response from a superseded
+// request (rapid project switches) instead of overwriting newer data with
+// stale data (CHT-1211 item 7).
+let loadBoardRequestId = 0;
 
 /**
  * Get current board issues
@@ -67,6 +71,11 @@ export async function loadBoard() {
     // front, mirroring loadIssues()'s setSelectedIssueIndex(-1).
     setSelectedBoardIndex(-1);
 
+    // Request-sequencing guard (CHT-1211 item 7): capture this call's id so
+    // a response from an earlier, superseded loadBoard() (rapid project
+    // switching) can be detected and dropped below.
+    const requestId = ++loadBoardRequestId;
+
     const projectId = getCurrentProject();
     if (!projectId) {
         const board = document.getElementById('kanban-board');
@@ -94,9 +103,23 @@ export async function loadBoard() {
     }
 
     try {
-        boardIssues = await api.getIssues({ project_id: projectId });
+        const issues = await api.getIssues({ project_id: projectId });
+        if (requestId !== loadBoardRequestId) return; // a newer loadBoard() has since started — drop this stale response
+
+        boardIssues = issues;
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
+        // opened from the Board should page through the board's own list,
+        // not the Issues-view-only global issues array. The request id only
+        // orders loadBoard() against itself — also require that Board is
+        // still the current view at response time, or a slow response
+        // landing after the user navigated to another view would clobber
+        // that view's fresher context (CHT-1211 review #2).
+        if (getCurrentView() === 'board') {
+            setDetailNavContext(boardIssues);
+        }
         renderBoard();
     } catch (e) {
+        if (requestId !== loadBoardRequestId) return;
         if (board) board.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.issues, heading: 'Failed to load board', description: 'Check your connection and try again' });
         showApiError('load board', e);
     }
