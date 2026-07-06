@@ -10,6 +10,7 @@ import {
   toggleUserDropdown,
   loadTeamMembersQuiet,
   loadTeamMembers,
+  loadTeamAgents,
   loadTeamInvitations,
   loadLabels,
   showInviteModal,
@@ -303,6 +304,90 @@ describe('loadTeamMembers', () => {
     await loadTeamMembers();
     const list = document.getElementById('team-members-list');
     expect(list.innerHTML).toContain('Test User');
+  });
+
+  // CHT-1226: none of the three team lists showed a loading state before —
+  // the DOM just sat at whatever it last rendered while the fetch was in flight.
+  it('shows a loading skeleton while fetching', async () => {
+    let capturedDuringLoad = null;
+    api.getTeamMembers.mockImplementation(async () => {
+      capturedDuringLoad = document.getElementById('team-members-list').innerHTML;
+      return [];
+    });
+    await loadTeamMembers();
+    expect(capturedDuringLoad).toContain('skeleton-list-item');
+  });
+
+  // CHT-1226: was showApiError()-only (a toast) — the list itself was left
+  // blank/stale with zero in-page indication anything went wrong.
+  it('shows a standardized error state with retry on fetch failure', async () => {
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+    const list = document.getElementById('team-members-list');
+    expect(list.innerHTML).toContain("Couldn't load members");
+    expect(list.innerHTML).toContain('empty-state-error');
+    expect(list.innerHTML).toContain('data-action="retry-load-team-members"');
+    expect(showApiError).toHaveBeenCalledWith('load team members', expect.any(Error));
+  });
+
+  it('wires the retry-load-team-members action to re-run loadTeamMembers()', async () => {
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+
+    api.getTeamMembers.mockResolvedValue([]);
+    await teamsActions['retry-load-team-members']();
+
+    expect(api.getTeamMembers).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('loadTeamAgents', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="team-agents-list"></div>';
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+  });
+
+  it('fetches and renders agents', async () => {
+    const agents = [{ id: 'agent-1', name: 'Bot', parent_user_name: 'Alice' }];
+    api.getTeamAgents.mockResolvedValue(agents);
+    await loadTeamAgents();
+    const list = document.getElementById('team-agents-list');
+    expect(list.innerHTML).toContain('Bot');
+  });
+
+  it('shows a loading skeleton while fetching', async () => {
+    let capturedDuringLoad = null;
+    api.getTeamAgents.mockImplementation(async () => {
+      capturedDuringLoad = document.getElementById('team-agents-list').innerHTML;
+      return [];
+    });
+    await loadTeamAgents();
+    expect(capturedDuringLoad).toContain('skeleton-list-item');
+  });
+
+  it('shows a standardized error state with retry on fetch failure', async () => {
+    api.getTeamAgents.mockRejectedValue(new Error('network down'));
+    await loadTeamAgents();
+    const list = document.getElementById('team-agents-list');
+    expect(list.innerHTML).toContain("Couldn't load agents");
+    expect(list.innerHTML).toContain('empty-state-error');
+    expect(list.innerHTML).toContain('data-action="retry-load-team-agents"');
+    expect(showApiError).toHaveBeenCalledWith('load team agents', expect.any(Error));
+  });
+
+  it('wires the retry-load-team-agents action to re-run loadTeamAgents()', async () => {
+    api.getTeamAgents.mockRejectedValue(new Error('network down'));
+    await loadTeamAgents();
+
+    api.getTeamAgents.mockResolvedValue([]);
+    await teamsActions['retry-load-team-agents']();
+
+    expect(api.getTeamAgents).toHaveBeenCalledTimes(2);
   });
 });
 

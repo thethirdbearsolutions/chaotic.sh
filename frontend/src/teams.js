@@ -14,6 +14,7 @@ import { loadTeamAgentsQuiet } from './agents.js';
 import { connectWebSocket } from './ws.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import { getAgents } from './agents.js';
+import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Module state
 let teams = [];
@@ -143,18 +144,53 @@ export async function loadTeamMembersQuiet() {
   }
 }
 
+// CHT-1226: shared loading skeleton for the three team-management lists
+// (members, agents, invitations) — none of them showed any loading state
+// before (the DOM just sat at whatever it last rendered while in flight).
+function memberListSkeleton() {
+  return Array(3).fill(0).map(() => `
+        <div class="skeleton-list-item">
+            <div style="flex: 1">
+                <div class="skeleton skeleton-title"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Monotonic request id — lets loadTeamMembers() drop a response from a
+// superseded request (double-clicked Retry, or Retry racing a team switch)
+// instead of painting stale data, mirroring loadTeamInvitations() below
+// (CHT-1226).
+let loadTeamMembersRequestId = 0;
+
 /**
  * Load team members with UI feedback
  */
 export async function loadTeamMembers() {
   if (!getCurrentTeam()) return;
 
+  const requestId = ++loadTeamMembersRequestId;
+  const list = document.getElementById('team-members-list');
+  if (list) list.innerHTML = memberListSkeleton();
+
   try {
-    members = await api.getTeamMembers(getCurrentTeam().id);
+    const fetched = await api.getTeamMembers(getCurrentTeam().id);
+    if (requestId !== loadTeamMembersRequestId) return; // a newer loadTeamMembers() has since started — drop this stale response
+    members = fetched;
     buildAssignees(getMembers, getAgents);
     updateAssigneeFilter();
     renderTeamMembers();
   } catch (e) {
+    if (requestId !== loadTeamMembersRequestId) return;
+    // CHT-1226: was showApiError()-only (a toast) -- the list itself was
+    // left blank/stale with zero in-page indication anything went wrong.
+    if (list) list.innerHTML = renderEmptyState({
+      icon: EMPTY_ICONS.team,
+      heading: "Couldn't load members",
+      description: 'Check your connection and try again',
+      cta: { label: 'Retry', action: 'retry-load-team-members' },
+      variant: 'error',
+    });
     showApiError('load team members', e);
   }
 }
@@ -204,6 +240,10 @@ export async function loadTeamInvitations() {
   if (!getCurrentTeam()) return;
 
   const requestId = ++loadTeamInvitationsRequestId;
+  // CHT-1226: was the only one of the three team lists with no loading
+  // state at all -- the DOM just sat at whatever it last rendered.
+  const list = document.getElementById('team-invitations-list');
+  if (list) list.innerHTML = memberListSkeleton();
 
   try {
     const fetched = await api.getTeamInvitations(getCurrentTeam().id);
@@ -259,16 +299,34 @@ export function renderTeamInvitations() {
     .join('');
 }
 
+// Monotonic request id — see loadTeamMembersRequestId above (CHT-1226).
+let loadTeamAgentsRequestId = 0;
+
 /**
  * Load team agents with UI feedback
  */
 export async function loadTeamAgents() {
   if (!getCurrentTeam()) return;
 
+  const requestId = ++loadTeamAgentsRequestId;
+  const list = document.getElementById('team-agents-list');
+  if (list) list.innerHTML = memberListSkeleton();
+
   try {
-    teamAgents = await api.getTeamAgents(getCurrentTeam().id);
+    const fetched = await api.getTeamAgents(getCurrentTeam().id);
+    if (requestId !== loadTeamAgentsRequestId) return; // a newer loadTeamAgents() has since started — drop this stale response
+    teamAgents = fetched;
     renderTeamAgents();
   } catch (e) {
+    if (requestId !== loadTeamAgentsRequestId) return;
+    // CHT-1226: was showApiError()-only (a toast) -- see loadTeamMembers above.
+    if (list) list.innerHTML = renderEmptyState({
+      icon: EMPTY_ICONS.team,
+      heading: "Couldn't load agents",
+      description: 'Check your connection and try again',
+      cta: { label: 'Retry', action: 'retry-load-team-agents' },
+      variant: 'error',
+    });
     showApiError('load team agents', e);
   }
 }
@@ -543,6 +601,12 @@ registerActions({
   },
   'retry-load-team-invitations': () => {
     loadTeamInvitations();
+  },
+  'retry-load-team-members': () => {
+    loadTeamMembers();
+  },
+  'retry-load-team-agents': () => {
+    loadTeamAgents();
   },
   'invite-member': (event) => {
     handleInvite(event);
