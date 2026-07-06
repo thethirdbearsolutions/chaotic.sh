@@ -695,13 +695,16 @@ export async function bulkDeleteDocuments() {
  */
 export async function viewDocument(documentId, pushHistory = true) {
   try {
+    // Record the list's scroll position synchronously, before any await, so
+    // a slow fetch can't capture a position the user has since scrolled away
+    // from (CHT-1211 item 1; ordering standardized across all four detail
+    // entry points per review #4).
+    if (pushHistory) saveScrollPosition();
+
     const doc = await api.getDocument(documentId);
 
-    // Update URL — also records the originating list's scroll position
-    // before we replace it with detail content, so Back can restore it
-    // (CHT-1211 item 1).
+    // Update URL
     if (pushHistory) {
-      saveScrollPosition();
       history.pushState({ documentId }, '', `/document/${documentId}`);
     }
 

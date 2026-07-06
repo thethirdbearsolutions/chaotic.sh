@@ -56,6 +56,12 @@ export async function viewEpicByPath(identifier) {
  */
 export async function viewEpic(epicId, pushHistory = true) {
     try {
+        // Record the list's scroll position synchronously, before any await,
+        // so a slow fetch can't capture a position the user has since
+        // scrolled away from (CHT-1211 item 1; ordering standardized across
+        // all four detail entry points per review #4).
+        if (pushHistory) saveScrollPosition();
+
         const [epic, subIssues, activities, comments] = await Promise.all([
             api.getIssue(epicId),
             api.getSubIssues(epicId),
@@ -69,11 +75,8 @@ export async function viewEpic(epicId, pushHistory = true) {
             return;
         }
 
-        // Update URL — also records the originating list's scroll position
-        // before we replace it with detail content, so Back can restore it
-        // (CHT-1211 item 1).
+        // Update URL
         if (pushHistory) {
-            saveScrollPosition();
             history.pushState({ epicId, view: getCurrentView() }, '', `/epic/${epic.identifier}`);
         }
 

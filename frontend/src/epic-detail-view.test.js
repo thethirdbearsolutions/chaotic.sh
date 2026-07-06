@@ -383,6 +383,14 @@ describe('epic-detail-view', () => {
                 await viewEpic('epic-1', false);
                 expect(saveScrollPosition).not.toHaveBeenCalled();
             });
+
+            // CHT-1211 review #4: must run synchronously before the first
+            // await — proven by it firing even when the fetch rejects.
+            it('saves scroll position before the fetch (still saved on fetch failure)', async () => {
+                api.getIssue.mockRejectedValue(new Error('slow network died'));
+                await viewEpic('epic-1');
+                expect(saveScrollPosition).toHaveBeenCalled();
+            });
         });
 
         // CHT-1211 item 6: epic detail lacked prev/next parity with issue detail

@@ -235,6 +235,18 @@ describe('viewDocument', () => {
       await viewDocument('doc-1', false);
       expect(mockSaveScrollPosition).not.toHaveBeenCalled();
     });
+
+    // CHT-1211 review #4: must run synchronously before the first await —
+    // proven by it firing even when the fetch rejects.
+    it('saves scroll position before the fetch (still saved on fetch failure)', async () => {
+      api.getDocument.mockRejectedValue(new Error('slow network died'));
+      try {
+        await viewDocument('doc-1');
+      } catch {
+        // viewDocument may rethrow; the assertion below is what matters
+      }
+      expect(mockSaveScrollPosition).toHaveBeenCalled();
+    });
   });
 
   // CHT-1211 item 3/4: document detail 'Back' was hardcoded to 'documents'
