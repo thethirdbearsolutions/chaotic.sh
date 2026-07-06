@@ -496,6 +496,66 @@ async def test_update_issue(client, auth_headers, test_issue):
 
 
 @pytest.mark.asyncio
+async def test_update_issue_explicit_null_assignee_unassigns(client, auth_headers, test_project, test_user, test_user2, test_issue):
+    """CHT-1223: PATCH {"assignee_id": null} unassigns without a validation error.
+
+    _validate_assignee is only invoked when assignee_id is not None
+    (api/issues.py), so explicit-null must skip validation and clear the
+    relationship -- this is the CHT-741-class case the taste-pass spec
+    flagged as correct-but-untested at the API layer.
+    """
+    # Add test_user2 to the team and assign the issue to them first.
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    assign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": test_user2.id},
+    )
+    assert assign_response.status_code == 200
+    assert assign_response.json()["assignee_id"] == test_user2.id
+
+    unassign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": None},
+    )
+    assert unassign_response.status_code == 200
+    assert unassign_response.json()["assignee_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_issue_omitted_assignee_untouched(client, auth_headers, test_project, test_user2, test_issue):
+    """CHT-1223: an *omitted* assignee_id leaves the existing assignee untouched.
+
+    Exercises the exclude_unset boundary explicitly: a PATCH that doesn't
+    mention assignee_id at all must not clear it (only an explicit null
+    should).
+    """
+    from app.enums import TeamRole
+    from app.oxyde_models.team import OxydeTeamMember
+    await OxydeTeamMember.objects.create(team_id=test_project.team_id, user_id=test_user2.id, role=TeamRole.MEMBER)
+
+    assign_response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"assignee_id": test_user2.id},
+    )
+    assert assign_response.status_code == 200
+
+    # PATCH with an unrelated field only -- assignee_id is omitted, not null.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"priority": "high"},
+    )
+    assert response.status_code == 200
+    assert response.json()["assignee_id"] == test_user2.id
+
+
+@pytest.mark.asyncio
 async def test_update_issue_to_done(client, auth_headers, test_issue):
     """Test updating issue status to done."""
     response = await client.patch(
