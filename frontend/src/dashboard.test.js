@@ -73,7 +73,6 @@ import {
     loadMyIssues,
     loadDashboardActivity,
     loadSprintStatus,
-    renderSprintStatus,
     renderMyIssues,
     renderDashboardActivity,
     showMyIssuesLoadingSkeleton,
