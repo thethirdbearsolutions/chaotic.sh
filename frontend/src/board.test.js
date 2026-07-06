@@ -116,6 +116,46 @@ describe('board', () => {
 
             expect(showApiError).toHaveBeenCalledWith('load board', expect.objectContaining({ message: 'API Error' }));
         });
+
+        // CHT-1215 review finding 3: the skeleton wipe destroys the
+        // .keyboard-selected card before renderBoard() can re-find it by id,
+        // so the stale index would positionally clamp into the NEW project's
+        // cards — Enter could then open the wrong issue.
+        describe('keyboard cursor reset (project/view switch)', () => {
+            it('resets the board cursor before loading a new project', async () => {
+                // Project A: select card index 2 (id '3')
+                setBoardIssues([
+                    { id: '1', title: 'A1', status: 'todo', identifier: 'A-1', priority: 'low' },
+                    { id: '2', title: 'A2', status: 'todo', identifier: 'A-2', priority: 'low' },
+                    { id: '3', title: 'A3', status: 'done', identifier: 'A-3', priority: 'low' },
+                ]);
+                renderBoard();
+                setSelectedBoardIndex(2);
+                document.querySelector('.kanban-card[data-id="3"]').classList.add('keyboard-selected');
+
+                // Switch to Project B with different cards
+                api.getIssues.mockResolvedValue([
+                    { id: 'b1', title: 'B1', status: 'todo', identifier: 'B-1', priority: 'low' },
+                    { id: 'b2', title: 'B2', status: 'todo', identifier: 'B-2', priority: 'low' },
+                    { id: 'b3', title: 'B3', status: 'todo', identifier: 'B-3', priority: 'low' },
+                ]);
+                setState('currentProject', 'project-B');
+                await loadBoard();
+
+                // No card in Project B inherits Project A's positional cursor
+                expect(document.querySelectorAll('.kanban-card.keyboard-selected')).toHaveLength(0);
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
+
+            it('resets the cursor even when the new project has no board element content', async () => {
+                setSelectedBoardIndex(1);
+                setState('currentProject', null);
+
+                await loadBoard();
+
+                expect(getSelectedBoardIndex()).toBe(-1);
+            });
+        });
     });
 
     describe('renderBoard', () => {

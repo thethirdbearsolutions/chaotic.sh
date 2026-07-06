@@ -59,6 +59,14 @@ subscribe((key) => {
  * Load board issues for the current project
  */
 export async function loadBoard() {
+    // CHT-1215 (review finding 3): loadBoard() runs on view entry and
+    // project switch, and its skeleton wipe below destroys the
+    // .keyboard-selected card before renderBoard() can re-find it by id —
+    // the stale index would then positionally clamp into the NEW project's
+    // cards and Enter could open the wrong issue. Reset the cursor up
+    // front, mirroring loadIssues()'s setSelectedIssueIndex(-1).
+    setSelectedBoardIndex(-1);
+
     const projectId = getCurrentProject();
     if (!projectId) {
         const board = document.getElementById('kanban-board');
@@ -103,9 +111,9 @@ export function renderBoard() {
 
     // CHT-1215: capture the currently keyboard-selected card's id before the
     // rebuild below replaces the DOM — same fix as issue-list.js's
-    // renderIssues(), applied proactively here since renderBoard() rebuilds
-    // from scratch on the same kinds of triggers (drag/drop, websocket
-    // updates) that would otherwise drift the cursor out of sync.
+    // renderIssues(). Covers in-place re-renders (drag/drop reorders and
+    // remote-event re-render calls); full reloads go through loadBoard(),
+    // which resets the cursor instead (review finding 3).
     const selectedCardId = board.querySelector('.kanban-card.keyboard-selected')?.dataset.id;
 
     board.innerHTML = BOARD_STATUSES.map(status => {
