@@ -4,10 +4,10 @@
  */
 
 import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft } from './storage.js';
-import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getIssues } from './state.js';
+import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
@@ -566,6 +566,10 @@ export async function viewIssueByPath(identifier) {
  */
 export async function viewIssue(issueId, pushHistory = true) {
     try {
+        // Record the list's scroll position before we replace it with detail
+        // content, so Back can restore it (CHT-1211 item 1).
+        if (pushHistory) saveScrollPosition();
+
         ticketRitualsCollapsed = true;
         const [issue, comments, activities, subIssues, relations, ritualStatus] = await Promise.all([
             api.getIssue(issueId),
@@ -632,8 +636,12 @@ export async function viewIssue(issueId, pushHistory = true) {
         const assigneeName = assignee ? formatAssigneeName(assignee) : null;
         const currentSprint = issue.sprint_id ? projectSprints.find(s => s.id === issue.sprint_id) : null;
 
-        // Compute prev/next navigation from current issue list
-        const issueList = getIssues();
+        // Compute prev/next navigation from the list the user actually
+        // navigated from (Issues/Board/Dashboard/Sprint each set this before
+        // routing into an issue) rather than the Issues-view-only global
+        // issues array, which was stale or empty when arriving from Board,
+        // Dashboard, or a Sprint (CHT-1211 item 2).
+        const issueList = getDetailNavContext();
         const currentIndex = issueList.findIndex(i => i.id === issue.id);
         const prevIssue = currentIndex > 0 ? issueList[currentIndex - 1] : null;
         const nextIssue = currentIndex >= 0 && currentIndex < issueList.length - 1 ? issueList[currentIndex + 1] : null;
@@ -1375,8 +1383,8 @@ function navigateAdjacentIssue(direction) {
     const currentIssue = getCurrentDetailIssue();
     if (!currentIssue) return;
 
-    // Navigate within the current issues list (only works when navigated from issues view)
-    const issues = getIssues();
+    // Navigate within the list the user actually arrived from (CHT-1211 item 2)
+    const issues = getDetailNavContext();
     if (!issues || issues.length === 0) return;
 
     const currentIndex = issues.findIndex(i => i.id === currentIssue.id);

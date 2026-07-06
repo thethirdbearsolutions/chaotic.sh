@@ -31,6 +31,7 @@ vi.mock('./ui.js', () => ({
 
 vi.mock('./router.js', () => ({
     navigateTo: vi.fn(),
+    saveScrollPosition: vi.fn(),
 }));
 
 vi.mock('./projects.js', () => ({
@@ -93,14 +94,14 @@ vi.mock('./state.js', async (importOriginal) => {
     return {
         ...actual,
         getCurrentView: vi.fn(() => 'my-issues'),
-        getIssues: vi.fn(() => []),
+        getDetailNavContext: vi.fn(() => []),
     };
 });
 
-import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getIssues } from './state.js';
+import { setCurrentTeam, setCurrentDetailIssue, getCurrentDetailIssue, getCurrentView, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
@@ -176,7 +177,7 @@ describe('issue-detail-view', () => {
         setupMentionAutocomplete.mockClear();
         renderTicketRitualActions.mockReset().mockReturnValue('');
         getCurrentView.mockReset().mockReturnValue('my-issues');
-        getIssues.mockReset().mockReturnValue([]);
+        getDetailNavContext.mockReset().mockReturnValue([]);
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -435,6 +436,24 @@ describe('issue-detail-view', () => {
             expect(pushStateSpy).not.toHaveBeenCalled();
         });
 
+        // CHT-1211 item 1: detail views never saved the originating list's
+        // scroll position, so Back always landed at the top of the list.
+        describe('scroll position (CHT-1211)', () => {
+            beforeEach(() => {
+                saveScrollPosition.mockClear();
+            });
+
+            it('saves scroll position when pushHistory is true (default)', async () => {
+                await viewIssue('issue-1');
+                expect(saveScrollPosition).toHaveBeenCalled();
+            });
+
+            it('does not save scroll position when pushHistory=false', async () => {
+                await viewIssue('issue-1', false);
+                expect(saveScrollPosition).not.toHaveBeenCalled();
+            });
+        });
+
         it('sets currentDetailIssue in state', async () => {
             await viewIssue('issue-1');
 
@@ -528,7 +547,7 @@ describe('issue-detail-view', () => {
             ];
 
             it('renders prev/next buttons when issue is in list', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -538,7 +557,7 @@ describe('issue-detail-view', () => {
             });
 
             it('prev button links to previous issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -548,7 +567,7 @@ describe('issue-detail-view', () => {
             });
 
             it('next button links to next issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -558,7 +577,7 @@ describe('issue-detail-view', () => {
             });
 
             it('disables prev button on first issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
                 api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-a',
@@ -572,7 +591,7 @@ describe('issue-detail-view', () => {
             });
 
             it('disables next button on last issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
                 api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-c',
@@ -586,7 +605,7 @@ describe('issue-detail-view', () => {
             });
 
             it('hides nav arrows when issue not in list', async () => {
-                getIssues.mockReturnValue([]);
+                getDetailNavContext.mockReturnValue([]);
 
                 await viewIssue('issue-1');
 
@@ -595,7 +614,7 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard ArrowRight to navigate next', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -611,7 +630,7 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard ArrowLeft to navigate prev', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -627,7 +646,7 @@ describe('issue-detail-view', () => {
             });
 
             it('ignores keyboard nav when detail view is hidden', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -642,7 +661,7 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard j to navigate to next issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -658,7 +677,7 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard k to navigate to prev issue', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -674,7 +693,7 @@ describe('issue-detail-view', () => {
             });
 
             it('handles keyboard c to focus comment textarea', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
 
@@ -689,7 +708,7 @@ describe('issue-detail-view', () => {
             });
 
             it('ignores hotkeys when typing in textarea', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -702,7 +721,7 @@ describe('issue-detail-view', () => {
             });
 
             it('ignores hotkeys when modifier key is pressed', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
 
                 await viewIssue('issue-1');
                 api.getIssue.mockClear();
@@ -714,7 +733,7 @@ describe('issue-detail-view', () => {
             });
 
             it('j does nothing on last issue in list', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
                 api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-c',
@@ -730,7 +749,7 @@ describe('issue-detail-view', () => {
             });
 
             it('k does nothing on first issue in list', async () => {
-                getIssues.mockReturnValue(issueList);
+                getDetailNavContext.mockReturnValue(issueList);
                 api.getIssue.mockResolvedValue({
                     ...mockIssue,
                     id: 'issue-a',
