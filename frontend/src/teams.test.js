@@ -339,6 +339,32 @@ describe('loadTeamMembers', () => {
 
     expect(api.getTeamMembers).toHaveBeenCalledTimes(2);
   });
+
+  // CHT-1226 PR #212 review finding 2: the permission gate must fail
+  // closed. The Invite button is hidden by default in the template and only
+  // revealed on a confirmed admin role -- a members-fetch failure must
+  // (re-)hide it, not leave whatever visibility state it last had.
+  it('hides the Invite Member button when the members fetch fails', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn"></button>'; // worst case: visible
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+
+    await loadTeamMembers();
+
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+  });
+
+  it('re-hides the Invite Member button if a refetch fails after a successful admin load', async () => {
+    document.body.innerHTML += '<button id="invite-member-btn" class="hidden"></button>';
+    api.getTeamMembers.mockResolvedValue([
+      { id: 'self', user_id: 'current-user', user_name: 'Me', role: 'admin' },
+    ]);
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(false);
+
+    api.getTeamMembers.mockRejectedValue(new Error('network down'));
+    await loadTeamMembers();
+    expect(document.getElementById('invite-member-btn').classList.contains('hidden')).toBe(true);
+  });
 });
 
 describe('loadTeamAgents', () => {
@@ -556,6 +582,37 @@ describe('loadTeamInvitations', () => {
     await loadTeamInvitations();
     const list = document.getElementById('team-invitations-list');
     expect(list.innerHTML).toContain('test@example.com');
+  });
+
+  // CHT-1226 PR #212 review finding 3: Cancel gets the same admin gate as
+  // Remove/Invite. Usually masked by the list endpoint 403ing non-admins,
+  // but the gate must not rely on that backend policy (and covers a demoted
+  // admin whose stale invitations list is still on screen).
+  it('shows the Cancel button when the viewer is an admin', async () => {
+    setCurrentUser({ id: 'current-user' });
+    setMembers([{ id: 'self', user_id: 'current-user', role: 'admin' }]);
+    api.getTeamInvitations.mockResolvedValue([
+      { id: 'inv-1', email: 'test@example.com', role: 'member', expires_at: '2024-12-31' },
+    ]);
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('data-action="delete-invitation"');
+    setMembers([]);
+    setCurrentUser(null);
+  });
+
+  it('hides the Cancel button when the viewer is not an admin', async () => {
+    setCurrentUser({ id: 'current-user' });
+    setMembers([{ id: 'self', user_id: 'current-user', role: 'member' }]);
+    api.getTeamInvitations.mockResolvedValue([
+      { id: 'inv-1', email: 'test@example.com', role: 'member', expires_at: '2024-12-31' },
+    ]);
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('test@example.com');
+    expect(list.innerHTML).not.toContain('data-action="delete-invitation"');
+    setMembers([]);
+    setCurrentUser(null);
   });
 
   it('shows empty state when no invitations', async () => {

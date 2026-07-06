@@ -191,6 +191,13 @@ export async function loadTeamMembers() {
       cta: { label: 'Retry', action: 'retry-load-team-members' },
       variant: 'error',
     });
+    // Fail closed (PR #212 review finding 2): with the fetch failed we
+    // cannot confirm the viewer's role, so drop any stale members list and
+    // re-run the admin gate -- otherwise a previously-visible Invite button
+    // (or a demoted admin's stale role) would keep admin affordances up
+    // indefinitely on error.
+    members = [];
+    updateInviteButtonVisibility();
     showApiError('load team members', e);
   }
 }
@@ -308,6 +315,11 @@ export function renderTeamInvitations() {
     return;
   }
 
+  // Same admin gate as Remove/Invite (PR #212 review finding 3). Today this
+  // is usually masked upstream -- the invitations list endpoint itself 403s
+  // for non-admins -- but the gate stops relying on that backend policy and
+  // covers a demoted admin whose stale list is still on screen.
+  const canManageInvitations = isCurrentUserAdmin();
   list.innerHTML = invitations
     .map(
       (inv) => `
@@ -319,7 +331,7 @@ export function renderTeamInvitations() {
                     <span>Expires: ${new Date(inv.expires_at).toLocaleDateString()}</span>
                 </div>
             </div>
-            <button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>
+            ${canManageInvitations ? `<button class="btn btn-danger btn-small" data-action="delete-invitation" data-invitation-id="${escapeAttr(inv.id)}">Cancel</button>` : ''}
         </div>
     `
     )
