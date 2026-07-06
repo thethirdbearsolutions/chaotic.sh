@@ -12,8 +12,10 @@ import {
   deleteDocument,
   refreshDocumentsListIfActive,
   refreshDocumentDetailIfViewing,
+  handleRemoteDocumentDeleted,
 } from './documents.js';
 import { api } from './api.js';
+import { showToast } from './ui.js';
 import { getDocumentDraft, setDocumentDraft, getCommentDraft, setCommentDraft } from './storage.js';
 import { registerActions } from './event-delegation.js';
 
@@ -879,5 +881,37 @@ describe('refreshDocumentsListIfActive / refreshDocumentDetailIfViewing (CHT-121
     api.getDocument.mockClear();
     refreshDocumentDetailIfViewing('doc-1');
     expect(api.getDocument).not.toHaveBeenCalled();
+  });
+
+  // CHT-1213 review finding: refreshDocumentDetailIfViewing() would 404
+  // trying to re-fetch a just-deleted document — navigate away instead,
+  // mirroring ws-handlers.js's handleIssueDeleted.
+  describe('handleRemoteDocumentDeleted', () => {
+    it('navigates away with a toast when the deleted document is the one open', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+
+      handleRemoteDocumentDeleted('doc-1', 'Test');
+
+      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Test'), 'warning');
+      expect(mockNavigateTo).toHaveBeenCalledWith('documents');
+    });
+
+    it('does nothing when the deleted document is not the one open', async () => {
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentComments.mockResolvedValue([]);
+      await viewDocument('doc-1');
+      mockNavigateTo.mockClear();
+
+      handleRemoteDocumentDeleted('doc-2', 'Some Other Doc');
+
+      expect(mockNavigateTo).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when no document detail is open', () => {
+      handleRemoteDocumentDeleted('doc-1', 'Test');
+      expect(mockNavigateTo).not.toHaveBeenCalled();
+    });
   });
 });

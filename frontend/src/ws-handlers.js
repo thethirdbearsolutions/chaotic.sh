@@ -13,7 +13,7 @@ import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
-import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing } from './documents.js';
+import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
@@ -241,10 +241,18 @@ function handleComment(data) {
  * changed. See refreshDocumentDetailIfViewing()'s own comment (documents.js)
  * for why this doesn't reuse the getCurrentView() === '<x>-detail' pattern
  * the issue-detail handlers above use — that check is dead in production.
+ *
+ * 'deleted' is handled separately: refreshing a just-deleted document would
+ * 404 and just show a generic error toast over stale content, so it
+ * navigates away instead (mirrors handleIssueDeleted below).
  */
-function handleDocument(data) {
+function handleDocument(data, { type } = {}) {
     refreshDocumentsListIfActive();
-    refreshDocumentDetailIfViewing(data.id);
+    if (type === 'deleted') {
+        handleRemoteDocumentDeleted(data.id, data.title);
+    } else {
+        refreshDocumentDetailIfViewing(data.id);
+    }
 }
 
 function handleRelation(data) {

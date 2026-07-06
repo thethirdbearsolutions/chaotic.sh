@@ -76,6 +76,7 @@ vi.mock('./gate-approvals.js', () => ({
 vi.mock('./documents.js', () => ({
     refreshDocumentsListIfActive: vi.fn(),
     refreshDocumentDetailIfViewing: vi.fn(),
+    handleRemoteDocumentDeleted: vi.fn(),
 }));
 
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
@@ -85,7 +86,7 @@ import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
-import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing } from './documents.js';
+import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch, resetWsState } from './ws.js';
@@ -406,16 +407,23 @@ describe('ws-handlers.js', () => {
     // CHT-1213: documents previously broadcast nothing at all on
     // create/update/delete.
     describe('document', () => {
-        it('refreshes the documents list and the open detail on create/update/delete', () => {
+        it('refreshes the documents list and the open detail on create/update', () => {
             dispatch({ type: 'created', entity: 'document', data: { id: 'doc-1' } });
             expect(refreshDocumentsListIfActive).toHaveBeenCalled();
             expect(refreshDocumentDetailIfViewing).toHaveBeenCalledWith('doc-1');
 
             dispatch({ type: 'updated', entity: 'document', data: { id: 'doc-1' } });
             expect(refreshDocumentsListIfActive).toHaveBeenCalledTimes(2);
+            expect(refreshDocumentDetailIfViewing).toHaveBeenCalledTimes(2);
+        });
 
-            dispatch({ type: 'deleted', entity: 'document', data: { id: 'doc-1' } });
-            expect(refreshDocumentsListIfActive).toHaveBeenCalledTimes(3);
+        // Refreshing a just-deleted document would 404 and show a generic
+        // error toast over stale content instead of navigating away.
+        it('handles delete via handleRemoteDocumentDeleted instead of refreshDocumentDetailIfViewing', () => {
+            dispatch({ type: 'deleted', entity: 'document', data: { id: 'doc-1', title: 'Deleted Doc' } });
+            expect(refreshDocumentsListIfActive).toHaveBeenCalled();
+            expect(handleRemoteDocumentDeleted).toHaveBeenCalledWith('doc-1', 'Deleted Doc');
+            expect(refreshDocumentDetailIfViewing).not.toHaveBeenCalled();
         });
     });
 

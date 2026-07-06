@@ -387,6 +387,22 @@ export function refreshDocumentDetailIfViewing(documentId) {
 }
 
 /**
+ * Handle a remote deletion of the currently-open document (CHT-1213).
+ * refreshDocumentDetailIfViewing() would otherwise try to re-fetch a
+ * document that no longer exists, which 404s and just shows a generic
+ * "couldn't load document" toast while leaving the stale deleted content on
+ * screen — mirrors ws-handlers.js's handleIssueDeleted, which navigates away
+ * with a "was deleted" toast instead.
+ * @param {string} documentId
+ * @param {string} [title]
+ */
+export function handleRemoteDocumentDeleted(documentId, title) {
+  if (!isViewingDocumentDetail(documentId)) return;
+  showToast(`Document "${title || 'Untitled'}" was deleted`, 'warning');
+  navigateTo('documents');
+}
+
+/**
  * Render labels as colored badges
  */
 function renderLabelBadges(labels) {
