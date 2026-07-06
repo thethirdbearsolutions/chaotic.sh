@@ -50,6 +50,7 @@ const SHORTCUT_GROUPS = [
         title: 'Issue Detail',
         shortcuts: [
             { key: 'c', description: 'Focus comment box' },
+            { key: 'd', description: 'Edit description' },
             { key: 'j / k', description: 'Next / previous issue' },
             { key: '\u2190 / \u2192', description: 'Previous / next issue' },
             { key: 's', description: 'Status' },

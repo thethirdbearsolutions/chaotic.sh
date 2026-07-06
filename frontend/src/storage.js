@@ -110,14 +110,44 @@ export function setCommentDraft(issueId, content) {
 }
 
 // --- Description drafts ---
+//
+// Stored as `{draft, basedOn}` JSON (CHT-1214) so a restored draft can be
+// compared against the live server description to detect staleness — a
+// draft abandoned days ago (tab closed, crash) would otherwise silently
+// overwrite however many edits happened in the meantime with no warning.
 
 export function getDescriptionDraft(issueId) {
-    return get(`description_draft_${issueId}`);
+    const raw = get(`description_draft_${issueId}`);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.draft === 'string') return parsed.draft;
+        return null;
+    } catch {
+        // Legacy plain-string draft (pre-CHT-1214) — no snapshot to compare
+        // against, so treat the whole raw value as the draft text.
+        return raw;
+    }
 }
 
-export function setDescriptionDraft(issueId, content) {
+/**
+ * The description snapshot a draft was captured against, or null if unknown
+ * (no draft, or a legacy pre-CHT-1214 plain-string draft).
+ */
+export function getDescriptionDraftBase(issueId) {
+    const raw = get(`description_draft_${issueId}`);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed?.basedOn === 'string' ? parsed.basedOn : null;
+    } catch {
+        return null;
+    }
+}
+
+export function setDescriptionDraft(issueId, content, basedOn = '') {
     if (content) {
-        set(`description_draft_${issueId}`, content);
+        set(`description_draft_${issueId}`, JSON.stringify({ draft: content, basedOn }));
     } else {
         remove(`description_draft_${issueId}`);
     }

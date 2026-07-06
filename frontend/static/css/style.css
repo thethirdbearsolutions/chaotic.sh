@@ -3301,6 +3301,46 @@ input[type="checkbox"] {
     font-style: italic;
 }
 
+/* Click-to-edit affordance (CHT-1214): the empty state is the only one
+   with a visible cursor/hover cue — the populated state stays plain text
+   (no pointer cursor) so it doesn't fight with selecting text to quote. */
+.description-content.empty {
+    cursor: pointer;
+}
+
+.description-content.empty:hover .add-description-link {
+    color: var(--accent-color);
+    text-decoration: underline;
+}
+
+.add-description-link {
+    color: var(--text-muted);
+}
+
+/* Unsaved-draft cue on the description Edit button (CHT-1214) */
+.draft-indicator {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: var(--accent-color);
+    color: var(--bg-color);
+}
+
+/* Stale-draft-vs-server conflict warning (CHT-1214) */
+.description-draft-warning {
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--warning-color, #f59e0b);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+}
+
 /* Markdown styling for descriptions (matching comment-content) */
 .description-content code {
     background: var(--bg-tertiary);

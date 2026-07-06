@@ -18,9 +18,19 @@ export function getMemberHandle(member) {
     return 'user';
 }
 
-export function setupMentionAutocomplete() {
-    const textarea = document.getElementById('new-comment');
-    const container = document.getElementById('mention-suggestions');
+/**
+ * Wire up @mention autocomplete on a textarea.
+ *
+ * Defaults to the comment box for backward compatibility; the issue
+ * description editor also calls this with its own textarea/container ids
+ * (CHT-1214) — the logic here was already textarea-agnostic, so this is a
+ * mechanical parameterization.
+ * @param {string} [textareaId='new-comment']
+ * @param {string} [containerId='mention-suggestions']
+ */
+export function setupMentionAutocomplete(textareaId = 'new-comment', containerId = 'mention-suggestions') {
+    const textarea = document.getElementById(textareaId);
+    const container = document.getElementById(containerId);
     if (!textarea || !container) return;
     if (textarea.dataset.mentionsBound === 'true') return;
     textarea.dataset.mentionsBound = 'true';

@@ -6,7 +6,7 @@ import {
     isOnboardingComplete, setOnboardingComplete, clearOnboarding,
     getIssueFilters, setIssueFilters,
     getCommentDraft, setCommentDraft,
-    getDescriptionDraft, setDescriptionDraft,
+    getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase,
     getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft,
     getDocViewMode, setDocViewMode,
     isApprovalsExplainerDismissed, dismissApprovalsExplainer,
@@ -111,6 +111,38 @@ describe('storage', () => {
             setDescriptionDraft('i1', 'new desc');
             setDescriptionDraft('i1', null);
             expect(getDescriptionDraft('i1')).toBeNull();
+        });
+
+        // CHT-1214: draft/basedOn snapshot pair, so a restored draft can be
+        // compared against the current server description for staleness.
+        describe('basedOn snapshot (CHT-1214)', () => {
+            it('stores and retrieves the basedOn snapshot alongside the draft', () => {
+                setDescriptionDraft('i1', 'new desc', 'original desc');
+                expect(getDescriptionDraft('i1')).toBe('new desc');
+                expect(getDescriptionDraftBase('i1')).toBe('original desc');
+            });
+
+            it('defaults basedOn to empty string when omitted', () => {
+                setDescriptionDraft('i1', 'new desc');
+                expect(getDescriptionDraftBase('i1')).toBe('');
+            });
+
+            it('returns null basedOn when there is no draft', () => {
+                expect(getDescriptionDraftBase('i1')).toBeNull();
+            });
+
+            it('treats a legacy plain-string draft as having no known base', () => {
+                localStorage.setItem('chaotic_description_draft_i1', 'legacy plain draft');
+                expect(getDescriptionDraft('i1')).toBe('legacy plain draft');
+                expect(getDescriptionDraftBase('i1')).toBeNull();
+            });
+
+            it('clears both draft and snapshot together', () => {
+                setDescriptionDraft('i1', 'new desc', 'original desc');
+                setDescriptionDraft('i1', null);
+                expect(getDescriptionDraft('i1')).toBeNull();
+                expect(getDescriptionDraftBase('i1')).toBeNull();
+            });
         });
     });
 
