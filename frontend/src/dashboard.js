@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus } from './utils.js';
-import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentUser, getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext } from './state.js';
 import { renderIssueRow } from './issue-list.js';
 import { formatActivityText, formatActivityActor, getActivityIcon } from './issue-detail-view.js';
 import { navigateToIssueByIdentifier } from './router.js';
@@ -87,6 +87,10 @@ export async function loadMyIssues() {
             issues = await api.getTeamIssues(currentTeam.id, params);
         }
         myIssues = issues;
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
+        // opened from the Dashboard should page through this list, not the
+        // Issues-view-only global issues array.
+        setDetailNavContext(myIssues);
         renderMyIssues();
     } catch (e) {
         showApiError('load issues', e);
