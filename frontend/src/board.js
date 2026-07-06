@@ -8,7 +8,7 @@ import { showToast, showApiError } from './ui.js';
 import { escapeHtml, escapeAttr, formatPriority } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { viewIssue } from './issue-detail-view.js';
-import { getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentProject, getCurrentView, subscribe, getSelectedBoardIndex, setSelectedBoardIndex } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Board status configuration
@@ -59,6 +59,14 @@ subscribe((key) => {
  * Load board issues for the current project
  */
 export async function loadBoard() {
+    // CHT-1215 (review finding 3): loadBoard() runs on view entry and
+    // project switch, and its skeleton wipe below destroys the
+    // .keyboard-selected card before renderBoard() can re-find it by id —
+    // the stale index would then positionally clamp into the NEW project's
+    // cards and Enter could open the wrong issue. Reset the cursor up
+    // front, mirroring loadIssues()'s setSelectedIssueIndex(-1).
+    setSelectedBoardIndex(-1);
+
     const projectId = getCurrentProject();
     if (!projectId) {
         const board = document.getElementById('kanban-board');
@@ -101,6 +109,13 @@ export function renderBoard() {
     const board = document.getElementById('kanban-board');
     if (!board) return;
 
+    // CHT-1215: capture the currently keyboard-selected card's id before the
+    // rebuild below replaces the DOM — same fix as issue-list.js's
+    // renderIssues(). Covers in-place re-renders (drag/drop reorders and
+    // remote-event re-render calls); full reloads go through loadBoard(),
+    // which resets the cursor instead (review finding 3).
+    const selectedCardId = board.querySelector('.kanban-card.keyboard-selected')?.dataset.id;
+
     board.innerHTML = BOARD_STATUSES.map(status => {
         const columnIssues = boardIssues.filter(i => i.status === status.key);
         return `
@@ -128,6 +143,36 @@ export function renderBoard() {
             </div>
         `;
     }).join('');
+
+    reapplyKeyboardSelection(selectedCardId);
+}
+
+/**
+ * Re-apply the j/k keyboard-selection highlight after renderBoard() rebuilds
+ * the board's innerHTML from scratch (CHT-1215) — see issue-list.js's
+ * reapplyKeyboardSelection() for the same fix on the Issues list.
+ * @param {string|undefined} selectedCardId - id of the card that had
+ *   .keyboard-selected before the rebuild, if any
+ */
+function reapplyKeyboardSelection(selectedCardId) {
+    const prevIndex = getSelectedBoardIndex();
+    if (prevIndex < 0) return;
+
+    const cards = document.querySelectorAll('#kanban-board .kanban-card');
+    if (cards.length === 0) {
+        setSelectedBoardIndex(-1);
+        return;
+    }
+
+    let newIndex = selectedCardId
+        ? Array.prototype.findIndex.call(cards, (card) => card.dataset.id === selectedCardId)
+        : -1;
+    if (newIndex < 0) {
+        newIndex = Math.min(prevIndex, cards.length - 1);
+    }
+
+    setSelectedBoardIndex(newIndex);
+    cards[newIndex].classList.add('keyboard-selected');
 }
 
 // Drag and drop handlers for Kanban

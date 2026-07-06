@@ -28,6 +28,9 @@ describe('keyboard-help', () => {
             expect(titles).toContain('Issue List');
             expect(titles).toContain('Issue Detail');
             expect(titles).toContain('Documents');
+            // CHT-1215: Board previously had zero documented shortcuts,
+            // matching it having zero actual keyboard support
+            expect(titles).toContain('Board');
             expect(titles).toContain('General');
         });
 

@@ -263,6 +263,57 @@ describe('inline-dropdown', () => {
         });
     });
 
+    // CHT-1215: keyHandler/sprintKeyHandler closed on Escape and number-key
+    // selection, but had no Tab handling at all — Tab moved focus onward
+    // while the popup stayed visually open until a stray click elsewhere.
+    describe('Tab closes the popup, mirroring Escape (CHT-1215)', () => {
+        function mockEvent() {
+            return {
+                preventDefault: vi.fn(),
+                currentTarget: {
+                    getBoundingClientRect: () => ({ left: 100, right: 200, top: 50, bottom: 70 }),
+                },
+            };
+        }
+
+        // Note: other tests in this file leave stray document-level keydown
+        // listeners registered (showInlineDropdown attaches keyHandler/
+        // sprintKeyHandler directly, independent of the mocked ui.js helpers),
+        // so these assert "was called" / "fires no more after the popup's own
+        // handler tore itself down" rather than an exact call count.
+        it('closes a status/priority/estimate-style dropdown (keyHandler) on Tab', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            expect(document.querySelector('.inline-dropdown')).not.toBeNull();
+            closeAllDropdowns.mockClear();
+
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+
+            expect(closeAllDropdowns).toHaveBeenCalled();
+        });
+
+        it('closes the sprint dropdown (sprintKeyHandler) on Tab', async () => {
+            await showInlineDropdown(mockEvent(), 'sprint', 'issue-1');
+            expect(document.querySelector('.inline-dropdown')).not.toBeNull();
+            closeAllDropdowns.mockClear();
+
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+
+            expect(closeAllDropdowns).toHaveBeenCalled();
+        });
+
+        it('tears down its own keydown listener after Tab (no further calls from this handler)', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+            const callsAfterFirstTab = closeAllDropdowns.mock.calls.length;
+
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+
+            // This test's own handler already removed itself; a second Tab
+            // shouldn't add another call attributable to it.
+            expect(closeAllDropdowns.mock.calls.length).toBe(callsAfterFirstTab);
+        });
+    });
+
     describe('showDetailDropdown', () => {
         it('delegates to showInlineDropdown', async () => {
             const mockEvent = {
