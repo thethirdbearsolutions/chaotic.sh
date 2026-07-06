@@ -10,6 +10,18 @@ import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
+// Last-loaded epics list, exposed so epic-detail-view.js can build prev/next
+// navigation the same way issue-detail-view.js does for issues (CHT-1211 item 6).
+let currentEpics = [];
+
+/**
+ * Get the epics list from the most recent loadEpics() call.
+ * @returns {Array}
+ */
+export function getCurrentEpics() {
+    return currentEpics;
+}
+
 // React to project changes when epics view is active (CHT-1083)
 subscribe((key) => {
     if (key !== 'currentProject') return;
@@ -40,6 +52,7 @@ export async function loadEpics() {
 
     try {
         if (!getCurrentTeam()?.id) {
+            currentEpics = [];
             listEl.innerHTML = '<div class="empty-state">Select a team to view epics.</div>';
             return;
         }
@@ -53,6 +66,7 @@ export async function loadEpics() {
         }
 
         if (!epics || epics.length === 0) {
+            currentEpics = [];
             listEl.innerHTML = renderEmptyState({
                 icon: EMPTY_ICONS.epics,
                 heading: 'No epics found',
@@ -76,6 +90,7 @@ export async function loadEpics() {
             })
         );
 
+        currentEpics = epicsWithProgress;
         renderEpics(epicsWithProgress, listEl);
     } catch (e) {
         listEl.innerHTML = `<div class="empty-state">Failed to load epics: ${escapeHtml(e.message || String(e))}</div>`;

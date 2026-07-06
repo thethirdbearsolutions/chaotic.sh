@@ -23,7 +23,7 @@ vi.mock('./utils.js', () => ({
 }));
 
 import { setCurrentTeam } from './state.js';
-import { loadEpics, renderEpics } from './epics.js';
+import { loadEpics, renderEpics, getCurrentEpics } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
 
@@ -149,6 +149,34 @@ describe('loadEpics', () => {
         const el = document.getElementById('epics-list');
         const progressTexts = el.querySelectorAll('.epic-progress-text');
         expect(progressTexts[0].textContent).toBe('2/3');
+    });
+
+    // CHT-1211 item 6: epic-detail-view.js's prev/next reads this list
+    describe('getCurrentEpics', () => {
+        it('exposes the last-loaded epics list', async () => {
+            api.getTeamIssues.mockResolvedValue([
+                { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'todo', estimate: 3 },
+            ]);
+            api.getSubIssues.mockResolvedValue([]);
+
+            await loadEpics();
+
+            expect(getCurrentEpics().map(e => e.id)).toEqual(['e1']);
+        });
+
+        it('clears to empty array when the list is empty', async () => {
+            api.getTeamIssues.mockResolvedValue([
+                { id: 'e1', identifier: 'CHT-10', title: 'Auth Epic', status: 'todo', estimate: 3 },
+            ]);
+            api.getSubIssues.mockResolvedValue([]);
+            await loadEpics();
+            expect(getCurrentEpics().length).toBe(1);
+
+            api.getTeamIssues.mockResolvedValue([]);
+            await loadEpics();
+
+            expect(getCurrentEpics()).toEqual([]);
+        });
     });
 });
 
