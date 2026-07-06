@@ -6,7 +6,7 @@ import pytest
 async def test_create_project(client, auth_headers, test_team):
     """Test creating a project."""
     response = await client.post(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers,
         json={
             "name": "New Project",
@@ -27,7 +27,7 @@ async def test_create_project(client, auth_headers, test_team):
 async def test_create_project_duplicate_key(client, auth_headers, test_team, test_project):
     """Test creating project with existing key."""
     response = await client.post(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers,
         json={
             "name": "Duplicate Project",
@@ -42,7 +42,7 @@ async def test_create_project_duplicate_key(client, auth_headers, test_team, tes
 async def test_create_project_not_member(client, auth_headers2, test_team):
     """Test creating project when not a member."""
     response = await client.post(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers2,
         json={
             "name": "Unauthorized Project",
@@ -56,7 +56,7 @@ async def test_create_project_not_member(client, auth_headers2, test_team):
 async def test_list_projects(client, auth_headers, test_team, test_project):
     """Test listing projects."""
     response = await client.get(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers,
     )
     assert response.status_code == 200
@@ -160,7 +160,7 @@ async def test_update_project_settings(client, auth_headers, test_project):
 async def test_create_project_with_settings(client, auth_headers, test_team):
     """Test creating project with initial settings."""
     response = await client.post(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers,
         json={
             "name": "Settings Project",
@@ -182,7 +182,7 @@ async def test_create_project_with_settings(client, auth_headers, test_team):
 async def test_list_projects_not_member(client, auth_headers2, test_team):
     """Test listing projects when not a member."""
     response = await client.get(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers2,
     )
     assert response.status_code == 403
@@ -244,7 +244,7 @@ async def test_list_projects_with_pagination(client, auth_headers, test_team, db
         )
 
     response = await client.get(
-        f"/api/projects?team_id={test_team.id}&skip=1&limit=2",
+        f"/api/teams/{test_team.id}/projects?skip=1&limit=2",
         headers=auth_headers,
     )
     assert response.status_code == 200
@@ -283,7 +283,7 @@ async def test_update_project_unestimated_handling(client, auth_headers, test_pr
 async def test_create_project_minimal(client, auth_headers, test_team):
     """Test creating project with minimal data."""
     response = await client.post(
-        f"/api/projects?team_id={test_team.id}",
+        f"/api/teams/{test_team.id}/projects",
         headers=auth_headers,
         json={
             "name": "Minimal Project",

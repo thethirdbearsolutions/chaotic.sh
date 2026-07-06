@@ -54,13 +54,16 @@ async def _build_attestation_response(att) -> RitualAttestationResponse:
     )
 
 
-@router.post("", response_model=RitualResponse, status_code=status.HTTP_201_CREATED)
 async def create_ritual(
     project_id: str,
     ritual_in: RitualCreate,
     current_user: CurrentUser,
 ):
-    """Create a new ritual for a project."""
+    """Create a new ritual for a project.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /projects/{project_id}/rituals`` in nested.py.
+    """
     project_service = ProjectService()
     team_service = TeamService()
     ritual_service = RitualService()
@@ -88,7 +91,6 @@ async def create_ritual(
         )
 
 
-@router.get("", response_model=list[RitualResponse])
 async def list_rituals(
     project_id: str,
     current_user: CurrentUser,
@@ -96,7 +98,11 @@ async def list_rituals(
     skip: int = 0,
     limit: int = 1000,
 ):
-    """List rituals for a project."""
+    """List rituals for a project.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``GET /projects/{project_id}/rituals`` in nested.py.
+    """
     project_service = ProjectService()
     ritual_service = RitualService()
 

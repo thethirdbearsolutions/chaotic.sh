@@ -156,11 +156,12 @@ export class ApiClient {
 
     // Projects
     async createProject(teamId, data) {
-        return this.request('POST', `/projects?team_id=${teamId}`, data);
+        // CHT-1223: team_id moved from a query param to the URL path.
+        return this.request('POST', `/teams/${teamId}/projects`, data);
     }
 
     async getProjects(teamId) {
-        return this.request('GET', `/projects?team_id=${teamId}`);
+        return this.request('GET', `/teams/${teamId}/projects`);
     }
 
     async getProject(projectId) {
@@ -177,7 +178,8 @@ export class ApiClient {
 
     // Issues
     async createIssue(projectId, data) {
-        return this.request('POST', `/issues?project_id=${projectId}`, data);
+        // CHT-1223: project_id moved from a query param to the URL path.
+        return this.request('POST', `/projects/${projectId}/issues`, data);
     }
 
     async getIssues(params = {}) {
@@ -279,8 +281,9 @@ export class ApiClient {
 
     // Sprints (note: manual creation removed in CHT-588, sprints use cadence system)
     async getSprints(projectId, status = null) {
-        let url = `/sprints?project_id=${projectId}`;
-        if (status) url += `&sprint_status=${status}`;
+        // CHT-1223: project_id moved from a query param to the URL path.
+        let url = `/projects/${projectId}/sprints`;
+        if (status) url += `?sprint_status=${status}`;
         return this.request('GET', url);
     }
 
@@ -306,11 +309,12 @@ export class ApiClient {
 
     // Rituals
     async createRitual(projectId, data) {
-        return this.request('POST', `/rituals?project_id=${projectId}`, data);
+        // CHT-1223: project_id moved from a query param to the URL path.
+        return this.request('POST', `/projects/${projectId}/rituals`, data);
     }
 
     async getRituals(projectId) {
-        return this.request('GET', `/rituals?project_id=${projectId}`);
+        return this.request('GET', `/projects/${projectId}/rituals`);
     }
 
     async getRitual(ritualId) {
@@ -393,14 +397,17 @@ export class ApiClient {
 
     // Documents
     async createDocument(teamId, data) {
-        return this.request('POST', `/documents?team_id=${teamId}`, data);
+        // CHT-1223: team_id moved from a query param to the URL path.
+        return this.request('POST', `/teams/${teamId}/documents`, data);
     }
 
     async getDocuments(teamId, projectId = null, search = null, sprintId = null) {
-        let url = `/documents?team_id=${teamId}`;
-        if (projectId) url += `&project_id=${projectId}`;
-        if (sprintId) url += `&sprint_id=${sprintId}`;
-        if (search) url += `&search=${encodeURIComponent(search)}`;
+        let url = `/teams/${teamId}/documents`;
+        const params = [];
+        if (projectId) params.push(`project_id=${projectId}`);
+        if (sprintId) params.push(`sprint_id=${sprintId}`);
+        if (search) params.push(`search=${encodeURIComponent(search)}`);
+        if (params.length) url += `?${params.join('&')}`;
         return this.request('GET', url);
     }
 
@@ -465,11 +472,12 @@ export class ApiClient {
 
     // Labels
     async createLabel(teamId, data) {
-        return this.request('POST', `/labels?team_id=${teamId}`, data);
+        // CHT-1223: team_id moved from a query param to the URL path.
+        return this.request('POST', `/teams/${teamId}/labels`, data);
     }
 
     async getLabels(teamId) {
-        return this.request('GET', `/labels?team_id=${teamId}`);
+        return this.request('GET', `/teams/${teamId}/labels`);
     }
 
     async getLabel(labelId) {

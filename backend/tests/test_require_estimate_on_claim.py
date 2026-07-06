@@ -122,7 +122,7 @@ async def test_human_can_create_without_estimate(
     # Human should be able to CREATE tickets without estimates
     # (require_estimate_on_claim only applies to CLAIMING, not creating)
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Test Issue Without Estimate"},
     )
@@ -161,7 +161,7 @@ async def test_agent_can_create_without_estimate(
     # Agent should be able to CREATE tickets without estimates
     # (require_estimate_on_claim only applies to CLAIMING, not creating)
     response = await client.post(
-        f"/api/issues?project_id={test_project.id}",
+        f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={"title": "Agent Created Issue Without Estimate"},
     )

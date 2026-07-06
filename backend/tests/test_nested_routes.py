@@ -1,10 +1,13 @@
-"""Tests for path-nested alias routes (CHT-1223).
+"""Tests for path-nested scope-ID routes (CHT-1223).
 
-Covers the query-vs-path scoping-ID inconsistency's cheapest additive
-fix: path-nested aliases that mirror agents.py's shape, alongside the
-existing query-param routes (which stay working -- see test_projects.py,
-test_labels.py, test_documents.py, test_issues.py, test_sprints.py,
-test_rituals.py for those).
+Covers the query-vs-path scoping-ID inconsistency fix: path-nested
+routes mirroring agents.py's shape are now the *only* way to
+create/list projects/labels/documents (team-scoped) and
+issues/sprints/rituals (project-scoped) -- BREAKING, sanctioned (see
+nested.py's module docstring). The old query-param routes for these
+six are gone; test_projects.py, test_labels.py, test_documents.py,
+test_issues.py, test_sprints.py, test_rituals.py were updated to use
+the new paths for their create/list assertions.
 """
 import pytest
 
@@ -31,23 +34,37 @@ class TestNestedTeamRoutes:
         data = response.json()
         assert any(p["id"] == test_project.id for p in data)
 
-    async def test_create_project_nested_matches_query_param_route(self, client, auth_headers, test_team):
-        """Both routes hit the same handler -- same auth/validation behavior."""
-        nested = await client.post(
+    async def test_create_project_nested_duplicate_key_rejected(self, client, auth_headers, test_team):
+        """Same validation behavior as before the convention change: a
+        second create with the same (team_id, key) 400s."""
+        first = await client.post(
             f"/api/teams/{test_team.id}/projects",
             headers=auth_headers,
             json={"name": "Dup Key Project", "key": "DUPK"},
         )
-        assert nested.status_code == 201
+        assert first.status_code == 201
 
-        # Same key again via the query-param route should 400 the same
-        # way it would via a second nested-route call.
-        via_query = await client.post(
-            f"/api/projects?team_id={test_team.id}",
+        second = await client.post(
+            f"/api/teams/{test_team.id}/projects",
             headers=auth_headers,
             json={"name": "Dup Key Project 2", "key": "DUPK"},
         )
-        assert via_query.status_code == 400
+        assert second.status_code == 400
+
+    async def test_create_project_old_query_param_route_gone(self, client, auth_headers, test_team):
+        """CHT-1223: the old ?team_id= flat-route shape is gone (breaking,
+        sanctioned). ``/api/projects`` still resolves to something (the
+        surviving ``GET /api/projects/{project_id}`` template), so the
+        router reports 405 Method Not Allowed rather than 404 for this
+        exact path+method combination -- either way, POST-without-a-
+        path-segment no longer creates a project.
+        """
+        response = await client.post(
+            f"/api/projects?team_id={test_team.id}",
+            headers=auth_headers,
+            json={"name": "Should 404", "key": "GONE"},
+        )
+        assert response.status_code in (404, 405)
 
     async def test_create_label_nested(self, client, auth_headers, test_team):
         response = await client.post(
@@ -142,6 +159,21 @@ class TestNestedProjectRoutes:
         response = await client.get(f"/api/projects/{test_project.id}/rituals", headers=auth_headers)
         assert response.status_code == 200
         assert any(r["name"] == "listed-ritual" for r in response.json())
+
+    async def test_create_issue_old_query_param_route_gone(self, client, auth_headers, test_project):
+        """CHT-1223: the old ?project_id= flat-route shape is gone
+        (breaking, sanctioned) -- only GET /issues keeps a query-based
+        project_id filter. POST /api/issues now 405s (GET /api/issues
+        still exists) rather than 404 -- see
+        test_create_project_old_query_param_route_gone for why either
+        status is an acceptable "this no longer creates anything".
+        """
+        response = await client.post(
+            f"/api/issues?project_id={test_project.id}",
+            headers=auth_headers,
+            json={"title": "Should 404"},
+        )
+        assert response.status_code in (404, 405)
 
     async def test_create_issue_nested_project_not_found(self, client, auth_headers):
         response = await client.post(

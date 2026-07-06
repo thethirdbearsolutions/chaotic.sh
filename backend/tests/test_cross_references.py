@@ -213,7 +213,7 @@ class TestCrossReferencesViaApi:
     async def test_issue_create_with_description_reference(self, client, auth_headers, test_project, second_issue):
         """Creating an issue with a reference in the description should auto-link."""
         response = await client.post(
-            f"/api/issues?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/issues",
             json={
                 "title": "New Issue",
                 "description": f"Follow-up to {second_issue.identifier}",

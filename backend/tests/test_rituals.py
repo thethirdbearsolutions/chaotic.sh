@@ -3228,7 +3228,7 @@ class TestRitualAPIEndpoints:
     async def test_create_ritual_api(self, client, auth_headers, test_project):
         """Test creating a ritual via API."""
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={
                 "name": "test-api-ritual",
@@ -3253,7 +3253,7 @@ class TestRitualAPIEndpoints:
         member = await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
 
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers2,
             json={
                 "name": "unauthorized-ritual",
@@ -3266,7 +3266,7 @@ class TestRitualAPIEndpoints:
     async def test_create_ritual_api_project_not_found(self, client, auth_headers):
         """Test creating ritual for non-existent project."""
         response = await client.post(
-            "/api/rituals?project_id=00000000-0000-0000-0000-000000000000",
+            "/api/projects/00000000-0000-0000-0000-000000000000/rituals",
             headers=auth_headers,
             json={
                 "name": "test-ritual",
@@ -3280,7 +3280,7 @@ class TestRitualAPIEndpoints:
         """Test that duplicate ritual names are rejected via API."""
         # Create first ritual
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={"name": "dup-ritual", "prompt": "Test"},
         )
@@ -3288,7 +3288,7 @@ class TestRitualAPIEndpoints:
 
         # Try to create another with the same name
         response = await client.post(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
             json={"name": "dup-ritual", "prompt": "Test 2"},
         )
@@ -3302,7 +3302,7 @@ class TestRitualAPIEndpoints:
         ritual2 = await OxydeRitual.objects.create(project_id=test_project.id, name="ritual-2", prompt="Prompt 2")
 
         response = await client.get(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers,
         )
         assert response.status_code == 200
@@ -3315,7 +3315,7 @@ class TestRitualAPIEndpoints:
     async def test_list_rituals_api_project_not_found(self, client, auth_headers):
         """Test listing rituals for non-existent project."""
         response = await client.get(
-            "/api/rituals?project_id=00000000-0000-0000-0000-000000000000",
+            "/api/projects/00000000-0000-0000-0000-000000000000/rituals",
             headers=auth_headers,
         )
         assert response.status_code == 404
@@ -3323,7 +3323,7 @@ class TestRitualAPIEndpoints:
     async def test_list_rituals_api_not_team_member(self, client, auth_headers2, test_project):
         """Test that non-team members cannot list rituals."""
         response = await client.get(
-            f"/api/rituals?project_id={test_project.id}",
+            f"/api/projects/{test_project.id}/rituals",
             headers=auth_headers2,
         )
         assert response.status_code == 403

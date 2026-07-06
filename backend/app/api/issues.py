@@ -177,13 +177,19 @@ def issue_to_response(issue: Issue) -> IssueResponse:
     )
 
 
-@router.post("", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
 ):
-    """Create a new issue."""
+    """Create a new issue.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /projects/{project_id}/issues`` in nested.py.
+    ``GET /issues`` (list_issues, below) keeps project_id/team_id/
+    sprint_id/assignee_id as alternative query-based scope filters --
+    no path-nested list alias, see nested.py's module docstring.
+    """
     project_service = ProjectService()
     issue_service = IssueService()
 

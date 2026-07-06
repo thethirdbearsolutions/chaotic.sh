@@ -61,13 +61,16 @@ def build_document_response(doc, author_name: str | None = None) -> DocumentResp
     )
 
 
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def create_document(
     team_id: str,
     document_in: DocumentCreate,
     current_user: CurrentUser,
 ):
-    """Create a new document."""
+    """Create a new document.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``POST /teams/{team_id}/documents`` in nested.py.
+    """
     document_service = DocumentService()
 
     if not await check_user_team_access(current_user, team_id):
@@ -102,7 +105,6 @@ async def create_document(
     return build_document_response(document, author_name=current_user.name)
 
 
-@router.get("", response_model=list[DocumentResponse])
 async def list_documents(
     team_id: str,
     current_user: CurrentUser,
@@ -112,7 +114,12 @@ async def list_documents(
     skip: int = 0,
     limit: int = 100,
 ):
-    """List documents for a team."""
+    """List documents for a team.
+
+    Not directly routed here (CHT-1223): canonical route is the
+    path-nested ``GET /teams/{team_id}/documents`` in nested.py
+    (project_id/sprint_id/search/skip/limit remain query filters there).
+    """
     limit = min(limit, 10000)
     document_service = DocumentService()
 

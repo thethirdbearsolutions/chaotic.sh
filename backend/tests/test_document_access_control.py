@@ -246,7 +246,7 @@ class TestDocumentListAccessControl:
     ):
         """GET /documents?project_id=... returns 403 for non-team-member."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&project_id={test_project.id}",
+            f"/api/teams/{test_team.id}/documents?project_id={test_project.id}",
             headers=other_auth_headers,
         )
         # Team-level check rejects before project-level check is reached
@@ -257,7 +257,7 @@ class TestDocumentListAccessControl:
     ):
         """GET /documents?sprint_id=... returns 403 for non-team-member."""
         response = await client.get(
-            f"/api/documents?team_id={test_team.id}&sprint_id={test_sprint.id}",
+            f"/api/teams/{test_team.id}/documents?sprint_id={test_sprint.id}",
             headers=other_auth_headers,
         )
         # Team-level check rejects before sprint-level check is reached
