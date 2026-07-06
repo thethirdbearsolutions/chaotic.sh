@@ -252,14 +252,23 @@ function renderSprintBurndown(sprint) {
 // Sprint Detail View (CHT-464)
 // ============================================================================
 
+// Monotonic request id — lets viewSprint() drop a response from a superseded
+// request (rapid navigation between sprints) instead of overwriting newer
+// data with stale data (CHT-1211 review #3).
+let viewSprintRequestId = 0;
+
 export async function viewSprint(sprintId, pushHistory = true) {
     try {
         // Record the list's scroll position before we replace it with detail
         // content, so Back can restore it (CHT-1211 item 1).
         if (pushHistory) saveScrollPosition();
 
+        const requestId = ++viewSprintRequestId;
+        const viewAtEntry = getCurrentView();
+
         // Fetch sprint details
         const sprint = await api.getSprint(sprintId);
+        if (requestId !== viewSprintRequestId) return; // a newer viewSprint() has since started — drop this stale response
         if (!sprint) {
             showToast('Sprint not found', 'error');
             navigateTo('sprints');
@@ -275,13 +284,21 @@ export async function viewSprint(sprintId, pushHistory = true) {
             api.getSprintTransactions(sprintId).catch(() => []),
             teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(() => []) : [],
         ]);
+        if (requestId !== viewSprintRequestId) return; // guard again — a newer request may have started during the awaits above
+
         currentSprintIssues = issues;
         currentSprintTransactions = transactions;
         currentSprintDocuments = documents;
         // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
         // opened from a sprint's issue list should page through this list,
-        // not the Issues-view-only global issues array.
-        setDetailNavContext(currentSprintIssues);
+        // not the Issues-view-only global issues array. The request id only
+        // orders viewSprint() against itself — also require that the user
+        // hasn't navigated to a different view while the fetches were in
+        // flight, or this slow response would clobber the fresher context
+        // that view has since written (CHT-1211 review #2).
+        if (getCurrentView() === viewAtEntry) {
+            setDetailNavContext(currentSprintIssues);
+        }
 
         // Update URL and history
         if (pushHistory) {

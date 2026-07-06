@@ -66,7 +66,7 @@ vi.mock('./api.js', () => ({
 }));
 
 import { api } from './api.js';
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
@@ -997,6 +997,22 @@ describe('issues-view', () => {
             api.getIssues.mockResolvedValue(mockIssues);
             await loadIssues();
             expect(setDetailNavContext).toHaveBeenCalledWith(mockIssues);
+        });
+
+        // CHT-1211 review #2: a slow loadIssues() response landing after the
+        // user navigated to another view must not clobber that view's
+        // fresher context (the request id only orders loadIssues() against
+        // itself).
+        it('does not write the detail nav context when the user has navigated away', async () => {
+            const mockIssues = [{ id: 'i-1', project_id: 'p-1' }];
+            api.getIssues.mockResolvedValue(mockIssues);
+            getCurrentView.mockReturnValue('board'); // no longer on Issues
+
+            await loadIssues();
+
+            expect(setDetailNavContext).not.toHaveBeenCalled();
+            // Issues-view's own state still updates
+            expect(setIssues).toHaveBeenCalledWith(mockIssues);
         });
 
         // CHT-1211 item 7: a stale response from a superseded loadIssues()

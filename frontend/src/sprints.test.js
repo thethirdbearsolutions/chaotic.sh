@@ -77,6 +77,7 @@ import {
     getSprints,
     setSprints,
     getSprintCache,
+    getCurrentSprintDetail,
     getLimboStatus,
     loadSprints,
     renderSprints,
@@ -531,6 +532,62 @@ describe('viewSprint', () => {
             await viewSprint('s1');
 
             expect(getDetailNavContext()).toEqual(sprintIssues);
+        });
+
+        // CHT-1211 review #2: a slow viewSprint() response landing after the
+        // user navigated to a different view must not clobber that view's
+        // fresher context.
+        it('does not write the context when the user navigated to another view mid-fetch', async () => {
+            setState('currentView', 'sprints');
+            setState('detailNavContext', []);
+            let resolveSprint;
+            api.getSprint.mockImplementationOnce(() => new Promise((resolve) => { resolveSprint = resolve; }));
+            const sprintIssues = [{ id: 'i1', identifier: 'CHT-1', title: 'One', status: 'todo' }];
+            api.getIssues.mockResolvedValue(sprintIssues);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            const load = viewSprint('s1'); // in flight, slow
+
+            // User navigates to Issues; its loader writes the correct context
+            const issuesList = [{ id: 'x1', identifier: 'CHT-9' }];
+            setState('currentView', 'issues');
+            setState('detailNavContext', issuesList);
+
+            resolveSprint({ id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 5, project_id: 'p1' });
+            await load;
+
+            expect(getDetailNavContext()).toEqual(issuesList);
+        });
+    });
+
+    // CHT-1211 review #3: same monotonic-request-id protection as
+    // loadIssues()/loadBoard() — rapid navigation between two sprints must
+    // not let the slower, earlier response win.
+    describe('request sequencing (out-of-order responses)', () => {
+        it('drops a slow response from an earlier sprint navigation', async () => {
+            let resolveFirst;
+            const sprint1 = { id: 's1', name: 'Sprint 1', status: 'active', budget: 20, points_spent: 5, project_id: 'p1' };
+            const sprint2 = { id: 's2', name: 'Sprint 2', status: 'planned', budget: 10, points_spent: 0, project_id: 'p1' };
+            api.getIssues.mockResolvedValue([]);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            api.getSprint.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+            const firstLoad = viewSprint('s1'); // in flight, slow
+
+            api.getSprint.mockImplementationOnce(() => Promise.resolve(sprint2));
+            await viewSprint('s2'); // resolves first (faster)
+
+            expect(getCurrentSprintDetail()).toEqual(sprint2);
+
+            // The slow first request now resolves — must be dropped, not
+            // replace the sprint the user is now looking at.
+            resolveFirst(sprint1);
+            await firstLoad;
+
+            expect(getCurrentSprintDetail()).toEqual(sprint2);
+            expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 2');
         });
     });
 });

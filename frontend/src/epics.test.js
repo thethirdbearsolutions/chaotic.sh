@@ -151,6 +151,34 @@ describe('loadEpics', () => {
         expect(progressTexts[0].textContent).toBe('2/3');
     });
 
+    // CHT-1211 review #3: same monotonic-request-id protection as the other
+    // list loaders — a stale response from a superseded loadEpics() call
+    // (rapid project switching) must not overwrite newer data.
+    describe('request sequencing (out-of-order responses)', () => {
+        it('drops a slow response from an earlier project switch', async () => {
+            let resolveFirst;
+            const staleEpics = [{ id: 'stale', identifier: 'CHT-1', title: 'Stale Epic', status: 'todo' }];
+            const freshEpics = [{ id: 'fresh', identifier: 'CHT-2', title: 'Fresh Epic', status: 'todo' }];
+            api.getSubIssues.mockResolvedValue([]);
+
+            api.getTeamIssues.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+            const firstLoad = loadEpics(); // in flight, slow
+
+            api.getTeamIssues.mockImplementationOnce(() => Promise.resolve(freshEpics));
+            await loadEpics(); // resolves first (faster)
+
+            expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
+
+            // The slow first request now resolves — must be dropped
+            resolveFirst(staleEpics);
+            await firstLoad;
+
+            expect(getCurrentEpics().map(e => e.id)).toEqual(['fresh']);
+            expect(document.getElementById('epics-list').innerHTML).toContain('Fresh Epic');
+            expect(document.getElementById('epics-list').innerHTML).not.toContain('Stale Epic');
+        });
+    });
+
     // CHT-1211 item 6: epic-detail-view.js's prev/next reads this list
     describe('getCurrentEpics', () => {
         it('exposes the last-loaded epics list', async () => {

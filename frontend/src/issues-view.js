@@ -345,8 +345,14 @@ export async function loadIssues() {
         setIssues(issues);
         // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
         // Issues-view's own list, so it's the reliable source when arriving
-        // at an issue detail from here.
-        setDetailNavContext(issues);
+        // at an issue detail from here. The request id above only orders
+        // loadIssues() against itself — also require that Issues is still
+        // the current view at response time, or a slow response landing
+        // after the user navigated away would clobber the context another
+        // view has since written (CHT-1211 review #2).
+        if (getCurrentView() === 'issues') {
+            setDetailNavContext(issues);
+        }
 
         const projectIds = [...new Set(issues.map(i => i.project_id))];
         await ensureSprintCacheForIssues(projectIds);

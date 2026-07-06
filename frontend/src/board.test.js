@@ -59,6 +59,10 @@ describe('board', () => {
         setBoardIssues([]);
         vi.clearAllMocks();
 
+        // Reset shared state the CHT-1211 nav-context tests touch
+        setState('currentView', 'board');
+        setState('detailNavContext', []);
+
         // Setup minimal DOM
         document.body.innerHTML = `
             <select id="board-project-filter"></select>
@@ -127,10 +131,27 @@ describe('board', () => {
             ];
             api.getIssues.mockResolvedValue(mockIssues);
             setState('currentProject', 'project-123');
+            setState('currentView', 'board');
 
             await loadBoard();
 
             expect(getDetailNavContext()).toEqual(mockIssues);
+        });
+
+        // CHT-1211 review #2: the request id only orders loadBoard() against
+        // itself — the context write must also require Board to still be the
+        // current view when the response arrives.
+        it('does not write the detail nav context when the user has navigated away', async () => {
+            const boardIssuesList = [{ id: 'b1', title: 'B1', status: 'todo' }];
+            api.getIssues.mockResolvedValue(boardIssuesList);
+            setState('currentProject', 'project-123');
+            setState('currentView', 'issues'); // user is no longer on Board
+
+            await loadBoard();
+
+            expect(getDetailNavContext()).toEqual([]);
+            // Board's own local state still updates
+            expect(getBoardIssues()).toEqual(boardIssuesList);
         });
 
         // CHT-1211 item 7: a stale response from a superseded loadBoard()
@@ -158,6 +179,35 @@ describe('board', () => {
                 await firstLoad;
 
                 expect(getBoardIssues()).toEqual(projectBIssues);
+            });
+
+            // CHT-1211 review #2: the board→issues cross-view race. A slow
+            // loadBoard() response passes its own request-id check (nobody
+            // called loadBoard() again) but must NOT clobber the fresher
+            // context the Issues view wrote in the meantime.
+            it('does not clobber another view\'s context with a slow cross-view response', async () => {
+                let resolveBoard;
+                const slowBoardRequest = new Promise((resolve) => { resolveBoard = resolve; });
+                const boardIssuesList = [{ id: 'b1', title: 'Board 1', status: 'todo' }];
+                const issuesList = [{ id: 'i1', title: 'Issue 1', status: 'todo' }];
+
+                // User on Board, project switch fires a slow loadBoard()
+                setState('currentView', 'board');
+                setState('currentProject', 'project-A');
+                api.getIssues.mockImplementationOnce(() => slowBoardRequest);
+                const boardLoad = loadBoard();
+
+                // User navigates to Issues; its loader resolves fast and
+                // writes the correct context (simulated directly here)
+                setState('currentView', 'issues');
+                setState('detailNavContext', issuesList);
+
+                // Board's stale response finally arrives — request id still
+                // matches (no newer loadBoard()), but the view has changed
+                resolveBoard(boardIssuesList);
+                await boardLoad;
+
+                expect(getDetailNavContext()).toEqual(issuesList);
             });
         });
 

@@ -109,8 +109,14 @@ export async function loadBoard() {
         boardIssues = issues;
         // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
         // opened from the Board should page through the board's own list,
-        // not the Issues-view-only global issues array.
-        setDetailNavContext(boardIssues);
+        // not the Issues-view-only global issues array. The request id only
+        // orders loadBoard() against itself — also require that Board is
+        // still the current view at response time, or a slow response
+        // landing after the user navigated to another view would clobber
+        // that view's fresher context (CHT-1211 review #2).
+        if (getCurrentView() === 'board') {
+            setDetailNavContext(boardIssues);
+        }
         renderBoard();
     } catch (e) {
         if (requestId !== loadBoardRequestId) return;

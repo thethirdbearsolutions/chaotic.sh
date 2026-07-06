@@ -29,12 +29,19 @@ subscribe((key) => {
     loadEpics();
 });
 
+// Monotonic request id — lets loadEpics() drop a response from a superseded
+// request (rapid project switching) instead of overwriting newer data with
+// stale data (CHT-1211 review #3).
+let loadEpicsRequestId = 0;
+
 /**
  * Load and render the epics list view.
  */
 export async function loadEpics() {
     const listEl = document.getElementById('epics-list');
     if (!listEl) return;
+
+    const requestId = ++loadEpicsRequestId;
 
     // Show loading skeleton (CHT-1047)
     listEl.innerHTML = Array(4).fill(0).map(() => `
@@ -64,6 +71,7 @@ export async function loadEpics() {
         } else {
             epics = await api.getTeamIssues(getCurrentTeam().id, { issue_type: 'epic' });
         }
+        if (requestId !== loadEpicsRequestId) return; // a newer loadEpics() has since started — drop this stale response
 
         if (!epics || epics.length === 0) {
             currentEpics = [];
@@ -90,9 +98,12 @@ export async function loadEpics() {
             })
         );
 
+        if (requestId !== loadEpicsRequestId) return; // guard again — a newer request may have resolved during the sub-issue fetches
+
         currentEpics = epicsWithProgress;
         renderEpics(epicsWithProgress, listEl);
     } catch (e) {
+        if (requestId !== loadEpicsRequestId) return;
         listEl.innerHTML = `<div class="empty-state">Failed to load epics: ${escapeHtml(e.message || String(e))}</div>`;
     }
 }
