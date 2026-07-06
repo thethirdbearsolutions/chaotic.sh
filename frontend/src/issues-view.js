@@ -15,6 +15,7 @@ import {
     getCurrentTeam,
     getIssues,
     setIssues,
+    setDetailNavContext,
     getSearchDebounceTimer,
     setSearchDebounceTimer,
     setSelectedIssueIndex,
@@ -222,8 +223,14 @@ function resolveLabelNames(labelIds, dropdownId) {
         .filter(Boolean);
 }
 
+// Monotonic request id — lets loadIssues() drop a response from a
+// superseded request (rapid filter/search changes) instead of overwriting
+// newer data with stale data (CHT-1211 item 7).
+let loadIssuesRequestId = 0;
+
 export async function loadIssues() {
     setSelectedIssueIndex(-1);
+    const requestId = ++loadIssuesRequestId;
     if (!getCurrentTeam()) return;
 
     const projectId = getCurrentProject() || '';
@@ -333,13 +340,21 @@ export async function loadIssues() {
             issues = await api.getTeamIssues(getCurrentTeam().id, params);
         }
 
+        if (requestId !== loadIssuesRequestId) return; // a newer loadIssues() has since started — drop this stale response
+
         setIssues(issues);
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — this is the
+        // Issues-view's own list, so it's the reliable source when arriving
+        // at an issue detail from here.
+        setDetailNavContext(issues);
 
         const projectIds = [...new Set(issues.map(i => i.project_id))];
         await ensureSprintCacheForIssues(projectIds);
+        if (requestId !== loadIssuesRequestId) return; // guard again — a newer request may have resolved during the await above
 
         renderIssues();
     } catch (e) {
+        if (requestId !== loadIssuesRequestId) return;
         showApiError('load issues', e);
     }
 }

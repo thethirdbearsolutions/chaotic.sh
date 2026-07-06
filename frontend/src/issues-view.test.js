@@ -10,6 +10,7 @@ vi.mock('./state.js', () => ({
     getCurrentUser: vi.fn(() => ({ id: 'user-1', name: 'Test User' })),
     getIssues: vi.fn(() => []),
     setIssues: vi.fn(),
+    setDetailNavContext: vi.fn(),
     getSearchDebounceTimer: vi.fn(() => null),
     setSearchDebounceTimer: vi.fn(),
     setSelectedIssueIndex: vi.fn(),
@@ -65,7 +66,7 @@ vi.mock('./api.js', () => ({
 }));
 
 import { api } from './api.js';
-import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
+import { getActiveFilterCategory, setActiveFilterCategory, getCurrentUser, setIssues, setDetailNavContext, setSelectedIssueIndex, setSearchDebounceTimer, getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js';
 import { getProjects } from './projects.js';
 import { getMembers } from './teams.js';
 import { getCachedCurrentSprintId, setCachedCurrentSprintId } from './sprints.js';
@@ -987,6 +988,42 @@ describe('issues-view', () => {
             api.getIssues.mockResolvedValue([]);
             await loadIssues();
             expect(renderIssues).toHaveBeenCalled();
+        });
+
+        // CHT-1211 item 2: issue-detail prev/next should page through this
+        // same list — Issues-view is the one legitimate source for it.
+        it('sets the detail nav context to the loaded issues', async () => {
+            const mockIssues = [{ id: 'i-1', project_id: 'p-1' }];
+            api.getIssues.mockResolvedValue(mockIssues);
+            await loadIssues();
+            expect(setDetailNavContext).toHaveBeenCalledWith(mockIssues);
+        });
+
+        // CHT-1211 item 7: a stale response from a superseded loadIssues()
+        // call (rapid filter/search changes) must not overwrite newer data.
+        describe('request sequencing (out-of-order responses)', () => {
+            it('drops a slow response from an earlier filter change', async () => {
+                let resolveFirst;
+                const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+                const firstIssues = [{ id: 'stale', project_id: 'p-1' }];
+                const secondIssues = [{ id: 'fresh', project_id: 'p-1' }];
+
+                api.getIssues.mockImplementationOnce(() => firstRequest);
+                const firstLoad = loadIssues(); // in flight, slow
+
+                api.getIssues.mockImplementationOnce(() => Promise.resolve(secondIssues));
+                await loadIssues(); // resolves first (faster)
+
+                expect(setIssues).toHaveBeenLastCalledWith(secondIssues);
+
+                // The slow first request now resolves — must be dropped, not
+                // overwrite the already-current second response.
+                setIssues.mockClear();
+                resolveFirst(firstIssues);
+                await firstLoad;
+
+                expect(setIssues).not.toHaveBeenCalled();
+            });
         });
 
         it('includes status filters in params', async () => {
