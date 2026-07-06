@@ -1,7 +1,7 @@
 /**
  * Tests for sprints.js module
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./api.js', () => ({
     api: {
@@ -41,8 +41,10 @@ vi.mock('./event-delegation.js', () => ({
 }));
 
 const mockNavigateTo = vi.fn();
+const mockSaveScrollPosition = vi.fn();
 vi.mock('./router.js', () => ({
     navigateTo: (...args) => mockNavigateTo(...args),
+    saveScrollPosition: (...args) => mockSaveScrollPosition(...args),
 }));
 
 vi.mock('./gate-approvals.js', () => ({
@@ -68,7 +70,7 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn(s => s || ''),
 }));
 
-import { setCurrentTeam, setState } from './state.js';
+import { setCurrentTeam, setState, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
@@ -484,6 +486,86 @@ describe('viewSprint', () => {
         expect(api.getDocuments).not.toHaveBeenCalled();
         const detailView = document.getElementById('sprint-detail-view');
         expect(detailView).toBeTruthy();
+    });
+
+    // CHT-1211 item 1: scroll position must be saved before pushState
+    describe('scroll position', () => {
+        beforeEach(() => {
+            api.getSprint.mockResolvedValue({
+                id: 's1', name: 'Sprint 1', status: 'active',
+                budget: 20, points_spent: 5, project_id: 'p1',
+            });
+            api.getIssues.mockResolvedValue([]);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+            mockSaveScrollPosition.mockClear();
+        });
+
+        it('saves scroll position when pushHistory is true (default)', async () => {
+            await viewSprint('s1');
+            expect(mockSaveScrollPosition).toHaveBeenCalled();
+        });
+
+        it('does not save scroll position when pushHistory=false', async () => {
+            await viewSprint('s1', false);
+            expect(mockSaveScrollPosition).not.toHaveBeenCalled();
+        });
+    });
+
+    // CHT-1211 item 2: prev/next issue-detail nav context should reflect the
+    // sprint's own issue list, not the Issues-view-only global array.
+    describe('detail nav context', () => {
+        it('sets the detail nav context to the sprint issue list', async () => {
+            api.getSprint.mockResolvedValue({
+                id: 's1', name: 'Sprint 1', status: 'active',
+                budget: 20, points_spent: 5, project_id: 'p1',
+            });
+            const sprintIssues = [
+                { id: 'i1', identifier: 'CHT-1', title: 'One', status: 'todo' },
+                { id: 'i2', identifier: 'CHT-2', title: 'Two', status: 'done' },
+            ];
+            api.getIssues.mockResolvedValue(sprintIssues);
+            api.getSprintTransactions.mockResolvedValue([]);
+            api.getDocuments.mockResolvedValue([]);
+
+            await viewSprint('s1');
+
+            expect(getDetailNavContext()).toEqual(sprintIssues);
+        });
+    });
+});
+
+// CHT-1211 item 3/4: sprint detail 'Back' was hardcoded to 'sprints' instead
+// of computing backView from getCurrentView(), like issue/epic detail do.
+describe('sprint detail Back button', () => {
+    beforeEach(() => {
+        api.getSprint.mockResolvedValue({
+            id: 's1', name: 'Sprint 1', status: 'active',
+            budget: 20, points_spent: 5, project_id: 'p1',
+        });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        setState('currentView', 'my-issues');
+    });
+
+    it('defaults to sprints when there is no current view', async () => {
+        setState('currentView', null);
+        await viewSprint('s1');
+
+        const backBtn = document.querySelector('#sprint-detail-view [data-action="navigate-to"]');
+        expect(backBtn.dataset.view).toBe('sprints');
+    });
+
+    it('returns to the view the sprint was opened from', async () => {
+        setState('currentView', 'my-issues');
+        await viewSprint('s1');
+
+        const backBtn = document.querySelector('#sprint-detail-view [data-action="navigate-to"]');
+        expect(backBtn.dataset.view).toBe('my-issues');
     });
 });
 

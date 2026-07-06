@@ -9,9 +9,9 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getEstimateScaleHint } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
-import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext } from './state.js';
 import { registerActions } from './event-delegation.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { approveRitual, completeGateRitual } from './rituals-view.js';
@@ -254,6 +254,10 @@ function renderSprintBurndown(sprint) {
 
 export async function viewSprint(sprintId, pushHistory = true) {
     try {
+        // Record the list's scroll position before we replace it with detail
+        // content, so Back can restore it (CHT-1211 item 1).
+        if (pushHistory) saveScrollPosition();
+
         // Fetch sprint details
         const sprint = await api.getSprint(sprintId);
         if (!sprint) {
@@ -274,6 +278,10 @@ export async function viewSprint(sprintId, pushHistory = true) {
         currentSprintIssues = issues;
         currentSprintTransactions = transactions;
         currentSprintDocuments = documents;
+        // Prev/next issue-detail nav context (CHT-1211 item 2) — issues
+        // opened from a sprint's issue list should page through this list,
+        // not the Issues-view-only global issues array.
+        setDetailNavContext(currentSprintIssues);
 
         // Update URL and history
         if (pushHistory) {
@@ -322,6 +330,11 @@ function renderSprintDetail() {
     }
     view.classList.remove('hidden');
 
+    // Compute where Back should return to, the same way issue/epic detail do
+    // (CHT-1211 item 3/4) — was hardcoded to 'sprints', a dead end when a
+    // sprint is opened from elsewhere (e.g. a future Dashboard link).
+    const backView = getCurrentView() || 'sprints';
+
     // Separate issues by status
     const openIssues = issues.filter(i => OPEN_STATUSES.includes(i.status));
     const closedIssues = issues.filter(i => i.status === 'done');
@@ -348,7 +361,7 @@ function renderSprintDetail() {
     view.innerHTML = `
         <div class="sprint-detail-header">
             <div class="sprint-detail-nav">
-                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="sprints">
+                <button class="btn btn-secondary btn-small" data-action="navigate-to" data-view="${escapeAttr(backView)}">
                     \u2190 Back to Sprints
                 </button>
             </div>
