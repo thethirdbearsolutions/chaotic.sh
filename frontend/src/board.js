@@ -225,8 +225,31 @@ export function handleDragEnd(e, target) {
     draggingIssueId = null;
 }
 
+// CHT-1226: intra-column drag-to-reorder was cosmetic only -- Issue has no
+// persisted order/position field (no `order`-like column on
+// backend/app/oxyde_models/issue.py), so a same-column drop reordered the
+// in-memory boardIssues array and re-rendered (looked like it worked), but
+// nothing was ever sent to the API; any reload/project-switch discarded the
+// manual arrangement. Adding real persistence would mean a new model field
+// + migration + service/API plumbing + a default backend sort order for
+// board fetches -- disproportionate to this item next to the rest of this
+// pass. Per the ticket's own escape hatch, same-column drag targets are
+// disabled instead (below) so the UI stops promising an ordering it can't
+// keep; cross-column drags (the persisted, real feature: status) are
+// unaffected.
+
+/**
+ * True if dropping `draggingIssueId` onto something with `targetStatus`
+ * would be a same-column, no-op drop (CHT-1226 — see note above).
+ */
+function isSameColumnDrag(targetStatus) {
+    const dragged = boardIssues.find(i => i.id === draggingIssueId);
+    return !!dragged && dragged.status === targetStatus;
+}
+
 export function handleDragOver(e, target) {
     e.preventDefault();
+    if (isSameColumnDrag(target.dataset.status)) return;
     target.classList.add('drag-over');
 }
 
@@ -236,6 +259,8 @@ export function handleDragLeave(e, target) {
 
 export function handleCardDragOver(e, target) {
     e.preventDefault();
+    const targetIssue = boardIssues.find(i => i.id === target.dataset.id);
+    if (targetIssue && isSameColumnDrag(targetIssue.status)) return;
     target.classList.add('drag-over');
 }
 
@@ -255,11 +280,12 @@ export async function handleDrop(e, target) {
     if (!issue) return;
 
     const oldStatus = issue.status;
-    issue.status = newStatus;
-    reorderBoardIssues(newStatus, issueId);
-    renderBoard();
-
+    // Same-column drop is a no-op (CHT-1226 — see note above): there is no
+    // persisted order to write, so don't pretend to reorder.
     if (oldStatus === newStatus) return;
+
+    issue.status = newStatus;
+    renderBoard();
 
     // Optimistic update
     try {
@@ -289,11 +315,12 @@ export async function handleCardDrop(e, target) {
     if (!issue) return;
 
     const oldStatus = issue.status;
+    // Same-column drop-on-card is a no-op — see handleDrop above.
+    if (oldStatus === newStatus) return;
+
     issue.status = newStatus;
-    reorderBoardIssues(newStatus, issueId, targetId);
     renderBoard();
 
-    if (oldStatus === newStatus) return;
     try {
         await api.updateIssue(issueId, { status: newStatus });
         showToast('Status updated', 'success');
@@ -302,33 +329,6 @@ export async function handleCardDrop(e, target) {
         renderBoard();
         showApiError('update status', e);
     }
-}
-
-export function reorderBoardIssues(status, issueId, targetId = null) {
-    const statusIssues = boardIssues.filter(i => i.status === status && i.id !== issueId);
-    const dragged = boardIssues.find(i => i.id === issueId);
-    if (!dragged) return;
-
-    if (targetId) {
-        const targetIndex = statusIssues.findIndex(i => i.id === targetId);
-        if (targetIndex >= 0) {
-            statusIssues.splice(targetIndex, 0, dragged);
-        } else {
-            statusIssues.push(dragged);
-        }
-    } else {
-        statusIssues.push(dragged);
-    }
-
-    const reordered = [];
-    BOARD_STATUSES.forEach(s => {
-        if (s.key === status) {
-            reordered.push(...statusIssues);
-        } else {
-            reordered.push(...boardIssues.filter(i => i.status === s.key));
-        }
-    });
-    boardIssues = reordered;
 }
 
 // Register delegated event handlers for board actions
