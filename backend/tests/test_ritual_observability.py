@@ -174,6 +174,21 @@ class TestIntentClearedEmitsEvents:
             "event for `chaotic await issue CHT-X`."
         )
 
+        # CHT-1225: the auto-transition changes issue.status just like a
+        # direct PATCH does, but previously only ever emitted the
+        # 'activity' broadcast above -- board/issue-list/sprints views
+        # don't listen to 'activity', only 'issue', so they went stale
+        # after a ritual-gated claim/close.
+        issue_broadcasts = [
+            msg for _team, msg in captured_broadcasts if msg.get("entity") == "issue"
+        ]
+        assert issue_broadcasts, (
+            "Auto-transition must also broadcast an 'issue' event (not "
+            "just 'activity') so board/list/sprints views refresh."
+        )
+        assert issue_broadcasts[0]["type"] == "updated"
+        assert issue_broadcasts[0]["data"]["status"] == "in_progress"
+
     @pytest.mark.asyncio
     async def test_clearing_intermediate_block_does_not_emit_intent_cleared(
         self, db, test_issue, test_user, make_ritual, captured_broadcasts
@@ -266,3 +281,68 @@ class TestRitualAttestedStillEmitsAfterRefactor:
         assert any(
             "attested" in (t or "") for t in _broadcast_types(captured_broadcasts)
         )
+
+
+# ---------------------------------------------------------------------------
+# CHT-1200: HTTP attest/approve must not double-broadcast
+# ---------------------------------------------------------------------------
+
+
+class TestNoDuplicateAttestationBroadcastOverHttp:
+    """CHT-1187 moved the ritual_attested/ritual_approved broadcasts into
+    RitualService (service-layer observability). The API layer used to ALSO
+    broadcast its own 'attested'/'approved' event on top, so a single HTTP
+    attest/approve fired two attestation-entity broadcasts."""
+
+    @pytest.mark.asyncio
+    async def test_http_attest_broadcasts_exactly_once(
+        self, client, auth_headers, test_issue, auto_close_ritual, captured_broadcasts
+    ):
+        response = await client.post(
+            f"/api/rituals/{auto_close_ritual.id}/attest-issue/{test_issue.id}",
+            headers=auth_headers,
+            json={"note": "done"},
+        )
+        assert response.status_code == 200
+
+        attestation_broadcasts = [
+            msg for _team, msg in captured_broadcasts if msg.get("entity") == "attestation"
+        ]
+        assert len(attestation_broadcasts) == 1, (
+            f"Expected exactly one attestation broadcast, got {attestation_broadcasts}"
+        )
+        assert attestation_broadcasts[0]["type"] == "ritual_attested"
+
+    @pytest.mark.asyncio
+    async def test_http_approve_broadcasts_exactly_once(
+        self, client, auth_headers, test_issue, test_project, test_user, make_ritual, captured_broadcasts
+    ):
+        from app.enums import RitualTrigger, ApprovalMode
+
+        # Approving requires team-admin -- test_user is the OWNER on
+        # test_team via the test_project fixture chain.
+        ritual = await make_ritual(
+            name="review_close_http",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+        )
+        await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
+            headers=auth_headers,
+            json={"note": "ready"},
+        )
+        captured_broadcasts.clear()
+
+        response = await client.post(
+            f"/api/rituals/{ritual.id}/approve-issue/{test_issue.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+
+        attestation_broadcasts = [
+            msg for _team, msg in captured_broadcasts if msg.get("entity") == "attestation"
+        ]
+        assert len(attestation_broadcasts) == 1, (
+            f"Expected exactly one attestation broadcast, got {attestation_broadcasts}"
+        )
+        assert attestation_broadcasts[0]["type"] == "ritual_approved"
