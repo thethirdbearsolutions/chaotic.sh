@@ -1655,6 +1655,56 @@ async def test_create_relation(client, auth_headers, test_project, test_user, db
 
 
 @pytest.mark.asyncio
+async def test_create_relation_matches_list_relations_shape(client, auth_headers, test_project, test_user, db):
+    """CHT-1223: create_relation and list_relations return the same shape.
+
+    Before the fix, create_relation's hand-built dict omitted
+    related_issue_identifier/title/status and "direction" entirely, while
+    list_relations included both -- same logical resource, two different
+    wire shapes.
+    """
+    from app.oxyde_models.issue import OxydeIssue
+
+    issue1 = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-1200",
+        number=1200,
+        title="Issue 1",
+        creator_id=test_user.id,
+    )
+    issue2 = await OxydeIssue.objects.create(
+        project_id=test_project.id,
+        identifier=f"{test_project.key}-1201",
+        number=1201,
+        title="Issue 2",
+        creator_id=test_user.id,
+    )
+
+    create_response = await client.post(
+        f"/api/issues/{issue1.id}/relations",
+        headers=auth_headers,
+        json={"related_issue_id": issue2.id, "relation_type": "blocks"},
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+
+    # Fields list_relations has always populated, now also on create's response.
+    assert created["related_issue_identifier"] == issue2.identifier
+    assert created["related_issue_title"] == issue2.title
+    assert created["related_issue_status"] == "backlog"
+    assert created["direction"] == "outgoing"
+
+    list_response = await client.get(
+        f"/api/issues/{issue1.id}/relations",
+        headers=auth_headers,
+    )
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert len(listed) == 1
+    assert set(created.keys()) == set(listed[0].keys())
+
+
+@pytest.mark.asyncio
 async def test_create_relation_issue_not_found(client, auth_headers, test_issue):
     """Test creating relation with non-existent source issue."""
     response = await client.post(

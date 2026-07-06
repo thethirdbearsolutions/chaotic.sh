@@ -19,6 +19,7 @@ from app.schemas.issue import (
     IssueActivityFeedResponse,
     TeamCommentResponse,
     IssueRelationCreate,
+    IssueRelationResponse,
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
@@ -1282,6 +1283,7 @@ async def delete_comment(
 # Issue Relations
 @router.post(
     "/{issue_id}/relations",
+    response_model=IssueRelationResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_relation(
@@ -1338,19 +1340,27 @@ async def create_relation(
         "created",
         {"source_issue_id": relation.issue_id, "target_issue_id": relation.related_issue_id},
     )
-    return {
-        "id": relation.id,
-        "issue_id": relation.issue_id,
-        "related_issue_id": relation.related_issue_id,
-        "relation_type": (relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name).lower(),
-        "created_at": relation.created_at,
-    }
+    # Fill in the related-issue fields and "direction" that list_relations
+    # already computes, so create and list return the same shape (CHT-1223).
+    return IssueRelationResponse(
+        id=relation.id,
+        issue_id=relation.issue_id,
+        related_issue_id=relation.related_issue_id,
+        relation_type=(relation.relation_type if isinstance(relation.relation_type, str) else relation.relation_type.name).lower(),
+        created_at=relation.created_at,
+        related_issue_identifier=related_issue.identifier,
+        related_issue_title=related_issue.title,
+        related_issue_status=related_issue.status,
+        direction="outgoing",
+    )
 
 
-@router.get("/{issue_id}/relations")
+@router.get("/{issue_id}/relations", response_model=list[IssueRelationResponse])
 async def list_relations(
     issue_id: str,
     current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List all relations for an issue."""
     issue_service = IssueService()
@@ -1372,7 +1382,7 @@ async def list_relations(
         )
 
     relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
-    return relations
+    return relations[skip:skip + limit]
 
 
 @router.delete(

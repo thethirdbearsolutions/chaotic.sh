@@ -74,7 +74,7 @@ class RitualGroupCreate(BaseModel):
 class RitualGroupUpdate(BaseModel):
     """Schema for updating a ritual group."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     selection_mode: SelectionMode | None = None
 
 
@@ -144,7 +144,7 @@ class RitualCreate(BaseModel):
 class RitualUpdate(BaseModel):
     """Schema for updating a ritual."""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     prompt: str | None = None
     trigger: RitualTrigger | None = None
     approval_mode: ApprovalMode | None = None

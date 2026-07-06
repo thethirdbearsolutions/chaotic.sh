@@ -18,7 +18,7 @@ class DocumentCreate(BaseModel):
 class DocumentUpdate(BaseModel):
     """Schema for updating a document."""
 
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
     content: str | None = None
     icon: str | None = None
     project_id: str | None = None
