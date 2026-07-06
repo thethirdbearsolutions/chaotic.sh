@@ -12,6 +12,7 @@ import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { loadIssues } from './issues-view.js';
 import { registerActions } from './event-delegation.js';
+import { getDescriptionDraft, setDescriptionDraft } from './storage.js';
 
 export async function showEditIssueModal(issueId) {
     try {
@@ -87,6 +88,26 @@ export async function showEditIssueModal(issueId) {
             </form>
         `;
         showModal();
+
+        // Draft persistence for the description field only (CHT-1214),
+        // reusing the inline editor's own storage keys/helpers — this modal
+        // has no dirty-check before closing (Escape/click-outside discard
+        // instantly), so at minimum the typed text survives that. Shares a
+        // localStorage slot with the inline editor by design: an abandoned
+        // edit in one surface is recoverable from the other too.
+        const descEl = document.getElementById('edit-issue-description');
+        if (descEl) {
+            const draft = getDescriptionDraft(issueId);
+            if (draft) descEl.value = draft;
+            descEl.addEventListener('input', () => {
+                const val = descEl.value;
+                if (val !== (issue.description || '')) {
+                    setDescriptionDraft(issueId, val, issue.description || '');
+                } else {
+                    setDescriptionDraft(issueId, null);
+                }
+            });
+        }
     } catch (e) {
         showApiError('load issue', e);
     }
@@ -117,6 +138,7 @@ export async function handleUpdateIssue(event, issueId) {
         };
 
         await api.updateIssue(issueId, data);
+        setDescriptionDraft(issueId, null);
         closeModal();
         await viewIssue(issueId);
         showToast('Issue updated!', 'success');
