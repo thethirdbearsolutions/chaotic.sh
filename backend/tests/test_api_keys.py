@@ -302,6 +302,19 @@ class TestAPIKeyAPIEndpoints:
         for key in data:
             assert "key" not in key or key.get("key") is None
 
+    async def test_list_api_keys_skip_limit(self, client, auth_headers, test_user, db):
+        """CHT-1223: /api-keys now accepts skip/limit like other list endpoints."""
+        service = APIKeyService()
+        for i in range(3):
+            await service.create(test_user.id, APIKeyCreate(name=f"Key {i}"))
+
+        response = await client.get(
+            "/api/api-keys?limit=1",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+
     async def test_revoke_api_key_endpoint(self, client, auth_headers, test_user, db):
         """DELETE /api-keys/{id} should revoke the API key."""
         service = APIKeyService()

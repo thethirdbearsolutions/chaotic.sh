@@ -120,7 +120,12 @@ async def delete_team(team_id: str, current_user: CurrentUser):
 
 # Members
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
-async def list_team_members(team_id: str, current_user: CurrentUser):
+async def list_team_members(
+    team_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
+):
     """List team members."""
     team_service = TeamService()
 
@@ -132,7 +137,7 @@ async def list_team_members(team_id: str, current_user: CurrentUser):
             detail="Not a member of this team",
         )
 
-    members = await team_service.get_members(team_id)
+    members = (await team_service.get_members(team_id))[skip:skip + limit]
     return [
         TeamMemberResponse(
             id=m.id,
@@ -277,7 +282,10 @@ async def create_invitation(
 
 @router.get("/{team_id}/invitations", response_model=list[TeamInvitationResponse])
 async def list_team_invitations(
-    team_id: str, current_user: CurrentUser
+    team_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List pending team invitations."""
     team_service = TeamService()
@@ -289,7 +297,7 @@ async def list_team_invitations(
         )
 
     invitations = await team_service.get_team_invitations(team_id)
-    return invitations
+    return invitations[skip:skip + limit]
 
 
 @router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)

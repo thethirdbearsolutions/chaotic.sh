@@ -93,6 +93,8 @@ async def list_rituals(
     project_id: str,
     current_user: CurrentUser,
     include_inactive: bool = False,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List rituals for a project."""
     project_service = ProjectService()
@@ -112,7 +114,7 @@ async def list_rituals(
         )
 
     rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
-    return rituals
+    return rituals[skip:skip + limit]
 
 
 @router.get("/history", response_model=list[RitualAttestationHistoryItem])
@@ -836,6 +838,8 @@ async def create_ritual_group(
 async def list_ritual_groups(
     project_id: str,
     current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 1000,
 ):
     """List ritual groups for a project."""
     project_service = ProjectService()
@@ -855,7 +859,7 @@ async def list_ritual_groups(
         )
 
     groups = await ritual_service.list_groups_by_project(project_id)
-    return groups
+    return groups[skip:skip + limit]
 
 
 @router.get("/groups/{group_id}", response_model=RitualGroupResponse)
