@@ -69,6 +69,15 @@ export function createKeyboardHandler(actions) {
         if (waitingForNavKey) {
             waitingForNavKey = false;
             clearTimeout(navKeyTimeout);
+            // CHT-1215 (review finding 2): 5 of the g-prefix targets collide
+            // with the issue detail view's own s/p/a/e/t shortcut map (its
+            // listener is registered later and would double-fire against the
+            // page being navigated away — startViewTransition defers the DOM
+            // swap past this synchronous dispatch). Same policy as the bare
+            // 'p'/'c' cases below: no-op here so the detail listener wins.
+            if (actions.isDetailViewActive?.() && ['p', 's', 't', 'e', 'a'].includes(e.key)) {
+                return;
+            }
             switch (e.key) {
                 case 'i': actions.navigateTo('issues'); break;
                 case 'p': actions.navigateTo('projects'); break;
@@ -215,6 +224,9 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
  * @param {Function} actions.showInlineDropdown - Opens an inline dropdown for a field
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
  * @returns {Function} The keydown event handler
  */
 export function createListNavigationHandler(actions) {
@@ -241,6 +253,13 @@ export function createListNavigationHandler(actions) {
 
     return function handleListNavigation(e) {
         if (actions.getCurrentView() !== 'issues') return;
+        // CHT-1215 (review finding 1): opening a detail view hides the list
+        // via CSS but leaves currentView === 'issues' and the .issue-row
+        // elements in the DOM, so without this guard the handler stays live
+        // against the hidden list — its stopImmediatePropagation for
+        // p/s/a fires before the detail view's own listener (registered
+        // later) ever sees the key, killing the documented detail shortcuts.
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
@@ -307,12 +326,19 @@ export function createListNavigationHandler(actions) {
  * @param {Function} actions.showEditDocumentModal - Opens edit modal for a document
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
  * @returns {Function} The keydown event handler
  */
 export function createDocListNavigationHandler(actions) {
     const selector = '#documents-list .list-item, #documents-list .grid-item';
     return function handleDocListNavigation(e) {
         if (actions.getCurrentView() !== 'documents') return;
+        // CHT-1215 (review finding 1): same disengage as the issues list —
+        // document detail leaves currentView === 'documents' and the hidden
+        // .list-item elements in the DOM.
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
@@ -374,12 +400,20 @@ export function createDocListNavigationHandler(actions) {
  * @param {Function} actions.viewIssue - Opens an issue by ID
  * @param {Function} actions.isModalOpen - Returns true if a modal is open
  * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @param {Function} [actions.isDetailViewActive] - Returns true if a detail
+ *   view is overlaying this handler's list; the handler disengages entirely
+ *   while one is up (CHT-1215 review finding 1)
  * @returns {Function} The keydown event handler
  */
 export function createBoardNavigationHandler(actions) {
     const selector = '#kanban-board .kanban-card';
     return function handleBoardNavigation(e) {
         if (actions.getCurrentView() !== 'board') return;
+        // CHT-1215 (review finding 1): same disengage as the issues list —
+        // opening a card's issue detail leaves currentView === 'board' and
+        // the hidden .kanban-card elements in the DOM; without this, Enter
+        // on the detail view would re-open the stale board selection.
+        if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;

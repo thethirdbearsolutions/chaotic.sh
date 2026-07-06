@@ -570,6 +570,15 @@ async function viewDocumentByPath(docId) {
 // getMemberHandle, setupMentionAutocomplete moved to mention-autocomplete.js (CHT-1044)
 
 
+// CHT-1215 (review finding 1): detail views hide the list via CSS but leave
+// currentView and the list DOM intact, so list/board nav handlers need an
+// explicit "a detail view is overlaying me" disengage check.
+const isAnyDetailViewActive = () =>
+    ['issue-detail-view', 'epic-detail-view', 'document-detail-view'].some((id) => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+    });
+
 // List navigation handlers registered BEFORE global shortcuts so
 // stopImmediatePropagation can block conflicts (e.g. 'p' = priority, not projects)
 document.addEventListener('keydown', createListNavigationHandler({
@@ -581,6 +590,7 @@ document.addEventListener('keydown', createListNavigationHandler({
     showInlineDropdown,
     isModalOpen,
     isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // j/k/Enter/e list navigation for documents
@@ -592,6 +602,7 @@ document.addEventListener('keydown', createDocListNavigationHandler({
     showEditDocumentModal,
     isModalOpen,
     isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // j/k/Enter card navigation for the Board (CHT-1215)
@@ -602,6 +613,7 @@ document.addEventListener('keydown', createBoardNavigationHandler({
     viewIssue,
     isModalOpen,
     isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
 }));
 
 // Keyboard shortcuts (logic in keyboard.js)

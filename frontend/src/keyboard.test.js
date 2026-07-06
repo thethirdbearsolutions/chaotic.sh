@@ -234,6 +234,56 @@ describe('Keyboard Handler', () => {
             handler(event);
             expect(actions.navigateTo).toHaveBeenCalledWith('projects');
         });
+
+        // CHT-1215 review finding 2: the g-prefix switch needs the same
+        // policy — 5 of its targets (p/s/t/e/a) collide with the detail
+        // view's own s/p/a/e/t shortcut map. The double-fire trigger is
+        // startViewTransition-dependent (Chrome defers the DOM swap past the
+        // synchronous listener dispatch, so the detail listener still sees
+        // its view as visible), which jsdom can't reproduce — these tests
+        // pin the guard itself at the unit level instead.
+        describe('g-prefix collisions', () => {
+            it.each(['p', 's', 't', 'e', 'a'])('g then %s does not navigate when detail view is active', (key) => {
+                actions.isDetailViewActive.mockReturnValue(true);
+                handler(makeEvent('g'));
+                handler(makeEvent(key));
+                expect(actions.navigateTo).not.toHaveBeenCalled();
+            });
+
+            it.each([
+                ['i', 'issues'],
+                ['d', 'documents'],
+                ['r', 'rituals'],
+                [',', 'settings'],
+            ])('g then %s (non-colliding) still navigates to %s when detail view is active', (key, view) => {
+                actions.isDetailViewActive.mockReturnValue(true);
+                handler(makeEvent('g'));
+                handler(makeEvent(key));
+                expect(actions.navigateTo).toHaveBeenCalledWith(view);
+            });
+
+            it.each([
+                ['p', 'projects'],
+                ['s', 'sprints'],
+                ['t', 'team'],
+                ['e', 'epics'],
+                ['a', 'approvals'],
+            ])('g then %s navigates to %s when detail view is not active', (key, view) => {
+                actions.isDetailViewActive.mockReturnValue(false);
+                handler(makeEvent('g'));
+                handler(makeEvent(key));
+                expect(actions.navigateTo).toHaveBeenCalledWith(view);
+            });
+
+            it('the swallowed colliding key still consumes the g prefix', () => {
+                actions.isDetailViewActive.mockReturnValue(true);
+                handler(makeEvent('g'));
+                handler(makeEvent('p')); // swallowed, but resets waitingForNavKey
+                actions.isDetailViewActive.mockReturnValue(false);
+                handler(makeEvent('s')); // bare 's' has no global shortcut
+                expect(actions.navigateTo).not.toHaveBeenCalled();
+            });
+        });
     });
 
     describe('g + key navigation combos', () => {
@@ -615,6 +665,7 @@ describe('List Navigation Handler', () => {
             showInlineDropdown: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+            isDetailViewActive: vi.fn().mockReturnValue(false),
         };
         handler = createListNavigationHandler(actions);
         Element.prototype.scrollIntoView = vi.fn();
@@ -680,6 +731,23 @@ describe('List Navigation Handler', () => {
             document.body.innerHTML = '<div id="issues-list"></div>';
             handler(makeEvent('j'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        // CHT-1215 review finding 1: a detail view hides the list via CSS
+        // but leaves currentView === 'issues' and the rows in the DOM — the
+        // handler must disengage entirely, or its stopImmediatePropagation
+        // (p/s/a) preempts the detail view's own shortcuts.
+        it('disengages entirely while a detail view is active', () => {
+            actions.isDetailViewActive.mockReturnValue(true);
+            actions.getSelectedIndex.mockReturnValue(0);
+            const p = makeEvent('p');
+            handler(makeEvent('j'));
+            handler(makeEvent('Enter'));
+            handler(p);
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.viewIssue).not.toHaveBeenCalled();
+            expect(actions.showInlineDropdown).not.toHaveBeenCalled();
+            expect(p.stopImmediatePropagation).not.toHaveBeenCalled();
         });
     });
 
@@ -869,6 +937,7 @@ describe('Document List Navigation Handler', () => {
             showEditDocumentModal: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+            isDetailViewActive: vi.fn().mockReturnValue(false),
         };
         handler = createDocListNavigationHandler(actions);
         Element.prototype.scrollIntoView = vi.fn();
@@ -909,6 +978,18 @@ describe('Document List Navigation Handler', () => {
             document.body.innerHTML = '<div id="documents-list"></div>';
             handler(makeEvent('j'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        // CHT-1215 review finding 1: same disengage as the issues list
+        it('disengages entirely while a detail view is active', () => {
+            actions.isDetailViewActive.mockReturnValue(true);
+            actions.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('j'));
+            handler(makeEvent('Enter'));
+            handler(makeEvent('e'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.viewDocument).not.toHaveBeenCalled();
+            expect(actions.showEditDocumentModal).not.toHaveBeenCalled();
         });
     });
 
@@ -1000,6 +1081,7 @@ describe('Board Navigation Handler', () => {
             viewIssue: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+            isDetailViewActive: vi.fn().mockReturnValue(false),
         };
         handler = createBoardNavigationHandler(actions);
         Element.prototype.scrollIntoView = vi.fn();
@@ -1046,6 +1128,18 @@ describe('Board Navigation Handler', () => {
             document.body.innerHTML = '<div id="kanban-board"></div>';
             handler(makeEvent('j'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        // CHT-1215 review finding 1: opening a card's detail view keeps
+        // currentView === 'board' and the hidden cards in the DOM — Enter
+        // must not re-open the stale board selection from the detail view.
+        it('disengages entirely while a detail view is active', () => {
+            actions.isDetailViewActive.mockReturnValue(true);
+            actions.getSelectedIndex.mockReturnValue(1);
+            handler(makeEvent('j'));
+            handler(makeEvent('Enter'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.viewIssue).not.toHaveBeenCalled();
         });
     });
 
@@ -1126,5 +1220,139 @@ describe('Board Navigation Handler', () => {
             expect(actions.viewIssue).not.toHaveBeenCalled();
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
+    });
+});
+
+// ============================================================================
+// Full listener-stack layering: j/k -> Enter -> p (CHT-1215 review finding 1)
+// ============================================================================
+//
+// The earlier "detail view layering" tests exercise createKeyboardHandler in
+// isolation; the review showed the real bug lived in the listener STACK:
+// createListNavigationHandler registers first and its stopImmediatePropagation
+// for p/s/a fired before the global guard or the detail listener ever ran.
+// This suite reproduces app.js's actual registration order with real
+// KeyboardEvents so stopImmediatePropagation semantics are genuinely
+// exercised end-to-end.
+
+describe('Full listener-stack layering: j/k → Enter → p (CHT-1215)', () => {
+    let registered;
+    let navigateTo;
+    let showInlineDropdown;
+    let viewIssue;
+    let detailShortcut;
+    let selectedIndex;
+
+    beforeEach(() => {
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="issues-list">
+                <div class="issue-row" data-issue-id="issue-1"><button class="priority-btn"></button>Issue 1</div>
+                <div class="issue-row" data-issue-id="issue-2"><button class="priority-btn"></button>Issue 2</div>
+            </div>
+            <div id="issue-detail-view" class="view hidden"></div>
+        `;
+        selectedIndex = -1;
+        navigateTo = vi.fn();
+        showInlineDropdown = vi.fn();
+        detailShortcut = vi.fn();
+
+        // Same check app.js wires in: the detail container's hidden class.
+        const isDetailViewActive = () => !document.getElementById('issue-detail-view').classList.contains('hidden');
+
+        // Mirrors what the real viewIssue() does to the DOM synchronously:
+        // hide all views, reveal the detail container. Crucially it does NOT
+        // reset selectedIssueIndex or change currentView — that's the exact
+        // state the review flagged.
+        viewIssue = vi.fn(() => {
+            document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+            document.getElementById('issue-detail-view').classList.remove('hidden');
+        });
+
+        registered = [];
+        const add = (fn) => {
+            document.addEventListener('keydown', fn);
+            registered.push(fn);
+        };
+
+        // 1. List-nav handler — registered FIRST, exactly as app.js does
+        add(createListNavigationHandler({
+            getCurrentView: () => 'issues', // stays 'issues' on detail open (real behavior)
+            getSelectedIndex: () => selectedIndex,
+            setSelectedIndex: (i) => { selectedIndex = i; },
+            viewIssue,
+            showEditIssueModal: vi.fn(),
+            showInlineDropdown,
+            isModalOpen: () => false,
+            isCommandPaletteOpen: () => false,
+            isDetailViewActive,
+        }));
+
+        // 2. Global shortcuts — registered second
+        add(createKeyboardHandler({
+            closeModal: vi.fn(),
+            closeSidebar: vi.fn(),
+            navigateTo,
+            showCreateIssueModal: vi.fn(),
+            showKeyboardShortcutsHelp: vi.fn(),
+            isModalOpen: () => false,
+            focusSearch: vi.fn(),
+            closeDropdowns: vi.fn(),
+            isDetailViewActive,
+        }));
+
+        // 3. Detail-view listener — registered LAST, standing in for
+        // issue-detail-view.js's dynamically-added detailKeyHandler
+        add((e) => {
+            if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if (e.key === 'p') detailShortcut('priority');
+        });
+    });
+
+    afterEach(() => {
+        registered.forEach((fn) => document.removeEventListener('keydown', fn));
+    });
+
+    function press(key) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    }
+
+    it('p reaches the detail Priority action after j → Enter, not a stale list dropdown or Projects nav', () => {
+        press('j'); // select row 0 on the list
+        expect(selectedIndex).toBe(0);
+
+        press('Enter'); // open the detail view
+        expect(viewIssue).toHaveBeenCalledWith('issue-1');
+
+        press('p');
+
+        expect(showInlineDropdown).not.toHaveBeenCalled(); // list-nav disengaged
+        expect(navigateTo).not.toHaveBeenCalled(); // global 'p' deferred
+        expect(detailShortcut).toHaveBeenCalledWith('priority'); // detail wins
+    });
+
+    it('j on the detail view no longer re-arms the hidden list cursor', () => {
+        press('j');
+        press('Enter');
+        const before = selectedIndex;
+
+        press('j'); // detail-view j (navigate next) — must not touch the list cursor
+
+        expect(selectedIndex).toBe(before);
+        // and a follow-up p still cannot be captured by list-nav
+        press('p');
+        expect(showInlineDropdown).not.toHaveBeenCalled();
+        expect(detailShortcut).toHaveBeenCalledWith('priority');
+    });
+
+    it('list-nav works normally again once the detail view is hidden', () => {
+        press('j');
+        press('Enter');
+        // Simulate navigating Back to the list
+        document.getElementById('issue-detail-view').classList.add('hidden');
+
+        press('j');
+        expect(selectedIndex).toBe(1);
     });
 });
