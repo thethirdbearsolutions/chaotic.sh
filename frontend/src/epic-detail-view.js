@@ -13,12 +13,14 @@ import {
 import { api } from './api.js';
 import { getCurrentView } from './state.js';
 import { showApiError } from './ui.js';
-import { navigateTo } from './router.js';
+import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { registerActions } from './event-delegation.js';
+import { getCurrentEpics } from './epics.js';
 
 /**
  * View epic by path (identifier or ID)
@@ -54,6 +56,12 @@ export async function viewEpicByPath(identifier) {
  */
 export async function viewEpic(epicId, pushHistory = true) {
     try {
+        // Record the list's scroll position synchronously, before any await,
+        // so a slow fetch can't capture a position the user has since
+        // scrolled away from (CHT-1211 item 1; ordering standardized across
+        // all four detail entry points per review #4).
+        if (pushHistory) saveScrollPosition();
+
         const [epic, subIssues, activities, comments] = await Promise.all([
             api.getIssue(epicId),
             api.getSubIssues(epicId),
@@ -86,6 +94,14 @@ export async function viewEpic(epicId, pushHistory = true) {
         const done = subIssues.filter(s => s.status === 'done' || s.status === 'canceled').length;
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
+        // Prev/next navigation from the Epics list's last-loaded contents,
+        // matching the Issue detail parity gap called out in CHT-1211 item 6.
+        const epicList = getCurrentEpics();
+        const currentIndex = epicList.findIndex(e => e.id === epic.id);
+        const prevEpic = currentIndex > 0 ? epicList[currentIndex - 1] : null;
+        const nextEpic = currentIndex >= 0 && currentIndex < epicList.length - 1 ? epicList[currentIndex + 1] : null;
+        const inList = currentIndex >= 0;
+
         detailView.querySelector('#epic-detail-content').innerHTML = `
             <div class="detail-layout">
                 <div class="detail-main">
@@ -94,6 +110,17 @@ export async function viewEpic(epicId, pushHistory = true) {
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Back
                         </button>
+                        ${inList ? `
+                        <div class="issue-nav-arrows">
+                            <button class="issue-nav-btn" ${prevEpic ? `data-action="navigate-epic" data-epic-id="${escapeAttr(prevEpic.id)}"` : 'disabled'} title="Previous epic">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="issue-nav-counter">${currentIndex + 1} / ${epicList.length}</span>
+                            <button class="issue-nav-btn" ${nextEpic ? `data-action="navigate-epic" data-epic-id="${escapeAttr(nextEpic.id)}"` : 'disabled'} title="Next epic">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                        </div>
+                        ` : ''}
                         <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(epic.identifier)}</span>
                     </div>
 
@@ -261,3 +288,10 @@ export async function viewEpic(epicId, pushHistory = true) {
 }
 
 // navigate-to action is registered centrally in app.js
+
+// Prev/next epic nav arrows (CHT-1211 item 6)
+registerActions({
+    'navigate-epic': (_event, data) => {
+        viewEpic(data.epicId);
+    },
+});
