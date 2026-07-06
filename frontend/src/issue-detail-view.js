@@ -3,7 +3,7 @@
  * Extracted from app.js for testability
  */
 
-import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft } from './storage.js';
+import { getCommentDraft, setCommentDraft, getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase } from './storage.js';
 import { getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, setCurrentDetailSprints, getCurrentView, getDetailNavContext, subscribe } from './state.js';
 import { api } from './api.js';
 import { showToast, showModal, closeModal, showApiError } from './ui.js';
@@ -24,11 +24,34 @@ import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js
 
 // Module state
 let commentSubmitting = false;
+let descriptionSubmitting = false;
 let ticketRitualsCollapsed = true;
 let currentTicketRituals = null;
 let detailNavPrevId = null;
 let detailNavNextId = null;
 let detailAbortController = null;
+
+// Remote activity that arrived while the description editor was open
+// (CHT-1214, PR #209 review finding 3). ws-handlers.js suppresses the
+// destructive viewIssue() re-render while the editor is up, but records it
+// here instead of dropping it: Cancel resyncs the view from the server, and
+// Save checks the stashed fresh issue for a remote description change so it
+// can warn instead of silently last-write-winning over someone else's edit.
+let pendingRemoteRefresh = false;
+let remoteIssueDuringEdit = null;
+
+/**
+ * Called by ws-handlers.js when a websocket event for the currently-open
+ * issue was NOT allowed to re-render the detail view because the inline
+ * description editor is open.
+ * @param {Object|null} freshIssue - the full issue payload for issue:updated
+ *   events (null for comment/relation/attestation/activity events, which
+ *   carry no issue body)
+ */
+export function noteSkippedDetailRefresh(freshIssue = null) {
+    pendingRemoteRefresh = true;
+    if (freshIssue) remoteIssueDuringEdit = freshIssue;
+}
 
 /**
  * Get ticketRitualsCollapsed state
@@ -365,19 +388,21 @@ export function renderCommentContent(content) {
 }
 
 /**
- * Render description content with markdown and issue links
+ * Render description content with markdown, issue links, and mentions
  * @param {string} content - Description content
  * @returns {string} Rendered HTML
  */
 export function renderDescriptionContent(content) {
-    // Same as renderCommentContent but for descriptions (issue refs only, no mentions)
+    // Same as renderCommentContent — descriptions now linkify @mentions too
+    // (CHT-1214), matching the comment box's existing behavior instead of
+    // leaving manually-typed @handles as permanent plain text.
     if (!content) return '';
     const sanitizedHtml = renderMarkdown(content);
 
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = sanitizedHtml;
 
-    processTextNodes(tempDiv, addIssueLinks);
+    processTextNodes(tempDiv, addIssueLinksAndMentions);
 
     return tempDiv.innerHTML;
 }
@@ -697,6 +722,11 @@ export async function viewIssue(issueId, pushHistory = true) {
         setCurrentDetailIssue(issue);
         setCurrentDetailSprints(projectSprints);
 
+        // A full render is by definition up to date — clear any remote
+        // activity stashed while an editor was open (CHT-1214).
+        pendingRemoteRefresh = false;
+        remoteIssueDuringEdit = null;
+
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         const detailView = document.getElementById('issue-detail-view');
         detailView.classList.remove('hidden');
@@ -742,9 +772,10 @@ export async function viewIssue(issueId, pushHistory = true) {
                             <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                 Edit
+                                ${getDescriptionDraft(issue.id) ? '<span class="draft-indicator" title="Unsaved draft">Draft</span>' : ''}
                             </button>
                         </div>
-                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}"${!issue.description ? ` data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}"` : ''}>
+                        <div class="description-content markdown-body ${!issue.description ? 'empty' : ''}" data-action="edit-description" data-issue-id="${escapeAttr(issue.id)}">
                             ${issue.description ? renderDescriptionContent(issue.description) : '<span class="add-description-link">Add description...</span>'}
                         </div>
                     </div>
@@ -1117,6 +1148,15 @@ export async function viewIssue(issueId, pushHistory = true) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 navigateAdjacentIssue(-1);
+            } else if (e.key === 'd') {
+                // Keyboard path into description editing (CHT-1214). 'e' is
+                // deliberately left alone here — it's parked as a product
+                // decision (CHT-1215) since it already means Estimate on this
+                // view vs. Edit Issue on the list. This reuses the existing
+                // edit-description click wiring rather than inventing a new
+                // entry point.
+                e.preventDefault();
+                document.querySelector('[data-action="edit-description"]')?.click();
             }
 
             // Metadata keyboard shortcuts — click the property row to open its dropdown
@@ -1192,7 +1232,9 @@ export async function editDescription(issueId) {
                 <button type="button" class="editor-tab active" id="edit-description-tab-write" data-action="set-description-editor-mode" data-mode="write">Write</button>
                 <button type="button" class="editor-tab" id="edit-description-tab-preview" data-action="set-description-editor-mode" data-mode="preview">Preview</button>
             </div>
+            <div id="description-draft-warning" class="description-draft-warning hidden"></div>
             <textarea id="edit-description" rows="8" placeholder="Add a description...">${escapeHtml(issue.description || '')}</textarea>
+            <div id="edit-description-mention-suggestions" class="mention-suggestions hidden"></div>
             <div id="edit-description-preview" class="markdown-body editor-preview" style="display: none;"></div>
             <div class="description-inline-actions">
                 <button type="button" class="btn btn-secondary btn-sm" id="cancel-description-edit">Cancel</button>
@@ -1201,19 +1243,31 @@ export async function editDescription(issueId) {
         </div>
     `;
     contentDiv.classList.remove('empty');
-    contentDiv.removeAttribute('onclick');
 
     const textarea = document.getElementById('edit-description');
-    // Restore description draft if available (CHT-1041)
+    // Restore description draft if available (CHT-1041). If the draft was
+    // captured against a description the server no longer has (someone else
+    // saved changes since, or this draft is from a previous session), warn
+    // instead of silently loading it over the current content (CHT-1214) —
+    // a legacy draft with no recorded snapshot (basedOn === null) is treated
+    // the same conservative way, since we can't rule out staleness.
     const savedDescDraft = getDescriptionDraft(issueId);
+    const draftWarning = document.getElementById('description-draft-warning');
     if (savedDescDraft) {
         textarea.value = savedDescDraft;
+        const draftBase = getDescriptionDraftBase(issueId);
+        if (draftWarning && (draftBase === null || draftBase !== (issue.description || ''))) {
+            draftWarning.textContent = 'This description has changed since your draft — review before saving.';
+            draftWarning.classList.remove('hidden');
+        }
     }
+    setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
     textarea.addEventListener('input', () => {
-        // Save description draft
+        // Save description draft, snapshotted against the description as of
+        // when this edit session opened (CHT-1214).
         const val = textarea.value;
         if (val !== (issue.description || '')) {
-            setDescriptionDraft(issueId, val);
+            setDescriptionDraft(issueId, val, issue.description || '');
         } else {
             setDescriptionDraft(issueId, null);
         }
@@ -1230,36 +1284,96 @@ export async function editDescription(issueId) {
         }
         if (e.key === 'Escape') {
             e.preventDefault();
+            // Don't let the keydown continue to keyboard.js's document-level
+            // handler, whose input-field branch blurs the textarea on Escape
+            // — after a declined discard-confirm ("keep editing") that blur
+            // would leave an open editor with no focus (PR #209 review
+            // finding 4).
+            e.stopPropagation();
             document.getElementById('cancel-description-edit')?.click();
         }
     });
     textarea.focus();
 
-    // Cancel — restore original content and clear draft
+    // Cancel — restore the read-only view, but only silently discard when
+    // there's nothing to lose. If the textarea differs from the saved
+    // description, confirm before wiping it (and the recovery draft) —
+    // mirroring the confirm() gate deleteIssue already uses for destructive
+    // actions. Escape routes through this same handler (CHT-1214).
     document.getElementById('cancel-description-edit').addEventListener('click', () => {
+        const currentValue = document.getElementById('edit-description')?.value ?? '';
+        const isDirty = currentValue !== (issue.description || '');
+        if (isDirty && !confirm('Discard your unsaved description changes?')) {
+            return;
+        }
         setDescriptionDraft(issueId, null);
+        // Remote activity (comments, attestations, an issue:updated) may
+        // have been suppressed while this editor was open — resync the whole
+        // view from the server instead of restoring the pre-edit snapshot,
+        // which would leave that activity invisible indefinitely (PR #209
+        // review finding 3).
+        if (pendingRemoteRefresh) {
+            viewIssue(issueId, false);
+            return;
+        }
         if (header) header.style.display = '';
         contentDiv.className = `description-content markdown-body ${!issue.description ? 'empty' : ''}`;
-        if (!issue.description) {
-            contentDiv.setAttribute('data-action', 'edit-description');
-            contentDiv.setAttribute('data-issue-id', issue.id);
-        }
+        contentDiv.setAttribute('data-action', 'edit-description');
+        contentDiv.setAttribute('data-issue-id', issue.id);
         contentDiv.innerHTML = issue.description
             ? renderDescriptionContent(issue.description)
             : '<span class="add-description-link">Add description...</span>';
+        // Restore focus to something sensible instead of leaving it on the
+        // removed textarea/button (CHT-1214) — no full re-render happens on
+        // Cancel, so scroll position is untouched.
+        section.querySelector('[data-action="edit-description"]')?.focus();
     });
 
-    // Save
+    // Save — guarded against double-submit (CHT-1214; CHT-1101 only covered
+    // the comment form). Scroll position and focus are restored after
+    // viewIssue()'s full re-render, which would otherwise drop both.
+    //
+    // If a remote issue:updated arrived while this editor was open and it
+    // changed the description, the first Save is intercepted with the same
+    // conflict warning the stale-draft path uses — this is the live-session
+    // variant of exactly that scenario, which would otherwise silently
+    // last-write-win over the other person's edit (PR #209 review finding 3).
+    // Saving again proceeds as an explicit overwrite.
+    let remoteConflictAcknowledged = false;
     document.getElementById('save-description-edit').addEventListener('click', async () => {
+        if (descriptionSubmitting) return;
         const description = document.getElementById('edit-description')?.value;
         if (description === undefined) return;
+        const remoteDescription = remoteIssueDuringEdit ? (remoteIssueDuringEdit.description || '') : null;
+        if (remoteDescription !== null && remoteDescription !== (issue.description || '') && !remoteConflictAcknowledged) {
+            remoteConflictAcknowledged = true;
+            const warnEl = document.getElementById('description-draft-warning');
+            if (warnEl) {
+                warnEl.textContent = 'This description was changed by someone else while you were editing — review your text, then Save again to overwrite their version.';
+                warnEl.classList.remove('hidden');
+            }
+            return;
+        }
+        const saveBtn = document.getElementById('save-description-edit');
+        descriptionSubmitting = true;
+        if (saveBtn) saveBtn.disabled = true;
+        const scrollY = window.scrollY;
         try {
             await api.updateIssue(issueId, { description });
             setDescriptionDraft(issueId, null);
             showToast('Description updated', 'success');
-            viewIssue(issueId, false);
+            await viewIssue(issueId, false);
+            window.scrollTo(0, scrollY);
+            document.querySelector('.issue-detail-description [data-action="edit-description"]')?.focus();
         } catch (e) {
             showApiError('update description', e);
+        } finally {
+            descriptionSubmitting = false;
+            // On success this button no longer exists (viewIssue replaced
+            // it); on failure the editor stays open with this same button,
+            // and it must not be left permanently disabled after a retry-able
+            // failure.
+            if (saveBtn) saveBtn.disabled = false;
         }
     });
 }
@@ -1463,7 +1577,17 @@ registerActions({
     'show-detail-dropdown': (event, data, target) => {
         showDetailDropdown(event, data.dropdownType, data.issueId, target);
     },
-    'edit-description': (_event, data) => {
+    'edit-description': (event, data) => {
+        // The click-to-edit affordance now covers the populated-description
+        // case too (CHT-1214), not just the empty state — guard against two
+        // things that would otherwise misfire as "open the editor":
+        // (1) clicking an issue-ref <a> inside the rendered markdown, which
+        // should navigate instead, and (2) the click that ends a text
+        // selection (e.g. before using the quote-comment tooltip), which
+        // would otherwise destroy the very selection the user just made.
+        if (event.target.closest('a')) return;
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.toString().trim()) return;
         editDescription(data.issueId);
     },
     'toggle-section': (_event, data) => {

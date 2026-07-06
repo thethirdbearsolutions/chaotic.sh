@@ -110,6 +110,7 @@ import { renderMarkdown } from './gate-approvals.js';
 import { showDetailDropdown } from './inline-dropdown.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
+import { registerActions } from './event-delegation.js';
 import {
     getActivityIcon,
     formatActivityActor,
@@ -131,7 +132,13 @@ import {
     handleAddRelation,
     deleteRelation,
     loadTicketRituals,
+    noteSkippedDetailRefresh,
 } from './issue-detail-view.js';
+
+// Combine every registerActions({...}) call this module made at import time
+// into one lookup, so tests can invoke a delegated handler directly (CHT-1214)
+// — mirrors the pattern already used in issues-view.test.js.
+const detailActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('issue-detail-view', () => {
     beforeEach(() => {
@@ -178,6 +185,13 @@ describe('issue-detail-view', () => {
         renderTicketRitualActions.mockReset().mockReturnValue('');
         getCurrentView.mockReset().mockReturnValue('my-issues');
         getDetailNavContext.mockReset().mockReturnValue([]);
+
+        // Defaults to "confirm the discard" (CHT-1214) — tests that need to
+        // verify the block-on-decline path override this per-test.
+        global.confirm = vi.fn(() => true);
+        // jsdom doesn't implement scrollTo; the Save handler calls it
+        // unconditionally to restore scroll position (CHT-1214).
+        window.scrollTo = vi.fn();
 
         // Setup minimal DOM
         document.body.innerHTML = `
@@ -458,6 +472,82 @@ describe('issue-detail-view', () => {
             await viewIssue('issue-1');
 
             expect(getCurrentDetailIssue()).toEqual(mockIssue);
+        });
+
+        // CHT-1214: the click-to-edit affordance only ever worked on an empty
+        // description, and had no visible cursor/hover cue there either.
+        describe('click-to-edit affordance (CHT-1214)', () => {
+            it('wires data-action=edit-description on a populated description too', async () => {
+                await viewIssue('issue-1');
+
+                const content = document.querySelector('.description-content');
+                expect(content.classList.contains('empty')).toBe(false);
+                expect(content.getAttribute('data-action')).toBe('edit-description');
+                expect(content.getAttribute('data-issue-id')).toBe('issue-1');
+            });
+
+            it('still wires the empty-state affordance', async () => {
+                api.getIssue.mockResolvedValue({ ...mockIssue, description: '' });
+                await viewIssue('issue-1');
+
+                const content = document.querySelector('.description-content');
+                expect(content.classList.contains('empty')).toBe(true);
+                expect(content.getAttribute('data-action')).toBe('edit-description');
+            });
+
+            it('opens the editor on a plain click on populated description content', async () => {
+                await viewIssue('issue-1');
+                const target = document.querySelector('.description-content');
+
+                detailActions['edit-description']({ target, }, { issueId: 'issue-1' });
+
+                expect(document.getElementById('edit-description')).toBeTruthy();
+            });
+
+            it('does not open the editor when the click lands on an issue-ref link inside the content', async () => {
+                await viewIssue('issue-1');
+                const content = document.querySelector('.description-content');
+                content.innerHTML = '<a class="issue-link" href="#/issue/CHT-1">CHT-1</a>';
+                const link = content.querySelector('a');
+
+                detailActions['edit-description']({ target: link }, { issueId: 'issue-1' });
+
+                expect(document.getElementById('edit-description')).toBeFalsy();
+            });
+
+            it('does not open the editor when the click ends an active text selection', async () => {
+                await viewIssue('issue-1');
+                const content = document.querySelector('.description-content');
+                const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue({
+                    isCollapsed: false,
+                    toString: () => 'some selected text',
+                });
+
+                detailActions['edit-description']({ target: content }, { issueId: 'issue-1' });
+
+                expect(document.getElementById('edit-description')).toBeFalsy();
+                getSelectionSpy.mockRestore();
+            });
+        });
+
+        // CHT-1214: no way to tell an abandoned description draft existed
+        // before clicking Edit — it silently loaded (and could clobber the
+        // textarea) only once the user was already inside the editor.
+        describe('unsaved-draft cue on Edit button (CHT-1214)', () => {
+            it('shows a draft indicator when a draft exists', async () => {
+                localStorage.setItem('chaotic_description_draft_issue-1', JSON.stringify({ draft: 'wip', basedOn: 'Test description' }));
+
+                await viewIssue('issue-1');
+
+                expect(document.querySelector('.draft-indicator')).toBeTruthy();
+                localStorage.removeItem('chaotic_description_draft_issue-1');
+            });
+
+            it('shows no draft indicator when there is no draft', async () => {
+                await viewIssue('issue-1');
+
+                expect(document.querySelector('.draft-indicator')).toBeFalsy();
+            });
         });
 
         it('renders empty sub-issues state', async () => {
@@ -773,6 +863,28 @@ describe('issue-detail-view', () => {
                 expect(focusSpy).toHaveBeenCalled();
             });
 
+            // CHT-1214: no keyboard path into description editing existed on
+            // the detail view. 'e' is deliberately left as Estimate (parked
+            // as a product decision in CHT-1215) — this adds a distinct 'd'
+            // key that clicks through the existing edit-description wiring.
+            it('handles keyboard d to open the description editor', async () => {
+                getDetailNavContext.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                // event-delegation.js is mocked in this test file (no real
+                // click listener attached), so assert the keyboard handler
+                // reaches for the right element rather than the full
+                // click-through — the click wiring itself is covered by the
+                // 'opens the editor on a plain click' test above.
+                const editBtn = document.querySelector('[data-action="edit-description"]');
+                const clickSpy = vi.spyOn(editBtn, 'click');
+
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+                await new Promise(r => setTimeout(r, 10));
+
+                expect(clickSpy).toHaveBeenCalled();
+            });
+
             it('ignores hotkeys when typing in textarea', async () => {
                 getDetailNavContext.mockReturnValue(issueList);
 
@@ -944,9 +1056,15 @@ describe('issue-detail-view', () => {
 
     describe('editDescription', () => {
         beforeEach(() => {
+            // Matches production markup closely enough to be focusable
+            // (real <button data-action="edit-description">), unlike a bare
+            // div — needed for the focus-restoration assertions (CHT-1214).
             document.body.innerHTML += `
                 <div class="issue-detail-description">
-                    <div class="section-header"><h3>Description</h3></div>
+                    <div class="section-header">
+                        <h3>Description</h3>
+                        <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="i1">Edit</button>
+                    </div>
                     <div class="description-content markdown-body">Current desc</div>
                 </div>
             `;
@@ -989,7 +1107,408 @@ describe('issue-detail-view', () => {
             await editDescription('i1');
             document.getElementById('cancel-description-edit').click();
 
+            expect(global.confirm).toHaveBeenCalled();
             expect(localStorage.getItem('chaotic_description_draft_i1')).toBeNull();
+        });
+
+        // CHT-1214: Escape/Cancel used to wipe both the edit and its recovery
+        // draft with zero confirmation. Only auto-discard-without-asking when
+        // there's nothing to lose; otherwise confirm() first (mirroring
+        // deleteIssue's existing destructive-action pattern).
+        describe('confirm-before-discard (CHT-1214)', () => {
+            it('does not prompt when the textarea is unchanged from the saved description', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+
+                await editDescription('i1');
+                document.getElementById('cancel-description-edit').click();
+
+                expect(global.confirm).not.toHaveBeenCalled();
+                expect(document.getElementById('edit-description')).toBeFalsy();
+            });
+
+            it('prompts before discarding when the textarea has unsaved changes', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+
+                await editDescription('i1');
+                document.getElementById('edit-description').value = 'edited text';
+                document.getElementById('cancel-description-edit').click();
+
+                expect(global.confirm).toHaveBeenCalledWith('Discard your unsaved description changes?');
+                expect(document.getElementById('edit-description')).toBeFalsy();
+            });
+
+            it('keeps the editor and draft intact when the user declines the confirm', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                global.confirm = vi.fn(() => false);
+
+                await editDescription('i1');
+                document.getElementById('edit-description').value = 'edited text';
+                document.getElementById('edit-description').dispatchEvent(new Event('input'));
+                document.getElementById('cancel-description-edit').click();
+
+                expect(document.getElementById('edit-description')).toBeTruthy();
+                expect(document.getElementById('edit-description').value).toBe('edited text');
+                expect(localStorage.getItem('chaotic_description_draft_i1')).not.toBeNull();
+                localStorage.removeItem('chaotic_description_draft_i1');
+            });
+        });
+
+        // CHT-1214: no equivalent of the comment form's commentSubmitting guard
+        // existed for description Save — a fast double-click fired two
+        // api.updateIssue() calls.
+        describe('double-submit guard on Save (CHT-1214)', () => {
+            it('ignores a second click while the first save is in flight', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                let resolveUpdate;
+                api.updateIssue.mockReturnValue(new Promise(r => { resolveUpdate = r; }));
+
+                await editDescription('i1');
+                const saveBtn = document.getElementById('save-description-edit');
+                saveBtn.click();
+                saveBtn.click();
+                saveBtn.click();
+
+                expect(api.updateIssue).toHaveBeenCalledTimes(1);
+                resolveUpdate({});
+                await new Promise(r => setTimeout(r, 0));
+            });
+
+            it('disables the Save button while the request is in flight', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                let resolveUpdate;
+                api.updateIssue.mockReturnValue(new Promise(r => { resolveUpdate = r; }));
+
+                await editDescription('i1');
+                const saveBtn = document.getElementById('save-description-edit');
+                saveBtn.click();
+
+                expect(saveBtn.disabled).toBe(true);
+                resolveUpdate({});
+                await new Promise(r => setTimeout(r, 0));
+            });
+
+            it('releases the guard after the first save completes, allowing another', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                api.updateIssue.mockResolvedValue({});
+
+                await editDescription('i1');
+                const saveBtn = document.getElementById('save-description-edit');
+                saveBtn.click();
+                await new Promise(r => setTimeout(r, 0));
+
+                expect(saveBtn.disabled).toBe(false);
+                saveBtn.click();
+                await new Promise(r => setTimeout(r, 0));
+
+                expect(api.updateIssue).toHaveBeenCalledTimes(2);
+            });
+
+            it('re-enables Save and clears the flag after a failed save', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                api.updateIssue.mockRejectedValue(new Error('boom'));
+
+                await editDescription('i1');
+                const saveBtn = document.getElementById('save-description-edit');
+                saveBtn.click();
+                await new Promise(r => setTimeout(r, 0));
+
+                expect(saveBtn.disabled).toBe(false);
+                expect(showApiError).toHaveBeenCalledWith('update description', expect.any(Error));
+
+                // A retry now goes through
+                api.updateIssue.mockResolvedValue({});
+                saveBtn.click();
+                await new Promise(r => setTimeout(r, 0));
+                expect(api.updateIssue).toHaveBeenCalledTimes(2);
+            });
+        });
+
+        // CHT-1214: Save/Cancel fully re-rendered the pane with no scroll or
+        // focus restoration.
+        describe('scroll/focus restoration (CHT-1214)', () => {
+            it('restores scroll position after Save', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                api.updateIssue.mockResolvedValue({});
+                window.scrollTo = vi.fn();
+                Object.defineProperty(window, 'scrollY', { value: 250, configurable: true });
+
+                await editDescription('i1');
+                document.getElementById('save-description-edit').click();
+                await new Promise(r => setTimeout(r, 0));
+
+                expect(window.scrollTo).toHaveBeenCalledWith(0, 250);
+            });
+
+            it('focuses the Edit button after Save re-renders the pane', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                api.updateIssue.mockResolvedValue({});
+                api.getIssue.mockResolvedValue({
+                    id: 'i1', identifier: 'TEST-1', title: 'T', description: 'Current desc',
+                    status: 'todo', priority: 'medium', issue_type: 'task', project_id: 'p1',
+                    created_at: '2024-01-01T00:00:00Z',
+                });
+                window.scrollTo = vi.fn();
+
+                await editDescription('i1');
+                document.getElementById('save-description-edit').click();
+                await new Promise(r => setTimeout(r, 0));
+
+                const focused = document.activeElement;
+                expect(focused.getAttribute('data-action')).toBe('edit-description');
+                expect(focused.closest('#issue-detail-content')).toBeTruthy();
+            });
+
+            it('focuses the Edit button after Cancel restores the read-only view', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+
+                await editDescription('i1');
+                document.getElementById('edit-description').value = 'changed';
+                document.getElementById('cancel-description-edit').click();
+
+                expect(document.activeElement.getAttribute('data-action')).toBe('edit-description');
+            });
+        });
+
+        // CHT-1214: @mention autocomplete only ever fired in the comment box.
+        describe('mention autocomplete wiring (CHT-1214)', () => {
+            it('wires up the description editor textarea/container, not the comment box', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+                setupMentionAutocomplete.mockClear();
+
+                await editDescription('i1');
+
+                expect(setupMentionAutocomplete).toHaveBeenCalledWith('edit-description', 'edit-description-mention-suggestions');
+                expect(document.getElementById('edit-description-mention-suggestions')).toBeTruthy();
+            });
+        });
+
+        // CHT-1214: a stale localStorage draft used to silently replace the
+        // current server description with no way to tell they'd diverged.
+        describe('stale draft conflict warning (CHT-1214)', () => {
+            it('warns when the draft was captured against a different description', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'New server desc' });
+                localStorage.setItem('chaotic_description_draft_i1', JSON.stringify({ draft: 'my draft', basedOn: 'Old desc' }));
+
+                await editDescription('i1');
+
+                const warning = document.getElementById('description-draft-warning');
+                expect(warning.classList.contains('hidden')).toBe(false);
+                expect(warning.textContent).toContain('changed since your draft');
+                localStorage.removeItem('chaotic_description_draft_i1');
+            });
+
+            it('does not warn when the draft matches the current description', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Same desc' });
+                localStorage.setItem('chaotic_description_draft_i1', JSON.stringify({ draft: 'my draft', basedOn: 'Same desc' }));
+
+                await editDescription('i1');
+
+                const warning = document.getElementById('description-draft-warning');
+                expect(warning.classList.contains('hidden')).toBe(true);
+                localStorage.removeItem('chaotic_description_draft_i1');
+            });
+
+            it('warns for a legacy plain-string draft with no recorded snapshot', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Server desc' });
+                localStorage.setItem('chaotic_description_draft_i1', 'legacy plain draft');
+
+                await editDescription('i1');
+
+                const warning = document.getElementById('description-draft-warning');
+                expect(warning.classList.contains('hidden')).toBe(false);
+                localStorage.removeItem('chaotic_description_draft_i1');
+            });
+
+            it('does not warn when there is no draft at all', async () => {
+                setCurrentDetailIssue({ id: 'i1', description: 'Server desc' });
+
+                await editDescription('i1');
+
+                const warning = document.getElementById('description-draft-warning');
+                expect(warning.classList.contains('hidden')).toBe(true);
+            });
+        });
+    });
+
+    // PR #209 review finding 3: ws-handlers.js suppresses viewIssue() while
+    // the description editor is open — but the suppressed activity must be
+    // deferred, not dropped: Cancel resyncs the view, and Save detects a
+    // remote description change instead of silently last-write-winning.
+    describe('remote activity during description edit (CHT-1214, PR #209 finding 3)', () => {
+        const mockIssue = {
+            id: 'issue-1',
+            identifier: 'TEST-1',
+            title: 'Test Issue',
+            description: 'Test description',
+            status: 'todo',
+            priority: 'medium',
+            issue_type: 'task',
+            project_id: 'project-1',
+            created_at: '2024-01-15T10:00:00Z',
+        };
+
+        beforeEach(() => {
+            api.getIssue.mockResolvedValue(mockIssue);
+            getProjects.mockReturnValue([{ id: 'project-1', name: 'Test Project' }]);
+        });
+
+        it('a comment that arrived mid-edit appears after Cancel (view resyncs from the server)', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            expect(document.getElementById('edit-description')).toBeTruthy();
+
+            // Simulate ws-handlers deferring a comment event while editing
+            noteSkippedDetailRefresh();
+            api.getComments.mockResolvedValue([
+                { id: 'c1', author_name: 'Bob', content: 'a fresh remote comment', created_at: '2024-01-16T10:00:00Z' },
+            ]);
+
+            // Textarea unchanged → no confirm gate; Cancel triggers the resync
+            document.getElementById('cancel-description-edit').click();
+            await vi.waitFor(() => {
+                expect(document.getElementById('issue-detail-content').innerHTML).toContain('a fresh remote comment');
+            });
+        });
+
+        it('Cancel without any deferred remote activity does NOT re-fetch (fast local restore)', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            api.getIssue.mockClear();
+
+            document.getElementById('cancel-description-edit').click();
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(api.getIssue).not.toHaveBeenCalled();
+            expect(document.getElementById('edit-description')).toBeFalsy();
+        });
+
+        it('a declined discard-confirm keeps the editor AND the pending resync for later', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+            noteSkippedDetailRefresh();
+            global.confirm = vi.fn(() => false);
+            api.getIssue.mockClear();
+
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            document.getElementById('cancel-description-edit').click();
+            await new Promise(r => setTimeout(r, 10));
+
+            // Editor intact, no re-render happened
+            expect(document.getElementById('edit-description')).toBeTruthy();
+            expect(api.getIssue).not.toHaveBeenCalled();
+
+            // A later accepted Cancel still resyncs
+            global.confirm = vi.fn(() => true);
+            document.getElementById('cancel-description-edit').click();
+            await vi.waitFor(() => expect(api.getIssue).toHaveBeenCalled());
+        });
+
+        it('a remote description change mid-edit blocks the first Save with a conflict warning', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, description: 'their new description' });
+            document.getElementById('edit-description').value = 'my version';
+            document.getElementById('save-description-edit').click();
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).not.toHaveBeenCalled();
+            const warning = document.getElementById('description-draft-warning');
+            expect(warning.classList.contains('hidden')).toBe(false);
+            expect(warning.textContent).toContain('changed by someone else');
+            // Editor still open with the user's text
+            expect(document.getElementById('edit-description').value).toBe('my version');
+        });
+
+        it('Save again after the conflict warning proceeds as an explicit overwrite', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, description: 'their new description' });
+            document.getElementById('edit-description').value = 'my version';
+            const saveBtn = document.getElementById('save-description-edit');
+            saveBtn.click(); // blocked, warns
+            await new Promise(r => setTimeout(r, 0));
+            saveBtn.click(); // explicit overwrite
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).toHaveBeenCalledTimes(1);
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { description: 'my version' });
+        });
+
+        it('a remote update that did NOT touch the description does not block Save', async () => {
+            await viewIssue('issue-1');
+            await editDescription('issue-1');
+
+            noteSkippedDetailRefresh({ ...mockIssue, title: 'Retitled remotely' });
+            document.getElementById('edit-description').value = 'my version';
+            document.getElementById('save-description-edit').click();
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { description: 'my version' });
+        });
+    });
+
+    // PR #209 review finding 4: the textarea's Escape handler must stop the
+    // event from reaching keyboard.js's document-level handler, whose
+    // input-field branch blurs any focused textarea on Escape — after a
+    // declined discard-confirm that blur left an open editor with no focus.
+    describe('Escape propagation from the description editor (CHT-1214, PR #209 finding 4)', () => {
+        let globalEscapeBlur;
+
+        beforeEach(() => {
+            document.body.innerHTML += `
+                <div class="issue-detail-description">
+                    <div class="section-header">
+                        <h3>Description</h3>
+                        <button class="btn btn-secondary btn-sm" data-action="edit-description" data-issue-id="i1">Edit</button>
+                    </div>
+                    <div class="description-content markdown-body">Current desc</div>
+                </div>
+            `;
+            // Stand-in for keyboard.js's global handler: blurs any focused
+            // textarea on Escape (keyboard.js:31-42's input-bypass branch).
+            globalEscapeBlur = vi.fn((e) => {
+                if (e.key === 'Escape' && e.target.tagName === 'TEXTAREA') e.target.blur();
+            });
+            document.addEventListener('keydown', globalEscapeBlur);
+        });
+
+        afterEach(() => {
+            document.removeEventListener('keydown', globalEscapeBlur);
+        });
+
+        it('keep-editing after Escape leaves focus in the textarea (event never reaches the global blur)', async () => {
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+            global.confirm = vi.fn(() => false); // decline the discard
+
+            await editDescription('i1');
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            textarea.focus();
+
+            textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+            expect(global.confirm).toHaveBeenCalled();
+            expect(globalEscapeBlur).not.toHaveBeenCalled();
+            expect(document.getElementById('edit-description')).toBeTruthy();
+            expect(document.activeElement).toBe(textarea);
+        });
+
+        it('accepted Escape still closes the editor and moves focus to the Edit affordance', async () => {
+            setCurrentDetailIssue({ id: 'i1', description: 'Current desc' });
+            global.confirm = vi.fn(() => true);
+
+            await editDescription('i1');
+            const textarea = document.getElementById('edit-description');
+            textarea.value = 'dirty text';
+            textarea.focus();
+
+            textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+            expect(document.getElementById('edit-description')).toBeFalsy();
+            expect(document.activeElement.getAttribute('data-action')).toBe('edit-description');
         });
     });
 

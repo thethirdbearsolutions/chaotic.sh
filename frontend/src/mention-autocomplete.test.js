@@ -189,3 +189,82 @@ describe('Arrow-key/Enter/Tab selection (CHT-1215)', () => {
         expect(highlightedHandles()).toEqual([suggestions()[2].dataset.handle]);
     });
 });
+
+// CHT-1214: setupMentionAutocomplete() was hardcoded to #new-comment /
+// #mention-suggestions, so @mentions only ever worked in the comment box —
+// not the issue description editor, despite the logic being textarea-agnostic.
+describe('textarea/container parameterization (CHT-1214)', () => {
+    let setupMentionAutocomplete;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.doMock('./teams.js', () => ({
+            getMembers: vi.fn(() => [{ id: '1', name: 'Ada Lovelace', email: 'ada@example.com' }]),
+        }));
+        ({ setupMentionAutocomplete } = await import('./mention-autocomplete.js'));
+    });
+
+    it('defaults to #new-comment / #mention-suggestions when called with no args', () => {
+        document.body.innerHTML = `
+            <textarea id="new-comment"></textarea>
+            <div id="mention-suggestions" class="hidden"></div>
+        `;
+        setupMentionAutocomplete();
+
+        const textarea = document.getElementById('new-comment');
+        const container = document.getElementById('mention-suggestions');
+        textarea.value = '@a';
+        textarea.selectionStart = 2;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        expect(container.classList.contains('hidden')).toBe(false);
+    });
+
+    it('wires up a custom textarea/container pair, e.g. the description editor', () => {
+        document.body.innerHTML = `
+            <textarea id="edit-description"></textarea>
+            <div id="edit-description-mention-suggestions" class="hidden"></div>
+            <textarea id="new-comment"></textarea>
+            <div id="mention-suggestions" class="hidden"></div>
+        `;
+        setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
+
+        const descTextarea = document.getElementById('edit-description');
+        const descContainer = document.getElementById('edit-description-mention-suggestions');
+        const commentContainer = document.getElementById('mention-suggestions');
+
+        descTextarea.value = '@a';
+        descTextarea.selectionStart = 2;
+        descTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        expect(descContainer.classList.contains('hidden')).toBe(false);
+        // The untouched comment box's popup must stay closed — confirms this
+        // wasn't accidentally still bound to the hardcoded default ids.
+        expect(commentContainer.classList.contains('hidden')).toBe(true);
+    });
+
+    it('does nothing if the given textarea id does not exist', () => {
+        document.body.innerHTML = `<div id="mention-suggestions" class="hidden"></div>`;
+        expect(() => setupMentionAutocomplete('does-not-exist', 'mention-suggestions')).not.toThrow();
+    });
+
+    it('does not double-bind when called twice for the same textarea', () => {
+        document.body.innerHTML = `
+            <textarea id="edit-description"></textarea>
+            <div id="edit-description-mention-suggestions" class="hidden"></div>
+        `;
+        setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
+        setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
+
+        const textarea = document.getElementById('edit-description');
+        const container = document.getElementById('edit-description-mention-suggestions');
+        textarea.value = '@a';
+        textarea.selectionStart = 2;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // A single suggestion ('Ada Lovelace' only) confirms only one 'input'
+        // listener is attached — the dataset.mentionsBound guard should have
+        // no-op'd the second setup call.
+        expect(container.querySelectorAll('.mention-suggestion').length).toBe(1);
+    });
+});

@@ -69,13 +69,17 @@ export function createKeyboardHandler(actions) {
         if (waitingForNavKey) {
             waitingForNavKey = false;
             clearTimeout(navKeyTimeout);
-            // CHT-1215 (review finding 2): 5 of the g-prefix targets collide
-            // with the issue detail view's own s/p/a/e/t shortcut map (its
+            // CHT-1215 (review finding 2): 6 of the g-prefix targets collide
+            // with the issue detail view's own s/p/a/e/t/d shortcut map (its
             // listener is registered later and would double-fire against the
             // page being navigated away — startViewTransition defers the DOM
             // swap past this synchronous dispatch). Same policy as the bare
             // 'p'/'c' cases below: no-op here so the detail listener wins.
-            if (actions.isDetailViewActive?.() && ['p', 's', 't', 'e', 'a'].includes(e.key)) {
+            // 'd' joined the list with CHT-1214's edit-description hotkey
+            // (PR #209 review finding 2) — without the guard, `g d` on a
+            // detail view navigated to Documents AND left a zombie
+            // description editor open in the hidden detail pane.
+            if (actions.isDetailViewActive?.() && ['p', 's', 't', 'e', 'a', 'd'].includes(e.key)) {
                 return;
             }
             switch (e.key) {

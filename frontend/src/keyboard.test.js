@@ -236,14 +236,16 @@ describe('Keyboard Handler', () => {
         });
 
         // CHT-1215 review finding 2: the g-prefix switch needs the same
-        // policy — 5 of its targets (p/s/t/e/a) collide with the detail
-        // view's own s/p/a/e/t shortcut map. The double-fire trigger is
-        // startViewTransition-dependent (Chrome defers the DOM swap past the
-        // synchronous listener dispatch, so the detail listener still sees
-        // its view as visible), which jsdom can't reproduce — these tests
-        // pin the guard itself at the unit level instead.
+        // policy — its targets that collide with the detail view's own
+        // shortcut map must no-op while a detail view is active. The
+        // double-fire trigger is startViewTransition-dependent (Chrome
+        // defers the DOM swap past the synchronous listener dispatch, so the
+        // detail listener still sees its view as visible), which jsdom can't
+        // reproduce — these tests pin the guard itself at the unit level
+        // instead. 'd' joined the colliding set with CHT-1214's
+        // edit-description hotkey (PR #209 review finding 2).
         describe('g-prefix collisions', () => {
-            it.each(['p', 's', 't', 'e', 'a'])('g then %s does not navigate when detail view is active', (key) => {
+            it.each(['p', 's', 't', 'e', 'a', 'd'])('g then %s does not navigate when detail view is active', (key) => {
                 actions.isDetailViewActive.mockReturnValue(true);
                 handler(makeEvent('g'));
                 handler(makeEvent(key));
@@ -252,7 +254,6 @@ describe('Keyboard Handler', () => {
 
             it.each([
                 ['i', 'issues'],
-                ['d', 'documents'],
                 ['r', 'rituals'],
                 [',', 'settings'],
             ])('g then %s (non-colliding) still navigates to %s when detail view is active', (key, view) => {
@@ -268,6 +269,7 @@ describe('Keyboard Handler', () => {
                 ['t', 'team'],
                 ['e', 'epics'],
                 ['a', 'approvals'],
+                ['d', 'documents'],
             ])('g then %s navigates to %s when detail view is not active', (key, view) => {
                 actions.isDetailViewActive.mockReturnValue(false);
                 handler(makeEvent('g'));
@@ -1303,10 +1305,12 @@ describe('Full listener-stack layering: j/k → Enter → p (CHT-1215)', () => {
 
         // 3. Detail-view listener — registered LAST, standing in for
         // issue-detail-view.js's dynamically-added detailKeyHandler
+        // (including CHT-1214's 'd' → edit-description branch)
         add((e) => {
             if (document.getElementById('issue-detail-view').classList.contains('hidden')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
             if (e.key === 'p') detailShortcut('priority');
+            if (e.key === 'd') detailShortcut('edit-description');
         });
     });
 
@@ -1354,5 +1358,31 @@ describe('Full listener-stack layering: j/k → Enter → p (CHT-1215)', () => {
 
         press('j');
         expect(selectedIndex).toBe(1);
+    });
+
+    // PR #209 review finding 2: before the guard added 'd', `g d` on an open
+    // detail view double-fired — navigateTo('documents') AND the
+    // edit-description branch, leaving a zombie editor in the hidden pane.
+    describe('g d collision (CHT-1214, PR #209 review finding 2)', () => {
+        it('g then d on an open detail view fires the detail action only — never both', () => {
+            press('j');
+            press('Enter'); // open the detail view
+
+            press('g');
+            press('d');
+
+            expect(navigateTo).not.toHaveBeenCalled(); // no Documents nav
+            expect(detailShortcut).toHaveBeenCalledTimes(1); // exactly one action fired
+            expect(detailShortcut).toHaveBeenCalledWith('edit-description');
+        });
+
+        it('g then d on the list navigates to Documents only — the editor branch never fires', () => {
+            press('g');
+            press('d');
+
+            expect(navigateTo).toHaveBeenCalledTimes(1);
+            expect(navigateTo).toHaveBeenCalledWith('documents');
+            expect(detailShortcut).not.toHaveBeenCalled();
+        });
     });
 });

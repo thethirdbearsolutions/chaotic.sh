@@ -12,10 +12,28 @@ import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
-import { viewIssue } from './issue-detail-view.js';
+import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
+
+/**
+ * True while the issue detail view has its inline description editor open.
+ * Handlers below that would otherwise call viewIssue() to live-refresh the
+ * currently-open issue suppress that destructive full re-render while this
+ * is true — it would tear down the open editor (textarea, cursor position,
+ * Write/Preview state) out from under the user (CHT-1214). Typed text itself
+ * stays safe via the CHT-1041 draft-on-input listener.
+ *
+ * The refresh is deferred, not dropped: each suppressed event is recorded
+ * via noteSkippedDetailRefresh() (with the fresh issue payload for
+ * issue:updated), so the editor's Cancel resyncs the view from the server
+ * and its Save can warn about a remote description change instead of
+ * silently overwriting it (PR #209 review finding 3).
+ */
+function hasOpenDescriptionEditor() {
+    return !!document.querySelector('.description-inline-editor');
+}
 
 /**
  * Register all WebSocket event handlers.
@@ -136,9 +154,20 @@ function handleIssueUpdated(data) {
     } else if (getCurrentView() === 'sprints') {
         refreshSprintView();
     } else if (getCurrentView() === 'issue-detail') {
-        const detailContent = document.getElementById('issue-detail-content');
-        if (detailContent && detailContent.dataset.issueId === data.id) {
-            viewIssue(data.id);
+        // Was gated on detailContent.dataset.issueId, an attribute production
+        // code never sets — remote updates to the open issue (including a
+        // description change from another user) silently never refreshed
+        // (CHT-1214). Match the getCurrentDetailIssue() check every other
+        // handler below already uses. While the description editor is open,
+        // defer instead of re-rendering (which would clobber the edit) —
+        // and hand over the fresh issue payload so Save can detect a remote
+        // description conflict.
+        if (getCurrentDetailIssue()?.id === data.id) {
+            if (hasOpenDescriptionEditor()) {
+                noteSkippedDetailRefresh(data);
+            } else {
+                viewIssue(data.id, false);
+            }
         }
     }
 }
@@ -173,12 +202,24 @@ function handleIssueDeleted(data) {
     }
 }
 
+/**
+ * Refresh the open detail view for an event on the currently-viewed issue,
+ * deferring (not dropping) the refresh while the description editor is open.
+ */
+function refreshOpenDetail(issueId) {
+    if (hasOpenDescriptionEditor()) {
+        noteSkippedDetailRefresh();
+    } else {
+        viewIssue(issueId, false);
+    }
+}
+
 function handleComment(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
-        viewIssue(data.issue_id, false);
+        refreshOpenDetail(data.issue_id);
     }
 }
 
@@ -186,7 +227,7 @@ function handleRelation(data) {
     if (getCurrentView() === 'issue-detail') {
         const currentIssueId = getCurrentDetailIssue()?.id;
         if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
-            viewIssue(currentIssueId, false);
+            refreshOpenDetail(currentIssueId);
         }
     }
 }
@@ -196,7 +237,7 @@ function handleAttestation(data) {
         loadGateApprovals();
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
-        viewIssue(data.issue_id, false);
+        refreshOpenDetail(data.issue_id);
     }
 }
 
@@ -205,7 +246,7 @@ function handleActivity(data) {
         loadDashboardActivity({ showLoading: false });
     }
     if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
-        viewIssue(data.issue_id, false);
+        refreshOpenDetail(data.issue_id);
     }
 }
 

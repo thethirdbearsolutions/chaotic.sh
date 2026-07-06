@@ -52,6 +52,7 @@ vi.mock('./projects.js', () => ({
 // Mock issue-detail-view.js
 vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
+    noteSkippedDetailRefresh: vi.fn(),
 }));
 
 // Mock router.js
@@ -77,7 +78,7 @@ import { renderIssues } from './issue-list.js';
 import { renderBoard } from './board.js';
 import { loadSprints, viewSprint, getCurrentSprintDetail, clearCachedCurrentSprintIds } from './sprints.js';
 import { loadProjects, renderProjects } from './projects.js';
-import { viewIssue } from './issue-detail-view.js';
+import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch, resetWsState } from './ws.js';
@@ -211,12 +212,44 @@ describe('ws-handlers.js', () => {
             expect(loadSprints).not.toHaveBeenCalled();
         });
 
+        // CHT-1214: the old guard checked detailContent.dataset.issueId, an
+        // attribute production code never sets anywhere — this branch was
+        // dead code. Confirmed by getCurrentDetailIssue(), which every other
+        // handler in this file already uses consistently.
         it('refreshes detail view if viewing updated issue', () => {
             getCurrentView.mockReturnValue('issue-detail');
-            document.body.innerHTML = '<div id="issue-detail-content" data-issue-id="issue-1"></div>';
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '';
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1');
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+
+        it('does not refresh detail view for a different issue', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-2' });
+            document.body.innerHTML = '';
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(viewIssue).not.toHaveBeenCalled();
+        });
+
+        // CHT-1214: a remote update to the open issue (e.g. someone else's
+        // description edit) must not tear down an in-progress local
+        // description edit — the refresh is deferred (with the fresh issue
+        // payload stashed for the editor's conflict check), not dropped
+        // (PR #209 review finding 3).
+        it('defers instead of clobbering an in-progress description edit, stashing the fresh issue', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div class="description-inline-editor"><textarea id="edit-description">my in-progress edit</textarea></div>';
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+
+            expect(viewIssue).not.toHaveBeenCalled();
+            expect(noteSkippedDetailRefresh).toHaveBeenCalledWith(updatedIssue);
+            expect(document.getElementById('edit-description').value).toBe('my in-progress edit');
+            document.body.innerHTML = '';
         });
 
         // CHT-1211 review #1: the detail nav context is a snapshot — remote
@@ -334,6 +367,21 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
         });
+
+        // CHT-1214: a comment landing on the open issue while its description
+        // is being edited must not blow the editor away — deferred, not
+        // dropped (PR #209 review finding 3).
+        it('defers instead of clobbering an in-progress description edit', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+
+            dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+
+            expect(viewIssue).not.toHaveBeenCalled();
+            expect(noteSkippedDetailRefresh).toHaveBeenCalled();
+            document.body.innerHTML = '';
+        });
     });
 
     describe('relation', () => {
@@ -347,6 +395,22 @@ describe('ws-handlers.js', () => {
                 data: { source_issue_id: 'issue-1', target_issue_id: 'issue-2' },
             });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+
+        it('defers instead of clobbering an in-progress description edit', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+
+            dispatch({
+                type: 'created',
+                entity: 'relation',
+                data: { source_issue_id: 'issue-1', target_issue_id: 'issue-2' },
+            });
+
+            expect(viewIssue).not.toHaveBeenCalled();
+            expect(noteSkippedDetailRefresh).toHaveBeenCalled();
+            document.body.innerHTML = '';
         });
     });
 
@@ -430,6 +494,18 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
             expect(mockLoadGateApprovals).toHaveBeenCalled();
         });
+
+        it('defers instead of clobbering an in-progress description edit', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+
+            dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
+
+            expect(viewIssue).not.toHaveBeenCalled();
+            expect(noteSkippedDetailRefresh).toHaveBeenCalled();
+            document.body.innerHTML = '';
+        });
     });
 
     describe('activity', () => {
@@ -445,6 +521,18 @@ describe('ws-handlers.js', () => {
 
             dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+        });
+
+        it('defers instead of clobbering an in-progress description edit', () => {
+            getCurrentView.mockReturnValue('issue-detail');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+
+            dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+
+            expect(viewIssue).not.toHaveBeenCalled();
+            expect(noteSkippedDetailRefresh).toHaveBeenCalled();
+            document.body.innerHTML = '';
         });
     });
 

@@ -110,14 +110,71 @@ export function setCommentDraft(issueId, content) {
 }
 
 // --- Description drafts ---
+//
+// Stored as `{draft, basedOn}` JSON (CHT-1214) so a restored draft can be
+// compared against the live server description to detect staleness — a
+// draft abandoned days ago (tab closed, crash) would otherwise silently
+// overwrite however many edits happened in the meantime with no warning.
+//
+// DRAFT POLICY across the two description-editing surfaces (single source
+// of truth for the behavior parity — both call sites point here):
+//
+// - The inline editor (issue-detail-view.js editDescription) and the
+//   'Edit all fields' modal (issue-edit.js showEditIssueModal) share this
+//   one storage slot per issue by design: an edit abandoned in one surface
+//   is recoverable from the other.
+// - Inline editor: always loads the draft into the textarea; if basedOn is
+//   unknown (legacy) or differs from the live server description, an inline
+//   warning is shown. Loading is safe there because the user explicitly
+//   entered description-editing mode and is looking at the text.
+// - Modal: only prefills the draft when basedOn matches the live server
+//   description exactly, with a visible "restored draft" notice (never
+//   silently). On mismatch/legacy it does NOT prefill — the field keeps the
+//   server description and a warning points at the inline editor — because
+//   the modal's failure mode is worse: a user editing an unrelated field
+//   (title, status) would silently commit a stale forgotten draft on save.
+// - Both surfaces clear the draft on successful save; the inline editor's
+//   confirmed Cancel deletes it too.
 
-export function getDescriptionDraft(issueId) {
-    return get(`description_draft_${issueId}`);
+/** Parse the new-format `{draft, basedOn}` payload, or null if not one. */
+function parseDraftPayload(raw) {
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && typeof parsed.draft === 'string') {
+            return parsed;
+        }
+        return null;
+    } catch {
+        return null;
+    }
 }
 
-export function setDescriptionDraft(issueId, content) {
+export function getDescriptionDraft(issueId) {
+    const raw = get(`description_draft_${issueId}`);
+    if (!raw) return null;
+    const parsed = parseDraftPayload(raw);
+    if (parsed) return parsed.draft;
+    // Legacy plain-string draft (pre-CHT-1214). Includes legacy content that
+    // happens to be valid JSON of the wrong shape (a pasted object/array,
+    // `123`, `true`, a quoted string) — anything that isn't the exact
+    // {draft: string} payload IS the draft text, not a payload.
+    return raw;
+}
+
+/**
+ * The description snapshot a draft was captured against, or null if unknown
+ * (no draft, or a legacy pre-CHT-1214 plain-string draft).
+ */
+export function getDescriptionDraftBase(issueId) {
+    const raw = get(`description_draft_${issueId}`);
+    if (!raw) return null;
+    const parsed = parseDraftPayload(raw);
+    return parsed && typeof parsed.basedOn === 'string' ? parsed.basedOn : null;
+}
+
+export function setDescriptionDraft(issueId, content, basedOn = '') {
     if (content) {
-        set(`description_draft_${issueId}`, content);
+        set(`description_draft_${issueId}`, JSON.stringify({ draft: content, basedOn }));
     } else {
         remove(`description_draft_${issueId}`);
     }
