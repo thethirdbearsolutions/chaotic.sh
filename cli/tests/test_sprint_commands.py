@@ -693,6 +693,37 @@ class TestSprintAdd:
         assert data["results"][2]["success"] is True
         assert client.update_issue.call_count == 2
 
+    def test_add_transport_error_mid_batch_reported_per_issue(self, cli_runner):
+        """A transient httpx transport failure (ConnectError/Timeout) mid-
+        batch is NOT an APIError; it used to escape to the outer
+        handle_error, discarding the per-issue results accumulated so far
+        (CHT-1222 review finding #6). Now it gets the same per-issue
+        reporting as data failures."""
+        import httpx
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value={"id": "sprint-1"})
+
+        def fake_get_issue(identifier):
+            if identifier == "CHT-NET":
+                raise httpx.ConnectError("connection refused")
+            return {"id": f"id-{identifier}", "identifier": identifier}
+
+        client.get_issue_by_identifier = MagicMock(side_effect=fake_get_issue)
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, [
+            'sprint', 'add', 'CHT-10', 'CHT-NET', 'CHT-11', '--json',
+        ])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["results"][0]["success"] is True
+        assert data["results"][1]["success"] is False
+        assert 'connection refused' in data["results"][1]["error"]
+        # The transport error didn't abort the batch.
+        assert data["results"][2]["success"] is True
+
 
 class TestSprintRemove:
     """Tests for chaotic sprint remove (CHT-830)."""

@@ -2,6 +2,7 @@
 import sys
 
 import click
+import httpx
 from rich.panel import Panel
 from rich.table import Table
 
@@ -290,7 +291,11 @@ def register(cli):
                 _client().update_issue(issue["id"], sprint_id=sprint_id)
                 console.print(f"[green]Added {issue['identifier']} to current sprint.[/green]")
                 results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
-            except m.APIError as e:
+            except (m.APIError, httpx.HTTPError) as e:
+                # httpx.HTTPError too: a transient transport failure
+                # (ConnectError/Timeout) mid-batch shouldn't discard the
+                # per-issue results accumulated so far by escaping to the
+                # outer handle_error (CHT-1222).
                 console.print(f"[red]Failed to add {identifier}: {e}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 
@@ -326,7 +331,9 @@ def register(cli):
                 _client().update_issue(issue["id"], sprint_id=None)
                 console.print(f"[green]Removed {issue['identifier']} from sprint.[/green]")
                 results.append({"identifier": issue["identifier"], "id": issue["id"], "success": True})
-            except m.APIError as e:
+            except (m.APIError, httpx.HTTPError) as e:
+                # See sprint_add: transport errors also get per-issue
+                # reporting instead of aborting the batch (CHT-1222).
                 console.print(f"[red]Failed to remove {identifier}: {e}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 

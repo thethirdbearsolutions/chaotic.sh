@@ -324,7 +324,7 @@ class TestIssueShowJson:
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data['identifier'] == 'CHT-100'
         assert data['title'] == 'Fix the widget'
         assert data['sub_issues'] == [{"id": "sub-1", "status": "done"}]
@@ -340,7 +340,7 @@ class TestIssueShowJson:
         result = cli_runner.invoke(cli, ['issue', 'show', 'CHT-100', 'CHT-101', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert len(data) == 2
         assert data[0]['identifier'] == 'CHT-100'
         assert data[1]['identifier'] == 'CHT-101'

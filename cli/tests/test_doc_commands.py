@@ -63,7 +63,7 @@ class TestDocList:
         result = cli_runner.invoke(cli, ['doc', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list)
         assert data[0]['title'] == 'Sprint Report'
 

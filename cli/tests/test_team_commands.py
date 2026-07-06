@@ -71,7 +71,7 @@ class TestTeamList:
         result = cli_runner.invoke(cli, ['team', 'list', '--json'])
 
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert isinstance(data, list)
         assert data[0]['name'] == 'Chaotic Team'
 
