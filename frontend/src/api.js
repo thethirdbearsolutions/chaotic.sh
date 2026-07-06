@@ -128,7 +128,9 @@ export class ApiClient {
     }
 
     async updateMemberRole(teamId, userId, role) {
-        return this.request('PATCH', `/teams/${teamId}/members/${userId}?role=${role}`);
+        // CHT-1223: role is sent in the body -- the server no longer
+        // accepts it as a query param.
+        return this.request('PATCH', `/teams/${teamId}/members/${userId}`, { role });
     }
 
     async removeMember(teamId, userId) {

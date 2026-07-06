@@ -1335,12 +1335,13 @@ describe('ApiClient', () => {
     });
 
     describe('updateMemberRole', () => {
-      it('sends PATCH request with role query parameter', async () => {
+      it('sends PATCH request with role in the JSON body', async () => {
         await client.updateMemberRole(1, 5, 'admin');
         expect(fetchMock).toHaveBeenCalledWith(
-          '/api/teams/1/members/5?role=admin',
+          '/api/teams/1/members/5',
           expect.objectContaining({
             method: 'PATCH',
+            body: JSON.stringify({ role: 'admin' }),
           })
         );
       });

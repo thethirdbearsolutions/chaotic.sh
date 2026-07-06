@@ -156,27 +156,20 @@ async def list_team_members(
 async def update_member_role(
     team_id: str,
     user_id: str,
+    role_in: TeamRoleUpdate,
     current_user: CurrentUser,
-    role_in: TeamRoleUpdate | None = None,
-    role: TeamRole | None = None,
 ):
     """Update a member's role.
 
-    CHT-1223: the server historically read ``role`` only from the query
-    string (a bare, non-Body-annotated param), but the CLI (and every
-    other PATCH endpoint's convention) sends it as a JSON body -- so the
-    only shipped client could never successfully drive this endpoint.
-    Body is now the primary path; ``?role=`` is still accepted so any
-    existing query-string caller keeps working.
+    CHT-1223: the server used to read ``role`` only from the query
+    string (a bare, non-Body-annotated param), but the CLI -- and every
+    other PATCH endpoint's convention in this codebase -- sends it as a
+    JSON body, so the only shipped client could never successfully
+    drive this endpoint. Body is now the only accepted shape (breaking
+    wire change, sanctioned: no query-string caller exists to break).
     """
     team_service = TeamService()
-
-    resolved_role = role_in.role if role_in is not None else role
-    if resolved_role is None:
-        raise HTTPException(
-            status_code=422,
-            detail="role is required (JSON body {\"role\": ...} or ?role= query param)",
-        )
+    resolved_role = role_in.role
 
     if not await team_service.is_team_admin(team_id, current_user.id):
         raise HTTPException(
