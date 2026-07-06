@@ -244,6 +244,39 @@ class TestIssueMine:
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
 
+    def test_mine_batches_sprint_lookups_by_project_not_per_sprint(self, cli_runner):
+        """issue mine used to call get_sprint() once per unique sprint id
+        (N+1 across however many sprints the result set touches). Now
+        batches one get_sprints() call per distinct project, mirroring
+        issue_list --all-projects's existing fix for the identical shape
+        (CHT-1222)."""
+        from cli.main import cli, client
+
+        issues_across_projects = [
+            {"identifier": "CHT-1", "title": "A", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-1", "sprint_id": "sprint-1"},
+            {"identifier": "CHT-2", "title": "B", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-1", "sprint_id": "sprint-2"},
+            {"identifier": "CHT-3", "title": "C", "status": "todo", "priority": "medium",
+             "issue_type": "task", "estimate": 1, "project_id": "proj-2", "sprint_id": "sprint-3"},
+        ]
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_issues = MagicMock(return_value=issues_across_projects)
+        client.get_sprint = MagicMock(side_effect=AssertionError("get_sprint (singular, per-sprint) must not be called"))
+        client.get_sprints = MagicMock(side_effect=lambda project_id: {
+            "proj-1": [{"id": "sprint-1", "name": "Sprint One"}, {"id": "sprint-2", "name": "Sprint Two"}],
+            "proj-2": [{"id": "sprint-3", "name": "Sprint Three"}],
+        }[project_id])
+
+        result = cli_runner.invoke(cli, ['issue', 'mine'])
+
+        assert result.exit_code == 0, result.output
+        # One get_sprints() call per distinct project (2), not per sprint (3).
+        assert client.get_sprints.call_count == 2
+        assert 'Sprint One' in result.output
+        assert 'Sprint Two' in result.output
+        assert 'Sprint Three' in result.output
+
 
 class TestIssueSearch:
     """Tests for issue search command."""

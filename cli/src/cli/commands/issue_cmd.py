@@ -251,16 +251,30 @@ def register(cli):
             console.print("[yellow]No issues assigned to you.[/yellow]")
             return
 
-        # Build sprint ID -> name map from unique sprint IDs in results
+        # Build sprint ID -> name map. issue mine can span multiple
+        # projects (it's not project-scoped), so batch one get_sprints()
+        # call per distinct project represented in the results instead of
+        # one get_sprint() call per unique sprint id -- same fix
+        # issue_list --all-projects already applies for the identical
+        # N+1 shape (CHT-1222).
         sprint_names = {}
+        project_ids = {
+            i["project_id"] for i in issues
+            if i.get("sprint_id") and i.get("project_id")
+        }
+        for pid in project_ids:
+            try:
+                for s in _client().get_sprints(pid):
+                    sprint_names[s["id"]] = s["name"]
+            except m.APIError:
+                pass
+        # Fall back to a truncated id for any sprint id that didn't
+        # resolve (project_id missing on the issue, or that project's
+        # sprint fetch failed).
         for i in issues:
             sid = i.get("sprint_id")
             if sid and sid not in sprint_names:
-                try:
-                    s = _client().get_sprint(sid)
-                    sprint_names[sid] = s["name"]
-                except m.APIError:
-                    sprint_names[sid] = sid[:8] + "..."
+                sprint_names[sid] = sid[:8] + "..."
 
         table = Table(title="My Issues")
         table.add_column("ID")
