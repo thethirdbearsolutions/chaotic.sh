@@ -246,7 +246,7 @@ describe('showToast', () => {
     showToast('Test message');
     const toast = document.querySelector('.toast');
     expect(toast).not.toBeNull();
-    expect(toast.textContent).toBe('Test message');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Test message');
   });
 
   it('applies success class by default', () => {
@@ -261,7 +261,7 @@ describe('showToast', () => {
     expect(toast.classList.contains('toast-error')).toBe(true);
   });
 
-  it('removes toast after 3 seconds', () => {
+  it('removes a short success toast after 3 seconds', () => {
     showToast('Temporary');
     const toast = document.querySelector('.toast');
     expect(toast).not.toBeNull();
@@ -271,6 +271,98 @@ describe('showToast', () => {
     expect(toast.classList.contains('toast-exit')).toBe(true);
     toast.dispatchEvent(new Event('animationend'));
     expect(document.querySelector('.toast')).toBeNull();
+  });
+
+  // CHT-1224: fixed 3s regardless of message length/type meant a long
+  // error toast got the exact same window as a short "Saved!" success.
+  describe('dismiss delay scaling (CHT-1224)', () => {
+    it('does not dismiss a short success toast before 3s', () => {
+      showToast('Saved!', 'success');
+      const toast = document.querySelector('.toast');
+      vi.advanceTimersByTime(2999);
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+    });
+
+    it('gives error toasts a longer minimum floor than success toasts', () => {
+      showToast('x', 'error'); // 1-char message — length alone wouldn't justify 5s
+      const toast = document.querySelector('.toast');
+      vi.advanceTimersByTime(3000);
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+      vi.advanceTimersByTime(2000);
+      expect(toast.classList.contains('toast-exit')).toBe(true);
+    });
+
+    it('gives warning toasts the same longer floor as error toasts', () => {
+      showToast('x', 'warning');
+      const toast = document.querySelector('.toast');
+      vi.advanceTimersByTime(3000);
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+      vi.advanceTimersByTime(2000);
+      expect(toast.classList.contains('toast-exit')).toBe(true);
+    });
+
+    it('scales the delay up for a long message', () => {
+      const longMessage = 'A'.repeat(300); // long joined FastAPI validation error
+      showToast(longMessage, 'error');
+      const toast = document.querySelector('.toast');
+      vi.advanceTimersByTime(9999);
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+      vi.advanceTimersByTime(1);
+      // Capped at 10s even for very long messages
+      expect(toast.classList.contains('toast-exit')).toBe(true);
+    });
+  });
+
+  // CHT-1224: no way to dismiss early or re-read a toast before it vanished.
+  describe('manual dismiss (CHT-1224)', () => {
+    it('renders a close button', () => {
+      showToast('Test message');
+      const toast = document.querySelector('.toast');
+      expect(toast.querySelector('.toast-close')).not.toBeNull();
+    });
+
+    it('dismisses immediately on close-button click, without waiting for the timer', () => {
+      showToast('Test message');
+      const toast = document.querySelector('.toast');
+      toast.querySelector('.toast-close').click();
+      expect(toast.classList.contains('toast-exit')).toBe(true);
+    });
+
+    it('does not error if the auto-dismiss timer already fired before a click', () => {
+      showToast('Test message');
+      const toast = document.querySelector('.toast');
+      vi.advanceTimersByTime(3000);
+      expect(() => toast.querySelector('.toast-close').click()).not.toThrow();
+    });
+  });
+
+  // CHT-1224: hovering pauses the countdown so a toast a user is actively
+  // reading doesn't vanish out from under them.
+  describe('pause-on-hover (CHT-1224)', () => {
+    it('pauses the countdown on mouseenter', () => {
+      showToast('Saved!', 'success');
+      const toast = document.querySelector('.toast');
+
+      vi.advanceTimersByTime(2000);
+      toast.dispatchEvent(new Event('mouseenter'));
+      vi.advanceTimersByTime(5000); // well past the original 3s window
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+    });
+
+    it('resumes the remaining countdown on mouseleave', () => {
+      showToast('Saved!', 'success');
+      const toast = document.querySelector('.toast');
+
+      vi.advanceTimersByTime(2000); // 1s remaining of the original 3s
+      toast.dispatchEvent(new Event('mouseenter'));
+      vi.advanceTimersByTime(5000); // paused — nothing happens
+      toast.dispatchEvent(new Event('mouseleave'));
+
+      vi.advanceTimersByTime(999);
+      expect(toast.classList.contains('toast-exit')).toBe(false);
+      vi.advanceTimersByTime(2);
+      expect(toast.classList.contains('toast-exit')).toBe(true);
+    });
   });
 });
 
@@ -464,13 +556,13 @@ describe('showApiError', () => {
     showApiError('load issues', new Error('Network error'));
     const toast = document.querySelector('.toast-error');
     expect(toast).not.toBeNull();
-    expect(toast.textContent).toBe('Failed to load issues: Network error');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Failed to load issues: Network error');
   });
 
   it('handles structured errors', () => {
     showApiError('update sprint', { detail: { message: 'Sprint is in limbo' } });
     const toast = document.querySelector('.toast-error');
-    expect(toast.textContent).toBe('Failed to update sprint: Sprint is in limbo');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Failed to update sprint: Sprint is in limbo');
   });
 
   // CHT-1224: api.js now flags network failures (isNetworkError, no .status)
@@ -481,7 +573,7 @@ describe('showApiError', () => {
     error.isNetworkError = true;
     showApiError('load issues', error);
     const toast = document.querySelector('.toast-error');
-    expect(toast.textContent).toBe('Failed to load issues: Network error - check your connection (network)');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Failed to load issues: Network error - check your connection (network)');
   });
 
   it('tags a 5xx server error distinctly', () => {
@@ -489,7 +581,7 @@ describe('showApiError', () => {
     error.status = 500;
     showApiError('load issues', error);
     const toast = document.querySelector('.toast-error');
-    expect(toast.textContent).toBe('Failed to load issues: Internal error (server)');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Failed to load issues: Internal error (server)');
   });
 
   it('does not tag a 4xx error', () => {
@@ -497,6 +589,6 @@ describe('showApiError', () => {
     error.status = 404;
     showApiError('load issue', error);
     const toast = document.querySelector('.toast-error');
-    expect(toast.textContent).toBe('Failed to load issue: Not found');
+    expect(toast.querySelector('.toast-message').textContent).toBe('Failed to load issue: Not found');
   });
 });

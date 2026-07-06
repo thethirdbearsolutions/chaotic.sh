@@ -87,23 +87,68 @@ export function isModalOpen() {
 }
 
 /**
- * Show a toast notification
+ * Show a toast notification.
+ *
+ * CHT-1224: previously a fixed 3s for every message, regardless of length or
+ * type, with no way to dismiss early or re-read after it vanished. Now:
+ * - the auto-dismiss delay scales with message length (capped), with a
+ *   longer floor for error/warning toasts users are more likely to need to
+ *   actually read and act on;
+ * - a manual close (x) button dismisses immediately;
+ * - hovering pauses the countdown so a toast a user is actively reading
+ *   doesn't vanish out from under them.
  * @param {string} message - Message to display
- * @param {'success'|'error'|'info'} type - Toast type
+ * @param {'success'|'error'|'warning'|'info'} type - Toast type
  */
 export function showToast(message, type = 'success') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.textContent = message;
+
+  const textEl = document.createElement('span');
+  textEl.className = 'toast-message';
+  textEl.textContent = message;
+  toast.appendChild(textEl);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'toast-close';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.textContent = '×';
+  toast.appendChild(closeBtn);
+
   container.appendChild(toast);
 
-  setTimeout(() => {
+  const dismiss = () => {
     toast.classList.add('toast-exit');
     toast.addEventListener('animationend', () => toast.remove(), { once: true });
     // Fallback removal if animationend never fires (e.g. CSS not loaded)
     setTimeout(() => { if (toast.parentNode) toast.remove(); }, 500);
-  }, 3000);
+  };
+
+  // Error/warning toasts get a longer floor; every toast's delay also scales
+  // with message length (capped at 10s so a very long validation-error list
+  // still eventually clears on its own).
+  const baseDelay = (type === 'error' || type === 'warning') ? 5000 : 3000;
+  const delay = Math.min(10000, Math.max(baseDelay, message.length * 50));
+
+  let remaining = delay;
+  let startedAt = Date.now();
+  let timer = setTimeout(dismiss, delay);
+
+  closeBtn.addEventListener('click', () => {
+    clearTimeout(timer);
+    dismiss();
+  });
+
+  toast.addEventListener('mouseenter', () => {
+    clearTimeout(timer);
+    remaining -= (Date.now() - startedAt);
+  });
+  toast.addEventListener('mouseleave', () => {
+    startedAt = Date.now();
+    timer = setTimeout(dismiss, Math.max(remaining, 500));
+  });
 }
 
 /**

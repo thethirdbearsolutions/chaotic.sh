@@ -2241,6 +2241,27 @@ select:focus-visible {
     flex-shrink: 0;
 }
 
+/* CHT-1224: message + manual dismiss button */
+.toast-message {
+    flex: 1;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    padding: 0 0.25rem;
+    margin: 0;
+    line-height: 1;
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.toast-close:hover {
+    color: var(--text-primary);
+}
+
 .toast-success .toast-icon::before {
     content: '✓';
     color: var(--success-color);
