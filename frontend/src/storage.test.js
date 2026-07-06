@@ -8,6 +8,7 @@ import {
     getCommentDraft, setCommentDraft,
     getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase,
     getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft,
+    getDocumentDraft, setDocumentDraft,
     getDocViewMode, setDocViewMode,
     isApprovalsExplainerDismissed, dismissApprovalsExplainer,
 } from './storage.js';
@@ -199,6 +200,45 @@ describe('storage', () => {
             const draft = getCreateIssueDraft();
             expect(draft.title).toBeNull();
             expect(draft.description).toBeNull();
+        });
+    });
+
+    describe('document drafts (CHT-1213)', () => {
+        it('stores and retrieves a draft', () => {
+            setDocumentDraft('new', { title: 'T', content: 'C', icon: '📄' });
+            expect(getDocumentDraft('new')).toEqual({ title: 'T', content: 'C', icon: '📄' });
+        });
+
+        it('is keyed independently per id', () => {
+            setDocumentDraft('new', { title: 'Create draft' });
+            setDocumentDraft('doc-1', { title: 'Edit draft' });
+            expect(getDocumentDraft('new')).toEqual({ title: 'Create draft' });
+            expect(getDocumentDraft('doc-1')).toEqual({ title: 'Edit draft' });
+        });
+
+        it('removes the draft when set to null', () => {
+            setDocumentDraft('new', { title: 'T' });
+            setDocumentDraft('new', null);
+            expect(getDocumentDraft('new')).toBeNull();
+        });
+
+        it('removes the draft when all fields are empty', () => {
+            setDocumentDraft('new', { title: '', content: '', icon: '' });
+            expect(getDocumentDraft('new')).toBeNull();
+        });
+
+        it('returns null when nothing stored', () => {
+            expect(getDocumentDraft('missing')).toBeNull();
+        });
+
+        it('returns null for malformed JSON rather than throwing', () => {
+            localStorage.setItem('chaotic_document_draft_new', 'not json{');
+            expect(getDocumentDraft('new')).toBeNull();
+        });
+
+        it('returns null for valid JSON that is not an object', () => {
+            localStorage.setItem('chaotic_document_draft_new', '"just a string"');
+            expect(getDocumentDraft('new')).toBeNull();
         });
     });
 

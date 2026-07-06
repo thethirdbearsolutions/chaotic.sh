@@ -180,6 +180,38 @@ export function setDescriptionDraft(issueId, content, basedOn = '') {
     }
 }
 
+// --- Document drafts (CHT-1213) ---
+//
+// Covers the create-document modal and the edit-document modal — CHT-1041
+// only wired draft persistence for issue creation/description/comments and
+// explicitly left documents out. Comment drafts on a document reuse
+// getCommentDraft/setCommentDraft above unchanged (already keyed by id, and
+// a document id can't collide with an issue id).
+//
+// The create-modal draft is a single slot ('new') since only one
+// create-document modal can be open at a time (mirrors
+// create_issue_title/create_issue_description above). The edit-modal draft
+// is keyed per document id, like description drafts.
+
+export function getDocumentDraft(key) {
+    const raw = get(`document_draft_${key}`);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        return (parsed && typeof parsed === 'object') ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+export function setDocumentDraft(key, draft) {
+    if (draft && (draft.title || draft.content || draft.icon)) {
+        set(`document_draft_${key}`, JSON.stringify(draft));
+    } else {
+        remove(`document_draft_${key}`);
+    }
+}
+
 // --- Create issue drafts ---
 
 export function getCreateIssueDraft() {

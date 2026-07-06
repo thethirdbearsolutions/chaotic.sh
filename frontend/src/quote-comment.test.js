@@ -4,25 +4,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('./storage.js', () => ({
-    setCommentDraft: vi.fn(),
-    getCommentDraft: vi.fn(),
-}));
-
-vi.mock('./state.js', () => ({
-    getCurrentDetailIssue: vi.fn(() => ({ id: 'issue-1' })),
-    getCurrentTeam: vi.fn(),
-    getCurrentProject: vi.fn(),
-    getCurrentView: vi.fn(),
-    subscribe: vi.fn(),
-}));
-
 vi.mock('./event-delegation.js', () => ({
     registerActions: vi.fn(),
 }));
 
-import { setCommentDraft } from './storage.js';
-import { getCurrentDetailIssue } from './state.js';
 import {
     quoteSelectionIntoComment,
     setupQuoteComment,
@@ -42,7 +27,6 @@ describe('quote-comment module', () => {
             <textarea id="new-comment"></textarea>
         `;
         vi.clearAllMocks();
-        getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
     });
 
     afterEach(() => {
@@ -103,13 +87,22 @@ describe('quote-comment module', () => {
             expect(textarea.value).toContain('> Some description');
         });
 
-        it('persists draft via setCommentDraft', () => {
+        it('dispatches an input event so the caller\'s own draft-persistence listener fires (CHT-1213)', () => {
+            // quote-comment.js doesn't know or care whether it's quoting into
+            // an issue or document comment box — draft persistence is the
+            // caller's responsibility via its own 'input' listener on the
+            // textarea (issue-detail-view.js / documents.js each wire one up).
+            const textarea = document.getElementById('new-comment');
+            const inputHandler = vi.fn();
+            textarea.addEventListener('input', inputHandler);
+
             const desc = document.querySelector('.description-content');
             mockSelection('Some description', desc);
 
             quoteSelectionIntoComment();
 
-            expect(setCommentDraft).toHaveBeenCalledWith('issue-1', expect.stringContaining('> Some description'));
+            expect(inputHandler).toHaveBeenCalledTimes(1);
+            expect(textarea.value).toContain('> Some description');
         });
 
         it('returns false when no quotable selection', () => {
@@ -292,6 +285,60 @@ describe('quote-comment module', () => {
             expect(getTooltip().style.display).toBe('none');
             document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }));
             expect(getTooltip().style.display).toBe('none');
+        });
+    });
+
+    // CHT-1213: generalized to a container/textarea id pair so the document
+    // detail view can reuse this instead of it being issue-only (PR #174
+    // scoped it to "issue detail view" specifically). Placed last in the file
+    // since setupQuoteComment() calls here retarget the module's shared
+    // "active textarea" default — later tests in this file would otherwise
+    // see it pointed at #new-doc-comment instead of #new-comment.
+    describe('setupQuoteComment with custom container/textarea ids', () => {
+        beforeEach(() => {
+            document.body.innerHTML = `
+                <div id="document-detail-content">
+                    <div class="document-content">Some document body text</div>
+                </div>
+                <textarea id="new-doc-comment"></textarea>
+            `;
+        });
+
+        it('attaches mouseup listener to the given container', () => {
+            const container = document.getElementById('document-detail-content');
+            const spy = vi.spyOn(container, 'addEventListener');
+
+            setupQuoteComment({ containerId: 'document-detail-content', textareaId: 'new-doc-comment' });
+
+            const mouseupCall = spy.mock.calls.find(([event]) => event === 'mouseup');
+            expect(mouseupCall).toBeTruthy();
+        });
+
+        it('quoteSelectionIntoComment targets the configured textarea', () => {
+            setupQuoteComment({ containerId: 'document-detail-content', textareaId: 'new-doc-comment' });
+
+            const body = document.querySelector('.document-content');
+            const range = document.createRange();
+            range.setStart(body.firstChild, 0);
+            range.setEnd(body.firstChild, 4);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+
+            const result = quoteSelectionIntoComment();
+
+            expect(result).toBe(true);
+            expect(document.getElementById('new-doc-comment').value).toContain('> Some');
+        });
+
+        it('recognizes selections inside .document-content as quotable', () => {
+            const body = document.querySelector('.document-content');
+            const range = document.createRange();
+            range.setStart(body.firstChild, 0);
+            range.setEnd(body.firstChild, 4);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+
+            expect(getQuotableSelection()).toBe('Some');
         });
     });
 });

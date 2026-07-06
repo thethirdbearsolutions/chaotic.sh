@@ -1,17 +1,24 @@
 /**
  * Quote-and-comment module (CHT-1173)
  *
- * Select text in an issue's description or a comment, then click the
- * floating "Quote" tooltip (or press Cmd/Ctrl+Shift+.) to insert the
- * selected text as a markdown blockquote into the comment textarea.
+ * Select text in an issue's description/comment or a document's body/comment,
+ * then click the floating "Quote" tooltip (or press Cmd/Ctrl+Shift+.) to
+ * insert the selected text as a markdown blockquote into the relevant
+ * comment textarea. Originally scoped to issue detail only (PR #174);
+ * generalized to take a container/textarea id pair so the document detail
+ * view (CHT-1213) can reuse the same selection/tooltip logic instead of
+ * silently no-oping there.
  */
-
-import { setCommentDraft } from './storage.js';
-import { getCurrentDetailIssue } from './state.js';
 
 let tooltipEl = null;
 let documentListenersAttached = false;
 let tooltipVisible = false;
+
+// Which comment textarea a bare quoteSelectionIntoComment() call (the
+// tooltip click, the keyboard shortcut) should target. Updated each time
+// setupQuoteComment() runs for whichever detail view just mounted — only one
+// detail view is visible at a time, so this always tracks the active one.
+let activeTextareaId = 'new-comment';
 
 /**
  * Create (or return cached) tooltip element.
@@ -88,14 +95,16 @@ function hideTooltip() {
 }
 
 /**
- * Check if a node is inside a quotable area (.description-content or .comment-content).
+ * Check if a node is inside a quotable area (.description-content or
+ * .comment-content on the issue side; .document-content — the document
+ * body's markdown class, CHT-1213 — on the document side).
  * @returns {Element|null} the quotable area element, or null
  */
 function isInQuotableArea(node) {
     if (!node) return null;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
     if (!el) return null;
-    return el.closest('.description-content') || el.closest('.comment-content') || null;
+    return el.closest('.description-content') || el.closest('.comment-content') || el.closest('.document-content') || null;
 }
 
 /**
@@ -127,13 +136,15 @@ function formatAsBlockquote(text) {
 
 /**
  * Insert the current selection as a blockquote into the comment textarea.
+ * @param {string} [textareaId] - defaults to whichever detail view last
+ *   called setupQuoteComment() (issue or document comment box, CHT-1213)
  * @returns {boolean} true if a quote was inserted
  */
-export function quoteSelectionIntoComment() {
+export function quoteSelectionIntoComment(textareaId = activeTextareaId) {
     const text = getQuotableSelection();
     if (!text) return false;
 
-    const textarea = document.getElementById('new-comment');
+    const textarea = document.getElementById(textareaId);
     if (!textarea) return false;
 
     const quote = formatAsBlockquote(text);
@@ -143,13 +154,9 @@ export function quoteSelectionIntoComment() {
         : '';
     textarea.value = existing + prefix + quote + '\n\n';
 
-    // Persist draft
-    const issue = getCurrentDetailIssue();
-    if (issue) {
-        setCommentDraft(issue.id, textarea.value);
-    }
-
-    // Trigger input event for any other listeners
+    // Trigger input event so whichever draft-persistence listener the caller
+    // wired up on this textarea (issue comment or document comment) picks up
+    // the new value — this function doesn't need to know which one it is.
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
     // Clear selection and hide tooltip first
@@ -199,14 +206,19 @@ function handleMouseUp(e) {
 }
 
 /**
- * Set up the quote-comment feature on the issue detail view.
- * Call after rendering the issue detail content.
+ * Set up the quote-comment feature on a detail view.
+ * Call after rendering the detail content.
  * @param {object} [options]
+ * @param {string} [options.containerId='issue-detail-content'] - the
+ *   detail-content container whose selections are quotable
+ * @param {string} [options.textareaId='new-comment'] - the comment textarea
+ *   a quote is inserted into (CHT-1213: 'new-doc-comment' for documents)
  * @param {AbortSignal} [options.signal] - signal to clean up the container listener
  */
-export function setupQuoteComment({ signal } = {}) {
-    const container = document.getElementById('issue-detail-content');
+export function setupQuoteComment({ containerId = 'issue-detail-content', textareaId = 'new-comment', signal } = {}) {
+    const container = document.getElementById(containerId);
     if (!container) return;
+    activeTextareaId = textareaId;
 
     // Container-level mouseup — tied to the detail view lifecycle via signal
     container.addEventListener('mouseup', handleMouseUp, signal ? { signal } : undefined);
