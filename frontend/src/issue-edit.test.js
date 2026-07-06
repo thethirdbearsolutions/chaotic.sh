@@ -118,20 +118,70 @@ describe('issue-edit', () => {
         // CHT-1214: this modal's description field had none of the inline
         // editor's protections — no draft persistence at all, so an
         // accidental modal close (no dirty-check gate exists here) silently
-        // discarded any typed changes.
+        // discarded any typed changes. Restore policy per the DRAFT POLICY
+        // block in storage.js: prefill only a fresh (basedOn-matching)
+        // draft, never silently; stale/legacy drafts warn and stay unloaded
+        // (PR #209 review finding 1).
         describe('description draft persistence (CHT-1214)', () => {
             it('loads server description when there is no draft', async () => {
                 await showEditIssueModal('issue-1');
 
                 expect(document.getElementById('edit-issue-description').value).toBe('Original description');
+                expect(document.getElementById('edit-issue-description-draft-warning').classList.contains('hidden')).toBe(true);
             });
 
-            it('restores an existing draft over the server description', async () => {
+            it('restores a fresh draft (basedOn matches server) with a visible notice', async () => {
                 setDescriptionDraft('issue-1', 'unsaved draft text', 'Original description');
 
                 await showEditIssueModal('issue-1');
 
                 expect(document.getElementById('edit-issue-description').value).toBe('unsaved draft text');
+                const warnEl = document.getElementById('edit-issue-description-draft-warning');
+                expect(warnEl.classList.contains('hidden')).toBe(false);
+                expect(warnEl.textContent).toContain('Restored');
+                setDescriptionDraft('issue-1', null);
+            });
+
+            it('does NOT prefill a stale draft (basedOn mismatch) — warns and keeps the server description', async () => {
+                setDescriptionDraft('issue-1', 'week-old forgotten draft', 'Some older description');
+
+                await showEditIssueModal('issue-1');
+
+                expect(document.getElementById('edit-issue-description').value).toBe('Original description');
+                const warnEl = document.getElementById('edit-issue-description-draft-warning');
+                expect(warnEl.classList.contains('hidden')).toBe(false);
+                expect(warnEl.textContent).toContain('older version');
+                // The stored draft is preserved, not consumed
+                expect(getDescriptionDraft('issue-1')).toBe('week-old forgotten draft');
+                setDescriptionDraft('issue-1', null);
+            });
+
+            it('does NOT prefill a legacy draft with no recorded snapshot — warns and keeps the server description', async () => {
+                localStorage.setItem('chaotic_description_draft_issue-1', 'legacy plain draft');
+
+                await showEditIssueModal('issue-1');
+
+                expect(document.getElementById('edit-issue-description').value).toBe('Original description');
+                expect(document.getElementById('edit-issue-description-draft-warning').classList.contains('hidden')).toBe(false);
+                localStorage.removeItem('chaotic_description_draft_issue-1');
+            });
+
+            // The concrete failure the reviewer described: user opens the
+            // modal to fix the title, glances past the description, saves —
+            // a stale draft must not ride along.
+            it('a stale draft is NOT committed by an unrelated field edit', async () => {
+                setDescriptionDraft('issue-1', 'week-old forgotten draft', 'Some older description');
+
+                await showEditIssueModal('issue-1');
+                document.getElementById('edit-issue-title').value = 'Just fixing the title';
+                await handleUpdateIssue({}, 'issue-1');
+
+                expect(api.updateIssue).toHaveBeenCalledWith('issue-1', expect.objectContaining({
+                    title: 'Just fixing the title',
+                    description: 'Original description',
+                }));
+                // And the un-loaded draft survives the save, still reviewable
+                expect(getDescriptionDraft('issue-1')).toBe('week-old forgotten draft');
                 setDescriptionDraft('issue-1', null);
             });
 

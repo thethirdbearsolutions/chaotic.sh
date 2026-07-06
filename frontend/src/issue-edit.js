@@ -12,7 +12,7 @@ import { viewIssue } from './issue-detail-view.js';
 import { navigateTo } from './router.js';
 import { loadIssues } from './issues-view.js';
 import { registerActions } from './event-delegation.js';
-import { getDescriptionDraft, setDescriptionDraft } from './storage.js';
+import { getDescriptionDraft, setDescriptionDraft, getDescriptionDraftBase } from './storage.js';
 
 export async function showEditIssueModal(issueId) {
     try {
@@ -34,6 +34,7 @@ export async function showEditIssueModal(issueId) {
                 </div>
                 <div class="form-group">
                     <label for="edit-issue-description">Description</label>
+                    <div id="edit-issue-description-draft-warning" class="description-draft-warning hidden"></div>
                     <textarea id="edit-issue-description">${escapeHtml(issue.description || '')}</textarea>
                 </div>
                 <div class="form-group">
@@ -90,15 +91,31 @@ export async function showEditIssueModal(issueId) {
         showModal();
 
         // Draft persistence for the description field only (CHT-1214),
-        // reusing the inline editor's own storage keys/helpers — this modal
-        // has no dirty-check before closing (Escape/click-outside discard
-        // instantly), so at minimum the typed text survives that. Shares a
-        // localStorage slot with the inline editor by design: an abandoned
-        // edit in one surface is recoverable from the other too.
+        // sharing the inline editor's storage slot. Restore policy differs
+        // from the inline editor on purpose — see the DRAFT POLICY block in
+        // storage.js (the single source of truth): the modal only prefills a
+        // draft whose basedOn matches the live server description, and never
+        // silently. A stale/legacy draft is NOT loaded here, because a user
+        // opening this modal to edit an unrelated field (title, status)
+        // would otherwise commit a forgotten week-old draft with zero signal
+        // (PR #209 review finding 1). The stored draft is left untouched.
         const descEl = document.getElementById('edit-issue-description');
         if (descEl) {
             const draft = getDescriptionDraft(issueId);
-            if (draft) descEl.value = draft;
+            if (draft) {
+                const base = getDescriptionDraftBase(issueId);
+                const warnEl = document.getElementById('edit-issue-description-draft-warning');
+                if (base !== null && base === (issue.description || '')) {
+                    descEl.value = draft;
+                    if (warnEl) {
+                        warnEl.textContent = 'Restored your unsaved description draft.';
+                        warnEl.classList.remove('hidden');
+                    }
+                } else if (warnEl) {
+                    warnEl.textContent = 'You have an unsaved description draft from an older version of this description — it was not loaded here. Open the description editor on the issue page to review it.';
+                    warnEl.classList.remove('hidden');
+                }
+            }
             descEl.addEventListener('input', () => {
                 const val = descEl.value;
                 if (val !== (issue.description || '')) {
@@ -138,7 +155,12 @@ export async function handleUpdateIssue(event, issueId) {
         };
 
         await api.updateIssue(issueId, data);
-        setDescriptionDraft(issueId, null);
+        // Clear the draft only when this save actually committed it — a save
+        // that never loaded a stale draft (finding 1's no-prefill path) must
+        // not delete the draft the warning just told the user to review.
+        if (getDescriptionDraft(issueId) === data.description) {
+            setDescriptionDraft(issueId, null);
+        }
         closeModal();
         await viewIssue(issueId);
         showToast('Issue updated!', 'success');
