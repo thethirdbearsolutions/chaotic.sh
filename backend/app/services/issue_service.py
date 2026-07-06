@@ -1307,13 +1307,29 @@ class IssueService:
 
     # Label operations
     async def create_label(self, label_in: LabelCreate, team_id: str) -> OxydeLabel:
-        """Create a label."""
-        return await OxydeLabel.objects.create(
-            team_id=team_id,
-            name=label_in.name,
-            color=label_in.color,
-            description=label_in.description,
-        )
+        """Create a label, idempotently on (team_id, name).
+
+        Unlike create_project, this had no duplicate-name check at all
+        before -- any client retry after a dropped response created a
+        second label with the same name in the same team, silently. A
+        DB-level UNIQUE(team_id, name) index (migration 0008) backstops
+        it: on IntegrityError, return the existing row instead of a 500,
+        mirroring IssueService.create_relation's fallback.
+        """
+        try:
+            return await OxydeLabel.objects.create(
+                team_id=team_id,
+                name=label_in.name,
+                color=label_in.color,
+                description=label_in.description,
+            )
+        except IntegrityError:
+            existing = await OxydeLabel.objects.filter(
+                team_id=team_id, name=label_in.name,
+            ).first()
+            if existing is not None:
+                return existing
+            raise
 
     async def get_label_by_id(self, label_id: str) -> OxydeLabel | None:
         """Get label by ID."""
