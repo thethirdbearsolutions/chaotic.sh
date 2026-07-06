@@ -108,6 +108,19 @@ export async function loadMyIssues() {
         renderMyIssues();
     } catch (e) {
         if (requestId !== loadMyIssuesRequestId) return;
+        // CHT-1224: showMyIssuesLoadingSkeleton() above must not be left on
+        // screen forever on failure — same stuck-skeleton bug as issues-view.js's
+        // loadIssues(), fixed the same way (persistent error + Retry cta).
+        const list = document.getElementById('my-issues-list');
+        if (list) {
+            list.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.dashboard,
+                heading: 'Failed to load issues',
+                description: 'Check your connection and try again',
+                cta: { label: 'Retry', action: 'retry-load-my-issues' },
+                variant: 'error',
+            });
+        }
         showApiError('load issues', e);
     }
 }
@@ -144,6 +157,7 @@ export async function loadDashboardActivity({ showLoading = true } = {}) {
                 icon: EMPTY_ICONS.activity,
                 heading: 'Failed to load activity',
                 description: 'Check your connection and try again',
+                variant: 'error',
             });
         }
     }
@@ -244,9 +258,17 @@ export function renderMyIssues() {
 /**
  * Load and render active sprint status across all projects.
  */
+// Monotonic request id — lets loadSprintStatus() drop a response from a
+// superseded request (Retry racing the ambient project-switch subscriber
+// above) instead of painting stale sprint cards (CHT-1224 PR #211 review
+// finding 2; same pattern as loadMyIssues above / CHT-1211 review #3).
+let loadSprintStatusRequestId = 0;
+
 export async function loadSprintStatus() {
     const container = document.getElementById('dashboard-sprint-status');
     if (!container) return;
+
+    const requestId = ++loadSprintStatusRequestId;
 
     const currentProjectId = getCurrentProject();
     const allProjects = getProjects();
@@ -269,16 +291,39 @@ export async function loadSprintStatus() {
                     for (const issue of issues) {
                         statusCounts[issue.status] = (statusCounts[issue.status] || 0) + 1;
                     }
-                } catch { /* ignore */ }
+                } catch (e) {
+                    // CHT-1224: was a bare-empty ignore — a per-project issue-count
+                    // fetch failure silently rendered the card with no status
+                    // breakdown at all, indistinguishable from a sprint with no
+                    // issues. Log it; the sprint card itself still renders below.
+                    console.error(`Failed to load issue counts for sprint ${sprint.id}:`, e);
+                }
                 return { project, sprint, statusCounts };
-            } catch {
+            } catch (e) {
+                // CHT-1224: was a bare `catch { return null }` — a project whose
+                // sprint fetch 500s looked identical to a project with no active
+                // sprint. Logging at least makes the failure debuggable; the
+                // project's card is still omitted (no sprint data to show).
+                console.error(`Failed to load current sprint for project ${project.id}:`, e);
                 return null;
             }
         });
         const results = (await Promise.all(sprintPromises)).filter(Boolean);
+        if (requestId !== loadSprintStatusRequestId) return; // a newer loadSprintStatus() has since started — drop this stale response
         renderSprintStatus(results);
-    } catch {
-        container.innerHTML = '';
+    } catch (e) {
+        if (requestId !== loadSprintStatusRequestId) return;
+        // CHT-1224: was `container.innerHTML = ''` with zero indication — the
+        // whole Sprint Status section just disappeared on failure. Render a
+        // persistent error + Retry cta instead.
+        console.error('Failed to load sprint status:', e);
+        container.innerHTML = renderEmptyState({
+            icon: EMPTY_ICONS.dashboard,
+            heading: "Couldn't load sprint status",
+            description: 'Check your connection and try again',
+            cta: { label: 'Retry', action: 'retry-load-sprint-status' },
+            variant: 'error',
+        });
     }
 }
 
@@ -363,5 +408,7 @@ registerActions({
         event.preventDefault();
         navigateToIssueByIdentifier(dataset.identifier);
     },
+    'retry-load-my-issues': () => loadMyIssues(),
+    'retry-load-sprint-status': () => loadSprintStatus(),
     // view-document action is registered in documents.js
 });

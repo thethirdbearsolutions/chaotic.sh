@@ -38,7 +38,23 @@ export class ApiClient {
             options.body = JSON.stringify(data);
         }
 
-        const response = await fetch(`${API_BASE}${path}`, options);
+        let response;
+        try {
+            response = await fetch(`${API_BASE}${path}`, options);
+        } catch (networkError) {
+            // CHT-1224: fetch() itself throwing (offline, DNS failure, CORS,
+            // timeout) previously propagated as the browser's raw, generic
+            // TypeError with no .status — showApiError then displayed it
+            // verbatim as if it were an app-level error, and app.js's
+            // bootstrap couldn't distinguish it from a real 401 (see
+            // logout-on-any-getMe()-failure fix in app.js). Normalize to a
+            // friendly message with no .status, so callers can tell "network
+            // down" apart from "server said no" (which always has .status).
+            const error = new Error('Network error - check your connection');
+            error.isNetworkError = true;
+            error.cause = networkError;
+            throw error;
+        }
 
         if (response.status === 204) {
             return null;

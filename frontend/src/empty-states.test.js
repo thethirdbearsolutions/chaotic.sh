@@ -80,5 +80,31 @@ describe('empty-states', () => {
             expect(html).toContain('data-view="issues"');
             expect(html).toContain('data-id="123"');
         });
+
+        // CHT-1224: a low-pri ticket flagged error and empty states as
+        // visually identical — this variant is the cheap, unified fix so
+        // every failure-state call site gets it for free instead of each
+        // view inventing its own distinction.
+        describe('error variant (CHT-1224)', () => {
+            it('adds empty-state-error class when variant is "error"', () => {
+                const html = renderEmptyState({
+                    icon: '<svg></svg>',
+                    heading: 'Failed to load things',
+                    description: 'Check your connection and try again',
+                    variant: 'error',
+                });
+                expect(html).toContain('class="empty-state empty-state-error"');
+            });
+
+            it('does not add the class when variant is omitted', () => {
+                const html = renderEmptyState({
+                    icon: '<svg></svg>',
+                    heading: 'No things yet',
+                    description: 'Create one to get started',
+                });
+                expect(html).toContain('class="empty-state"');
+                expect(html).not.toContain('empty-state-error');
+            });
+        });
     });
 });

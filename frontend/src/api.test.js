@@ -222,10 +222,44 @@ describe('ApiClient', () => {
   });
 
   describe('Error Handling', () => {
-    it('handles network errors', async () => {
-      fetchMock.mockRejectedValue(new Error('Network error'));
+    // CHT-1224: previously a raw fetch() rejection (offline, DNS failure,
+    // CORS, timeout) just rethrew the browser's generic message with no
+    // .status — indistinguishable from any other error to callers/ui.js.
+    // Now normalized to a friendly message flagged isNetworkError, with no
+    // .status, so a network blip can be told apart from a real 4xx/5xx.
+    it('normalizes a raw fetch() rejection to a friendly network error', async () => {
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
-      await expect(client.request('GET', '/test')).rejects.toThrow('Network error');
+      let caught;
+      try {
+        await client.request('GET', '/test');
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught.message).toBe('Network error - check your connection');
+      expect(caught.isNetworkError).toBe(true);
+      expect(caught.status).toBeUndefined();
+      expect(caught.cause).toBeInstanceOf(TypeError);
+    });
+
+    it('does not flag a network error for an HTTP error response (fetch itself resolved)', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ detail: 'Internal error' }),
+      });
+
+      let caught;
+      try {
+        await client.request('GET', '/test');
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught.isNetworkError).toBeUndefined();
+      expect(caught.status).toBe(500);
     });
 
     it('handles 401 Unauthorized responses', async () => {

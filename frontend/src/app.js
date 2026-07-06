@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
-import { closeModal, isModalOpen } from './ui.js';
+import { closeModal, isModalOpen, showToast } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
 import { initApp } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
@@ -499,6 +499,38 @@ registerActions({
     'navigateToProjects': () => navigateTo('projects'),
 });
 
+/**
+ * Resolve the current user for a stored token and boot into the app, or
+ * show the auth screen if there's no token / the token is invalid.
+ *
+ * CHT-1224: previously ANY getMe() failure — including a transient network
+ * blip during page load, not just a real 401 — cleared the stored token and
+ * booted the user to the login screen with zero explanation. Only a real
+ * auth failure (401/403) should log the user out; a network/5xx failure
+ * must retain the token and let the user retry, per api.js's isNetworkError
+ * distinction.
+ */
+async function bootApp() {
+    if (!api.getToken()) {
+        showAuthScreen();
+        return;
+    }
+    try {
+        const user = await api.getMe();
+        setCurrentUser(user);
+        await initApp();
+    } catch (e) {
+        if (e?.status === 401 || e?.status === 403) {
+            api.logout();
+            showAuthScreen();
+            return;
+        }
+        console.error('Failed to load current user on boot:', e);
+        showAuthScreen();
+        showToast('Failed to load your session — check your connection and retry', 'error');
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     initEventDelegation();
@@ -515,18 +547,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initIssueTooltip({ api });
     initRouter();
     registerWsHandlers();
-    if (api.getToken()) {
-        try {
-            const user = await api.getMe();
-            setCurrentUser(user);
-            await initApp();
-        } catch {
-            api.logout();
-            showAuthScreen();
-        }
-    } else {
-        showAuthScreen();
-    }
+    await bootApp();
 });
 
 function initThemeToggle() {

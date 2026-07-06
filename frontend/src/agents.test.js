@@ -13,6 +13,7 @@ import {
 } from './agents.js';
 import { api } from './api.js';
 import { getProjects } from './projects.js';
+import { showApiError } from './ui.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -156,10 +157,18 @@ describe('loadTeamAgentsQuiet', () => {
     expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
-  it('handles errors silently', async () => {
+  it('does not throw on failure', async () => {
     api.getTeamAgents.mockRejectedValue(new Error('Network error'));
     // Should not throw
     await loadTeamAgentsQuiet();
+  });
+
+  // CHT-1224: was console.error-only, silently breaking the assignee picker
+  // app-wide with zero user-visible signal.
+  it('shows a toast on failure', async () => {
+    api.getTeamAgents.mockRejectedValue(new Error('Network error'));
+    await loadTeamAgentsQuiet();
+    expect(showApiError).toHaveBeenCalledWith('load team agents', expect.objectContaining({ message: 'Network error' }));
   });
 });
 

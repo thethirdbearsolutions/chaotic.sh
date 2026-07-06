@@ -3,6 +3,7 @@ import { setCurrentTeam, setState, setCurrentView } from './state.js';
 import {
   getDocuments,
   loadDocuments,
+  fetchDocumentsForCurrentProject,
   renderDocuments,
   viewDocument,
   showCreateDocumentModal,
@@ -13,6 +14,10 @@ import {
   refreshDocumentsListIfActive,
   refreshDocumentDetailIfViewing,
   handleRemoteDocumentDeleted,
+  handleBulkMove,
+  bulkDeleteDocuments,
+  enterSelectionMode,
+  toggleDocSelection,
 } from './documents.js';
 import { api } from './api.js';
 import { showToast } from './ui.js';
@@ -25,6 +30,8 @@ vi.mock('./api.js', () => ({
     getDocuments: vi.fn(),
     getDocument: vi.fn(),
     getDocumentComments: vi.fn().mockResolvedValue([]),
+    getDocumentIssues: vi.fn().mockResolvedValue([]),
+    getSprint: vi.fn(),
     createDocument: vi.fn(),
     updateDocument: vi.fn(),
     deleteDocument: vi.fn(),
@@ -132,6 +139,104 @@ describe('loadDocuments', () => {
     api.getDocuments.mockResolvedValue(docs);
     await loadDocuments('team-1');
     expect(document.getElementById('documents-list').innerHTML).toContain('Test Doc');
+  });
+
+  // CHT-1224: was `errEl.innerHTML = ''` on failure — worse than the
+  // skeleton it replaced, since the list area just went blank with no
+  // message, indistinguishable from a team with zero documents.
+  it('renders a persistent error + Retry cta instead of blanking the list on failure', async () => {
+    api.getDocuments.mockRejectedValue(new Error('boom'));
+    await loadDocuments('team-1');
+    const list = document.getElementById('documents-list');
+    expect(list.innerHTML).toContain('Failed to load documents');
+    expect(list.innerHTML).toContain('data-action="retry-load-documents"');
+    // CHT-1224: error state visually distinguishable from empty state
+    expect(list.innerHTML).toContain('empty-state-error');
+  });
+
+  it('wires the retry-load-documents action to re-run loadDocuments() for the last-loaded team', async () => {
+    api.getDocuments.mockRejectedValue(new Error('boom'));
+    await loadDocuments('team-1');
+
+    api.getDocuments.mockResolvedValue([]);
+    await documentActions['retry-load-documents']();
+
+    expect(api.getDocuments).toHaveBeenLastCalledWith('team-1', null);
+  });
+});
+
+// CHT-1224: documents.js:281-327 — fetchDocumentsForCurrentProject() (used
+// on project-filter change) didn't even clear the skeleton on failure, and
+// only fired a self-dismissing toast.
+describe('fetchDocumentsForCurrentProject', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="documents-list"></div>';
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+  });
+
+  it('renders a persistent error + Retry cta on failure', async () => {
+    api.getDocuments.mockResolvedValue([]);
+    await loadDocuments('team-1'); // establishes currentTeamId
+
+    api.getDocuments.mockRejectedValue(new Error('boom'));
+    await fetchDocumentsForCurrentProject();
+
+    const list = document.getElementById('documents-list');
+    expect(list.innerHTML).toContain('Failed to load documents');
+    expect(list.innerHTML).toContain('data-action="retry-load-documents"');
+    // CHT-1224: error state visually distinguishable from empty state
+    expect(list.innerHTML).toContain('empty-state-error');
+  });
+
+  // CHT-1224 PR #211 review finding 2: loadDocuments() and
+  // fetchDocumentsForCurrentProject() both paint #documents-list and share a
+  // Retry button plus an ambient project-switch subscriber — a Retry racing
+  // a project switch must not paint the wrong project's documents. They share
+  // one request-id so they order against each other.
+  describe('request sequencing (out-of-order responses)', () => {
+    it('drops a slow loadDocuments() response superseded by a fresher fetch', async () => {
+      let resolveFirst;
+      api.getDocuments.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+      const firstLoad = loadDocuments('team-1'); // in flight, slow (e.g. a clicked Retry)
+
+      api.getDocuments.mockResolvedValue([
+        { id: 'doc-2', title: 'Fresh Doc', updated_at: '2024-01-02' },
+      ]);
+      await fetchDocumentsForCurrentProject(); // newer request resolves first
+
+      expect(document.getElementById('documents-list').innerHTML).toContain('Fresh Doc');
+
+      // The slow first request now resolves — must be dropped
+      resolveFirst([{ id: 'doc-1', title: 'Stale Doc', updated_at: '2024-01-01' }]);
+      await firstLoad;
+
+      expect(getDocuments().map(d => d.title)).toEqual(['Fresh Doc']);
+      expect(document.getElementById('documents-list').innerHTML).toContain('Fresh Doc');
+      expect(document.getElementById('documents-list').innerHTML).not.toContain('Stale Doc');
+    });
+
+    it('a stale failure does not paint the error card over fresher data', async () => {
+      let rejectFirst;
+      api.getDocuments.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+      const firstLoad = loadDocuments('team-1'); // in flight, will fail late
+
+      api.getDocuments.mockResolvedValue([
+        { id: 'doc-2', title: 'Fresh Doc', updated_at: '2024-01-02' },
+      ]);
+      await fetchDocumentsForCurrentProject();
+
+      rejectFirst(new Error('slow network died'));
+      await firstLoad;
+
+      const list = document.getElementById('documents-list');
+      expect(list.innerHTML).toContain('Fresh Doc');
+      expect(list.innerHTML).not.toContain('Failed to load documents');
+    });
   });
 });
 
@@ -242,6 +347,46 @@ describe('viewDocument', () => {
     expect(titleEl.textContent).toBe('<img onerror=alert(1)>');
     // Verify no img element was created
     expect(content.querySelector('img')).toBeNull();
+  });
+
+  // CHT-1224: documents.js:750-757 (sprint lookup), 786-800 (linked issues) —
+  // both used to silently ignore failures, rendering the same markup as the
+  // genuinely-empty case.
+  describe('sidebar lookup failures', () => {
+    it('logs and renders a distinct marker when the linked-issues lookup fails, instead of "None"', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Test', updated_at: '2024-01-01' });
+      api.getDocumentIssues.mockRejectedValue(new Error('boom'));
+
+      await viewDocument('doc-1');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load linked issues:', expect.any(Error));
+      const content = document.getElementById('document-detail-content');
+      expect(content.innerHTML).toContain("Couldn't load linked issues");
+      // PR #211 review finding 3: error-tinted, not the same text-muted
+      // styling as the genuinely-empty "None" case.
+      expect(content.innerHTML).toContain('sidebar-load-error');
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('logs and renders a distinct marker when the sprint-name lookup fails, instead of omitting the row', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      api.getDocument.mockResolvedValue({
+        id: 'doc-1', title: 'Test', updated_at: '2024-01-01',
+        project_id: 'proj-1', sprint_id: 'sprint-1',
+      });
+      api.getSprint.mockRejectedValue(new Error('boom'));
+
+      await viewDocument('doc-1');
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load sprint name:', expect.any(Error));
+      const content = document.getElementById('document-detail-content');
+      expect(content.innerHTML).toContain('Sprint');
+      expect(content.innerHTML).toContain("Couldn't load");
+      // PR #211 review finding 3: error-tinted marker
+      expect(content.innerHTML).toContain('sidebar-load-error');
+      consoleErrorSpy.mockRestore();
+    });
   });
 
   // CHT-1211 item 1: scroll position must be saved before pushState
@@ -999,5 +1144,72 @@ describe('refreshDocumentsListIfActive / refreshDocumentDetailIfViewing (CHT-121
       handleRemoteDocumentDeleted('doc-1', 'Test');
       expect(mockNavigateTo).not.toHaveBeenCalled();
     });
+  });
+});
+
+// CHT-1224: documents.js:615-648 (handleBulkMove), 653-689 (bulkDeleteDocuments)
+// — per-document errors were only console.error'd, and the summary toast was
+// just "Moved N, failed M" / "Deleted N, failed M" with no indication which
+// documents failed.
+describe('bulk actions identify failed documents (CHT-1224)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="documents-list"></div>
+      <div id="doc-select-btn"></div>
+      <div id="doc-bulk-actions" class="hidden"></div>
+      <select id="bulk-move-project"><option value="proj-2">Project 2</option></select>
+    `;
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+    vi.restoreAllMocks();
+  });
+
+  async function selectDocs(docs) {
+    api.getDocuments.mockResolvedValue(docs);
+    await loadDocuments('team-1');
+    enterSelectionMode();
+    docs.forEach(d => toggleDocSelection(d.id));
+  }
+
+  it('handleBulkMove: names the failed document titles in the warning toast', async () => {
+    const docs = [
+      { id: 'doc-1', title: 'Doc A', updated_at: '2024-01-01' },
+      { id: 'doc-2', title: 'Doc B', updated_at: '2024-01-01' },
+    ];
+    await selectDocs(docs);
+
+    api.updateDocument.mockImplementation((docId) =>
+      docId === 'doc-2' ? Promise.reject(new Error('boom')) : Promise.resolve({})
+    );
+    api.getDocuments.mockResolvedValue(docs);
+
+    const event = { preventDefault: vi.fn() };
+    await handleBulkMove(event);
+
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Doc B'), 'warning');
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Moved 1'), 'warning');
+  });
+
+  it('bulkDeleteDocuments: names the failed document titles in the warning toast', async () => {
+    const docs = [
+      { id: 'doc-1', title: 'Doc A', updated_at: '2024-01-01' },
+      { id: 'doc-2', title: 'Doc B', updated_at: '2024-01-01' },
+    ];
+    await selectDocs(docs);
+
+    api.deleteDocument.mockImplementation((docId) =>
+      docId === 'doc-1' ? Promise.reject(new Error('boom')) : Promise.resolve({})
+    );
+    api.getDocuments.mockResolvedValue(docs);
+
+    await bulkDeleteDocuments();
+
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Doc A'), 'warning');
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Deleted 1'), 'warning');
   });
 });

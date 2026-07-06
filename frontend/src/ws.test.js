@@ -59,10 +59,12 @@ describe('ws.js', () => {
                 close: vi.fn(),
             }));
             global.WebSocket = MockWebSocket;
+            document.body.innerHTML = '<span id="ws-status-badge" class="ws-status-badge hidden"></span>';
         });
 
         afterEach(() => {
             delete global.WebSocket;
+            document.body.innerHTML = '';
         });
 
         it('creates a WebSocket connection with correct URL', () => {
@@ -97,19 +99,159 @@ describe('ws.js', () => {
         });
 
         it('shows reconnected toast after disconnect', () => {
-            connectWebSocket('team-1');
-            const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+            // CHT-1224 PR #211 review finding 1: a manual connectWebSocket()
+            // call is now a FRESH connect that resets the outage state, so
+            // exercise the real reconnect-loop path (timer) instead.
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
 
-            // Simulate disconnect
-            ws.onclose();
-            expect(showToast).toHaveBeenCalledWith('Live updates disconnected. Reconnecting...', 'warning');
+                // Simulate disconnect
+                ws.onclose();
+                expect(showToast).toHaveBeenCalledWith('Live updates disconnected. Reconnecting...', 'warning');
 
-            // Now connect again and simulate onopen
-            vi.clearAllMocks();
-            connectWebSocket('team-1');
-            const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
-            ws2.onopen();
-            expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
+                // Let the internal reconnect fire, then simulate its onopen
+                showToast.mockClear();
+                vi.advanceTimersByTime(1500);
+                const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws2.onopen();
+                expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        // CHT-1224 PR #211 review finding 1: connectWebSocket() used to close
+        // the old socket without detaching its onclose, so an ordinary team
+        // switch ran the OLD connection's disconnect branch — false-positive
+        // toast + Offline badge on a completely healthy switch.
+        describe('team switch produces no disconnect UI (CHT-1224 review finding 1)', () => {
+            it('detaches the old socket handlers before closing it', () => {
+                connectWebSocket('team-1');
+                const oldWs = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                getWebsocket.mockReturnValue(oldWs);
+
+                connectWebSocket('team-2');
+
+                expect(oldWs.close).toHaveBeenCalled();
+                expect(oldWs.onclose).toBeNull();
+                expect(oldWs.onopen).toBeNull();
+                expect(oldWs.onmessage).toBeNull();
+                expect(oldWs.onerror).toBeNull();
+            });
+
+            it('a healthy team switch shows no disconnect toast and no badge', () => {
+                connectWebSocket('team-1');
+                const oldWs = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                getWebsocket.mockReturnValue(oldWs);
+
+                connectWebSocket('team-2');
+
+                expect(showToast).not.toHaveBeenCalled();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('a stale socket whose handler reference was captured pre-switch is ignored by the generation guard', () => {
+                connectWebSocket('team-1');
+                const oldWs = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                const capturedOnClose = oldWs.onclose; // e.g. an in-flight browser event
+                getWebsocket.mockReturnValue(oldWs);
+
+                connectWebSocket('team-2');
+                capturedOnClose(); // old generation's close event lands late
+
+                expect(showToast).not.toHaveBeenCalled();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('switching teams mid-outage clears the previous outage state (fresh connect = clean slate)', () => {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose(); // genuine drop on team-1
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                showToast.mockClear();
+                connectWebSocket('team-2'); // deliberate switch — new outage scope
+
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+                const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws2.onopen();
+                // Not a reconnect from team-2's perspective — no misleading toast
+                expect(showToast).not.toHaveBeenCalledWith('Live updates reconnected', 'success');
+            });
+
+            it('the internal reconnect loop still preserves outage state across attempts', () => {
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws.onclose(); // outage starts
+
+                    vi.advanceTimersByTime(1500); // reconnect attempt (isReconnect)
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                    const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws2.onopen();
+                    expect(showToast).toHaveBeenCalledWith('Live updates reconnected', 'success');
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+        });
+
+        // CHT-1224: the disconnect/reconnect toasts only bracket an outage
+        // with two transient 3s messages, which can vanish long before a
+        // backoff-delayed reconnect (up to 30s) actually resolves. A
+        // persistent badge should stay visible for the whole outage.
+        describe('persistent WS-status badge (CHT-1224)', () => {
+            it('is hidden while connected', () => {
+                connectWebSocket('team-1');
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('becomes visible on the first disconnect', () => {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+            });
+
+            it('stays visible through subsequent disconnects in the same outage (unlike the toast, which only fires once)', () => {
+                vi.useFakeTimers();
+                try {
+                    connectWebSocket('team-1');
+                    const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws.onclose();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                    vi.advanceTimersByTime(1500);
+                    const ws2 = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                    ws2.onclose();
+                    expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            it('hides again once the connection is reestablished', () => {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(false);
+
+                ws.onopen();
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
+            });
+
+            it('does not throw when the badge element is not in the DOM', () => {
+                document.body.innerHTML = '';
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                expect(() => ws.onclose()).not.toThrow();
+                expect(() => ws.onopen()).not.toThrow();
+            });
         });
 
         it('handles WebSocket constructor errors', () => {

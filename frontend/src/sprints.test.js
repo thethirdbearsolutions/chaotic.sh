@@ -73,6 +73,7 @@ vi.mock('./utils.js', () => ({
 import { setCurrentTeam, setState, getDetailNavContext } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
+import { registerActions } from './event-delegation.js';
 import {
     getSprints,
     setSprints,
@@ -95,6 +96,9 @@ import {
     setCachedCurrentSprintId,
     clearCachedCurrentSprintIds,
 } from './sprints.js';
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const sprintsActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -243,6 +247,82 @@ describe('loadSprints', () => {
 
         expect(showApiError).toHaveBeenCalledWith('load sprints', expect.objectContaining({ message: 'network' }));
     });
+
+    // CHT-1224: the error copy said "try again" but shipped no button.
+    it('renders a Retry cta on failure and wires it to reload sprints', async () => {
+        api.getCurrentSprint.mockRejectedValue(new Error('network'));
+        setState('currentProject', 'p1');
+
+        await loadSprints();
+
+        const html = document.getElementById('sprints-list').innerHTML;
+        expect(html).toContain('data-action="retry-load-sprints"');
+        // CHT-1224: error state visually distinguishable from empty state
+        expect(html).toContain('empty-state-error');
+
+        api.getCurrentSprint.mockResolvedValue({ id: 's1' });
+        api.getSprints.mockResolvedValue([]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        await sprintsActions['retry-load-sprints']();
+        expect(api.getSprints).toHaveBeenCalledWith('p1');
+    });
+
+    // CHT-1224 PR #211 review finding 2: loadSprints() now has a Retry button
+    // AND an ambient project-switch subscriber — a Retry racing a project
+    // switch must not paint the wrong project's sprints.
+    describe('request sequencing (out-of-order responses)', () => {
+        it('drops a slow response from a superseded loadSprints()', async () => {
+            let resolveFirst;
+            const firstRequest = new Promise((resolve) => { resolveFirst = resolve; });
+            api.getCurrentSprint.mockResolvedValue({ id: 's-active' });
+            api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+            setState('currentProject', 'p1');
+            api.getSprints.mockImplementationOnce(() => firstRequest);
+            const firstLoad = loadSprints(); // in flight, slow (e.g. a clicked Retry)
+
+            setState('currentProject', 'p2');
+            api.getSprints.mockImplementationOnce(() => Promise.resolve([
+                { id: 's2', name: 'P2 Sprint', status: 'active', project_id: 'p2' },
+            ]));
+            await loadSprints(); // newer request resolves first
+
+            expect(getSprints().map(s => s.id)).toEqual(['s2']);
+
+            // The slow first request now resolves — must be dropped
+            resolveFirst([{ id: 's1', name: 'P1 Sprint', status: 'active', project_id: 'p1' }]);
+            await firstLoad;
+
+            expect(getSprints().map(s => s.id)).toEqual(['s2']);
+            expect(document.getElementById('sprints-list').innerHTML).toContain('P2 Sprint');
+            expect(document.getElementById('sprints-list').innerHTML).not.toContain('P1 Sprint');
+        });
+
+        it('a stale failure does not paint the error card over fresher data', async () => {
+            let rejectFirst;
+            const firstRequest = new Promise((_resolve, reject) => { rejectFirst = reject; });
+            api.getCurrentSprint.mockResolvedValue({ id: 's-active' });
+            api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+
+            setState('currentProject', 'p1');
+            api.getSprints.mockImplementationOnce(() => firstRequest);
+            const firstLoad = loadSprints(); // in flight, will fail late
+
+            setState('currentProject', 'p2');
+            api.getSprints.mockImplementationOnce(() => Promise.resolve([
+                { id: 's2', name: 'P2 Sprint', status: 'active', project_id: 'p2' },
+            ]));
+            await loadSprints();
+
+            rejectFirst(new Error('slow network died'));
+            await firstLoad;
+
+            const html = document.getElementById('sprints-list').innerHTML;
+            expect(html).toContain('P2 Sprint');
+            expect(html).not.toContain('Failed to load sprints');
+            expect(showApiError).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe('renderSprints', () => {
@@ -347,6 +427,37 @@ describe('viewSprint', () => {
         await viewSprint('s1');
 
         expect(showToast).toHaveBeenCalledWith('Failed to load sprint', 'error');
+    });
+
+    // CHT-1224: sprints.js:271-272 — these used to be bare `.catch(() => [])`
+    // with zero logging, so a failed fetch silently looked like "sprint has
+    // no transactions/documents" instead of a real failure.
+    it('logs (but still renders) when the sprint transactions fetch fails', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', project_id: 'p1' });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockRejectedValue(new Error('boom'));
+        api.getDocuments.mockResolvedValue([]);
+
+        await viewSprint('s1');
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load sprint transactions:', expect.any(Error));
+        expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 1');
+        consoleErrorSpy.mockRestore();
+    });
+
+    it('logs (but still renders) when the sprint documents fetch fails', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        api.getSprint.mockResolvedValue({ id: 's1', name: 'Sprint 1', status: 'active', project_id: 'p1' });
+        api.getIssues.mockResolvedValue([]);
+        api.getSprintTransactions.mockResolvedValue([]);
+        api.getDocuments.mockRejectedValue(new Error('boom'));
+
+        await viewSprint('s1');
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load sprint documents:', expect.any(Error));
+        expect(document.getElementById('sprint-detail-view').innerHTML).toContain('Sprint 1');
+        consoleErrorSpy.mockRestore();
     });
 
     it('renders documents section when documents exist', async () => {

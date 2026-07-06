@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=60">
+    <link rel="stylesheet" href="/static/css/style.css?v=61">
     <!-- Fallback for when JS is disabled: show auth screen -->
     <noscript>
         <style>#auth-screen { display: block !important; }</style>
@@ -71,6 +71,11 @@
                             <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
                         </svg>
                     </div>
+                    <!-- CHT-1224: persistent (non-auto-dismissing) indicator for as
+                         long as the WebSocket reconnect loop is running — the two
+                         transient 3s toasts (disconnected/reconnected) don't cover
+                         an outage that backs off up to 30s. -->
+                    <span id="ws-status-badge" class="ws-status-badge hidden" title="Live updates disconnected — reconnecting">Offline</span>
                     <div id="team-dropdown" class="dropdown hidden">
                         <div id="team-list"></div>
                         <div class="dropdown-divider"></div>
@@ -745,6 +750,6 @@
         <div id="toast-container"></div>
     </div>
 
-    <script src="/static/js/app.bundle.js?v=19"></script>
+    <script src="/static/js/app.bundle.js?v=20"></script>
 </body>
 </html>

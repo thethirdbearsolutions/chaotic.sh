@@ -222,7 +222,7 @@ import { showAuthScreen } from './auth.js';
 import { initRouter } from './router.js';
 import { registerWsHandlers } from './ws-handlers.js';
 import { api } from './api.js';
-import { closeModal } from './ui.js';
+import { closeModal, showToast } from './ui.js';
 import { toggleTeamDropdown, toggleUserDropdown } from './teams.js';
 import { showCreateIssueModal } from './issue-creation.js';
 import { toggleSidebar } from './sidebar.js';
@@ -598,12 +598,46 @@ describe('app.js DOMContentLoaded initialization', () => {
         expect(showAuthScreen).not.toHaveBeenCalled();
     });
 
-    it('falls back to auth screen when getMe fails', async () => {
+    // CHT-1224: only a real auth failure (401/403, matching api.js's error
+    // shape) should log the user out — a network blip must not.
+    it('logs out and falls back to auth screen on a real 401', async () => {
         api.getToken.mockReturnValue('expired-token');
-        api.getMe.mockRejectedValue(new Error('Unauthorized'));
+        const error = new Error('Unauthorized');
+        error.status = 401;
+        api.getMe.mockRejectedValue(error);
         await domReadyCallback();
         expect(api.logout).toHaveBeenCalled();
         expect(showAuthScreen).toHaveBeenCalled();
+    });
+
+    it('logs out and falls back to auth screen on a real 403', async () => {
+        api.getToken.mockReturnValue('expired-token');
+        const error = new Error('Forbidden');
+        error.status = 403;
+        api.getMe.mockRejectedValue(error);
+        await domReadyCallback();
+        expect(api.logout).toHaveBeenCalled();
+        expect(showAuthScreen).toHaveBeenCalled();
+    });
+
+    it('does NOT log out on a network error during boot (retains the token)', async () => {
+        api.getToken.mockReturnValue('valid-token');
+        const error = new Error('Network error - check your connection');
+        error.isNetworkError = true;
+        api.getMe.mockRejectedValue(error);
+        await domReadyCallback();
+        expect(api.logout).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('check your connection and retry'), 'error');
+    });
+
+    it('does NOT log out on a 5xx error during boot (retains the token)', async () => {
+        api.getToken.mockReturnValue('valid-token');
+        const error = new Error('Internal server error');
+        error.status = 500;
+        api.getMe.mockRejectedValue(error);
+        await domReadyCallback();
+        expect(api.logout).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('check your connection and retry'), 'error');
     });
 });
 

@@ -11,6 +11,7 @@ import {
   loadTeamMembersQuiet,
   loadTeamMembers,
   loadTeamInvitations,
+  loadLabels,
   showInviteModal,
   handleInvite,
   removeMember,
@@ -21,6 +22,8 @@ import {
   handleUpdateTeam,
 } from './teams.js';
 import { api } from './api.js';
+import { showApiError } from './ui.js';
+import { registerActions } from './event-delegation.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -29,6 +32,7 @@ vi.mock('./api.js', () => ({
     getTeamMembers: vi.fn(),
     getTeamInvitations: vi.fn(),
     getTeamAgents: vi.fn(),
+    getLabels: vi.fn(),
     createInvitation: vi.fn(),
     removeMember: vi.fn(),
     deleteInvitation: vi.fn(),
@@ -79,6 +83,9 @@ vi.mock('./assignees.js', () => ({
   updateAssigneeFilter: (...args) => mockUpdateAssigneeFilter(...args),
   buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
+
+// Actions registered at module import time — capture before vi.clearAllMocks wipes them
+const teamsActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
 describe('getTeams', () => {
   it('returns empty array initially', () => {
@@ -260,10 +267,18 @@ describe('loadTeamMembersQuiet', () => {
     expect(mockUpdateAssigneeFilter).toHaveBeenCalled();
   });
 
-  it('handles errors silently', async () => {
+  it('does not throw on failure', async () => {
     api.getTeamMembers.mockRejectedValue(new Error('Network error'));
     // Should not throw
     await loadTeamMembersQuiet();
+  });
+
+  // CHT-1224: was console.error-only, silently breaking the assignee picker
+  // app-wide with zero user-visible signal.
+  it('shows a toast on failure', async () => {
+    api.getTeamMembers.mockRejectedValue(new Error('Network error'));
+    await loadTeamMembersQuiet();
+    expect(showApiError).toHaveBeenCalledWith('load team members', expect.objectContaining({ message: 'Network error' }));
   });
 });
 
@@ -343,6 +358,37 @@ describe('renderTeamMembers', () => {
   });
 });
 
+// CHT-1224: was console.error-only — silently broke every label picker
+// app-wide (issue-creation, issues-filter, document labels) until the next
+// team switch, with zero user-visible signal.
+describe('loadLabels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+  });
+
+  it('returns early if no currentTeam', async () => {
+    setCurrentTeam(null);
+    await loadLabels();
+    expect(api.getLabels).not.toHaveBeenCalled();
+  });
+
+  it('does not throw on failure', async () => {
+    api.getLabels.mockRejectedValue(new Error('Network error'));
+    await loadLabels();
+  });
+
+  it('shows a toast on failure', async () => {
+    api.getLabels.mockRejectedValue(new Error('Network error'));
+    await loadLabels();
+    expect(showApiError).toHaveBeenCalledWith('load labels', expect.objectContaining({ message: 'Network error' }));
+  });
+});
+
 describe('loadTeamInvitations', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="team-invitations-list"></div>';
@@ -373,6 +419,90 @@ describe('loadTeamInvitations', () => {
     await loadTeamInvitations();
     const list = document.getElementById('team-invitations-list');
     expect(list.innerHTML).toContain('No pending invitations');
+  });
+
+  // CHT-1224: a legitimate 403 (not admin) is an expected, silent no-op.
+  it('renders a blank list (no error message) on a 403', async () => {
+    const error = new Error('Forbidden');
+    error.status = 403;
+    api.getTeamInvitations.mockRejectedValue(error);
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toBe('');
+  });
+
+  // CHT-1224: any other failure (network, 500) used to collapse into the
+  // same blank list as a 403, giving an actual admin zero indication that
+  // the request failed rather than there being no invitations.
+  it('renders a visible error + Retry for non-403 failures', async () => {
+    api.getTeamInvitations.mockRejectedValue(new Error('network down'));
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain("Couldn't load invitations");
+    expect(list.innerHTML).toContain('data-action="retry-load-team-invitations"');
+  });
+
+  it('wires the retry-load-team-invitations action to re-run loadTeamInvitations()', async () => {
+    api.getTeamInvitations.mockRejectedValue(new Error('network down'));
+    await loadTeamInvitations();
+
+    api.getTeamInvitations.mockResolvedValue([]);
+    await teamsActions['retry-load-team-invitations']();
+
+    expect(api.getTeamInvitations).toHaveBeenCalledTimes(2);
+  });
+
+  // CHT-1224 PR #211 review finding 3: the failure state must be visually
+  // distinct from the plain informational/empty box, not just reworded.
+  it('error-tints the failure state (empty-state-error)', async () => {
+    api.getTeamInvitations.mockRejectedValue(new Error('network down'));
+    await loadTeamInvitations();
+    const list = document.getElementById('team-invitations-list');
+    expect(list.innerHTML).toContain('empty-state-error');
+  });
+
+  // CHT-1224 PR #211 review finding 2: loadTeamInvitations() now has a
+  // Retry button — a double-clicked Retry (or Retry racing a team switch)
+  // must not let a stale response win by network timing.
+  describe('request sequencing (out-of-order responses)', () => {
+    it('drops a slow response from a superseded loadTeamInvitations()', async () => {
+      let resolveFirst;
+      api.getTeamInvitations.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+      const firstLoad = loadTeamInvitations(); // in flight, slow
+
+      api.getTeamInvitations.mockResolvedValue([
+        { id: 'inv-2', email: 'fresh@example.com', role: 'member', expires_at: '2024-12-31' },
+      ]);
+      await loadTeamInvitations(); // newer request resolves first
+
+      const list = document.getElementById('team-invitations-list');
+      expect(list.innerHTML).toContain('fresh@example.com');
+
+      // The slow first request now resolves — must be dropped
+      resolveFirst([{ id: 'inv-1', email: 'stale@example.com', role: 'member', expires_at: '2024-12-31' }]);
+      await firstLoad;
+
+      expect(list.innerHTML).toContain('fresh@example.com');
+      expect(list.innerHTML).not.toContain('stale@example.com');
+    });
+
+    it('a stale failure does not paint the error card over fresher data', async () => {
+      let rejectFirst;
+      api.getTeamInvitations.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
+      const firstLoad = loadTeamInvitations(); // in flight, will fail late
+
+      api.getTeamInvitations.mockResolvedValue([]);
+      await loadTeamInvitations();
+
+      const list = document.getElementById('team-invitations-list');
+      expect(list.innerHTML).toContain('No pending invitations');
+
+      rejectFirst(new Error('slow network died'));
+      await firstLoad;
+
+      expect(list.innerHTML).toContain('No pending invitations');
+      expect(list.innerHTML).not.toContain("Couldn't load invitations");
+    });
   });
 });
 

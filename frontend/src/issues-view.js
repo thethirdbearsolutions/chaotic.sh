@@ -361,6 +361,20 @@ export async function loadIssues() {
         renderIssues();
     } catch (e) {
         if (requestId !== loadIssuesRequestId) return;
+        // CHT-1224: the skeleton from showIssuesLoadingSkeleton() above must
+        // not be left on screen forever — replace it with a persistent error
+        // + Retry cta (matches board.js's failed-load pattern) instead of a
+        // toast-only signal that self-dismisses in 3s.
+        const list = document.getElementById('issues-list');
+        if (list) {
+            list.innerHTML = renderEmptyState({
+                icon: EMPTY_ICONS.issues,
+                heading: 'Failed to load issues',
+                description: 'Check your connection and try again',
+                cta: { label: 'Retry', action: 'retry-load-issues' },
+                variant: 'error',
+            });
+        }
         showApiError('load issues', e);
     }
 }
@@ -640,4 +654,5 @@ registerActions({
     'set-sort': (_event, dataset) => setSort(dataset.value),
     'set-group-by': (_event, dataset) => setGroupBy(dataset.value),
     'clear-all-filters': () => clearAllFilters(),
+    'retry-load-issues': () => loadIssues(),
 });

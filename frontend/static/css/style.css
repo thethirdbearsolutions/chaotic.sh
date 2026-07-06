@@ -412,6 +412,25 @@ textarea {
     background: var(--bg-hover);
 }
 
+/* CHT-1224: persistent WS-outage indicator, shown for as long as the
+   reconnect loop is running (see ws.js's onclose/onopen). */
+.ws-status-badge {
+    display: inline-block;
+    margin: 0 0.5rem 0.5rem;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--warning-color, #f59e0b);
+    border: 1px solid var(--warning-color, #f59e0b);
+    border-radius: var(--radius-md);
+}
+
+.ws-status-badge.hidden {
+    display: none;
+}
+
 .sidebar-nav {
     flex: 1;
     padding: 1rem 0;
@@ -1877,6 +1896,28 @@ select:focus-visible {
     margin-top: 1rem;
 }
 
+/* CHT-1224: error variant — visually distinguishes a failed load from a
+   genuinely empty collection (previously identical-looking). */
+.empty-state-error .empty-state-icon {
+    color: var(--error-color);
+    opacity: 0.8;
+}
+
+.empty-state-error h3 {
+    color: var(--error-color);
+}
+
+/* CHT-1224 (PR #211 review finding 3): error-tinted inline failure markers
+   for the small non-empty-state surfaces — dropdown options and sidebar
+   slots — where a failed lookup must not look like genuinely-empty data. */
+.dropdown-option-error {
+    color: var(--error-color);
+}
+
+.sidebar-load-error {
+    color: var(--error-color);
+}
+
 /* Quick create bar */
 .quick-create {
     display: flex;
@@ -2239,6 +2280,27 @@ select:focus-visible {
 
 .toast-icon {
     flex-shrink: 0;
+}
+
+/* CHT-1224: message + manual dismiss button */
+.toast-message {
+    flex: 1;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    padding: 0 0.25rem;
+    margin: 0;
+    line-height: 1;
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.toast-close:hover {
+    color: var(--text-primary);
 }
 
 .toast-success .toast-icon::before {

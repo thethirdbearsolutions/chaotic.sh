@@ -942,6 +942,60 @@ describe('issue-detail-view', () => {
                 expect(api.getIssue).not.toHaveBeenCalled();
             });
         });
+
+        // CHT-1224: api.getComments(issueId) was the one fetch in the
+        // Promise.all with no per-call .catch (unlike ritual status/sprints on
+        // adjacent lines), so a comments-endpoint failure discarded 4
+        // successful fetches and failed the whole detail view.
+        describe('comments-fetch failure', () => {
+            it('still renders the issue detail view when only comments fail', async () => {
+                api.getComments.mockRejectedValue(new Error('comments down'));
+
+                await viewIssue('issue-1');
+
+                const detailView = document.getElementById('issue-detail-view');
+                expect(detailView.classList.contains('hidden')).toBe(false);
+                expect(detailView.innerHTML).toContain('Test Issue');
+            });
+
+            it('logs and shows an inline notice + Retry in the comments section instead of "No comments yet"', async () => {
+                const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+                api.getComments.mockRejectedValue(new Error('comments down'));
+
+                await viewIssue('issue-1');
+
+                expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load comments:', expect.any(Error));
+                const detailView = document.getElementById('issue-detail-view');
+                expect(detailView.innerHTML).toContain('Comments failed to load');
+                expect(detailView.innerHTML).toContain('data-action="retry-issue-comments"');
+                expect(detailView.innerHTML).not.toContain('No comments yet');
+                consoleErrorSpy.mockRestore();
+            });
+
+            it('wires retry-issue-comments to re-run viewIssue for the same issue', async () => {
+                api.getComments.mockRejectedValue(new Error('comments down'));
+                await viewIssue('issue-1');
+
+                api.getComments.mockResolvedValue([]);
+                // The action handler fires viewIssue() without awaiting it
+                // (mirrors every other delegated action in this app), so wait
+                // for its effect rather than the handler call itself.
+                detailActions['retry-issue-comments']({}, { issueId: 'issue-1' });
+                await vi.waitFor(() => {
+                    expect(api.getIssue).toHaveBeenCalledTimes(2);
+                    expect(document.getElementById('issue-detail-view').innerHTML).toContain('No comments yet');
+                });
+            });
+
+            it('still renders normally when comments succeed', async () => {
+                api.getComments.mockResolvedValue([]);
+
+                await viewIssue('issue-1');
+
+                const detailView = document.getElementById('issue-detail-view');
+                expect(detailView.innerHTML).not.toContain('Comments failed to load');
+            });
+        });
     });
 
     describe('viewIssueByPath', () => {

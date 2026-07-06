@@ -61,6 +61,12 @@ subscribe((key) => {
     loadSprints();
 });
 
+// Monotonic request id — lets loadSprints() drop a response from a
+// superseded request (Retry racing the ambient project-switch subscriber
+// above) instead of painting the wrong project's sprints (CHT-1224 PR #211
+// review finding 2; same pattern as viewSprint below / CHT-1211 item 7).
+let loadSprintsRequestId = 0;
+
 export async function loadSprints() {
     const projectId = getCurrentProject();
     if (!projectId) {
@@ -75,6 +81,8 @@ export async function loadSprints() {
         }
         return;
     }
+
+    const requestId = ++loadSprintsRequestId;
 
     invalidateSprintCache();
 
@@ -93,11 +101,17 @@ export async function loadSprints() {
 
     try {
         await api.getCurrentSprint(projectId);
-        sprints = await api.getSprints(projectId);
+        const fetched = await api.getSprints(projectId);
+        if (requestId !== loadSprintsRequestId) return; // a newer loadSprints() has since started — drop this stale response
+
+        sprints = fetched;
         renderSprints();
         await loadLimboStatus();
     } catch (e) {
-        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again' });
+        if (requestId !== loadSprintsRequestId) return;
+        // CHT-1224: the copy said "try again" but shipped no button — add the
+        // cta the helper already supports, wired to re-run loadSprints().
+        if (list) list.innerHTML = renderEmptyState({ icon: EMPTY_ICONS.sprints, heading: 'Failed to load sprints', description: 'Check your connection and try again', cta: { label: 'Retry', action: 'retry-load-sprints' }, variant: 'error' });
         showApiError('load sprints', e);
     }
 }
@@ -281,8 +295,11 @@ export async function viewSprint(sprintId, pushHistory = true) {
         const teamId = getCurrentTeam()?.id;
         const [issues, transactions, documents] = await Promise.all([
             api.getIssues({ sprint_id: sprintId, limit: 500 }),
-            api.getSprintTransactions(sprintId).catch(() => []),
-            teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(() => []) : [],
+            // CHT-1224: was a bare `.catch(() => [])` — a failed fetch silently
+            // degraded to "sprint has no transactions", indistinguishable from
+            // the true empty case. Logging at minimum makes it debuggable.
+            api.getSprintTransactions(sprintId).catch(e => { console.error('Failed to load sprint transactions:', e); return []; }),
+            teamId ? api.getDocuments(teamId, sprint.project_id, null, sprintId).catch(e => { console.error('Failed to load sprint documents:', e); return []; }) : [],
         ]);
         if (requestId !== viewSprintRequestId) return; // guard again — a newer request may have started during the awaits above
 
@@ -963,6 +980,7 @@ export function clearCachedCurrentSprintIds() {
 // ============================================================================
 
 registerActions({
+    'retry-load-sprints': () => loadSprints(),
     'view-sprint': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
             window.open(data.sprintUrl, '_blank');
