@@ -64,6 +64,17 @@ through account/team/project setup interactively.)
 
 Open http://localhost:24267 for the web UI.
 
+### Talking to your tracker from an agent
+
+`chaotic mcp` gives any local MCP-speaking harness (Claude Code, etc.)
+native chaotic tools over stdio. If your chaotic instance is reachable
+over the network (deployed somewhere, tunneled, whatever), it also
+speaks MCP directly over Streamable HTTP at `/mcp` -- point claude.ai's
+custom connectors, Claude Code web, or `claude mcp add --transport http`
+at it with an API key (`chaotic auth keys create --name "..."`). See
+[docs/agents.md](docs/agents.md) for both, including the capability-URL
+option for connector UIs that can't set custom headers.
+
 ## Core Concepts
 
 | Concept | What it does |
