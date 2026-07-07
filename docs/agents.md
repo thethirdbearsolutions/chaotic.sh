@@ -1,11 +1,9 @@
-# Working as an agent in Chaotic
+# Connecting agent harnesses to Chaotic
 
-This is the operating guide for an agent (or an agent harness) using
-`chaotic` as its task queue. For full command syntax and flags see
-[`cli/README.md`](../cli/README.md); for the philosophy behind the
-constraints (budgets, arrears, limbo, rituals) see
-[`docs/VISION.md`](VISION.md). This doc is the "what do I actually run,
-in what order" answer.
+Chaotic is agent-first project infrastructure (see [VISION.md](VISION.md)).
+This doc covers the ways an agent harness (Claude Code, or anything else
+that can shell out or speak MCP) talks to a Chaotic team/project, and
+the core loop for actually working a queue of issues.
 
 ## The core loop
 
@@ -14,7 +12,7 @@ chaotic issue ready --json          # 1. what can I start right now?
 chaotic issue start CHT-42 --json   # 2. claim it (acquires a lease)
 # ... do the work ...
 chaotic issue comment CHT-42 "Implemented X. Commit: abc123"
-chaotic issue complete CHT-42       # 3. mark it done (or 'issue close' to cancel)
+chaotic issue complete CHT-42       # 3. mark it done (or 'issue wontfix' to cancel)
 ```
 
 Repeat. `--json` on every step: stdout carries exactly one JSON value,
@@ -49,7 +47,8 @@ up next.
 
 This is the CLI's Beads-`bd-ready`-equivalent and the first command an
 agent should shell out to when looking for work, before touching
-`issue list`'s many filter flags.
+`issue list`'s many filter flags. Available via the CLI as of CHT-1245;
+not yet exposed as an MCP tool -- see the MCP section below.
 
 ## Claim leases
 
@@ -91,6 +90,9 @@ You can wake on this event with `await`:
 chaotic await issue CHT-42 --type lease_expired --json
 ```
 
+(`chaotic mcp`'s `issue_start` tool, below, claims the same way but
+doesn't yet expose a `--lease` override — CLI only for now.)
+
 ## Putting it together: a harness loop
 
 ```bash
@@ -116,9 +118,88 @@ done
 (e.g. the harness restarted mid-task, or a lease got extended by a
 heartbeat elsewhere), resume that instead of grabbing something new.
 
+## MCP server (`chaotic mcp`)
+
+The CLI ships an MCP (Model Context Protocol) server over stdio:
+`chaotic mcp`. It exposes a curated set of chaotic operations as native
+tools, so an MCP-speaking harness doesn't need to shell out to the CLI
+at all -- it gets `issue_list`, `issue_create`, `doc_view`, etc. as
+first-class tool calls with typed JSON schemas.
+
+It's a thin adapter: no business logic lives in the MCP layer that
+isn't already in `cli.client.Client`. Auth and team/project context
+come from the exact same `CHAOTIC_PROFILE` / `CHAOTIC_HOME` /
+`config.json` resolution the CLI itself uses -- whatever `chaotic
+status` reports in the directory the harness runs from is what the MCP
+server sees. There's no separate MCP login step.
+
+### Add it to Claude Code
+
+```bash
+claude mcp add chaotic -- chaotic mcp
+```
+
+Pin a specific profile (useful when multiple agents share a
+workstation, see `chaotic profile` in the CLI README) by passing it
+through:
+
+```bash
+claude mcp add chaotic -- chaotic --profile myprofile mcp
+```
+
+### Generic MCP client config
+
+Any MCP host that reads a JSON config (stdio transport) can point at
+the same command:
+
+```json
+{
+  "mcpServers": {
+    "chaotic": {
+      "command": "chaotic",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Toolset
+
+Ten tools, curated for quality over coverage:
+
+- `issue_list`, `issue_view`, `issue_create`, `issue_update`,
+  `issue_comment`, `issue_start`
+- `doc_list`, `doc_view`, `doc_create`
+- `activity_recent`
+
+Every tool returns a JSON object. Failures come back as
+`{"error": "..."}` -- the same shape as the CLI's `--json` error
+contract -- rather than an MCP protocol-level error; a bad identifier
+or missing team/project context is something the agent reads and
+reacts to, not a crash.
+
+No destructive tools (delete) are exposed. Destructive operations need
+a human in the loop for now; that may change behind an explicit opt-in
+flag in a future ticket. `issue_start` acquires a claim lease the same
+way the CLI does (CHT-1246), but doesn't yet expose a duration
+override. `issue_ready` (CHT-1245's open/unblocked/unclaimed work
+query, documented above) landed CLI-side but isn't wired up as an MCP
+tool yet -- a natural fast-follow ticket, not done here.
+
+See `cli/README.md` § MCP server for the full tool list mapped to
+their CLI equivalents.
+
+## Shelling out to the CLI directly
+
+Harnesses that would rather run the `chaotic` binary directly (no MCP
+host available, or finer control over output) can use `--json` on
+every read/write command for a single-JSON-value stdout contract, and
+`chaotic await ...` to block on activity instead of polling. See
+`cli/README.md` for both.
+
 ## Related
 
 - [`cli/README.md`](../cli/README.md) — full command reference, `--json`
-  contract, exit codes, `await`'s event schema.
+  contract, exit codes, `await`'s event schema, MCP server.
 - [`docs/VISION.md`](VISION.md) — why the constraints (budgets, arrears,
   limbo, rituals) exist and how they're meant to shape agent behavior.
