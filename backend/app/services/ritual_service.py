@@ -889,7 +889,36 @@ class RitualService:
                     "ritual=%s issue=%s", ritual_id, issue_id,
                 )
 
+        # REVIEW mode: this attestation now needs an admin's approval --
+        # fan out an inbox entry (CHT-1250). No email (CHT-1251 is
+        # gate-requests + invitations only).
+        if ritual.approval_mode == ApprovalMode.REVIEW:
+            try:
+                await self._notify_review_requested(ritual, issue, user_id)
+            except Exception:
+                logger.exception(
+                    "Failed to write review-requested inbox entries for "
+                    "ritual=%s issue=%s", ritual_id, issue_id,
+                )
+
         return attestation
+
+    async def _notify_review_requested(self, ritual: "OxydeRitual", issue: "OxydeIssue", attested_by_id: str) -> None:
+        """CHT-1250: fan a review_requested inbox entry out to every team
+        admin now that `ritual` has been attested on `issue`.
+        """
+        from app.oxyde_models.project import OxydeProject as _OP
+        from app.services.inbox_service import InboxService
+        from app.services.user_service import UserService
+
+        project = await _OP.objects.get_or_none(id=issue.project_id)
+        if project is None:
+            return
+        attester = await UserService().get_by_id(attested_by_id) if attested_by_id else None
+        await InboxService().notify_review_requested(
+            ritual=ritual, issue=issue, project=project,
+            attested_by_name=attester.name if attester else "Someone",
+        )
 
     async def _ensure_and_clear_limbo_for_attest(
         self, ritual: OxydeRitual, issue_id: str, user_id: str,
@@ -1100,6 +1129,17 @@ class RitualService:
                 ritual_id, issue_id,
             )
 
+        # CHT-1250: the gate just got completed -- no one is "awaiting" it
+        # anymore, so resolve every admin's gate_pending inbox entry for it.
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_gate_or_review(ritual_id=ritual_id, issue_id=issue_id)
+        except Exception:
+            logger.exception(
+                "Failed to resolve gate-pending inbox entries for ritual=%s issue=%s",
+                ritual_id, issue_id,
+            )
+
         return attestation
 
     async def _validate_approve_mode_and_pending(
@@ -1239,6 +1279,17 @@ class RitualService:
         except Exception:
             logger.exception(
                 "Failed to clear ticket limbo for ritual=%s issue=%s",
+                ritual_id, issue_id,
+            )
+
+        # CHT-1250: the review just got approved -- resolve every admin's
+        # review_requested inbox entry for it.
+        try:
+            from app.services.inbox_service import InboxService
+            await InboxService().resolve_gate_or_review(ritual_id=ritual_id, issue_id=issue_id)
+        except Exception:
+            logger.exception(
+                "Failed to resolve review-requested inbox entries for ritual=%s issue=%s",
                 ritual_id, issue_id,
             )
 
