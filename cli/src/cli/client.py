@@ -651,5 +651,50 @@ class Client:
     def mark_all_inbox_read(self, team_id: str) -> dict:
         return self._request("POST", f"/inbox/mark-all-read?team_id={team_id}", {})
 
+    # Templates (CHT-1259)
+    def create_template(
+        self, team_id: str, name: str, body: dict, description: str | None = None,
+    ) -> dict:
+        """Create a template from an explicit body (the import path)."""
+        data = {"name": name, "body": body}
+        if description:
+            data["description"] = description
+        return self._request("POST", f"/teams/{team_id}/templates", data)
+
+    def create_template_from_project(
+        self, team_id: str, name: str, project_id: str, description: str | None = None,
+    ) -> dict:
+        """Create a template by snapshotting a project's rituals + settings."""
+        data = {"name": name, "project_id": project_id}
+        if description:
+            data["description"] = description
+        return self._request("POST", f"/teams/{team_id}/templates/from-project", data)
+
+    def get_templates(self, team_id: str) -> list:
+        return self._request("GET", f"/teams/{team_id}/templates")
+
+    def get_template(self, template_id: str) -> dict:
+        return self._request("GET", f"/templates/{template_id}")
+
+    def delete_template(self, template_id: str) -> None:
+        self._request("DELETE", f"/templates/{template_id}")
+
+    def apply_template(
+        self,
+        template_id: str,
+        project_id: str,
+        update_rituals: list | None = None,
+        update_all: bool = False,
+        dry_run: bool = False,
+    ) -> dict:
+        """Apply a template to a project; returns the structured change report."""
+        data = {
+            "project_id": project_id,
+            "update_rituals": update_rituals or [],
+            "update_all": update_all,
+            "dry_run": dry_run,
+        }
+        return self._request("POST", f"/templates/{template_id}/apply", data)
+
 
 client = Client()

@@ -91,6 +91,33 @@ For the agent-operating guide (the actual loop to shell out: `issue
 ready` → `issue start` → work → `issue complete`, plus claim leases),
 see [docs/agents.md](docs/agents.md).
 
+## Templates & Starter Packs
+
+Configuring rituals and settings is the real onboarding tax. Templates
+pay it once:
+
+```bash
+# Snapshot a configured project's rituals + settings as a team template
+chaotic template create house-rules --from-project MYPROJ
+
+# One-liner for every project after that
+chaotic project create "New Thing" NT --template house-rules
+
+# Or start from a bundled pack (rigor, consulting, human-led, solo-agent)
+chaotic template install                 # list packs
+chaotic project create "New Thing" NT --template rigor
+
+# Move templates between installs as reviewable YAML
+chaotic template export house-rules -o house-rules.yml
+chaotic template import house-rules.yml
+```
+
+`template apply` is idempotent and additive: it creates rituals the
+project is missing, updates same-named ones only after per-ritual
+confirmation (`--yes` approves all), and **never deletes** rituals the
+template doesn't mention. Settings the template pins are set; everything
+else is left alone. Running apply twice is a no-op the second time.
+
 ## Architecture
 
 ```
