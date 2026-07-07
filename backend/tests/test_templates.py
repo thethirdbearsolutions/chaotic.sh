@@ -148,6 +148,36 @@ def test_template_name_validation():
     assert ok.name == "my-template_1"
 
 
+def test_body_rejects_duplicate_ritual_names():
+    """PR #220 review finding 2: duplicate names would create-then-conflict
+    against themselves at apply time and make per-name approval ambiguous."""
+    with pytest.raises(ValidationError, match="Duplicate ritual name"):
+        _simple_body(rituals=[_ritual_dict("x"), _ritual_dict("x")])
+
+
+def test_body_rejects_null_non_budget_settings():
+    """PR #220 review finding 1: explicit nulls used to be silently dropped."""
+    with pytest.raises(ValidationError, match="cannot be null"):
+        _simple_body(settings={"estimate_scale": None})
+    with pytest.raises(ValidationError, match="cannot be null"):
+        _simple_body(settings={"human_rituals_required": None})
+
+
+def test_body_null_budget_pins_unlimited():
+    """default_sprint_budget: null is the one meaningful null -- it pins
+    'unlimited' and must survive validation + round trip."""
+    body = _simple_body(settings={"default_sprint_budget": None})
+    assert body.pinned_settings() == {"default_sprint_budget"}
+    assert body.sections["settings"] == {"default_sprint_budget": None}
+    body2 = TemplateBody.model_validate(body.model_dump(mode="json"))
+    assert body2.pinned_settings() == {"default_sprint_budget"}
+
+
+def test_body_omitted_settings_stay_unpinned():
+    body = _simple_body(settings={"estimate_scale": "linear"})
+    assert body.pinned_settings() == {"estimate_scale"}
+
+
 # =========================================================================
 # Service: snapshot + create
 # =========================================================================
@@ -517,6 +547,117 @@ async def test_snapshot_round_trips_through_apply(db, test_team, test_project):
     second = await service.apply(template, other)
     assert [c.action for c in second.rituals] == ["unchanged"]
     assert all(c.action == "unchanged" for c in second.settings)
+
+
+@pytest.mark.asyncio
+async def test_apply_null_budget_pins_unlimited(db, test_team, test_project):
+    """PR #220 review finding 1: a pinned default_sprint_budget: null sets
+    the project's budget to unlimited (None) -- and re-apply is a no-op."""
+    from app.oxyde_models.project import OxydeProject
+
+    await OxydeProject.objects.filter(id=test_project.id).update(
+        default_sprint_budget=12,
+    )
+    project = await OxydeProject.objects.get(id=test_project.id)
+
+    template = await _make_template(
+        test_team.id, settings={"default_sprint_budget": None}
+    )
+    service = TemplateService()
+    report = await service.apply(template, project)
+
+    changes = {c.field: c for c in report.settings}
+    assert changes["default_sprint_budget"].action == "set"
+    assert changes["default_sprint_budget"].old_value == 12
+    assert changes["default_sprint_budget"].new_value is None
+
+    project = await OxydeProject.objects.get(id=test_project.id)
+    assert project.default_sprint_budget is None
+
+    second = await service.apply(template, project)
+    assert all(c.action == "unchanged" for c in second.settings)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_pins_unlimited_budget(db, test_team, test_project):
+    """PR #220 review finding 1: snapshotting a project whose budget is
+    unlimited pins default_sprint_budget: null instead of dropping it, so
+    'make new projects like this one' reproduces unlimited-ness."""
+    service = TemplateService()
+    template_in = await service.snapshot_project("snap", test_project)
+    assert template_in.body.pinned_settings() >= {"default_sprint_budget"}
+    assert template_in.body.sections["settings"]["default_sprint_budget"] is None
+
+    template = await service.create(template_in, test_team.id)
+
+    from app.oxyde_models.project import OxydeProject
+
+    other = await OxydeProject.objects.create(
+        team_id=test_team.id, name="Budgeted", key="BDG",
+        default_sprint_budget=25,
+    )
+    report = await service.apply(template, other)
+    changes = {c.field: c for c in report.settings}
+    assert changes["default_sprint_budget"].action == "set"
+
+    other = await OxydeProject.objects.get(id=other.id)
+    assert other.default_sprint_budget is None
+
+
+@pytest.mark.asyncio
+async def test_apply_creates_inactive_ritual(db, test_team, test_project):
+    """PR #220 review finding 3: a template carrying an inactive ritual
+    creates it inactive, and re-apply reports unchanged."""
+    template = await _make_template(
+        test_team.id, rituals=[_ritual_dict("dormant", is_active=False)]
+    )
+    service = TemplateService()
+    report = await service.apply(template, test_project)
+    assert [c.action for c in report.rituals] == ["create"]
+
+    ritual = await RitualService().get_by_name(
+        test_project.id, "dormant", include_inactive=True
+    )
+    assert ritual is not None
+    assert ritual.is_active is False
+    # Not visible in the active list.
+    assert await RitualService().list_by_project(test_project.id) == []
+
+    second = await service.apply(template, test_project)
+    assert [c.action for c in second.rituals] == ["unchanged"]
+
+
+@pytest.mark.asyncio
+async def test_apply_reactivates_via_is_active_diff(db, test_team, test_project):
+    """is_active participates in the diff: an inactive project ritual vs an
+    active template ritual is an update (with approval)."""
+    ritual_service = RitualService()
+    created = await ritual_service.create(
+        RitualCreate(
+            name="write-tests",
+            prompt="Confirm new code has test coverage.",
+            trigger=RitualTrigger.TICKET_CLOSE,
+        ),
+        test_project.id,
+    )
+    from app.schemas.ritual import RitualUpdate
+
+    await ritual_service.update(created, RitualUpdate(is_active=False))
+
+    template = await _make_template(test_team.id, rituals=[_ritual_dict("write-tests")])
+    service = TemplateService()
+
+    # Without approval: skipped, stays inactive.
+    report = await service.apply(template, test_project)
+    assert report.rituals[0].action == "skipped"
+    assert report.rituals[0].fields_changed == ["is_active"]
+
+    # With approval: reactivated.
+    report = await service.apply(template, test_project, update_all=True)
+    assert report.rituals[0].action == "update"
+    ritual = await ritual_service.get_by_name(test_project.id, "write-tests")
+    assert ritual is not None
+    assert ritual.is_active is True
 
 
 # =========================================================================

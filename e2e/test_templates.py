@@ -83,6 +83,40 @@ class TestTemplateCRUD:
                 test_team["id"], "future", {"version": 99, "sections": {}},
             )
 
+    def test_duplicate_ritual_names_rejected(self, api_client, test_team):
+        """PR #220 review finding 2, over the wire: 422 at create time."""
+        ritual = {
+            "name": "x", "prompt": "p", "trigger": "ticket_close",
+            "approval_mode": "auto", "note_required": True, "is_active": True,
+        }
+        with pytest.raises(APIError, match="[Dd]uplicate"):
+            api_client.create_template(
+                test_team["id"], "dupes",
+                {"version": 1, "sections": {"rituals": [ritual, dict(ritual)]}},
+            )
+
+    def test_null_setting_rejected_null_budget_pins_unlimited(
+        self, api_client, test_team, test_project
+    ):
+        """PR #220 review finding 1, over the wire: a null non-budget
+        setting 422s instead of vanishing; default_sprint_budget: null
+        pins the project's budget to unlimited."""
+        with pytest.raises(APIError, match="cannot be null"):
+            api_client.create_template(
+                test_team["id"], "nully",
+                {"version": 1, "sections": {"settings": {"estimate_scale": None}}},
+            )
+
+        api_client.update_project(test_project["id"], default_sprint_budget=30)
+        template = api_client.create_template(
+            test_team["id"], "unlimited",
+            {"version": 1, "sections": {"settings": {"default_sprint_budget": None}}},
+        )
+        report = api_client.apply_template(template["id"], test_project["id"])
+        assert [c["action"] for c in report["settings"]] == ["set"]
+        project = api_client.get_project(test_project["id"])
+        assert project["default_sprint_budget"] is None
+
 
 class TestTemplateApply:
     def test_apply_then_reapply_is_noop(self, api_client, test_team, test_project):

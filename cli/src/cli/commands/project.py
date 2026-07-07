@@ -99,15 +99,14 @@ def register(cli):
                         f"[dim]Installed pack '{template_name}' as a team template.[/dim]"
                     )
                 else:
-                    console.print(
-                        f"[red]No saved template or bundled pack named "
-                        f"'{template_name}'.[/red]"
+                    # ClickException for --json error-shape consistency
+                    # (PR #220 review finding 4).
+                    raise click.ClickException(
+                        f"No saved template or bundled pack named "
+                        f"'{template_name}'. Run 'chaotic template list' for "
+                        f"saved templates or 'chaotic template install' for "
+                        f"bundled packs."
                     )
-                    console.print(
-                        "Run `chaotic template list` for saved templates or "
-                        "`chaotic template install` for bundled packs."
-                    )
-                    raise SystemExit(1)
 
         result = _client().create_project(
             team_id, name, key.upper(),
@@ -120,9 +119,20 @@ def register(cli):
         if template is not None:
             # Fresh project: no ritual collisions possible, so apply with
             # update_all rather than prompting per change.
-            report = _client().apply_template(
-                template["id"], result["id"], update_all=True,
-            )
+            try:
+                report = _client().apply_template(
+                    template["id"], result["id"], update_all=True,
+                )
+            except Exception:
+                # The project exists and is set current -- say so before the
+                # error surfaces, or the partial state is invisible (PR #220
+                # review finding 9). Goes to stderr under --json.
+                console.print(
+                    f"[yellow]Project {result['key']} was created, but the "
+                    f"template was not applied. Fix the issue and run "
+                    f"'chaotic template apply {template_name}'.[/yellow]"
+                )
+                raise
 
         if m.is_json_output():
             if report is not None:

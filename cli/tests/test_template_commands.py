@@ -372,6 +372,19 @@ class TestTemplateApply:
         assert result.exit_code == 1
         assert 'not found' in result.output.lower()
 
+    def test_apply_not_found_json_error_shape(self, cli_runner):
+        """PR #220 review finding 4: not-found under --json emits
+        {"error": ...} on stdout, same contract as other failure paths."""
+        from cli.main import cli, client
+
+        client.get_templates = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['template', 'apply', 'nope', '--json'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'not found' in data["error"]
+
     def test_apply_prints_warnings(self, cli_runner):
         from cli.main import cli, client
 
@@ -550,6 +563,23 @@ class TestTemplateExportImport:
 
         assert result.exit_code != 0
 
+    def test_import_non_json_scalar_fails_with_message(self, cli_runner, tmp_path):
+        """PR #220 review finding 5: an unquoted YAML date parses to
+        datetime.date, which JSON can't carry -- fail with a message, not
+        a TypeError traceback."""
+        from cli.main import cli
+
+        f = tmp_path / "t.yml"
+        f.write_text(
+            "name: dated\nversion: 1\nsections:\n  notes:\n    when: 2026-01-01\n"
+        )
+
+        result = cli_runner.invoke(cli, ['template', 'import', str(f)])
+
+        assert result.exit_code == 1
+        assert 'JSON-representable' in result.output
+        assert 'Traceback' not in result.output
+
     def test_round_trip_export_import(self, cli_runner, tmp_path):
         """Export then import reproduces the exact body, including
         multiline prompts and unknown sections."""
@@ -639,6 +669,16 @@ class TestTemplateInstall:
 
         assert result.exit_code == 1
         assert 'Unknown pack' in result.output
+
+    def test_install_unknown_pack_json_error_shape(self, cli_runner):
+        """PR #220 review finding 4."""
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ['template', 'install', 'nope', '--json'])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert 'Unknown pack' in data["error"]
 
 
 class TestPackContentLint:

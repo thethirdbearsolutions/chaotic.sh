@@ -24,9 +24,10 @@ a warning in the apply report and are otherwise ignored -- forward
 compat, never a crash.
 """
 import json
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 
-from oxyde import IntegrityError
+from oxyde import IntegrityError, atomic
 
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.ritual import OxydeRitual
@@ -109,13 +110,18 @@ class TemplateService:
                     ).model_dump(mode="json")
                     for r in rituals
                 ],
+                # exclude_unset (not exclude_none): all five settings are
+                # passed explicitly, so all five are pinned -- including
+                # default_sprint_budget: null when the project's budget is
+                # unlimited (PR #220 review finding 1; an unlimited budget
+                # used to fall out of the snapshot silently).
                 "settings": TemplateSettings(
                     estimate_scale=project.estimate_scale,
                     unestimated_handling=project.unestimated_handling,
                     default_sprint_budget=project.default_sprint_budget,
                     human_rituals_required=project.human_rituals_required,
                     require_estimate_on_claim=project.require_estimate_on_claim,
-                ).model_dump(mode="json", exclude_none=True),
+                ).model_dump(mode="json", exclude_unset=True),
             },
         )
         return TemplateCreate(name=name, description=description, body=body)
@@ -146,7 +152,12 @@ class TemplateService:
     ) -> TemplateApplyReport:
         """Apply a template to a project. See module docstring for the
         idempotency contract. ``dry_run=True`` computes the same report
-        without writing anything."""
+        without writing anything.
+
+        Non-dry-run writes run in one transaction (PR #220 review
+        finding 6): a mid-loop failure rolls back the whole apply
+        instead of leaving a partially-applied template.
+        """
         body = TemplateBody.model_validate(json.loads(template.body))
         approved = set(update_rituals or [])
 
@@ -158,108 +169,124 @@ class TemplateService:
 
         ritual_service = RitualService()
         ritual_changes: list[RitualChange] = []
+        setting_changes: list[SettingChange] = []
 
-        for t_ritual in body.rituals():
-            existing = await ritual_service.get_by_name(
-                project.id, t_ritual.name, include_inactive=True
-            )
-            if existing is None:
-                if not dry_run:
-                    await ritual_service.create(
-                        RitualCreate(
-                            name=t_ritual.name,
-                            prompt=t_ritual.prompt,
-                            trigger=t_ritual.trigger,
-                            approval_mode=t_ritual.approval_mode,
-                            note_required=t_ritual.note_required,
-                        ),
-                        project.id,
-                    )
-                    if not t_ritual.is_active:
-                        # Template snapshots can carry inactive rituals;
-                        # honor that on create (rare, but round-trip exact).
-                        created = await ritual_service.get_by_name(
-                            project.id, t_ritual.name
+        async with AsyncExitStack() as stack:
+            if not dry_run:
+                await stack.enter_async_context(atomic())
+
+            for t_ritual in body.rituals():
+                existing = await ritual_service.get_by_name(
+                    project.id, t_ritual.name, include_inactive=True
+                )
+                if existing is None:
+                    if not dry_run:
+                        await ritual_service.create(
+                            RitualCreate(
+                                name=t_ritual.name,
+                                prompt=t_ritual.prompt,
+                                trigger=t_ritual.trigger,
+                                approval_mode=t_ritual.approval_mode,
+                                note_required=t_ritual.note_required,
+                            ),
+                            project.id,
                         )
-                        if created:
+                        if not t_ritual.is_active:
+                            # Template snapshots can carry inactive rituals;
+                            # honor that on create (rare, but round-trip exact).
+                            created = await ritual_service.get_by_name(
+                                project.id, t_ritual.name
+                            )
+                            if created is None:
+                                # We created this row two statements ago; a
+                                # miss means something deleted it mid-apply.
+                                # Fail loud (PR #220 review finding 3) --
+                                # silently proceeding would leave an ACTIVE
+                                # ritual the template says is inactive.
+                                raise RuntimeError(
+                                    f"Ritual '{t_ritual.name}' vanished "
+                                    f"mid-apply; concurrent modification? "
+                                    f"Re-run the apply."
+                                )
                             await ritual_service.update(
                                 created, RitualUpdate(is_active=False)
                             )
-                ritual_changes.append(RitualChange(name=t_ritual.name, action="create"))
-                continue
+                    ritual_changes.append(RitualChange(name=t_ritual.name, action="create"))
+                    continue
 
-            diff = self._diff_ritual(existing, t_ritual)
-            if not diff:
-                ritual_changes.append(
-                    RitualChange(name=t_ritual.name, action="unchanged")
-                )
-                continue
+                diff = self._diff_ritual(existing, t_ritual)
+                if not diff:
+                    ritual_changes.append(
+                        RitualChange(name=t_ritual.name, action="unchanged")
+                    )
+                    continue
 
-            if update_all or t_ritual.name in approved:
-                if not dry_run:
-                    await ritual_service.update(
-                        existing,
-                        RitualUpdate(
-                            **{f: getattr(t_ritual, f) for f in diff}
-                        ),
+                if update_all or t_ritual.name in approved:
+                    if not dry_run:
+                        await ritual_service.update(
+                            existing,
+                            RitualUpdate(
+                                **{f: getattr(t_ritual, f) for f in diff}
+                            ),
+                        )
+                    ritual_changes.append(
+                        RitualChange(
+                            name=t_ritual.name, action="update", fields_changed=diff
+                        )
                     )
-                ritual_changes.append(
-                    RitualChange(
-                        name=t_ritual.name, action="update", fields_changed=diff
+                else:
+                    ritual_changes.append(
+                        RitualChange(
+                            name=t_ritual.name, action="skipped", fields_changed=diff
+                        )
                     )
-                )
-            else:
-                ritual_changes.append(
-                    RitualChange(
-                        name=t_ritual.name, action="skipped", fields_changed=diff
-                    )
-                )
 
-        setting_changes: list[SettingChange] = []
-        settings = body.settings()
-        pinned = settings.model_dump(exclude_none=True)
-        # Coerce the project's current values through the same validators
-        # as the template's (DB enum fields can surface as name-strings
-        # like "FIBONACCI" depending on fetch path; compare apples to
-        # apples). default_sprint_budget=None is meaningful ("unlimited")
-        # but TemplateSettings can't distinguish it from unpinned -- read
-        # it straight off the project instead.
-        current = TemplateSettings(
-            estimate_scale=project.estimate_scale,
-            unestimated_handling=project.unestimated_handling,
-            human_rituals_required=project.human_rituals_required,
-            require_estimate_on_claim=project.require_estimate_on_claim,
-        )
-        to_set: dict = {}
-        for field in _SETTINGS_FIELDS:
-            if field not in pinned:
-                continue
-            if field == "default_sprint_budget":
-                old = project.default_sprint_budget
-            else:
-                old = getattr(current, field)
-            new = getattr(settings, field)
-            if _enum_value(old) == _enum_value(new):
-                setting_changes.append(
-                    SettingChange(
-                        field=field, action="unchanged",
-                        old_value=_enum_value(old), new_value=_enum_value(new),
+            settings = body.settings()
+            # Presence-of-key = pinned (PR #220 review finding 1): a stored
+            # ``default_sprint_budget: null`` pins "unlimited" rather than
+            # falling out of the template.
+            pinned = body.pinned_settings()
+            # Coerce the project's current values through the same validators
+            # as the template's (DB enum fields can surface as name-strings
+            # like "FIBONACCI" depending on fetch path; compare apples to
+            # apples). default_sprint_budget is read straight off the project
+            # since its None is a real value, not "unset".
+            current = TemplateSettings(
+                estimate_scale=project.estimate_scale,
+                unestimated_handling=project.unestimated_handling,
+                human_rituals_required=project.human_rituals_required,
+                require_estimate_on_claim=project.require_estimate_on_claim,
+            )
+            to_set: dict = {}
+            for field in _SETTINGS_FIELDS:
+                if field not in pinned:
+                    continue
+                if field == "default_sprint_budget":
+                    old = project.default_sprint_budget
+                else:
+                    old = getattr(current, field)
+                new = getattr(settings, field)
+                if _enum_value(old) == _enum_value(new):
+                    setting_changes.append(
+                        SettingChange(
+                            field=field, action="unchanged",
+                            old_value=_enum_value(old), new_value=_enum_value(new),
+                        )
                     )
-                )
-            else:
-                to_set[field] = new
-                setting_changes.append(
-                    SettingChange(
-                        field=field, action="set",
-                        old_value=_enum_value(old), new_value=_enum_value(new),
+                else:
+                    to_set[field] = new
+                    setting_changes.append(
+                        SettingChange(
+                            field=field, action="set",
+                            old_value=_enum_value(old), new_value=_enum_value(new),
+                        )
                     )
-                )
 
-        if to_set and not dry_run:
-            for field, value in to_set.items():
-                setattr(project, field, value)
-            project.updated_at = datetime.now(timezone.utc)
-            await project.save(update_fields=set(to_set) | {"updated_at"})
+            if to_set and not dry_run:
+                for field, value in to_set.items():
+                    setattr(project, field, value)
+                project.updated_at = datetime.now(timezone.utc)
+                await project.save(update_fields=set(to_set) | {"updated_at"})
 
         return TemplateApplyReport(
             template=template.name,

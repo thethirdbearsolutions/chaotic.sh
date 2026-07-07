@@ -9,6 +9,7 @@ Apply never deletes: rituals a project has that the template doesn't
 are left alone. Same-named rituals that differ are only updated with
 per-ritual confirmation (or --yes).
 """
+import json as json_module
 import sys
 from importlib import resources
 from pathlib import Path
@@ -89,15 +90,21 @@ def _yaml_dump(doc: dict) -> str:
 
 
 def _resolve_template(name: str) -> dict:
-    """Find a saved template by name in the current team, or exit loudly."""
+    """Find a saved template by name in the current team, or fail loud.
+
+    ClickException (not console.print + SystemExit) so the --json error
+    contract holds: handle_error turns it into {"error": ...} on stdout
+    (PR #220 review finding 4).
+    """
     m = _main()
     templates = _client().get_templates(m.get_current_team())
     template = next((t for t in templates if t["name"] == name), None)
     if not template:
-        console.print(f"[red]Template '{name}' not found.[/red]")
-        console.print("Run `chaotic template list` to see saved templates, "
-                      "or `chaotic template install` to see bundled packs.")
-        raise SystemExit(1)
+        raise click.ClickException(
+            f"Template '{name}' not found. Run 'chaotic template list' to "
+            f"see saved templates, or 'chaotic template install' to see "
+            f"bundled packs."
+        )
     return template
 
 
@@ -138,7 +145,15 @@ def _print_apply_report(report: dict):
 def _apply_with_confirmation(template: dict, project_id: str, yes: bool = False) -> dict:
     """Run the apply flow: dry-run to find conflicts, confirm each update
     (skipped under --json without --yes; all approved with --yes), then
-    the real apply. Returns the final change report."""
+    the real apply. Returns the final change report.
+
+    Approval is per-RITUAL, not per-field-set: the final apply recomputes
+    the diff server-side, so if a ritual changes between the dry run and
+    the apply, an approved update may touch fields beyond the ones shown
+    at the prompt (always toward template values; the final report shows
+    actuals). New conflicts appearing in that window are skipped, never
+    clobbered.
+    """
     m = _main()
 
     if yes or m.is_yes_mode():
@@ -402,8 +417,19 @@ def register(cli):
             raise click.ClickException(
                 f"{file} has no 'name' key; pass --name to set one."
             )
+        body = _doc_to_body(doc)
+        # YAML can parse scalars JSON can't carry (unquoted dates ->
+        # datetime.date); the HTTP client would die with a raw TypeError.
+        # Fail with a message instead (PR #220 review finding 5).
+        try:
+            json_module.dumps(body)
+        except (TypeError, ValueError) as e:
+            raise click.ClickException(
+                f"{file} contains values that aren't JSON-representable "
+                f"({e}). Quote YAML scalars like dates so they stay strings."
+            )
         result = _client().create_template(
-            m.get_current_team(), name, _doc_to_body(doc),
+            m.get_current_team(), name, body,
             description=doc.get("description"),
         )
         if m.is_json_output():
@@ -451,9 +477,11 @@ def register(cli):
             return
 
         if pack not in packs:
-            console.print(f"[red]Unknown pack '{pack}'.[/red]")
-            console.print(f"Available packs: {', '.join(packs)}")
-            raise SystemExit(1)
+            # ClickException for --json error-shape consistency (PR #220
+            # review finding 4).
+            raise click.ClickException(
+                f"Unknown pack '{pack}'. Available packs: {', '.join(packs)}"
+            )
 
         doc = packs[pack]
         name = name_override or doc["name"]

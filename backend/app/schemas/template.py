@@ -11,6 +11,7 @@ they survive round trips (create -> export -> import -> apply) and only
 produce a warning at apply time, never a crash. That's the forward-compat
 slot for planned sections like "hooks" (CHT-1263, deferred).
 """
+import json
 import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import (
@@ -87,8 +88,14 @@ class TemplateRitual(BaseModel):
 class TemplateSettings(BaseModel):
     """The project-settings section of a template.
 
-    All fields optional: a template may pin only some settings, and apply
-    only touches the ones it pins.
+    All fields optional: a template pins only the keys present in its
+    stored settings dict, and apply only touches the pinned ones
+    (presence-of-key semantics -- see TemplateBody.validate_sections).
+
+    ``default_sprint_budget`` is the one setting whose null is
+    meaningful: ``default_sprint_budget: null`` pins "unlimited" (PR #220
+    review finding 1). For every other setting a null is rejected at
+    create/import time rather than silently dropped.
     """
 
     estimate_scale: EstimateScale | None = None
@@ -144,12 +151,38 @@ class TemplateBody(BaseModel):
                 TemplateRitual.model_validate(r).model_dump(mode="json")
                 for r in v["rituals"]
             ]
+            # Duplicate names would create-then-conflict against
+            # themselves at apply time and make per-name update approval
+            # ambiguous (PR #220 review finding 2). Fail here instead.
+            names = [r["name"] for r in v["rituals"]]
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            if dupes:
+                raise ValueError(
+                    f"Duplicate ritual name(s) in template: {', '.join(dupes)}. "
+                    f"Ritual names must be unique within a template."
+                )
         if "settings" in v:
             if not isinstance(v["settings"], dict):
                 raise ValueError("Template section 'settings' must be a mapping")
+            # Presence-of-key = pinned. A null is only meaningful for
+            # default_sprint_budget (pins "unlimited"); for anything else
+            # it would previously be dropped silently (PR #220 review
+            # finding 1) -- reject it loudly instead.
+            null_keys = sorted(
+                k for k, val in v["settings"].items()
+                if val is None and k != "default_sprint_budget"
+            )
+            if null_keys:
+                raise ValueError(
+                    f"Setting(s) {', '.join(null_keys)} cannot be null; omit "
+                    f"the key to leave the setting unpinned. (Only "
+                    f"default_sprint_budget accepts null, meaning 'unlimited'.)"
+                )
+            # exclude_unset (not exclude_none): keeps a pinned
+            # default_sprint_budget: null in the stored body.
             v["settings"] = TemplateSettings.model_validate(
                 v["settings"]
-            ).model_dump(mode="json", exclude_none=True)
+            ).model_dump(mode="json", exclude_unset=True)
         return v
 
     def unknown_sections(self) -> list[str]:
@@ -161,6 +194,12 @@ class TemplateBody(BaseModel):
 
     def settings(self) -> TemplateSettings:
         return TemplateSettings.model_validate(self.sections.get("settings", {}))
+
+    def pinned_settings(self) -> set[str]:
+        """Setting keys this template pins (presence-of-key semantics --
+        includes a pinned ``default_sprint_budget: null``)."""
+        stored = self.sections.get("settings", {})
+        return set(stored) & set(TemplateSettings.model_fields)
 
 
 class TemplateCreate(BaseModel):
@@ -208,7 +247,6 @@ class TemplateResponse(BaseModel):
     def parse_body(cls, v):
         """Parse the stored JSON string into a TemplateBody."""
         if isinstance(v, str):
-            import json
             return json.loads(v)
         return v
 
