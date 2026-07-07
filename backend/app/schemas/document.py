@@ -87,3 +87,32 @@ class LabelAddedResponse(BaseModel):
     """Schema for add_label_to_document's response (CHT-1223)."""
 
     message: str
+
+
+class DocumentRevisionListItem(BaseModel):
+    """Lightweight revision entry for the history list (no body)."""
+
+    id: str
+    document_id: str
+    version: int
+    title: str
+    author_id: str | None = None
+    author_name: str | None = None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentRevisionResponse(BaseModel):
+    """Full revision snapshot."""
+
+    id: str
+    document_id: str
+    version: int
+    title: str
+    content: str | None = None
+    author_id: str | None = None
+    author_name: str | None = None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)

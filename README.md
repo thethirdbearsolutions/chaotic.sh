@@ -87,6 +87,9 @@ option for connector UIs that can't set custom headers.
 | **Now/Next** | Every project has exactly two sprints: the current one and the next one. Simple. |
 
 For the full design philosophy, see [chaotic.sh/philosophy](https://www.chaotic.sh/philosophy.html).
+For the agent-operating guide (the actual loop to shell out: `issue
+ready` → `issue start` → work → `issue complete`, plus claim leases),
+see [docs/agents.md](docs/agents.md).
 
 ## Architecture
 

@@ -1015,3 +1015,221 @@ async def test_document_service_add_label_idempotent(db, test_document):
     await service.add_label(test_document.id, label.id)
     # Add again — should be a no-op
     await service.add_label(test_document.id, label.id)
+
+
+@pytest.mark.asyncio
+class TestDocumentRevisions:
+    """Tests for document revision history (CHT-1243)."""
+
+    async def _create(self, client, auth_headers, team_id, **body):
+        resp = await client.post(
+            f"/api/teams/{team_id}/documents",
+            headers=auth_headers,
+            json=body,
+        )
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    async def test_create_writes_initial_revision(self, client, auth_headers, test_team):
+        """Creating a document via the API writes a v1 revision."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id,
+            title="Versioned Doc", content="Initial body",
+        )
+
+        list_resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )
+        assert list_resp.status_code == 200
+        revs = list_resp.json()
+        assert len(revs) == 1
+        assert revs[0]["version"] == 1
+        assert revs[0]["title"] == "Versioned Doc"
+
+    async def test_update_content_appends_revision(self, client, auth_headers, test_team):
+        """Each content edit appends a new revision row."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id,
+            title="Evolving", content="v1 body",
+        )
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v2 body"},
+        )
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v3 body"},
+        )
+
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert [r["version"] for r in revs] == [3, 2, 1]
+
+        v1 = (await client.get(
+            f"/api/documents/{doc_id}/revisions/1", headers=auth_headers,
+        )).json()
+        v3 = (await client.get(
+            f"/api/documents/{doc_id}/revisions/3", headers=auth_headers,
+        )).json()
+        assert v1["content"] == "v1 body"
+        assert v3["content"] == "v3 body"
+
+    async def test_update_unchanged_body_no_new_revision(self, client, auth_headers, test_team):
+        """Patches that don't touch title/content don't bump the version."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id,
+            title="Stable", content="Body", icon="📘",
+        )
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"icon": "📕"},
+        )
+        # Re-PATCHing the same content shouldn't snapshot either.
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "Body"},
+        )
+
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert len(revs) == 1
+        assert revs[0]["version"] == 1
+
+    async def test_title_change_alone_bumps_revision(self, client, auth_headers, test_team):
+        """Title-only edits get snapshotted (we capture title too)."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id,
+            title="Old", content="Body",
+        )
+
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"title": "New"},
+        )
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        assert [r["title"] for r in revs] == ["New", "Old"]
+
+    async def test_get_revision_not_found(self, client, auth_headers, test_team):
+        """Requesting a non-existent version returns 404."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id, title="x", content="y",
+        )
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions/99", headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    async def test_revision_access_requires_team_membership(
+        self, client, auth_headers2, test_team, auth_headers,
+    ):
+        """A non-team-member can't read a doc's revisions."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id,
+            title="Private", content="Secret",
+        )
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers2,
+        )
+        assert resp.status_code == 403
+
+    async def test_revisions_cascade_on_document_delete(
+        self, client, auth_headers, test_team, db,
+    ):
+        """Deleting a document removes its revision rows."""
+        from app.oxyde_models.document import OxydeDocumentRevision
+
+        doc_id = await self._create(
+            client, auth_headers, test_team.id, title="Doomed", content="v1",
+        )
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers,
+            json={"content": "v2"},
+        )
+        assert await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).count() == 2
+
+        delete_resp = await client.delete(
+            f"/api/documents/{doc_id}", headers=auth_headers,
+        )
+        assert delete_resp.status_code == 204
+        assert await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).count() == 0
+
+    async def test_revision_records_editor_attribution(
+        self, client, auth_headers, auth_headers2, test_team, test_user, test_user2, db,
+    ):
+        """The revision's author_id is the user who made the edit, not the doc author."""
+        # Make test_user2 a team member so they can edit.
+        await OxydeTeamMember.objects.create(
+            team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+        )
+
+        doc_id = await self._create(
+            client, auth_headers, test_team.id, title="Shared", content="by user1",
+        )
+
+        # user2 edits.
+        await client.patch(
+            f"/api/documents/{doc_id}",
+            headers=auth_headers2,
+            json={"content": "by user2"},
+        )
+        revs = (await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )).json()
+        by_version = {r["version"]: r for r in revs}
+        assert by_version[1]["author_id"] == test_user.id
+        assert by_version[2]["author_id"] == test_user2.id
+
+    async def test_revision_with_deleted_author_returns_null_name(
+        self, client, auth_headers, test_team, db,
+    ):
+        """If the author was deleted, author_name is None (not 500)."""
+        from app.oxyde_models.document import OxydeDocumentRevision
+
+        doc_id = await self._create(
+            client, auth_headers, test_team.id, title="T", content="C",
+        )
+
+        # Null out the revision's author (simulates ON DELETE SET NULL).
+        await OxydeDocumentRevision.objects.filter(
+            document_id=doc_id
+        ).update(author_id=None)
+
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()[0]["author_name"] is None
+
+    async def test_revisions_limit_capped(
+        self, client, auth_headers, test_team,
+    ):
+        """A wildly-large limit gets clamped, not blindly issued to the DB."""
+        doc_id = await self._create(
+            client, auth_headers, test_team.id, title="T", content="C",
+        )
+        # The cap is 10_000; requesting absurd values should still
+        # succeed and return whatever exists.
+        resp = await client.get(
+            f"/api/documents/{doc_id}/revisions?limit=99999999",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1

@@ -1083,6 +1083,10 @@ export async function viewDocument(documentId, pushHistory = true) {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                   Edit document
                 </button>
+                <button class="overflow-menu-item" data-action="show-document-revisions" data-document-id="${escapeAttr(doc.id)}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  View history
+                </button>
                 <button class="overflow-menu-item overflow-menu-danger" data-action="delete-document" data-document-id="${escapeAttr(doc.id)}">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   Delete document
@@ -1471,6 +1475,14 @@ export async function handleCreateDocument(event) {
   return false;
 }
 
+// Snapshot of the server {title, content} the edit modal opened with, so
+// handleUpdateDocument can detect a concurrent edit before overwriting it
+// (CHT-1243; resolves the CHT-1213 doc-edit audit item 10 gap). Only one
+// edit modal exists at a time, so module-level state suffices.
+let editDocBaselineId = null;
+let editDocBaseline = null;
+let editDocConflictAcknowledged = false;
+
 /**
  * Show the edit document modal
  * @param {string} documentId - Document ID to edit
@@ -1478,6 +1490,9 @@ export async function handleCreateDocument(event) {
 export async function showEditDocumentModal(documentId) {
   try {
     const doc = await api.getDocument(documentId);
+    editDocBaselineId = documentId;
+    editDocBaseline = { title: doc.title || '', content: doc.content || '' };
+    editDocConflictAcknowledged = false;
 
     // Get projects for dropdown
     const projects = getProjects();
@@ -1533,15 +1548,15 @@ export async function showEditDocumentModal(documentId) {
 /**
  * Handle update document form submission
  *
- * NOTE (CHT-1213 doc-edit audit item 10): this sends a full snapshot with no
- * version/updated_at precondition, so two concurrent edits silently
- * last-write-win with no warning. Deliberately NOT fixed here — the unlanded
- * claude/auto-versioning-docs-g0FRc branch already adds a
- * `document_revisions.version` field plus a diff viewer, which is the real
- * source of truth for a future "this changed since you started editing"
- * check. A bespoke timestamp-based guard now would conflict with that
- * branch's data model when it merges, so this is tracked as a known gap
- * rather than patched ad hoc.
+ * Concurrent edits no longer silently last-write-win (the CHT-1213
+ * doc-edit audit item 10 gap): before saving, we re-fetch the document
+ * and compare its title/content against the snapshot this edit modal
+ * opened with. On a mismatch the first save is intercepted with a
+ * warning — mirroring issue-detail-view.js's remote-conflict-on-save
+ * flow — and saving again proceeds as an explicit overwrite. The
+ * overwrite is safe because every body edit is snapshotted into the
+ * document's revision history (CHT-1243), so the other writer's
+ * version stays recoverable via "View history".
  *
  * @param {Event} event - Form submit event
  * @param {string} documentId - Document ID to update
@@ -1559,8 +1574,34 @@ export async function handleUpdateDocument(event, documentId) {
     sprint_id: sprintId,
   };
 
+  // Only run the staleness pre-check when the modal's warning element is
+  // present — an intercept with nowhere to explain itself would just be a
+  // save that silently does nothing.
+  const conflictWarnEl = document.getElementById('edit-doc-content-draft-warning');
+  if (conflictWarnEl && editDocBaselineId === documentId && editDocBaseline
+      && !editDocConflictAcknowledged) {
+    let server = null;
+    try {
+      server = await api.getDocument(documentId);
+    } catch {
+      // The staleness pre-check is advisory: if this GET fails, the PATCH
+      // below will almost certainly fail too and surface its own error —
+      // don't block the save on a failed advisory read.
+    }
+    if (server
+        && ((server.title || '') !== editDocBaseline.title
+          || (server.content || '') !== editDocBaseline.content)) {
+      editDocConflictAcknowledged = true;
+      conflictWarnEl.textContent = 'This document was changed by someone else while you were editing — review your text, then save again to overwrite their version. It will stay recoverable via "View history".';
+      conflictWarnEl.classList.remove('hidden');
+      return false;
+    }
+  }
+
   try {
     await api.updateDocument(documentId, data);
+    editDocBaselineId = null;
+    editDocBaseline = null;
     // Clear the draft only when this save actually committed it — a save
     // from the no-prefill path (stale draft, warning shown, server content
     // kept) must not delete the draft the warning just told the user about

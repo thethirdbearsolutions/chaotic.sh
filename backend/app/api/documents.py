@@ -10,6 +10,8 @@ from app.schemas.document import (
     DocumentCommentUpdate,
     DocumentCommentResponse,
     DocumentLinkedResponse,
+    DocumentRevisionListItem,
+    DocumentRevisionResponse,
     LabelAddedResponse,
 )
 from app.schemas.issue import IssueResponse, LabelResponse
@@ -575,6 +577,104 @@ async def remove_label_from_document(
             )
 
     await document_service.remove_label(document_id, label_id)
+
+
+# ============================================================================
+# Document Revisions
+# ============================================================================
+
+
+async def _check_document_access(document, current_user) -> None:
+    """403 unless current_user can access this document (project- or team-scoped)."""
+    if document.project_id:
+        if not await check_user_project_access(current_user, document.project_id, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
+    else:
+        if not await check_user_team_access(current_user, document.team_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized for this document",
+            )
+
+
+def _revision_author_name(rev) -> str | None:
+    author = getattr(rev, "author", None)
+    return author.name if author else None
+
+
+@router.get("/{document_id}/revisions", response_model=list[DocumentRevisionListItem])
+async def list_document_revisions(
+    document_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+):
+    """List revision history for a document, newest first."""
+    limit = min(limit, 10000)
+    document_service = DocumentService()
+
+    document = await document_service.get_by_id(document_id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    await _check_document_access(document, current_user)
+
+    revisions = await document_service.list_revisions(document_id, skip, limit)
+    return [
+        DocumentRevisionListItem(
+            id=rev.id,
+            document_id=rev.document_id,
+            version=rev.version,
+            title=rev.title,
+            author_id=rev.author_id,
+            author_name=_revision_author_name(rev),
+            created_at=ensure_utc(rev.created_at),
+        )
+        for rev in revisions
+    ]
+
+
+@router.get("/{document_id}/revisions/{version}", response_model=DocumentRevisionResponse)
+async def get_document_revision(
+    document_id: str,
+    version: int,
+    current_user: CurrentUser,
+):
+    """Get a single revision snapshot by version number."""
+    document_service = DocumentService()
+
+    document = await document_service.get_by_id(document_id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    await _check_document_access(document, current_user)
+
+    rev = await document_service.get_revision(document_id, version)
+    if not rev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Revision not found",
+        )
+
+    return DocumentRevisionResponse(
+        id=rev.id,
+        document_id=rev.document_id,
+        version=rev.version,
+        title=rev.title,
+        content=rev.content,
+        author_id=rev.author_id,
+        author_name=_revision_author_name(rev),
+        created_at=ensure_utc(rev.created_at),
+    )
 
 
 # ============================================================================

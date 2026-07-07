@@ -605,6 +605,109 @@ describe('handleUpdateDocument', () => {
   });
 });
 
+describe('handleUpdateDocument concurrent-edit staleness check (CHT-1243)', () => {
+  // The edit modal snapshots the server title/content it opened with;
+  // handleUpdateDocument re-fetches before saving and intercepts the first
+  // save when someone else changed the document meanwhile. Second save
+  // proceeds as an explicit overwrite — the overwritten version stays
+  // recoverable via the revision history.
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    vi.clearAllMocks();
+    vi.spyOn(history, 'pushState').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function openEditModal(serverDoc) {
+    api.getDocument.mockResolvedValue(serverDoc);
+    await showEditDocumentModal('doc-1');
+  }
+
+  it('intercepts the first save when the server document changed since the modal opened', async () => {
+    await openEditModal({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '' });
+    document.getElementById('edit-doc-content').value = 'My edit';
+
+    // Someone else saved meanwhile.
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Original', content: 'Their edit', icon: '' });
+    api.updateDocument.mockResolvedValue({});
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+
+    expect(api.updateDocument).not.toHaveBeenCalled();
+    const warnEl = document.getElementById('edit-doc-content-draft-warning');
+    expect(warnEl.classList.contains('hidden')).toBe(false);
+    expect(warnEl.textContent).toContain('changed by someone else');
+    expect(warnEl.textContent).toContain('View history');
+  });
+
+  it('second save proceeds as an explicit overwrite', async () => {
+    await openEditModal({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '' });
+    document.getElementById('edit-doc-content').value = 'My edit';
+
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Original', content: 'Their edit', icon: '' });
+    api.updateDocument.mockResolvedValue({});
+    api.getDocumentComments.mockResolvedValue([]);
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(api.updateDocument).not.toHaveBeenCalled();
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(api.updateDocument).toHaveBeenCalledWith('doc-1',
+      expect.objectContaining({ content: 'My edit' }));
+  });
+
+  it('saves straight through when the server document is unchanged', async () => {
+    await openEditModal({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '' });
+    document.getElementById('edit-doc-content').value = 'My edit';
+
+    // Server still matches the snapshot the modal opened with.
+    api.updateDocument.mockResolvedValue({});
+    api.getDocumentComments.mockResolvedValue([]);
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(api.updateDocument).toHaveBeenCalledWith('doc-1',
+      expect.objectContaining({ content: 'My edit' }));
+    const warnEl = document.getElementById('edit-doc-content-draft-warning');
+    expect(warnEl.classList.contains('hidden')).toBe(true);
+  });
+
+  it('does not block the save when the advisory pre-check GET fails', async () => {
+    await openEditModal({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '' });
+    document.getElementById('edit-doc-content').value = 'My edit';
+
+    api.getDocument.mockRejectedValue(new Error('network down'));
+    api.updateDocument.mockResolvedValue({});
+    api.getDocumentComments.mockResolvedValue([]);
+    // viewDocument's re-fetch after save also uses getDocument; let the
+    // second call succeed so the post-save render doesn't reject.
+    api.getDocument
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue({ id: 'doc-1', title: 'Original', content: 'My edit', icon: '' });
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(api.updateDocument).toHaveBeenCalled();
+  });
+
+  it('a metadata-only remote change (icon/project) does not intercept', async () => {
+    await openEditModal({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '' });
+    document.getElementById('edit-doc-content').value = 'My edit';
+
+    // Only icon changed remotely — title/content (the versioned body) match.
+    api.getDocument.mockResolvedValue({ id: 'doc-1', title: 'Original', content: 'Original body', icon: '📘' });
+    api.updateDocument.mockResolvedValue({});
+    api.getDocumentComments.mockResolvedValue([]);
+
+    await handleUpdateDocument({ preventDefault: vi.fn() }, 'doc-1');
+    expect(api.updateDocument).toHaveBeenCalled();
+  });
+});
+
 describe('deleteDocument', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="documents-list"></div>';

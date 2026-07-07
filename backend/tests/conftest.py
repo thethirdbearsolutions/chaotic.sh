@@ -161,6 +161,8 @@ CREATE TABLE IF NOT EXISTS issues (
     parent_id VARCHAR(36) REFERENCES issues(id) ON DELETE SET NULL,
     due_date DATETIME,
     completed_at DATETIME,
+    -- CHT-1246 (migration 0009): claim lease expiry.
+    lease_expires_at DATETIME,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 );
@@ -240,6 +242,27 @@ CREATE TABLE IF NOT EXISTS document_labels (
     PRIMARY KEY (document_id, label_id),
     FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
     FOREIGN KEY(label_id) REFERENCES labels(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_revisions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE (document_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS issue_description_revisions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    description TEXT,
+    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE (issue_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS issue_activities (

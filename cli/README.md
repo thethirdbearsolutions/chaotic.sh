@@ -171,6 +171,52 @@ chaotic issue view CHT-123                # Alias for 'show'
 chaotic issue open CHT-123                # Open issue in browser
 ```
 
+### Ready to start (CHT-1245)
+
+`chaotic issue ready` answers "what can I start right now" -- the
+agent's first shell-out, before touching `issue list`'s filters. It's
+Beads' `bd-ready` equivalent: open (`backlog`/`todo`), unblocked (no
+unresolved `blocks` relation), unassigned by default, priority-sorted
+(`urgent` first, then oldest-first within a tier). Epics are excluded
+-- they're containers for work, not startable work; their sub-issues
+surface individually.
+
+```bash
+chaotic issue ready --json                 # unassigned, unblocked, open work
+chaotic issue ready --mine                 # your own assigned-but-not-started backlog
+chaotic issue ready --include-assigned     # widen: include everyone's claims too
+chaotic issue ready --all-projects         # team-wide instead of current project
+chaotic issue ready --limit 5
+```
+
+`--mine` and `--include-assigned` are mutually exclusive. See
+[docs/agents.md](../docs/agents.md) for the full agent operating loop
+(`ready` → `start` → work → `complete`) and how this interacts with
+claim leases below.
+
+### Claiming and completing
+
+```bash
+chaotic issue start CHT-123                # assign to self + move to in_progress
+chaotic issue start CHT-123 --lease 4h     # override the claim-lease duration (CHT-1246)
+chaotic issue claim CHT-123                # same thing (start is an alias for claim)
+chaotic issue close CHT-123                # mark done (alias: issue complete)
+chaotic issue wontfix CHT-123              # cancel (alias: issue cancel)
+```
+
+`start`/`claim` acquire a **claim lease** -- a server-side expiry
+(default ~2h, `--lease` overrides). Re-running `start`/`claim` while you
+still hold the ticket extends (heartbeats) the lease instead of
+erroring. Claiming a ticket someone else already holds under a valid
+lease fails with an "already claimed by X" error (`already_claimed` on
+the wire, exit 1) -- concurrent claims are serialized server-side, so
+of two racing `issue start`s exactly one wins. If the lease expires
+while the issue is still `in_progress`, the next read or list of that
+issue lazily releases it back to `todo`/unassigned and logs a
+`lease_expired` activity -- no cron, no silent wedge. See
+[docs/agents.md](../docs/agents.md#claim-leases) for the full
+semantics.
+
 ### Creating issues
 ```bash
 chaotic issue create --title "Bug fix"
@@ -332,7 +378,7 @@ want to wake on intents regardless of ritual name.
                       assigned, unassigned, labeled, unlabeled,
                       moved_to_sprint, removed_from_sprint,
                       attested, approved, intent_opened,
-                      intent_cleared, intent_canceled,
+                      intent_cleared, intent_canceled, lease_expired,
                       created, updated, deleted, any
                     Default: any. These tokens are a stable CLI contract;
                     they do not change if backend enum names are renamed.
@@ -346,6 +392,11 @@ want to wake on intents regardless of ritual name.
                     on its own ongoing activity. Note: if multiple agents
                     share one principal (e.g. a team bot), this filter
                     hides all of their activity, not just the caller's.
+                    Exception: `lease_expired` events are never filtered
+                    as self — their user_id is the *former* lease holder
+                    by attribution (the release is a system action), and
+                    the headline use is an agent awaiting its own lease's
+                    expiry.
 --timeout DURATION  Give up after DURATION. Accepted forms: integer
                     seconds (`30`), or suffixed units, combinable
                     (`30s`, `5m`, `8h`, `1h30m`; whitespace between

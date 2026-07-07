@@ -3833,3 +3833,255 @@ async def test_list_issues_exclude_combined_with_include(
     # chore and plain are status=backlog by default
     assert labeled_issues["chore"].id in ids
     assert labeled_issues["plain"].id in ids
+
+
+# =========================================================================
+# Issue description revisions (CHT-1243)
+# =========================================================================
+
+
+async def _create_issue(client, auth_headers, project_id, **body):
+    resp = await client.post(
+        f"/api/projects/{project_id}/issues",
+        headers=auth_headers,
+        json=body,
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_create_writes_initial_description_revision(
+    client, auth_headers, test_project
+):
+    """Creating an issue via the API writes a v1 description revision."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id,
+        title="Versioned", description="Initial body",
+    )
+
+    list_resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )
+    assert list_resp.status_code == 200
+    revs = list_resp.json()
+    assert len(revs) == 1
+    assert revs[0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_without_description_still_writes_v1(
+    client, auth_headers, test_project
+):
+    """v1 exists even for a null description — history stays uniform."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id, title="Bare",
+    )
+
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    assert len(revs) == 1
+    v1 = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions/1",
+        headers=auth_headers,
+    )).json()
+    assert v1["description"] is None
+
+
+@pytest.mark.asyncio
+async def test_description_update_appends_revision(
+    client, auth_headers, test_project
+):
+    """Each description edit appends a new revision row."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id,
+        title="Evolving", description="v1 body",
+    )
+
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v2 body"},
+    )
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v3 body"},
+    )
+
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    assert [r["version"] for r in revs] == [3, 2, 1]
+
+    v1 = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions/1",
+        headers=auth_headers,
+    )).json()
+    v3 = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions/3",
+        headers=auth_headers,
+    )).json()
+    assert v1["description"] == "v1 body"
+    assert v3["description"] == "v3 body"
+
+
+@pytest.mark.asyncio
+async def test_non_description_update_does_not_snapshot(
+    client, auth_headers, test_project
+):
+    """Patches that don't touch description don't bump the version."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id,
+        title="Stable", description="Body", priority="low",
+    )
+
+    # Change title and priority — neither should snapshot.
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"title": "Renamed", "priority": "high"},
+    )
+    # Re-PATCHing the same description shouldn't snapshot either.
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "Body"},
+    )
+
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    assert len(revs) == 1
+    assert revs[0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_description_revision_get_404(client, auth_headers, test_project):
+    """Requesting a non-existent version returns 404."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id, title="x", description="y",
+    )
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions/99",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_require_project_access(
+    client, auth_headers, auth_headers2, test_project
+):
+    """A non-project-member can't read description revisions."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id,
+        title="Private", description="Secret",
+    )
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers2,
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_cascade_on_issue_delete(
+    client, auth_headers, test_project, db
+):
+    """Deleting an issue removes its description-revision rows."""
+    from app.oxyde_models.issue import OxydeIssueDescriptionRevision
+
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id, title="Doomed", description="v1",
+    )
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers,
+        json={"description": "v2"},
+    )
+    assert await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).count() == 2
+
+    delete_resp = await client.delete(
+        f"/api/issues/{issue_id}", headers=auth_headers,
+    )
+    assert delete_resp.status_code == 204
+    assert await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_description_revision_records_editor_attribution(
+    client, auth_headers, auth_headers2, test_project, test_team, test_user, test_user2, db
+):
+    """The revision's author_id is the user who made the edit."""
+    await OxydeTeamMember.objects.create(
+        team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+    )
+
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id,
+        title="Shared", description="by user1",
+    )
+
+    await client.patch(
+        f"/api/issues/{issue_id}",
+        headers=auth_headers2,
+        json={"description": "by user2"},
+    )
+    revs = (await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )).json()
+    by_version = {r["version"]: r for r in revs}
+    assert by_version[1]["author_id"] == test_user.id
+    assert by_version[2]["author_id"] == test_user2.id
+
+
+@pytest.mark.asyncio
+async def test_description_revision_with_deleted_author_returns_null_name(
+    client, auth_headers, test_project, db
+):
+    """If the author was deleted, author_name is None (not 500)."""
+    from app.oxyde_models.issue import OxydeIssueDescriptionRevision
+
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id, title="T", description="D",
+    )
+
+    await OxydeIssueDescriptionRevision.objects.filter(
+        issue_id=issue_id
+    ).update(author_id=None)
+
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()[0]["author_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_description_revisions_limit_capped(
+    client, auth_headers, test_project
+):
+    """A wildly-large limit gets clamped."""
+    issue_id = await _create_issue(
+        client, auth_headers, test_project.id, title="T", description="D",
+    )
+    resp = await client.get(
+        f"/api/issues/{issue_id}/description-revisions?limit=99999999",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
