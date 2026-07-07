@@ -89,14 +89,22 @@ class SprintService:
             project_id=project_id, status=SprintStatus.PLANNED.name
         ).order_by("created_at").first()
 
-    async def close_sprint(self, sprint: OxydeSprint, has_rituals: bool = False) -> OxydeSprint:
+    async def close_sprint(self, sprint: OxydeSprint) -> OxydeSprint:
         """Close the current sprint.
 
-        If has_rituals is True:
+        Whether the sprint enters limbo is decided here by asking
+        RitualService for this sprint's *pending EVERY_SPRINT rituals*
+        (CHT-1278) -- not by "does the project have any ritual at all".
+        Ticket-scoped rituals (TICKET_CLOSE/TICKET_CLAIM) never gate a
+        sprint close; only unattested sprint-triggered rituals do. This
+        is the single implementation of that rule -- callers must not
+        pass their own has_rituals boolean, or the two can drift again.
+
+        If there are pending sprint rituals:
         1. Sprint stays ACTIVE with limbo=True (work blocked until rituals clear)
         2. Moves incomplete issues to Next sprint
 
-        If has_rituals is False:
+        If there are no pending sprint rituals:
         1. Marks current sprint as COMPLETED
         2. Moves incomplete issues to Next sprint
         3. Next sprint becomes ACTIVE (new Current)
@@ -109,6 +117,13 @@ class SprintService:
             raise ValueError("Sprint is already in limbo. Complete pending rituals first.")
 
         project_id = sprint.project_id
+
+        # Lazy import: ritual_service imports SprintService at module
+        # level, so importing RitualService at module level here would
+        # create a circular import.
+        from app.services.ritual_service import RitualService
+        pending_rituals = await RitualService().get_pending_rituals(project_id, sprint.id)
+        has_rituals = bool(pending_rituals)
 
         async with atomic():
             # Get next sprint (or create if doesn't exist)
@@ -241,12 +256,3 @@ class SprintService:
             # .name for filter (bypasses model_dump, goes to msgpack raw)
             qs = qs.filter(status=status.name if hasattr(status, 'name') else status)
         return await qs.order_by("-created_at").offset(skip).limit(limit).all()
-
-    async def enter_limbo(self, sprint: OxydeSprint) -> OxydeSprint:
-        """Put sprint into limbo state (pending rituals)."""
-        if sprint.status != SprintStatus.ACTIVE:
-            raise ValueError("Can only put an active sprint into limbo")
-        sprint.limbo = True
-        await sprint.save(update_fields={"limbo"})
-        await sprint.refresh()
-        return sprint
