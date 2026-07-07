@@ -320,6 +320,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_sprint
     ON ritual_attestations (ritual_id, sprint_id)
     WHERE sprint_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS inbox_entries (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    recipient_user_id VARCHAR(36) NOT NULL,
+    kind VARCHAR(17) NOT NULL,
+    team_id VARCHAR(36) NOT NULL,
+    project_id VARCHAR(36),
+    issue_id VARCHAR(36),
+    document_id VARCHAR(36),
+    ritual_id VARCHAR(36),
+    source_user_id VARCHAR(36),
+    title VARCHAR(500) NOT NULL,
+    body TEXT,
+    created_at DATETIME NOT NULL,
+    read_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS inbox_entries_recipient_user_id_idx ON inbox_entries (recipient_user_id);
+CREATE INDEX IF NOT EXISTS inbox_entries_team_id_idx ON inbox_entries (team_id);
+
 CREATE TABLE IF NOT EXISTS oxyde_migrations (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,

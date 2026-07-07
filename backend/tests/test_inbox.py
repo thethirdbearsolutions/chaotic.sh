@@ -1,0 +1,600 @@
+"""Tests for the Inbox feature (CHT-1250): InboxService, its hooks into
+IssueService/RitualService/DocumentService, and the /inbox API routes.
+"""
+import pytest
+
+from app.enums import ApprovalMode, InboxEntryKind, IssueStatus, TeamRole
+from app.oxyde_models.inbox import OxydeInboxEntry
+from app.oxyde_models.team import OxydeTeamMember
+from app.schemas.document import DocumentCommentCreate
+from app.schemas.issue import IssueCommentCreate, IssueUpdate
+from app.services.document_service import DocumentService
+from app.services.inbox_service import InboxService, _member_handle
+from app.services.issue_service import ClaimRitualsError, IssueService, TicketRitualsError
+from app.services.ritual_service import RitualService
+
+
+async def _try_claim(issue, user_id: str):
+    return await IssueService().update(
+        issue, IssueUpdate(status=IssueStatus.IN_PROGRESS),
+        user_id=user_id, is_human_request=False,
+    )
+
+
+async def _try_close(issue, user_id: str):
+    return await IssueService().update(
+        issue, IssueUpdate(status=IssueStatus.DONE),
+        user_id=user_id, is_human_request=False,
+    )
+
+
+async def _add_distinct_member(team_id: str, first_name: str):
+    """Add a team member whose first-name handle can't collide with
+    test_user/test_user2's shared "Test" first name (mention resolution
+    is first-name-based -- see _member_handle -- so fixture reuse across
+    these mention tests needs a name that won't shadow another member's
+    handle via the by_handle dict's setdefault).
+    """
+    from app.oxyde_models.user import OxydeUser
+    from app.utils.security import get_password_hash
+
+    user = await OxydeUser.objects.create(
+        email=f"{first_name.lower()}@example.com",
+        hashed_password=get_password_hash("testpassword123"),
+        name=f"{first_name} Mentioned",
+    )
+    await OxydeTeamMember.objects.create(team_id=team_id, user_id=user.id, role=TeamRole.MEMBER)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# _member_handle -- mirrors frontend/src/mention-autocomplete.js exactly
+# ---------------------------------------------------------------------------
+
+class TestMemberHandle:
+    def test_uses_first_name_lowercased(self):
+        assert _member_handle("Ada Lovelace", "ada@example.com") == "ada"
+
+    def test_falls_back_to_email_local_part_when_no_name(self):
+        assert _member_handle(None, "grace@example.com") == "grace"
+
+    def test_falls_back_to_user_when_nothing(self):
+        assert _member_handle(None, None) == "user"
+
+    def test_lowercases_email_local_part(self):
+        assert _member_handle(None, "Grace@Example.com") == "grace"
+
+
+# ---------------------------------------------------------------------------
+# InboxService.notify_gate_pending
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestNotifyGatePending:
+    async def test_fans_out_to_admins_only(
+        self, db, test_project, test_team, test_user, test_user2, test_issue, gate_close_ritual,
+    ):
+        """test_user is OWNER (test_team fixture); test_user2 is a plain
+        MEMBER -- only admins/owners get gate_pending entries, mirroring
+        RitualService's is_team_admin gate on completion.
+        """
+        await OxydeTeamMember.objects.create(
+            team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER,
+        )
+
+        await InboxService().notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="Someone",
+        )
+
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 1
+        assert entries[0].recipient_user_id == test_user.id
+        assert entries[0].kind == InboxEntryKind.GATE_PENDING
+        assert entries[0].ritual_id == gate_close_ritual.id
+        assert entries[0].team_id == test_team.id
+        assert entries[0].read_at is None
+
+    async def test_dedupes_repeated_notify_for_same_open_entry(
+        self, db, test_project, test_issue, gate_close_ritual,
+    ):
+        service = InboxService()
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 1
+
+    async def test_new_entry_after_prior_one_marked_read(
+        self, db, test_project, test_issue, gate_close_ritual,
+    ):
+        """Dedup only suppresses while an entry is unread -- once resolved,
+        the same (ritual, issue) can gate again (e.g. reopened + reclaimed).
+        """
+        service = InboxService()
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        await service.resolve_gate_or_review(ritual_id=gate_close_ritual.id, issue_id=test_issue.id)
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 2
+
+
+# ---------------------------------------------------------------------------
+# InboxService.notify_review_requested
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestNotifyReviewRequested:
+    async def test_fans_out_to_admins(
+        self, db, test_project, test_team, test_user, test_issue, review_close_ritual,
+    ):
+        await InboxService().notify_review_requested(
+            ritual=review_close_ritual, issue=test_issue, project=test_project,
+            attested_by_name="An Agent",
+        )
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 1
+        assert entries[0].recipient_user_id == test_user.id
+        assert entries[0].kind == InboxEntryKind.REVIEW_REQUESTED
+
+
+# ---------------------------------------------------------------------------
+# InboxService.notify_assignment
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestNotifyAssignment:
+    async def test_creates_entry_for_new_assignee(
+        self, db, test_project, test_issue, test_user, test_user2,
+    ):
+        await InboxService().notify_assignment(
+            issue=test_issue, project=test_project,
+            assignee_id=test_user2.id, assigned_by=test_user,
+        )
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=test_user2.id).all()
+        assert len(entries) == 1
+        assert entries[0].kind == InboxEntryKind.ASSIGNMENT
+        assert entries[0].issue_id == test_issue.id
+        assert entries[0].source_user_id == test_user.id
+
+    async def test_skips_self_assignment(self, db, test_project, test_issue, test_user):
+        await InboxService().notify_assignment(
+            issue=test_issue, project=test_project,
+            assignee_id=test_user.id, assigned_by=test_user,
+        )
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=test_user.id).all()
+        assert len(entries) == 0
+
+    async def test_no_assigned_by_still_notifies(self, db, test_project, test_issue, test_user2):
+        """assigned_by=None (e.g. system-driven reassignment) still notifies
+        -- only a matching self-assignment id is skipped.
+        """
+        await InboxService().notify_assignment(
+            issue=test_issue, project=test_project,
+            assignee_id=test_user2.id, assigned_by=None,
+        )
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=test_user2.id).all()
+        assert len(entries) == 1
+        assert entries[0].source_user_id is None
+
+
+# ---------------------------------------------------------------------------
+# InboxService.notify_mentions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestNotifyMentions:
+    async def test_mentions_by_first_name_handle(
+        self, db, test_team, test_project, test_issue, test_user,
+    ):
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+
+        await InboxService().notify_mentions(
+            content=f"hey @{handle} can you take a look?",
+            team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=mentioned.id).all()
+        assert len(entries) == 1
+        assert entries[0].kind == InboxEntryKind.MENTION
+        assert entries[0].source_user_id == test_user.id
+        assert entries[0].issue_id == test_issue.id
+
+    async def test_no_mention_no_entries(self, db, test_team, test_issue, test_user):
+        await InboxService().notify_mentions(
+            content="no mentions here", team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+        assert await OxydeInboxEntry.objects.count() == 0
+
+    async def test_unresolvable_handle_no_entries(self, db, test_team, test_issue, test_user):
+        await InboxService().notify_mentions(
+            content="hey @nobody-like-this", team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+        assert await OxydeInboxEntry.objects.count() == 0
+
+    async def test_self_mention_is_skipped(self, db, test_team, test_issue, test_user):
+        handle = _member_handle(test_user.name, test_user.email)
+        await InboxService().notify_mentions(
+            content=f"note to self @{handle}", team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+        assert await OxydeInboxEntry.objects.count() == 0
+
+    async def test_document_mention(self, db, test_team, test_document, test_user):
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+        await InboxService().notify_mentions(
+            content=f"@{handle} thoughts?", team_id=test_team.id, author=test_user, document=test_document,
+        )
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=mentioned.id).all()
+        assert len(entries) == 1
+        assert entries[0].document_id == test_document.id
+        assert entries[0].issue_id is None
+
+
+# ---------------------------------------------------------------------------
+# InboxService readers/mark-read
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestInboxReaders:
+    async def test_list_for_user_newest_first(self, db, test_project, test_issue, test_user):
+        service = InboxService()
+        e1 = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, title="first",
+        )
+        e2 = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, title="second",
+        )
+        entries = await service.list_for_user(test_user.id)
+        assert [e.id for e in entries] == [e2.id, e1.id]
+
+    async def test_unread_only_filter(self, db, test_project, test_user):
+        service = InboxService()
+        read_entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, title="read",
+        )
+        await service.mark_read(read_entry)
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, title="unread",
+        )
+        unread = await service.list_for_user(test_user.id, unread_only=True)
+        assert len(unread) == 1
+        assert unread[0].title == "unread"
+
+    async def test_unread_count(self, db, test_project, test_user):
+        service = InboxService()
+        assert await service.unread_count(test_user.id) == 0
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, title="x",
+        )
+        assert await service.unread_count(test_user.id) == 1
+
+    async def test_mark_all_read(self, db, test_project, test_user):
+        service = InboxService()
+        for i in range(3):
+            await OxydeInboxEntry.objects.create(
+                recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+                team_id=test_project.team_id, title=f"x{i}",
+            )
+        marked = await service.mark_all_read(test_user.id)
+        assert marked == 3
+        assert await service.unread_count(test_user.id) == 0
+
+    async def test_mark_all_read_scoped_by_team(self, db, test_project, test_team, test_user):
+        service = InboxService()
+        from app.oxyde_models.team import OxydeTeam
+        other_team = await OxydeTeam.objects.create(name="Other", key="OTHR")
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="in-team",
+        )
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=other_team.id, title="other-team",
+        )
+        marked = await service.mark_all_read(test_user.id, team_id=test_team.id)
+        assert marked == 1
+        assert await service.unread_count(test_user.id) == 1
+
+
+# ---------------------------------------------------------------------------
+# resolve_gate_or_review
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestResolveGateOrReview:
+    async def test_resolves_gate_pending_only_for_matching_ritual_issue(
+        self, db, test_project, test_issue, gate_close_ritual, review_close_ritual,
+    ):
+        service = InboxService()
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        await service.notify_review_requested(
+            ritual=review_close_ritual, issue=test_issue, project=test_project,
+            attested_by_name="A",
+        )
+
+        resolved = await service.resolve_gate_or_review(
+            ritual_id=gate_close_ritual.id, issue_id=test_issue.id,
+        )
+        assert resolved == 1
+
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        by_ritual = {e.ritual_id: e for e in entries}
+        assert by_ritual[gate_close_ritual.id].read_at is not None
+        assert by_ritual[review_close_ritual.id].read_at is None
+
+    async def test_does_not_touch_mention_or_assignment_entries(
+        self, db, test_project, test_issue, test_user, gate_close_ritual,
+    ):
+        service = InboxService()
+        await service.notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        mention = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_project.team_id, issue_id=test_issue.id,
+            ritual_id=gate_close_ritual.id, title="unrelated mention",
+        )
+        await service.resolve_gate_or_review(ritual_id=gate_close_ritual.id, issue_id=test_issue.id)
+        mention = await OxydeInboxEntry.objects.get(id=mention.id)
+        assert mention.read_at is None
+
+
+# ---------------------------------------------------------------------------
+# Integration: real claim/close/comment flows write the expected entries
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestIntegrationHooks:
+    async def test_claim_with_gate_ritual_writes_gate_pending_entry(
+        self, db, test_issue, test_user, gate_claim_ritual,
+    ):
+        with pytest.raises(ClaimRitualsError):
+            await _try_claim(test_issue, test_user.id)
+
+        entries = await OxydeInboxEntry.objects.filter(
+            issue_id=test_issue.id, kind=InboxEntryKind.GATE_PENDING.name,
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].recipient_user_id == test_user.id  # owner
+        assert entries[0].ritual_id == gate_claim_ritual.id
+
+    async def test_close_with_review_ritual_does_not_write_gate_pending(
+        self, db, test_issue, test_user, review_close_ritual,
+    ):
+        """REVIEW-mode rituals don't fan out gate_pending -- only once
+        attested does a review_requested entry appear (next test).
+        """
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, test_user.id)
+
+        assert await OxydeInboxEntry.objects.count() == 0
+
+    async def test_attest_review_ritual_writes_review_requested_entry(
+        self, db, test_issue, test_user, review_close_ritual,
+    ):
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, test_user.id)
+
+        await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user.id, note="done",
+        )
+
+        entries = await OxydeInboxEntry.objects.filter(
+            issue_id=test_issue.id, kind=InboxEntryKind.REVIEW_REQUESTED.name,
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].recipient_user_id == test_user.id
+
+    async def test_complete_gate_ritual_resolves_inbox_entry(
+        self, db, test_issue, test_user, gate_claim_ritual,
+    ):
+        with pytest.raises(ClaimRitualsError):
+            await _try_claim(test_issue, test_user.id)
+
+        await RitualService().complete_gate_ritual_for_issue(
+            ritual=gate_claim_ritual, issue_id=test_issue.id, user_id=test_user.id, note="ok",
+        )
+
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 1
+        assert entries[0].read_at is not None
+
+    async def test_approve_review_ritual_resolves_inbox_entry(
+        self, db, test_issue, test_user, review_close_ritual,
+    ):
+        with pytest.raises(TicketRitualsError):
+            await _try_close(test_issue, test_user.id)
+
+        att = await RitualService().attest_for_issue(
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user.id, note="done",
+        )
+        await RitualService().approve_for_issue(att, approver_id=test_user.id)
+
+        entries = await OxydeInboxEntry.objects.filter(issue_id=test_issue.id).all()
+        assert len(entries) == 1
+        assert entries[0].read_at is not None
+
+    async def test_assignee_change_writes_assignment_entry(
+        self, db, test_issue, test_user, test_user2,
+    ):
+        await IssueService().update(
+            test_issue, IssueUpdate(assignee_id=test_user2.id), user_id=test_user.id,
+        )
+        entries = await OxydeInboxEntry.objects.filter(
+            recipient_user_id=test_user2.id, kind=InboxEntryKind.ASSIGNMENT.name,
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].issue_id == test_issue.id
+
+    async def test_unassign_writes_no_entry(self, db, test_issue, test_user, test_user2):
+        await IssueService().update(
+            test_issue, IssueUpdate(assignee_id=test_user2.id), user_id=test_user.id,
+        )
+        issue = await IssueService().get_by_id(test_issue.id)
+        await IssueService().update(
+            issue, IssueUpdate(assignee_id=None), user_id=test_user.id,
+        )
+        entries = await OxydeInboxEntry.objects.filter(kind=InboxEntryKind.ASSIGNMENT.name).all()
+        assert len(entries) == 1  # only the original assignment, not the unassign
+
+    async def test_issue_comment_mention_writes_entry(
+        self, db, test_team, test_issue, test_user,
+    ):
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+        await IssueService().create_comment(
+            test_issue.id, IssueCommentCreate(content=f"cc @{handle}"), author_id=test_user.id,
+        )
+        entries = await OxydeInboxEntry.objects.filter(
+            recipient_user_id=mentioned.id, kind=InboxEntryKind.MENTION.name,
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].issue_id == test_issue.id
+
+    async def test_document_comment_mention_writes_entry(
+        self, db, test_team, test_document, test_user,
+    ):
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+        await DocumentService().create_comment(
+            test_document.id, DocumentCommentCreate(content=f"cc @{handle}"), author_id=test_user.id,
+        )
+        entries = await OxydeInboxEntry.objects.filter(
+            recipient_user_id=mentioned.id, kind=InboxEntryKind.MENTION.name,
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].document_id == test_document.id
+
+
+@pytest.mark.asyncio
+class TestInboxBroadcast:
+    async def test_notify_gate_pending_broadcasts_inbox_event(
+        self, db, test_project, test_issue, gate_close_ritual, captured_broadcasts,
+    ):
+        await InboxService().notify_gate_pending(
+            ritual=gate_close_ritual, issue=test_issue, project=test_project,
+            requested_by_name="A",
+        )
+        inbox_broadcasts = [m for _, m in captured_broadcasts if m.get("entity") == "inbox"]
+        assert len(inbox_broadcasts) == 1
+        assert inbox_broadcasts[0]["type"] == "created"
+
+
+# ---------------------------------------------------------------------------
+# API routes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestInboxApi:
+    async def test_list_only_returns_own_entries(
+        self, client, db, test_project, test_team, test_user, test_user2, auth_headers,
+    ):
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="mine",
+        )
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user2.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="not mine",
+        )
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert resp.status_code == 200
+        titles = [e["title"] for e in resp.json()]
+        assert titles == ["mine"]
+
+    async def test_list_unread_filter(self, client, db, test_team, test_user, auth_headers):
+        service = InboxService()
+        read_entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="read",
+        )
+        await service.mark_read(read_entry)
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="unread",
+        )
+        resp = await client.get("/api/inbox?unread=true", headers=auth_headers)
+        assert resp.status_code == 200
+        titles = [e["title"] for e in resp.json()]
+        assert titles == ["unread"]
+
+    async def test_list_includes_issue_identifier(
+        self, client, db, test_project, test_team, test_issue, test_user, auth_headers,
+    ):
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, issue_id=test_issue.id, title="mentioned",
+        )
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()[0]["issue_identifier"] == test_issue.identifier
+
+    async def test_unread_count_endpoint(self, client, db, test_team, test_user, auth_headers):
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="x",
+        )
+        resp = await client.get("/api/inbox/unread-count", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["unread_count"] == 1
+
+    async def test_mark_read_endpoint(self, client, db, test_team, test_user, auth_headers):
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="x",
+        )
+        resp = await client.post(f"/api/inbox/{entry.id}/read", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["read_at"] is not None
+
+    async def test_mark_read_rejects_other_users_entry(
+        self, client, db, test_team, test_user2, auth_headers,
+    ):
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user2.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="not yours",
+        )
+        resp = await client.post(f"/api/inbox/{entry.id}/read", headers=auth_headers)
+        assert resp.status_code == 403
+
+    async def test_mark_read_404_for_missing_entry(self, client, db, auth_headers):
+        resp = await client.post("/api/inbox/does-not-exist/read", headers=auth_headers)
+        assert resp.status_code == 404
+
+    async def test_mark_all_read_endpoint(self, client, db, test_team, test_user, auth_headers):
+        for i in range(2):
+            await OxydeInboxEntry.objects.create(
+                recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+                team_id=test_team.id, title=f"x{i}",
+            )
+        resp = await client.post(
+            f"/api/inbox/mark-all-read?team_id={test_team.id}", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["marked_count"] == 2
+
+    async def test_list_requires_auth(self, client, db):
+        resp = await client.get("/api/inbox")
+        assert resp.status_code == 401

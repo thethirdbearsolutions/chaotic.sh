@@ -122,3 +122,18 @@ async def broadcast_attestation_event(team_id: str, event_type: str, attestation
         "entity": "attestation",
         "data": attestation_data
     })
+
+
+async def broadcast_inbox_event(team_id: str, event_type: str, inbox_data: dict):
+    """Broadcast an inbox event to all team members (CHT-1250).
+
+    Like every other broadcast_*_event, this fans out to the whole team's
+    connections, not just the entry's recipient -- the payload carries
+    `recipient_user_id` so each client can filter for itself (mirrors how
+    issue events carry `assignee_id` for the same client-side filtering).
+    """
+    await manager.broadcast_to_team(team_id, {
+        "type": event_type,
+        "entity": "inbox",
+        "data": inbox_data
+    })

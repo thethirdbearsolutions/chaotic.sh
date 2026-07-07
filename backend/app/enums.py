@@ -63,6 +63,7 @@ class ActivityType(str, Enum):
     INTENT_OPENED = "intent_opened"
     INTENT_CLEARED = "intent_cleared"
     INTENT_CANCELED = "intent_canceled"
+    EMAIL_DELIVERY_FAILED = "email_delivery_failed"  # CHT-1251: loud note when a configured SMTP send fails
 
 
 # --- Sprint enums ---
@@ -146,3 +147,13 @@ class LimboType(str, Enum):
     """Type of limbo - what action was blocked."""
     CLAIM = "claim"  # User tried to move ticket to in_progress
     CLOSE = "close"  # User tried to move ticket to done/cancelled
+
+
+# --- Inbox enums (CHT-1250) ---
+
+class InboxEntryKind(str, Enum):
+    """What kind of 'awaiting you' item an inbox entry represents."""
+    GATE_PENDING = "gate_pending"          # A GATE ritual is blocking a ticket; any team admin can complete it
+    MENTION = "mention"                    # Someone @mentioned this user in a comment
+    ASSIGNMENT = "assignment"               # An issue was assigned to this user
+    REVIEW_REQUESTED = "review_requested"  # A REVIEW ritual was attested; an admin must approve it
