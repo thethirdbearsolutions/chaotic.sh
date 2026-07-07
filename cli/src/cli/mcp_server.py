@@ -46,6 +46,7 @@ import sys
 from typing import Annotated, Literal
 
 import click
+import httpx
 from pydantic import Field
 
 from mcp.server.fastmcp import FastMCP
@@ -150,6 +151,15 @@ def _boundary(fn):
             return {"error": e.format_message()}
         except APIError as e:
             return {"error": str(e)}
+        # Network failures get the same actionable messages the CLI's
+        # handle_error decorator produces, not a generic "Unexpected
+        # error (ConnectError)" (PR #215 review).
+        except httpx.ConnectError:
+            return {"error": f"Could not connect to server at {_main().get_api_url()}. Is the server running?"}
+        except httpx.TimeoutException:
+            return {"error": "Request timed out. The server may be overloaded or unreachable."}
+        except httpx.HTTPError as e:
+            return {"error": f"Network error: {e}"}
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
             return {"error": f"Unexpected error ({type(e).__name__}): {e}"}
     return wrapper
@@ -188,11 +198,13 @@ def issue_list(
     ] = None,
     all_projects: Annotated[
         bool,
-        Field(description="List across every project in the team instead of just the current project.")
+        Field(description="List across every project in the team instead of just the current project. "
+                          "Ignored when `project` is passed explicitly; cannot be combined with `sprint`.")
     ] = False,
     project: Annotated[
         str | None,
-        Field(description="Project id, key, or name to list in. Defaults to the configured current project.")
+        Field(description="Project id, key, or name to list in. Defaults to the configured current project. "
+                          "Passing this always scopes to that one project, even if all_projects is also set.")
     ] = None,
     limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 50,
     sort_by: Annotated[SORT_FIELDS, Field(description="Sort field.")] = "updated",
@@ -202,7 +214,19 @@ def issue_list(
     m = _main()
     team_id = None
     project_id = None
-    if all_projects:
+    # Explicit `project` wins over all_projects -- same precedence as
+    # doc_list/doc_create (and their CLI counterparts, where --project
+    # beats --all). Previously all_projects silently dropped `project`
+    # (PR #215 review).
+    if all_projects and not project:
+        # Sprints are project-scoped; the CLI's `issue list` rejects this
+        # combination outright ("Cannot use --sprint with --all-projects").
+        if sprint:
+            raise ToolInputError(
+                "Cannot combine `sprint` with all_projects=true: sprints are "
+                "project-scoped. Pass `project` (or drop all_projects) to "
+                "filter by sprint."
+            )
         team_id = _require_team()
     else:
         project_id = _require_project(project)
@@ -215,10 +239,7 @@ def issue_list(
 
     sprint_id = None
     if sprint:
-        sprint_scope_project = project_id or m.get_current_project()
-        if not sprint_scope_project:
-            raise ToolInputError("Cannot resolve `sprint` without a project context.")
-        sprint_id = m.resolve_sprint_id(sprint, sprint_scope_project)
+        sprint_id = m.resolve_sprint_id(sprint, project_id)
 
     issues = _client().get_issues(
         project_id=project_id,
@@ -378,6 +399,7 @@ def doc_list(
         bool,
         Field(description="List every document in the team instead of just the current/given project.")
     ] = False,
+    limit: Annotated[int, Field(description="Maximum number of documents to return.", ge=1, le=500)] = 50,
 ) -> dict:
     """List documents (project-scoped by default, team-wide with all_projects=true)."""
     team_id = _require_team()
@@ -387,7 +409,7 @@ def doc_list(
         project_id = m.resolve_project_id(project)
     elif not all_projects:
         project_id = m.get_current_project()
-    documents = _client().get_documents(team_id, project_id=project_id, search=search)
+    documents = _client().get_documents(team_id, project_id=project_id, search=search, limit=limit)
     return {"documents": documents or []}
 
 

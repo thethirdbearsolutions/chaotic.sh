@@ -165,6 +165,30 @@ class TestErrorBoundary:
         result = mcp_mod.issue_list()
         assert "No project selected" in result["error"]
 
+    def test_connect_error_gets_actionable_message(self, mcp_mod, monkeypatch):
+        """Network failures mirror the CLI handle_error decorator's
+        messages, not a generic Unexpected error (PR #215 review)."""
+        import httpx
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(side_effect=httpx.ConnectError("refused"))
+        monkeypatch.setattr("cli.main.get_api_url", lambda: "http://example.test/api")
+        result = mcp_mod.issue_view(identifier="CHT-1")
+        assert result == {"error": "Could not connect to server at http://example.test/api. Is the server running?"}
+
+    def test_timeout_gets_actionable_message(self, mcp_mod):
+        import httpx
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(side_effect=httpx.ReadTimeout("slow"))
+        result = mcp_mod.issue_view(identifier="CHT-1")
+        assert result == {"error": "Request timed out. The server may be overloaded or unreachable."}
+
+    def test_other_httpx_error_gets_network_message(self, mcp_mod):
+        import httpx
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(side_effect=httpx.RemoteProtocolError("bad frame"))
+        result = mcp_mod.issue_view(identifier="CHT-1")
+        assert result == {"error": "Network error: bad frame"}
+
 
 # ---------------------------------------------------------------------------
 # issue_list
@@ -220,6 +244,42 @@ class TestIssueList:
         from cli.main import client
         client.get_issues = MagicMock(return_value=[])
         assert mcp_mod.issue_list() == {"issues": []}
+
+    def test_sprint_with_all_projects_is_rejected(self, mcp_mod):
+        """Sprints are project-scoped; the CLI rejects --sprint with
+        --all-projects and the MCP tool must too (PR #215 review)."""
+        from cli.main import client
+        client.get_issues = MagicMock()
+        result = mcp_mod.issue_list(all_projects=True, sprint="current")
+        assert "Cannot combine `sprint` with all_projects" in result["error"]
+        client.get_issues.assert_not_called()
+
+    def test_explicit_project_wins_over_all_projects(self, mcp_mod, mock_issue, monkeypatch):
+        """Same precedence as doc_list/doc_create: an explicit `project`
+        always scopes to that project, even with all_projects=true
+        (PR #215 review -- previously `project` was silently dropped)."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda ident: "explicit-project-1")
+        client.get_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_list(all_projects=True, project="CHT")
+
+        _, kwargs = client.get_issues.call_args
+        assert kwargs["project_id"] == "explicit-project-1"
+        assert kwargs["team_id"] is None
+
+    def test_sprint_resolves_against_explicit_project(self, mcp_mod, mock_issue, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda ident: "explicit-project-1")
+        resolve_sprint = MagicMock(return_value="sprint-1")
+        monkeypatch.setattr("cli.main.resolve_sprint_id", resolve_sprint)
+        client.get_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_list(project="CHT", sprint="current")
+
+        resolve_sprint.assert_called_once_with("current", "explicit-project-1")
+        _, kwargs = client.get_issues.call_args
+        assert kwargs["sprint_id"] == "sprint-1"
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +487,7 @@ class TestDocs:
 
         assert result == {"documents": [mock_document]}
         client.get_documents.assert_called_once_with(
-            "test-team-123", project_id="test-project-123", search=None,
+            "test-team-123", project_id="test-project-123", search=None, limit=50,
         )
 
     def test_doc_list_all_projects(self, mcp_mod, mock_document):
@@ -437,8 +497,17 @@ class TestDocs:
         mcp_mod.doc_list(all_projects=True)
 
         client.get_documents.assert_called_once_with(
-            "test-team-123", project_id=None, search=None,
+            "test-team-123", project_id=None, search=None, limit=50,
         )
+
+    def test_doc_list_custom_limit(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+
+        mcp_mod.doc_list(limit=5)
+
+        _, kwargs = client.get_documents.call_args
+        assert kwargs["limit"] == 5
 
     def test_doc_list_empty_returns_empty_list(self, mcp_mod):
         from cli.main import client

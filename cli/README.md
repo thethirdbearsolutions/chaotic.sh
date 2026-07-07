@@ -553,7 +553,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 | `issue_list` | `issue list` (with `all_projects` for team-wide) |
 | `issue_view` | `issue show` |
 | `issue_create` | `issue create` |
-| `issue_update` | `issue update` (status/priority/estimate/assignee/title/description) |
+| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description; `assignee: "unassigned"` clears) |
 | `issue_comment` | `issue comment` |
 | `issue_start` | `issue start` |
 | `doc_list` | `doc list` |
