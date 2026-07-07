@@ -198,6 +198,24 @@ class TestRitualAttestation:
         )
         assert result is not None
 
+    def test_attest_ritual_before_close_rejected_with_guidance(self, api_client, test_project):
+        """CHT-1276: attesting a sprint ritual before `sprint close` is
+        rejected -- intentionally (close creates the limbo the attestation
+        resolves) -- and the error must tell the caller to close first.
+        This is the exact friction the original bug report's agent hit;
+        exercise it through the real CLI client against the real server.
+        """
+        ritual = api_client.create_ritual(
+            test_project["id"], "premature-attest", "Attest this",
+            trigger="every_sprint", approval_mode="auto",
+        )
+        # No close: project is not in limbo.
+        with pytest.raises(APIError) as exc_info:
+            api_client.attest_ritual(ritual["id"], test_project["id"], note="too soon")
+        msg = str(exc_info.value)
+        assert "not in limbo" in msg
+        assert "sprint close" in msg
+
     def test_get_pending_issue_rituals(self, api_client, test_project):
         issue = api_client.create_issue(test_project["id"], "Ritual Issue")
         pending = api_client.get_pending_issue_rituals(issue["id"])

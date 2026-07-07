@@ -1120,7 +1120,12 @@ async def attest_ritual(
     if not in_limbo or not limbo_sprint:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project is not in limbo. No rituals to attest.",
+            detail=(
+                "Project is not in limbo. Sprint-level rituals (EVERY_SPRINT) "
+                "are only attestable after the sprint has been closed -- run "
+                "`chaotic sprint close` first to enter limbo, then attest. "
+                "(CHT-1276: this order is intentional -- see docs/VISION.md.)"
+            ),
         )
 
     if ritual.project_id != resolved_project_id:

@@ -3539,7 +3539,12 @@ class TestSprintRitualAttestationAPI:
         assert response.json()["note"] == "Tests passed"
 
     async def test_attest_ritual_api_not_in_limbo(self, client, auth_headers, test_project, db):
-        """Test that attestation fails when not in limbo."""
+        """Test that attestation fails when not in limbo.
+
+        CHT-1276: pre-close attestation is intentionally rejected, but the
+        error must tell the caller what to do instead (close the sprint
+        first) rather than just stating the precondition failed.
+        """
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="no-limbo-ritual",
@@ -3552,7 +3557,9 @@ class TestSprintRitualAttestationAPI:
             json={"note": "Should fail"},
         )
         assert response.status_code == 400
-        assert "not in limbo" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "not in limbo" in detail
+        assert "sprint close" in detail
 
     async def test_attest_ritual_api_gate_mode_rejected(self, client, auth_headers, test_project, db):
         """Test that GATE mode rituals cannot be attested via attest endpoint."""
