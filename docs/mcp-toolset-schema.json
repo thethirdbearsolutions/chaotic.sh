@@ -1,0 +1,620 @@
+{
+  "_meta": {
+    "generated_from": "cli.mcp_server.build_server() (CHT-1247/#215)",
+    "purpose": "Canonical MCP toolset shape shared by the stdio transport (cli/src/cli/mcp_server.py) and the backend Streamable HTTP transport (backend/app/mcp_server/tools.py, CHT-1266). cli/tests/test_mcp_toolset_sync.py asserts the stdio toolset matches this file exactly; backend/tests/test_mcp_toolset_sync.py asserts the HTTP toolset matches it for name/description and shared parameters, allowing only the documented additive 'team' parameter on issue_list/issue_create/doc_list/doc_create/activity_recent. Regenerate with cli/scripts/gen_mcp_toolset_schema.py if a stdio tool legitimately changes shape."
+  },
+  "tools": {
+    "activity_recent": {
+      "description": "Show recent team activity: comments, status changes, assignments, etc.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of activity entries to return.",
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Restrict to one project (id, key, or name). Omit for team-wide activity.",
+            "title": "Project"
+          }
+        },
+        "title": "activity_recentArguments",
+        "type": "object"
+      }
+    },
+    "doc_create": {
+      "description": "Create a new document.",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Document body (markdown).",
+            "title": "Content"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Emoji or short icon label for the document.",
+            "title": "Icon"
+          },
+          "is_global": {
+            "default": false,
+            "description": "Create as a global/team-wide document instead of project-scoped.",
+            "title": "Is Global",
+            "type": "boolean"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name to attach to. Omit for the current project.",
+            "title": "Project"
+          },
+          "title": {
+            "description": "Document title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "doc_createArguments",
+        "type": "object"
+      }
+    },
+    "doc_list": {
+      "description": "List documents (project-scoped by default, team-wide with all_projects=true).",
+      "inputSchema": {
+        "properties": {
+          "all_projects": {
+            "default": false,
+            "description": "List every document in the team instead of just the current/given project.",
+            "title": "All Projects",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Maximum number of documents to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name to scope to. Defaults to the current project.",
+            "title": "Project"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Search documents by title.",
+            "title": "Search"
+          }
+        },
+        "title": "doc_listArguments",
+        "type": "object"
+      }
+    },
+    "doc_view": {
+      "description": "Show a document's content, comments, and linked issues.",
+      "inputSchema": {
+        "properties": {
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "doc_viewArguments",
+        "type": "object"
+      }
+    },
+    "issue_comment": {
+      "description": "Add a comment to an issue, optionally assigning it in the same call.",
+      "inputSchema": {
+        "properties": {
+          "assign_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Also assign the issue: 'me', a user/agent id, or a name/email.",
+            "title": "Assign To"
+          },
+          "content": {
+            "description": "Comment body (markdown).",
+            "title": "Content",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier",
+          "content"
+        ],
+        "title": "issue_commentArguments",
+        "type": "object"
+      }
+    },
+    "issue_create": {
+      "description": "Create a new issue (optionally as a sub-issue of `parent`).",
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Issue description (markdown).",
+            "title": "Description"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Story point estimate.",
+            "title": "Estimate"
+          },
+          "issue_type": {
+            "default": "task",
+            "description": "Issue type. One of: task, bug, feature, chore, docs, tech_debt, epic (aliases accepted, e.g. 'feat').",
+            "title": "Issue Type",
+            "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Parent issue identifier (e.g. CHT-12) to create this as a sub-issue.",
+            "title": "Parent"
+          },
+          "priority": {
+            "default": "no_priority",
+            "description": "Priority.",
+            "enum": [
+              "no_priority",
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the configured current project.",
+            "title": "Project"
+          },
+          "status": {
+            "default": "backlog",
+            "description": "Initial status.",
+            "enum": [
+              "backlog",
+              "todo",
+              "in_progress",
+              "in_review",
+              "done",
+              "canceled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "description": "Issue title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "issue_createArguments",
+        "type": "object"
+      }
+    },
+    "issue_list": {
+      "description": "List issues in a project (or team-wide with all_projects=true), with filters.",
+      "inputSchema": {
+        "properties": {
+          "all_projects": {
+            "default": false,
+            "description": "List across every project in the team instead of just the current project. Ignored when `project` is passed explicitly; cannot be combined with `sprint`.",
+            "title": "All Projects",
+            "type": "boolean"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by assignee: 'me', a user/agent id, or a name/email.",
+            "title": "Assignee"
+          },
+          "epic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter to sub-issues of this epic/parent issue identifier (e.g. CHT-12).",
+            "title": "Epic"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by label name.",
+            "title": "Label"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Maximum number of issues to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "order": {
+            "default": "desc",
+            "description": "Sort direction.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Order",
+            "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "no_priority",
+                    "low",
+                    "medium",
+                    "high",
+                    "urgent"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by one or more priorities (OR'd together).",
+            "title": "Priority"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name to list in. Defaults to the configured current project. Passing this always scopes to that one project, even if all_projects is also set.",
+            "title": "Project"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Free-text search over title, description, and identifier.",
+            "title": "Search"
+          },
+          "sort_by": {
+            "default": "updated",
+            "description": "Sort field.",
+            "enum": [
+              "created",
+              "updated",
+              "priority",
+              "status",
+              "title",
+              "estimate"
+            ],
+            "title": "Sort By",
+            "type": "string"
+          },
+          "sprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by sprint: a sprint name, 'current', 'next', or a sprint id.",
+            "title": "Sprint"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "backlog",
+                    "todo",
+                    "in_progress",
+                    "in_review",
+                    "done",
+                    "canceled"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by one or more statuses (OR'd together).",
+            "title": "Status"
+          }
+        },
+        "title": "issue_listArguments",
+        "type": "object"
+      }
+    },
+    "issue_start": {
+      "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\n    Equivalent to `chaotic issue start`.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_startArguments",
+        "type": "object"
+      }
+    },
+    "issue_update": {
+      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    ",
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New assignee: 'me', a user/agent id, a name/email, or 'unassigned' to clear it.",
+            "title": "Assignee"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New description (markdown).",
+            "title": "Description"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New story point estimate.",
+            "title": "Estimate"
+          },
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "no_priority",
+                  "low",
+                  "medium",
+                  "high",
+                  "urgent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New priority.",
+            "title": "Priority"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "backlog",
+                  "todo",
+                  "in_progress",
+                  "in_review",
+                  "done",
+                  "canceled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New status.",
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New title.",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_updateArguments",
+        "type": "object"
+      }
+    },
+    "issue_view": {
+      "description": "Show full issue detail: fields, description, comments, and sub-issues.",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_viewArguments",
+        "type": "object"
+      }
+    }
+  }
+}
