@@ -504,6 +504,71 @@ class TestIntegrationHooks:
         entries = await OxydeInboxEntry.objects.filter(kind=InboxEntryKind.ASSIGNMENT.name).all()
         assert len(entries) == 1  # only the original assignment, not the unassign
 
+    # -----------------------------------------------------------------
+    # Claim-lease intersection (CHT-1246 x CHT-1250): the merged update()
+    # runs both #217's lease/CAS claim logic and this branch's
+    # assignment-inbox fan-out.
+    # -----------------------------------------------------------------
+
+    async def test_self_claim_with_lease_writes_no_assignment_entry(
+        self, db, test_issue, test_user,
+    ):
+        """`chaotic issue start` semantics: assignee=self + IN_PROGRESS in
+        one PATCH grants a lease AND is a self-assign -- no inbox entry.
+        """
+        updated = await IssueService().update(
+            test_issue,
+            IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user.id),
+            user_id=test_user.id,
+        )
+        assert updated.lease_expires_at is not None  # lease granted (CHT-1246 survives)
+        entries = await OxydeInboxEntry.objects.filter(kind=InboxEntryKind.ASSIGNMENT.name).all()
+        assert entries == []  # self-assign skip survives (CHT-1250)
+
+    async def test_claim_assigning_someone_else_still_writes_entry(
+        self, db, test_issue, test_user, test_user2,
+    ):
+        """Assigning someone ELSE while moving to IN_PROGRESS is not a
+        self-claim (no lease) but IS an assignment -- entry fires.
+        """
+        updated = await IssueService().update(
+            test_issue,
+            IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user2.id),
+            user_id=test_user.id,
+        )
+        assert updated.lease_expires_at is None  # not a self-claim, no lease
+        entries = await OxydeInboxEntry.objects.filter(
+            recipient_user_id=test_user2.id, kind=InboxEntryKind.ASSIGNMENT.name,
+        ).all()
+        assert len(entries) == 1
+
+    async def test_lost_claim_race_writes_no_assignment_entry(
+        self, db, test_issue, test_user, test_user2,
+    ):
+        """A self-claim that loses to an existing valid lease raises
+        IssueAlreadyClaimedError inside the transaction -- it must never
+        leave a phantom assignment inbox entry behind.
+        """
+        from app.services.issue_service import IssueAlreadyClaimedError
+
+        # user2 self-claims first (valid lease).
+        await IssueService().update(
+            test_issue,
+            IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user2.id),
+            user_id=test_user2.id,
+        )
+        issue = await IssueService().get_by_id(test_issue.id)
+
+        with pytest.raises(IssueAlreadyClaimedError):
+            await IssueService().update(
+                issue,
+                IssueUpdate(status=IssueStatus.IN_PROGRESS, assignee_id=test_user.id),
+                user_id=test_user.id,
+            )
+
+        entries = await OxydeInboxEntry.objects.filter(kind=InboxEntryKind.ASSIGNMENT.name).all()
+        assert entries == []  # neither the self-claim nor the failed steal produced one
+
     async def test_issue_comment_mention_writes_entry(
         self, db, test_team, test_issue, test_user,
     ):
