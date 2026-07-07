@@ -161,6 +161,52 @@ async def test_create_invitation(client, auth_headers, test_team):
 
 
 @pytest.mark.asyncio
+async def test_create_invitation_sends_email_with_accept_link(client, auth_headers, test_team, test_user):
+    """CHT-1251: creating an invitation dispatches the accept-link email
+    (the token itself is otherwise undeliverable -- TeamInvitationResponse
+    deliberately omits it).
+    """
+    from unittest.mock import patch
+
+    with patch("app.api.teams.EmailService.send_invitation_email") as mock_send:
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations",
+            headers=auth_headers,
+            json={"email": "invited@example.com", "role": "admin"},
+        )
+    assert response.status_code == 201
+
+    mock_send.assert_called_once()
+    _, kwargs = mock_send.call_args
+    assert mock_send.call_args[0][0] == "invited@example.com"
+    assert kwargs["team_name"] == test_team.name
+    assert kwargs["role"] == "admin"
+    assert kwargs["invited_by_name"] == test_user.name
+    assert "/invite/" in kwargs["accept_url"]
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_succeeds_even_if_email_send_raises(client, auth_headers, test_team):
+    """CHT-1251 fail-soft/fail-loud doctrine: EmailService.send itself never
+    raises (see test_email_service.py), but even if the dispatch call site
+    somehow did, the invitation create must not 500 -- the mutating path
+    doesn't depend on the email succeeding.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "app.api.teams.EmailService.send_invitation_email",
+        side_effect=RuntimeError("smtp blew up"),
+    ):
+        response = await client.post(
+            f"/api/teams/{test_team.id}/invitations",
+            headers=auth_headers,
+            json={"email": "invited@example.com", "role": "member"},
+        )
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_list_team_invitations(client, auth_headers, test_team, db, test_user):
     """Test listing team invitations."""
     # Create an invitation
