@@ -17,6 +17,7 @@ from app.websocket import manager
 from app.utils.security import decode_token
 from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
+from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -44,7 +45,12 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
-    yield
+    # CHT-1266: the MCP session manager owns a task group that must run
+    # for the app's whole lifetime -- Starlette doesn't cascade a mounted
+    # sub-app's own lifespan, so it's entered explicitly here (the mcp
+    # SDK's documented pattern; see mcp_server/asgi.py).
+    async with mcp_lifespan():
+        yield
     # Shutdown
     await close_oxyde()
 
@@ -119,6 +125,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # API routes
 app.include_router(api_router, prefix="/api")
+
+# Remote MCP (Model Context Protocol) -- Streamable HTTP transport at /mcp
+# (CHT-1266). Registered before the SPA catch-all below so it gets first
+# look; see app/mcp_server/asgi.py for the routing/auth/lifespan details.
+mount_mcp(app)
 
 # Get the directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
