@@ -1243,6 +1243,7 @@ from .commands import sprint_cmd as _sprint_mod
 from .commands import ritual_cmd as _ritual_mod
 from .commands import issue_cmd as _issue_mod
 from .commands import await_cmd as _await_mod
+from .commands import inbox_cmd as _inbox_mod
 
 _config_mod.register(cli)
 _profile_mod.register(cli)
@@ -1257,6 +1258,7 @@ _sprint_mod.register(cli)
 _ritual_mod.register(cli)
 _issue_mod.register(cli)
 _await_mod.register(cli)
+_inbox_mod.register(cli)
 
 cli.add_command(system)
 
