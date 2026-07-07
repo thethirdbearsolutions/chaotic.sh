@@ -347,6 +347,13 @@ class Client:
     def delete_issue(self, issue_id: str):
         return self._request("DELETE", f"/issues/{issue_id}")
 
+    # Description revisions
+    def get_issue_description_revisions(self, issue_id: str) -> list:
+        return self._request("GET", f"/issues/{issue_id}/description-revisions")
+
+    def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
+        return self._request("GET", f"/issues/{issue_id}/description-revisions/{version}")
+
     # Sub-issues
     def get_sub_issues(self, issue_id: str) -> list:
         return self._request("GET", f"/issues/{issue_id}/sub-issues")
@@ -446,6 +453,13 @@ class Client:
 
     def delete_document(self, document_id: str):
         return self._request("DELETE", f"/documents/{document_id}")
+
+    # Document revisions
+    def get_document_revisions(self, document_id: str) -> list:
+        return self._request("GET", f"/documents/{document_id}/revisions")
+
+    def get_document_revision(self, document_id: str, version: int) -> dict:
+        return self._request("GET", f"/documents/{document_id}/revisions/{version}")
 
     # Document-Issue Links
     def get_document_issues(self, document_id: str) -> list:

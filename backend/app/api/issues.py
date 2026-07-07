@@ -17,6 +17,8 @@ from app.schemas.issue import (
     IssueCommentResponse,
     IssueActivityResponse,
     IssueActivityFeedResponse,
+    IssueDescriptionRevisionListItem,
+    IssueDescriptionRevisionResponse,
     TeamCommentResponse,
     IssueRelationCreate,
     IssueRelationResponse,
@@ -1136,6 +1138,90 @@ async def list_activities(
         )
         for a in activities
     ]
+
+
+def _description_revision_author_name(rev) -> str | None:
+    author = getattr(rev, "author", None)
+    return author.name if author else None
+
+
+async def _get_issue_checked(issue_id: str, current_user) -> "Issue":
+    """Load an issue and 404/403 like the other issue-scoped GETs."""
+    issue_service = IssueService()
+    project_service = ProjectService()
+
+    issue = await issue_service.get_by_id(issue_id)
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Issue not found",
+        )
+
+    project = await project_service.get_by_id(issue.project_id)
+    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this project",
+        )
+    return issue
+
+
+@router.get(
+    "/{issue_id}/description-revisions",
+    response_model=list[IssueDescriptionRevisionListItem],
+)
+async def list_description_revisions(
+    issue_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+):
+    """List description revisions for an issue, newest first."""
+    limit = min(limit, 10000)
+    await _get_issue_checked(issue_id, current_user)
+
+    revisions = await IssueService().list_description_revisions(issue_id, skip, limit)
+    return [
+        IssueDescriptionRevisionListItem(
+            id=rev.id,
+            issue_id=rev.issue_id,
+            version=rev.version,
+            author_id=rev.author_id,
+            author_name=_description_revision_author_name(rev),
+            created_at=ensure_utc(rev.created_at),
+        )
+        for rev in revisions
+    ]
+
+
+@router.get(
+    "/{issue_id}/description-revisions/{version}",
+    response_model=IssueDescriptionRevisionResponse,
+)
+async def get_description_revision(
+    issue_id: str,
+    version: int,
+    current_user: CurrentUser,
+):
+    """Get a single description-revision snapshot by version number."""
+    await _get_issue_checked(issue_id, current_user)
+
+    rev = await IssueService().get_description_revision(issue_id, version)
+    if not rev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Revision not found",
+        )
+
+    return IssueDescriptionRevisionResponse(
+        id=rev.id,
+        issue_id=rev.issue_id,
+        version=rev.version,
+        description=rev.description,
+        author_id=rev.author_id,
+        author_name=_description_revision_author_name(rev),
+        created_at=ensure_utc(rev.created_at),
+    )
 
 
 # Sub-issues

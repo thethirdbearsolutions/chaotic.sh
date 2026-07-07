@@ -6,9 +6,9 @@ stamps this column with an expiry so a crashed agent doesn't wedge a
 ticket in IN_PROGRESS forever. NULL means "not leased" (never claimed,
 or claimed via a path that doesn't grant a lease -- see
 IssueService.update()). Lazily checked and auto-released -- no cron --
-by IssueService.release_expired_leases(), called from the ready-query
-and issue-read paths (mirrors RitualService's orphaned-ticket-limbo
-lazy cleanup).
+by IssueService.release_expired_leases(), called from the ready-query,
+issue-read, and team-activity-feed paths (mirrors RitualService's
+orphaned-ticket-limbo lazy cleanup).
 
 Hand-written rather than trusting `oxyde makemigrations`' auto-diff:
 this repo's migration history has several tables (`ticket_limbo_blockers`,
@@ -24,13 +24,21 @@ is the one new column below, added by hand instead, same as 0006/0007/
 
 Plain nullable column, no backfill needed -- every existing row's
 correct value is NULL (not currently leased). Rehearsed against a copy
-of a real ~/.chaotic/data/chaotic.db backup (`oxyde migrate` with
-DATABASE_URL pointed at the copy) before landing.
+of a real chaotic.db backup (`oxyde migrate` with DATABASE_URL pointed
+at the copy) plus a from-scratch full-chain apply before landing;
+re-rehearsed after renumbering 0009 -> 0011 (PR #216 took 0009/0010).
+
+Also adds a partial index on the lease column: the lazy-release sweep
+(PR #217 review finding 2) runs on every team activity-feed read, so
+its scan predicate (status = IN_PROGRESS, lease_expires_at non-null and
+past) must stay cheap even on large issue tables. Partial (non-null
+only) because at any moment only actively-leased issues -- a handful --
+carry a value; the index stays tiny regardless of total issue count.
 
 Created: 2026-07-06
 """
 
-depends_on = "0008_unique_project_key_label_name"
+depends_on = "0010_issue_description_revisions"
 
 
 def upgrade(ctx):
@@ -42,8 +50,13 @@ def upgrade(ctx):
     # relying on SQLite's NUMERIC-affinity fallback for a bare TIMESTAMP
     # declaration.
     ctx.execute("ALTER TABLE issues ADD COLUMN lease_expires_at TEXT")
+    ctx.execute(
+        "CREATE INDEX IF NOT EXISTS ix_issues_lease_expires_at "
+        "ON issues (lease_expires_at) WHERE lease_expires_at IS NOT NULL"
+    )
 
 
 def downgrade(ctx):
     """Revert migration."""
+    ctx.execute("DROP INDEX IF EXISTS ix_issues_lease_expires_at")
     ctx.drop_column("issues", "lease_expires_at")

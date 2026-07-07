@@ -491,3 +491,42 @@ class TestClaimLeases:
 
         ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
         assert issue["id"] in ready_ids
+
+
+class TestIssueDescriptionRevisions:
+    """CHT-1243: contract tests for issue description revision history."""
+
+    def test_create_writes_v1_even_without_description(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "Bare Issue")
+        revs = api_client.get_issue_description_revisions(issue["id"])
+        assert [r["version"] for r in revs] == [1]
+        v1 = api_client.get_issue_description_revision(issue["id"], 1)
+        assert v1["description"] is None
+
+    def test_description_edits_append_revisions(self, api_client, test_project):
+        issue = api_client.create_issue(
+            test_project["id"], "Versioned Issue", description="v1 body"
+        )
+        api_client.update_issue(issue["id"], description="v2 body")
+
+        revs = api_client.get_issue_description_revisions(issue["id"])
+        assert [r["version"] for r in revs] == [2, 1]
+        assert all(r["author_name"] is not None for r in revs)  # join("author")
+
+        v1 = api_client.get_issue_description_revision(issue["id"], 1)
+        assert v1["description"] == "v1 body"
+        v2 = api_client.get_issue_description_revision(issue["id"], 2)
+        assert v2["description"] == "v2 body"
+
+    def test_non_description_edit_does_not_bump(self, api_client, test_project):
+        issue = api_client.create_issue(
+            test_project["id"], "Stable Issue", description="Body"
+        )
+        api_client.update_issue(issue["id"], priority="high")
+        revs = api_client.get_issue_description_revisions(issue["id"])
+        assert [r["version"] for r in revs] == [1]
+
+    def test_revision_not_found(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "x")
+        with pytest.raises(APIError):
+            api_client.get_issue_description_revision(issue["id"], 99)
