@@ -5,12 +5,13 @@ Uses Oxyde ORM (Phase 2 migration from SQLAlchemy).
 import logging
 import re
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from oxyde import atomic, execute_raw, IntegrityError
 
 logger = logging.getLogger(__name__)
 
 
+from app.config import get_settings
 from app.oxyde_models.issue import (
     OxydeIssue,
     OxydeIssueComment,
@@ -694,7 +695,7 @@ class IssueService:
         method with skip_ritual_check=True. The ritual check is bypassed
         because the gate has already been resolved by the limbo lifecycle.
         """
-        update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids"})
+        update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
 
         # Track changes for activity log
         activities = []
@@ -761,6 +762,33 @@ class IssueService:
                 needs_budget_deduction = True
             elif old_status == IssueStatus.DONE and new_status != IssueStatus.DONE:
                 update_data["completed_at"] = None
+
+        # Claim lease (CHT-1246): grant/extend on self-claim (final
+        # assignee_id == the acting principal, final status IN_PROGRESS --
+        # covers both a fresh claim and a heartbeat re-claim, since
+        # `chaotic issue start` always resends both fields); clear
+        # whenever the issue leaves IN_PROGRESS or is reassigned away
+        # from a self-claim. Computed from the *final* state (update_data
+        # falling back to the issue's current value) so this fires
+        # correctly whether or not this particular PATCH touches
+        # `status` -- an assignee-only reassignment while already
+        # IN_PROGRESS still invalidates a stale lease.
+        final_status = update_data.get("status", issue.status)
+        final_assignee_id = update_data.get("assignee_id", issue.assignee_id)
+        assignee_touched = "assignee_id" in update_data
+        if (
+            final_status == IssueStatus.IN_PROGRESS
+            and user_id
+            and final_assignee_id == user_id
+        ):
+            lease_seconds = issue_in.lease_seconds
+            if lease_seconds is None:
+                lease_seconds = get_settings().default_lease_minutes * 60
+            update_data["lease_expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+        elif issue.lease_expires_at is not None and (
+            final_status != IssueStatus.IN_PROGRESS or assignee_touched
+        ):
+            update_data["lease_expires_at"] = None
 
         # Apply field updates
         update_data["updated_at"] = datetime.now(timezone.utc)
@@ -1088,6 +1116,177 @@ class IssueService:
             issues.sort(key=lambda i: id_order.get(i.id, 0))
 
         return issues
+
+    async def release_expired_leases(
+        self, project_id: str | None = None, team_id: str | None = None,
+    ) -> list[OxydeIssue]:
+        """Lazily auto-release issues whose claim lease has expired (CHT-1246).
+
+        No cron: this is called inline at the top of every read path that
+        could otherwise surface a stale claim -- list_ready_issues below,
+        plus get_by_id/get_by_identifier/list_issues callers in
+        api/issues.py -- same lazy, on-read, loud shape as
+        RitualService._cleanup_orphaned_ticket_limbo's orphan cleanup.
+
+        Reverts status to TODO, clears assignee_id + lease_expires_at,
+        and writes one LEASE_EXPIRED activity per released issue.
+        Best-effort per issue: one issue's release failing (logged) never
+        blocks the others or the caller's read.
+        """
+        if not project_id and not team_id:
+            raise ValueError("Must provide either project_id or team_id")
+
+        now = datetime.now(timezone.utc)
+        if project_id:
+            rows = await execute_raw(
+                "SELECT id FROM issues WHERE project_id = ? AND status = 'IN_PROGRESS' "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+                [project_id, now],
+            )
+        else:
+            rows = await execute_raw(
+                "SELECT i.id FROM issues i JOIN projects p ON i.project_id = p.id "
+                "WHERE p.team_id = ? AND i.status = 'IN_PROGRESS' "
+                "AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at < ?",
+                [team_id, now],
+            )
+        if not rows:
+            return []
+
+        released = []
+        for row in rows:
+            # Re-fetch under a fresh read: a heartbeat or reassignment may
+            # have landed between the scan above and here (SQLite is
+            # single-writer, but release_lease_if_expired's own re-check
+            # keeps this correct even if that ever changes).
+            issue = await self.get_by_id(row["id"])
+            updated = await self.release_lease_if_expired(issue)
+            if updated is not None and updated is not issue:
+                released.append(updated)
+        return released
+
+    async def release_lease_if_expired(self, issue: OxydeIssue | None) -> OxydeIssue | None:
+        """Single-issue variant of the lazy release check (CHT-1246),
+        for read paths keyed on one issue (GET /issues/{id}, GET by
+        identifier) that don't need a full project/team scan just to
+        check one row. Returns the issue unchanged if its lease (if any)
+        hasn't expired, or the freshly-released issue if it had.
+        Best-effort: a release failure is logged and the original issue
+        is returned rather than failing the caller's read.
+        """
+        if issue is None:
+            return None
+        if issue.status != IssueStatus.IN_PROGRESS or issue.lease_expires_at is None:
+            return issue
+        if issue.lease_expires_at >= datetime.now(timezone.utc):
+            return issue
+        try:
+            return await self._release_expired_lease(issue, datetime.now(timezone.utc))
+        except Exception:
+            logger.exception("Failed to release expired lease for issue=%s", issue.id)
+            return issue
+
+    async def _release_expired_lease(self, issue, now: datetime) -> OxydeIssue:
+        """Revert one expired-lease issue to TODO/unassigned, loudly."""
+        old_assignee_id = issue.assignee_id
+        issue.status = IssueStatus.TODO
+        issue.assignee_id = None
+        issue.lease_expires_at = None
+        issue.updated_at = now
+
+        async with atomic():
+            await issue.save(update_fields={"status", "assignee_id", "lease_expires_at", "updated_at"})
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue.id,
+                user_id=old_assignee_id,
+                activity_type=ActivityType.LEASE_EXPIRED,
+                field_name="status",
+                old_value=IssueStatus.IN_PROGRESS.name,
+                new_value=IssueStatus.TODO.name,
+            )
+
+        updated = await self.get_by_id(issue.id)
+        logger.info(
+            "Released expired lease for issue=%s (identifier=%s, was assigned to %s)",
+            issue.id, updated.identifier if updated else issue.id, old_assignee_id,
+        )
+        await self._broadcast_issue_updated(updated)
+        return updated
+
+    async def list_ready_issues(
+        self,
+        project_id: str | None = None,
+        team_id: str | None = None,
+        assignee_id: str | None = None,
+        limit: int = 50,
+    ) -> list[OxydeIssue]:
+        """'What can I start right now' -- Beads' bd-ready equivalent (CHT-1245).
+
+        Open (BACKLOG/TODO), unblocked (no unresolved incoming BLOCKS
+        relation), sorted urgent-first then oldest-first within a
+        priority tier. ``assignee_id`` is a plain filter, not a
+        CLI-flag translator: pass ``None`` for "unassigned only" (the
+        default 'ready' semantics -- claimed work isn't ready), a user
+        id to restrict to that principal's own assigned-but-not-started
+        issues (``--mine``), or the sentinel ``"any"`` to widen to all
+        issues regardless of assignee (``--include-assigned``).
+
+        Lazily releases expired leases in this scope first (CHT-1246) so
+        an issue whose lease just expired can appear as ready in this
+        same call, not just the next one.
+
+        Deliberately does not push ``limit`` into the SQL query before
+        sorting (unlike list_issues' pagination-oriented approach): the
+        whole point of 'ready' is a correct global priority ordering
+        within the queried scope, so every matching row is fetched and
+        sorted in Python, then sliced to ``limit``.
+        """
+        if not project_id and not team_id:
+            raise ValueError("Must provide either project_id or team_id")
+
+        await self.release_expired_leases(project_id=project_id, team_id=team_id)
+
+        conditions = ["i.status IN ('BACKLOG', 'TODO')"]
+        params: list = []
+        if project_id:
+            conditions.append("i.project_id = ?")
+            params.append(project_id)
+            from_clause = "FROM issues i"
+        else:
+            conditions.append("p.team_id = ?")
+            params.append(team_id)
+            from_clause = "FROM issues i JOIN projects p ON i.project_id = p.id"
+
+        if assignee_id == "any":
+            pass  # --include-assigned: no assignee filter
+        elif assignee_id:
+            conditions.append("i.assignee_id = ?")
+            params.append(assignee_id)
+        else:
+            conditions.append("i.assignee_id IS NULL")
+
+        conditions.append("""NOT EXISTS (
+            SELECT 1 FROM issue_relations ir
+            JOIN issues blocker ON ir.issue_id = blocker.id
+            WHERE ir.related_issue_id = i.id
+              AND ir.relation_type = 'BLOCKS'
+              AND blocker.status NOT IN ('DONE', 'CANCELED')
+        )""")
+
+        where_clause = " AND ".join(conditions)
+        sql = f"SELECT i.id {from_clause} WHERE {where_clause}"
+
+        rows = await execute_raw(sql, params)
+        if not rows:
+            return []
+
+        issue_ids = [r["id"] for r in rows]
+        issues = await OxydeIssue.objects.filter(
+            id__in=issue_ids,
+        ).join("creator").prefetch("labels").all()
+
+        issues.sort(key=_SORT_PYTHON_KEYS["priority"])
+        return issues[:limit]
 
     async def list_by_project(
         self,

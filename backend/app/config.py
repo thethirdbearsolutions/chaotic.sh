@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
 
+    # Claim leases (CHT-1246): default duration for `issue start`/`claim`'s
+    # self-claim lease, overridable per-call via `--lease`/`lease_seconds`.
+    default_lease_minutes: int = 120  # 2 hours
+
     # CORS
     cors_origins: str = "*"
 

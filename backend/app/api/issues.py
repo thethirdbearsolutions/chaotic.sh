@@ -171,6 +171,7 @@ def issue_to_response(issue: Issue) -> IssueResponse:
         parent_id=issue.parent_id,
         due_date=ensure_utc(issue.due_date),
         completed_at=ensure_utc(issue.completed_at),
+        lease_expires_at=ensure_utc(issue.lease_expires_at),
         created_at=ensure_utc(issue.created_at),
         updated_at=ensure_utc(issue.updated_at),
         labels=[LabelResponse.model_validate(label) for label in issue.labels] if issue.labels else [],
@@ -294,6 +295,59 @@ async def create_issue(
     return response
 
 
+async def list_ready_issues(
+    current_user: CurrentUser,
+    project_id: str | None = None,
+    team_id: str | None = None,
+    mine: bool = False,
+    include_assigned: bool = False,
+    limit: int = 50,
+) -> list[IssueResponse]:
+    """What can I start right now (CHT-1245) -- the agent's first
+    shell-out. Not directly routed here: canonical routes are the
+    path-nested ``GET /projects/{project_id}/issues/ready`` and
+    ``GET /teams/{team_id}/issues/ready`` in nested.py (CHT-1223's
+    convention for new endpoints -- see nested.py's module docstring).
+
+    ``mine``/``include_assigned`` resolve to the service's
+    ``assignee_id`` filter convention (None = unassigned only, a user id
+    = that principal only, "any" = no filter).
+    """
+    if mine and include_assigned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot use both mine and include_assigned",
+        )
+
+    issue_service = IssueService()
+    project_service = ProjectService()
+
+    if project_id:
+        project = await project_service.get_by_id(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not await check_user_project_access(current_user, project_id, project.team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+    elif team_id:
+        if not await check_user_team_access(current_user, team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+    else:
+        raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
+
+    if mine:
+        assignee_filter = current_user.id
+    elif include_assigned:
+        assignee_filter = "any"
+    else:
+        assignee_filter = None
+
+    issues = await issue_service.list_ready_issues(
+        project_id=project_id, team_id=team_id,
+        assignee_id=assignee_filter, limit=limit,
+    )
+    return [issue_to_response(issue) for issue in issues]
+
+
 @router.get("", response_model=list[IssueResponse])
 async def list_issues(
     current_user: CurrentUser,
@@ -346,6 +400,11 @@ async def list_issues(
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this project")
 
+        # Lazy auto-release of expired claim leases (CHT-1246) before
+        # listing, so a just-expired lease's issue shows up correctly
+        # released rather than still IN_PROGRESS in this same response.
+        await issue_service.release_expired_leases(project_id=project_id)
+
         # Use unified list_issues with project scope
         issues = await issue_service.list_issues(
             project_id=project_id,
@@ -372,6 +431,9 @@ async def list_issues(
         has_access = await check_user_team_access(current_user, team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
+
+        # Lazy auto-release of expired claim leases (CHT-1246), team-wide.
+        await issue_service.release_expired_leases(team_id=team_id)
 
         # Use unified list_issues with team scope
         issues = await issue_service.list_issues(
@@ -740,6 +802,11 @@ async def get_issue_by_identifier(
             detail="Issue not found",
         )
 
+    # Lazy auto-release of an expired claim lease (CHT-1246): an issue
+    # read is one of the surfaces that must never keep surfacing a
+    # crashed agent's stale claim.
+    issue = await issue_service.release_lease_if_expired(issue)
+
     return issue_to_response(issue)
 
 
@@ -763,6 +830,9 @@ async def get_issue(issue_id: str, current_user: CurrentUser):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
         )
+
+    # Lazy auto-release of an expired claim lease (CHT-1246).
+    issue = await issue_service.release_lease_if_expired(issue)
 
     return issue_to_response(issue)
 

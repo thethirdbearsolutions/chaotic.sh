@@ -332,7 +332,7 @@ want to wake on intents regardless of ritual name.
                       assigned, unassigned, labeled, unlabeled,
                       moved_to_sprint, removed_from_sprint,
                       attested, approved, intent_opened,
-                      intent_cleared, intent_canceled,
+                      intent_cleared, intent_canceled, lease_expired,
                       created, updated, deleted, any
                     Default: any. These tokens are a stable CLI contract;
                     they do not change if backend enum names are renamed.

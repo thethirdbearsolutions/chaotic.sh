@@ -31,6 +31,14 @@ class OxydeIssue(Model):
     parent_id: str | None = Field(default=None)
     due_date: DateTimeUTC | None = Field(default=None)
     completed_at: DateTimeUTC | None = Field(default=None)
+    # Claim lease (CHT-1246): set when an issue is self-claimed into
+    # IN_PROGRESS (assignee_id == the claiming principal), extended by
+    # re-claiming (heartbeat), and cleared whenever status leaves
+    # IN_PROGRESS. NULL means "not leased" -- either never claimed, or
+    # claimed via a path that doesn't grant a lease (e.g. a human
+    # reassigning the ticket to someone else). See IssueService.update()
+    # and IssueService.release_expired_leases().
+    lease_expires_at: DateTimeUTC | None = Field(default=None)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")

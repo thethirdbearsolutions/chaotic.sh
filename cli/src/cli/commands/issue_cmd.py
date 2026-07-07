@@ -1115,33 +1115,47 @@ def register(cli):
 
     @issue.command("claim")
     @click.argument("identifier")
+    @click.option("--lease", "lease_spec", default=None,
+                  help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
+                       "Default: server-configured (CHT-1246).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_claim(identifier):
+    def issue_claim(identifier, lease_spec):
         """Assign an issue to yourself and move to in_progress.
 
         Shortcut for 'issue assign IDENTIFIER me' + 'issue move IDENTIFIER in_progress'.
+        Acquires (or, if you already hold the ticket, extends/heartbeats)
+        a claim lease -- see 'chaotic issue ready' and CHT-1246. A lease
+        that expires while still IN_PROGRESS is auto-released back to
+        todo/unassigned the next time anyone reads or lists the issue.
         """
+        lease_seconds = parse_duration(lease_spec, flag_name="--lease")
         iss = _client().get_issue_by_identifier(identifier)
         user = _client().get_me()
-        _client().update_issue(iss["id"], assignee_id=user["id"], status="in_progress")
+        kwargs = {"assignee_id": user["id"], "status": "in_progress"}
+        if lease_seconds is not None:
+            kwargs["lease_seconds"] = int(lease_seconds)
+        _client().update_issue(iss["id"], **kwargs)
         console.print(f"[green]Issue {identifier} claimed and moved to In Progress.[/green]")
 
     @issue.command("start")
     @click.argument("identifier")
+    @click.option("--lease", "lease_spec", default=None,
+                  help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
+                       "Default: server-configured (CHT-1246).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_start(identifier):
+    def issue_start(identifier, lease_spec):
         """Start working on an issue.
 
-        Alias for 'issue claim IDENTIFIER'.
+        Alias for 'issue claim IDENTIFIER [--lease ...]'.
         """
         # See issue_complete's comment: no @json_result here, delegates
         # to claim's own (CHT-1222).
-        issue_claim.callback(identifier)
+        issue_claim.callback(identifier, lease_spec)
 
     @issue.command("rituals")
     @click.argument("identifier")

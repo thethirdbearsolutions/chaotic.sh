@@ -14,6 +14,7 @@ import json
 import pytest
 
 from cli.commands import await_cmd
+from cli.commands.shared import parse_duration
 
 
 # ---------------------------------------------------------------------------
@@ -22,39 +23,52 @@ from cli.commands import await_cmd
 
 
 class TestParseDuration:
+    """Covers cli.commands.shared.parse_duration, exercised here (and via
+    await's own --timeout tests below) since await was its original/only
+    caller before CHT-1246 gave `issue start/claim --lease` a second one
+    and the helper moved to shared.py. See test_issue_actions.py for the
+    --lease-specific flag_name wiring.
+    """
+
     def test_none_means_no_timeout(self):
-        assert await_cmd._parse_duration(None) is None
-        assert await_cmd._parse_duration("") is None
-        assert await_cmd._parse_duration("   ") is None
+        assert parse_duration(None) is None
+        assert parse_duration("") is None
+        assert parse_duration("   ") is None
 
     def test_bare_integer_is_seconds(self):
-        assert await_cmd._parse_duration("30") == 30.0
+        assert parse_duration("30") == 30.0
 
     def test_unit_suffixes(self):
-        assert await_cmd._parse_duration("30s") == 30.0
-        assert await_cmd._parse_duration("5m") == 300.0
-        assert await_cmd._parse_duration("2h") == 7200.0
-        assert await_cmd._parse_duration("1d") == 86400.0
+        assert parse_duration("30s") == 30.0
+        assert parse_duration("5m") == 300.0
+        assert parse_duration("2h") == 7200.0
+        assert parse_duration("1d") == 86400.0
 
     def test_compound(self):
-        assert await_cmd._parse_duration("1h30m") == 5400.0
+        assert parse_duration("1h30m") == 5400.0
 
     def test_compound_with_whitespace(self):
-        assert await_cmd._parse_duration("1h 30m") == 5400.0
-        assert await_cmd._parse_duration(" 30 s ") == 30.0
+        assert parse_duration("1h 30m") == 5400.0
+        assert parse_duration(" 30 s ") == 30.0
 
     def test_zero_is_rejected(self):
         import click
         for spec in ("0", "0s", "0m", "0h0m0s"):
             with pytest.raises(click.BadParameter) as exc_info:
-                await_cmd._parse_duration(spec)
+                parse_duration(spec)
             assert "zero" in str(exc_info.value)
 
     def test_malformed_raises(self):
         import click
         for spec in ("nope", "abc30", "5x", "30ss", "-5m"):
             with pytest.raises(click.BadParameter):
-                await_cmd._parse_duration(spec)
+                parse_duration(spec)
+
+    def test_flag_name_customizes_error_text(self):
+        import click
+        with pytest.raises(click.BadParameter) as exc_info:
+            parse_duration("0", flag_name="--lease")
+        assert "--lease" in str(exc_info.value)
 
 
 class TestTypeTokenResolution:
