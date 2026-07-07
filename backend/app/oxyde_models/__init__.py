@@ -34,6 +34,7 @@ from app.oxyde_models.ritual import (
     OxydeRitualAttestation,
 )
 from app.oxyde_models.inbox import OxydeInboxEntry
+from app.oxyde_models.template import OxydeTemplate
 
 __all__ = [
     "OxydeUser",
@@ -61,4 +62,5 @@ __all__ = [
     "OxydeRitualGroup",
     "OxydeRitualAttestation",
     "OxydeInboxEntry",
+    "OxydeTemplate",
 ]

@@ -361,6 +361,19 @@ CREATE TABLE IF NOT EXISTS inbox_entries (
 CREATE INDEX IF NOT EXISTS inbox_entries_recipient_user_id_idx ON inbox_entries (recipient_user_id);
 CREATE INDEX IF NOT EXISTS inbox_entries_team_id_idx ON inbox_entries (team_id);
 
+CREATE TABLE IF NOT EXISTS templates (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(1000),
+    body TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
+-- CHT-1259 (migration 0013): backstop for TemplateService.create's
+-- duplicate-name check, same shape as labels_team_id_name_idx.
+CREATE UNIQUE INDEX IF NOT EXISTS templates_team_id_name_idx ON templates (team_id, name);
+
 CREATE TABLE IF NOT EXISTS oxyde_migrations (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
