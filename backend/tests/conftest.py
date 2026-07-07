@@ -242,6 +242,27 @@ CREATE TABLE IF NOT EXISTS document_labels (
     FOREIGN KEY(label_id) REFERENCES labels(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS document_revisions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE (document_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS issue_description_revisions (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    description TEXT,
+    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE (issue_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS issue_activities (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
     issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,

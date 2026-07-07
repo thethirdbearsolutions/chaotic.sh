@@ -917,6 +917,61 @@ def register(cli):
 
         console.print(table)
 
+    @issue.command("history")
+    @click.argument("identifier")
+    @click.option("--version", "-v", type=int, help="Show the full description snapshot for one version")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def issue_history(identifier, version):
+        """Show description revision history for an issue.
+
+        Every edit that changes the description is snapshotted (v1 is
+        the state at creation). Without --version, lists the versions;
+        with --version N, prints that snapshot's description.
+        """
+        m = _main()
+        iss = _client().get_issue_by_identifier(identifier)
+
+        if version is not None:
+            rev = _client().get_issue_description_revision(iss["id"], version)
+            if m.is_json_output():
+                m.output_json(rev)
+                return
+            body = rev.get("description") or "(empty)"
+            author = rev.get("author_name") or "Unknown"
+            date = (rev.get("created_at") or "")[:19].replace("T", " ")
+            console.print(Panel(
+                Markdown(body),
+                title=f"{identifier} description v{rev['version']}",
+                subtitle=f"{author} · {date}",
+            ))
+            return
+
+        revisions = _client().get_issue_description_revisions(iss["id"])
+        if m.is_json_output():
+            m.output_json(revisions or [])
+            return
+
+        if not revisions:
+            console.print(f"[yellow]No description revisions found for {identifier}.[/yellow]")
+            return
+
+        table = Table(title=f"Description history for {identifier}")
+        table.add_column("Version")
+        table.add_column("Author")
+        table.add_column("Date", style="dim")
+
+        for rev in revisions:
+            table.add_row(
+                f"v{rev['version']}",
+                rev.get("author_name") or "Unknown",
+                (rev.get("created_at") or "")[:19].replace("T", " "),
+            )
+
+        console.print(table)
+        console.print(f"[dim]Use 'chaotic issue history {identifier} --version N' to view a snapshot.[/dim]")
+
     @issue.command("block")
     @click.argument("identifier")
     @click.argument("blocked_identifier")

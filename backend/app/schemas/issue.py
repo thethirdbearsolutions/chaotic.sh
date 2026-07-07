@@ -147,6 +147,33 @@ class LabelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class IssueDescriptionRevisionListItem(BaseModel):
+    """Lightweight description-revision entry for the history list (no body)."""
+
+    id: str
+    issue_id: str
+    version: int
+    author_id: str | None = None
+    author_name: str | None = None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IssueDescriptionRevisionResponse(BaseModel):
+    """Full description-revision snapshot."""
+
+    id: str
+    issue_id: str
+    version: int
+    description: str | None = None
+    author_id: str | None = None
+    author_name: str | None = None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class IssueActivityResponse(BaseModel):
     """Schema for activity response."""
 

@@ -192,6 +192,66 @@ def register(cli):
             else:
                 console.print("\n[dim]No comments[/dim]")
 
+    @doc.command("history")
+    @click.argument("document_id")
+    @click.option("--version", "-v", type=int, help="Show the full snapshot for one version")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def doc_history(document_id, version):
+        """Show revision history for a document.
+
+        Every edit that changes the title or content is snapshotted
+        (v1 is the state at creation). Without --version, lists the
+        versions; with --version N, prints that snapshot.
+
+        DOCUMENT_ID can be a full ID, title, or a prefix.
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        document_id = m.resolve_document_id(document_id, team_id)
+
+        if version is not None:
+            rev = _client().get_document_revision(document_id, version)
+            if m.is_json_output():
+                m.output_json(rev)
+                return
+            body = rev.get("content") or "(empty)"
+            author = rev.get("author_name") or "Unknown"
+            date = (rev.get("created_at") or "")[:19].replace("T", " ")
+            console.print(Panel(
+                Markdown(body),
+                title=f"{rev['title']} — v{rev['version']}",
+                subtitle=f"{author} · {date}",
+            ))
+            return
+
+        revisions = _client().get_document_revisions(document_id)
+        if m.is_json_output():
+            m.output_json(revisions or [])
+            return
+
+        if not revisions:
+            console.print("[yellow]No revisions found.[/yellow]")
+            return
+
+        table = Table(title="Document history")
+        table.add_column("Version")
+        table.add_column("Title")
+        table.add_column("Author")
+        table.add_column("Date", style="dim")
+
+        for rev in revisions:
+            table.add_row(
+                f"v{rev['version']}",
+                rev.get("title") or "",
+                rev.get("author_name") or "Unknown",
+                (rev.get("created_at") or "")[:19].replace("T", " "),
+            )
+
+        console.print(table)
+        console.print("[dim]Use 'chaotic doc history <id> --version N' to view a snapshot.[/dim]")
+
     @doc.command("comment")
     @click.argument("document_id")
     @click.argument("content")

@@ -20,6 +20,7 @@ from app.oxyde_models.issue import (
     OxydeTicketLimbo,
     OxydeTicketLimboBlocker,
     OxydeBudgetTransaction,
+    OxydeIssueDescriptionRevision,
 )
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
@@ -45,6 +46,7 @@ Issue = OxydeIssue
 IssueComment = OxydeIssueComment
 IssueActivity = OxydeIssueActivity
 IssueRelation = OxydeIssueRelation
+IssueDescriptionRevision = OxydeIssueDescriptionRevision
 Label = OxydeLabel
 
 
@@ -643,6 +645,8 @@ class IssueService:
                         activity_type=ActivityType.CREATED,
                     )
 
+                    await self._snapshot_description_revision(issue, creator_id)
+
                     # Deduct from sprint budget if creating as DONE
                     if issue_in.status == IssueStatus.DONE:
                         await self._deduct_from_sprint_budget(issue, creator_id)
@@ -695,6 +699,14 @@ class IssueService:
         because the gate has already been resolved by the limbo lifecycle.
         """
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids"})
+
+        # Decide upfront whether this update will snapshot the
+        # description. We capture this before mutating the issue object
+        # so the comparison reflects the true old vs new value.
+        description_changed = (
+            "description" in update_data
+            and update_data["description"] != issue.description
+        )
 
         # Track changes for activity log
         activities = []
@@ -782,12 +794,86 @@ class IssueService:
             for act_data in activities:
                 await OxydeIssueActivity.objects.create(**act_data)
 
+            if description_changed:
+                await self._snapshot_description_revision(issue, user_id)
+
             # Deduct from sprint budget inside transaction (CHT-974 review fix)
             if needs_budget_deduction:
                 await self._deduct_from_sprint_budget(issue, user_id)
 
         # Reload with relations
         return await self.get_by_id(issue.id)
+
+    async def _next_description_revision_version(self, issue_id: str) -> int:
+        """Compute the next description-revision number for an issue.
+
+        Revision numbers are dense and monotonic per-issue. The UNIQUE
+        (issue_id, version) index serializes concurrent appends — a
+        duplicate-key error means two writers raced, and the loser
+        retries in _snapshot_description_revision.
+        """
+        latest = await OxydeIssueDescriptionRevision.objects.filter(
+            issue_id=issue_id
+        ).max("version")
+        return (latest or 0) + 1
+
+    async def _snapshot_description_revision(
+        self,
+        issue: OxydeIssue,
+        author_id: str | None,
+    ) -> OxydeIssueDescriptionRevision:
+        """Append a description-revision snapshot for the issue.
+
+        Fail-loud inside the caller's atomic() block, same rationale as
+        DocumentService._snapshot_revision: no silent history gaps.
+
+        Retries on UNIQUE-constraint races (two writers both reading
+        MAX(version)=N). The IssueService.create path is already
+        wrapped in its own retry loop on a separate identifier-race,
+        so this snapshot also benefits from that outer loop on create —
+        the retry here covers the update path where there is no outer
+        loop.
+
+        Retrying inside the caller's still-open atomic() relies on
+        SQLite not poisoning a transaction on statement failure: the
+        failed INSERT is discarded and the transaction stays usable.
+        Revisit if we ever move to Postgres, where an errored statement
+        aborts the transaction until rollback (each attempt would need
+        a savepoint).
+
+        Revisions are uncapped and unpruned by conscious decision:
+        bodies are kilobyte-scale and edits are human-paced at current
+        scale, so the table stays small. Revisit if either changes.
+        """
+        last_error = None
+        for _ in range(5):
+            try:
+                version = await self._next_description_revision_version(issue.id)
+                return await OxydeIssueDescriptionRevision.objects.create(
+                    issue_id=issue.id,
+                    version=version,
+                    description=issue.description,
+                    author_id=author_id,
+                )
+            except IntegrityError as e:
+                last_error = e
+        raise last_error
+
+    async def list_description_revisions(
+        self, issue_id: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeIssueDescriptionRevision]:
+        """List description revisions for an issue, newest first."""
+        return await OxydeIssueDescriptionRevision.objects.filter(
+            issue_id=issue_id
+        ).join("author").order_by("-version").offset(skip).limit(limit).all()
+
+    async def get_description_revision(
+        self, issue_id: str, version: int
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Get a single description revision."""
+        return await OxydeIssueDescriptionRevision.objects.filter(
+            issue_id=issue_id, version=version
+        ).join("author").first()
 
     async def list_activities(
         self, issue_id: str, skip: int = 0, limit: int = 50
@@ -874,6 +960,7 @@ class IssueService:
             await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(related_issue_id=issue.id).delete()
+            await OxydeIssueDescriptionRevision.objects.filter(issue_id=issue.id).delete()
             # Ritual attestations on this issue. Without explicit
             # cleanup, orphan attestations accumulate pointing at a
             # deleted issue.
