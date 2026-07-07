@@ -127,6 +127,27 @@ class EstimateRequiredError(Exception):
         super().__init__(message)
 
 
+class IssueAlreadyClaimedError(Exception):
+    """Raised when a self-claim loses to another claimant (CHT-1246,
+    PR #217 review finding 1).
+
+    Two paths raise this:
+    * fast-path -- the issue is already held under a valid (unexpired)
+      lease by someone else at read time;
+    * CAS -- the conditional assignee UPDATE matched zero rows because
+      another claimant won the race between our read and our write.
+    """
+
+    def __init__(self, issue_id: str, identifier: str, assignee_id: str | None):
+        self.issue_id = issue_id
+        self.identifier = identifier
+        self.assignee_id = assignee_id
+        holder = assignee_id or "another claimant"
+        super().__init__(
+            f"Issue {identifier} is already claimed by {holder}."
+        )
+
+
 # Semantic ordering maps for Python-side sorting
 # Keys include both enum names (DB storage) and values (API/Pydantic) for robustness
 _PRIORITY_ORDER = {
@@ -788,15 +809,35 @@ class IssueService:
         final_status = update_data.get("status", issue.status)
         final_assignee_id = update_data.get("assignee_id", issue.assignee_id)
         assignee_touched = "assignee_id" in update_data
-        if (
+        # Captured before the setattr loop below overwrites the instance:
+        # the CAS predicate must be the value we *read*, not the value we
+        # are about to write.
+        old_assignee_id = issue.assignee_id
+        is_self_claim = (
             final_status == IssueStatus.IN_PROGRESS
-            and user_id
+            and user_id is not None
             and final_assignee_id == user_id
-        ):
+        )
+        if is_self_claim:
             lease_seconds = issue_in.lease_seconds
             if lease_seconds is None:
                 lease_seconds = get_settings().default_lease_minutes * 60
-            update_data["lease_expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+            now = datetime.now(timezone.utc)
+            update_data["lease_expires_at"] = now + timedelta(seconds=lease_seconds)
+            # Fast-path claim guard (PR #217 review finding 1): the issue
+            # is already held by someone else under a valid lease. The
+            # CAS below is the real serializer -- this just gives the
+            # common sequential case a precise error without burning a
+            # write.
+            if (
+                issue.assignee_id is not None
+                and issue.assignee_id != user_id
+                and issue.lease_expires_at is not None
+                and issue.lease_expires_at >= now
+            ):
+                raise IssueAlreadyClaimedError(
+                    issue.id, issue.identifier, issue.assignee_id,
+                )
         elif issue.lease_expires_at is not None and (
             final_status != IssueStatus.IN_PROGRESS or assignee_touched
         ):
@@ -808,6 +849,25 @@ class IssueService:
             setattr(issue, field, value)
 
         async with atomic():
+            if is_self_claim:
+                # Compare-and-set claim acquisition (PR #217 review
+                # finding 1, same shape as RitualService._approve_atomic):
+                # the assignee write is guarded by "assignee_id is still
+                # what we read it as", so of two concurrent claimants
+                # exactly one wins; the loser matches zero rows, raises,
+                # and this transaction rolls back before any ASSIGNED
+                # activity is written. Also covers heartbeats (predicate
+                # = ourselves) so a re-claim that raced a lease release +
+                # rival claim fails loudly instead of silently stealing.
+                claimed = await OxydeIssue.objects.filter(
+                    id=issue.id, assignee_id=old_assignee_id,
+                ).update(assignee_id=user_id)
+                if not claimed:
+                    current = await OxydeIssue.objects.get_or_none(id=issue.id)
+                    raise IssueAlreadyClaimedError(
+                        issue.id, issue.identifier,
+                        current.assignee_id if current else None,
+                    )
             await issue.save(update_fields=set(update_data.keys()))
 
             # Handle labels via junction table
@@ -1206,19 +1266,27 @@ class IssueService:
 
     async def release_expired_leases(
         self, project_id: str | None = None, team_id: str | None = None,
+        scan_limit: int = 50,
     ) -> list[OxydeIssue]:
         """Lazily auto-release issues whose claim lease has expired (CHT-1246).
 
         No cron: this is called inline at the top of every read path that
         could otherwise surface a stale claim -- list_ready_issues below,
-        plus get_by_id/get_by_identifier/list_issues callers in
-        api/issues.py -- same lazy, on-read, loud shape as
+        plus get_by_id/get_by_identifier/list_issues/team-activity-feed
+        callers in api/issues.py -- same lazy, on-read, loud shape as
         RitualService._cleanup_orphaned_ticket_limbo's orphan cleanup.
+        The activity-feed placement is what lets `chaotic await issue X
+        --type lease_expired` self-trigger (PR #217 review finding 2):
+        await polls that feed, so the poll itself runs the sweep.
 
         Reverts status to TODO, clears assignee_id + lease_expires_at,
         and writes one LEASE_EXPIRED activity per released issue.
         Best-effort per issue: one issue's release failing (logged) never
-        blocks the others or the caller's read.
+        blocks the others or the caller's read. ``scan_limit`` bounds the
+        work done on any single read (the partial index from migration
+        0011 keeps the scan itself cheap); a pathological backlog of
+        expired leases drains across successive reads instead of stalling
+        one of them.
         """
         if not project_id and not team_id:
             raise ValueError("Must provide either project_id or team_id")
@@ -1227,15 +1295,15 @@ class IssueService:
         if project_id:
             rows = await execute_raw(
                 "SELECT id FROM issues WHERE project_id = ? AND status = 'IN_PROGRESS' "
-                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
-                [project_id, now],
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? LIMIT ?",
+                [project_id, now, scan_limit],
             )
         else:
             rows = await execute_raw(
                 "SELECT i.id FROM issues i JOIN projects p ON i.project_id = p.id "
                 "WHERE p.team_id = ? AND i.status = 'IN_PROGRESS' "
-                "AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at < ?",
-                [team_id, now],
+                "AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at < ? LIMIT ?",
+                [team_id, now, scan_limit],
             )
         if not rows:
             return []
@@ -1243,12 +1311,24 @@ class IssueService:
         released = []
         for row in rows:
             # Re-fetch under a fresh read: a heartbeat or reassignment may
-            # have landed between the scan above and here (SQLite is
-            # single-writer, but release_lease_if_expired's own re-check
-            # keeps this correct even if that ever changes).
+            # have landed between the scan above and here; the CAS inside
+            # _release_expired_lease is the real serializer either way
+            # (a CAS-lost row returns None and is simply not ours to
+            # report -- whoever won already emitted the activity).
             issue = await self.get_by_id(row["id"])
-            updated = await self.release_lease_if_expired(issue)
-            if updated is not None and updated is not issue:
+            if (
+                issue is None
+                or issue.status != IssueStatus.IN_PROGRESS
+                or issue.lease_expires_at is None
+                or issue.lease_expires_at >= now
+            ):
+                continue
+            try:
+                updated = await self._release_expired_lease(issue, now)
+            except Exception:
+                logger.exception("Failed to release expired lease for issue=%s", issue.id)
+                continue
+            if updated is not None:
                 released.append(updated)
         return released
 
@@ -1257,9 +1337,10 @@ class IssueService:
         for read paths keyed on one issue (GET /issues/{id}, GET by
         identifier) that don't need a full project/team scan just to
         check one row. Returns the issue unchanged if its lease (if any)
-        hasn't expired, or the freshly-released issue if it had.
-        Best-effort: a release failure is logged and the original issue
-        is returned rather than failing the caller's read.
+        hasn't expired, or the current (released -- by us or by a
+        concurrent winner) issue if it had. Best-effort: a release
+        failure is logged and the original issue is returned rather than
+        failing the caller's read.
         """
         if issue is None:
             return None
@@ -1268,21 +1349,50 @@ class IssueService:
         if issue.lease_expires_at >= datetime.now(timezone.utc):
             return issue
         try:
-            return await self._release_expired_lease(issue, datetime.now(timezone.utc))
+            released = await self._release_expired_lease(issue, datetime.now(timezone.utc))
+            if released is not None:
+                return released
+            # CAS-lost: another releaser (or a heartbeat) got there first.
+            # Return the current row so the caller's read reflects it.
+            return await self.get_by_id(issue.id)
         except Exception:
             logger.exception("Failed to release expired lease for issue=%s", issue.id)
             return issue
 
-    async def _release_expired_lease(self, issue, now: datetime) -> OxydeIssue:
-        """Revert one expired-lease issue to TODO/unassigned, loudly."""
+    async def _release_expired_lease(self, issue, now: datetime) -> OxydeIssue | None:
+        """Revert one expired-lease issue to TODO/unassigned, loudly.
+
+        Compare-and-set (PR #217 review finding 3, same shape as
+        RitualService._approve_atomic): the write is guarded by "still
+        IN_PROGRESS with a still-expired lease", so of N concurrent
+        readers hitting the same expired lease exactly one performs the
+        release and emits the one LEASE_EXPIRED activity + broadcast for
+        the one logical expiry event; the rest match zero rows and
+        return None. A concurrent heartbeat also wins against us here
+        (lease_expires_at moves past ``now``), correctly aborting the
+        release. End-state idempotence was already guaranteed; this
+        makes the *side effects* exactly-once too.
+        """
         old_assignee_id = issue.assignee_id
-        issue.status = IssueStatus.TODO
-        issue.assignee_id = None
-        issue.lease_expires_at = None
-        issue.updated_at = now
 
         async with atomic():
-            await issue.save(update_fields={"status", "assignee_id", "lease_expires_at", "updated_at"})
+            # Raw SQL rather than the ORM filter: oxyde doesn't support
+            # range lookups (__lt) on DateTimeUTC (Annotated) fields, and
+            # the expiry comparison must live inside the guarded UPDATE
+            # itself. RETURNING gives us the row count (SQLite >= 3.35,
+            # already required by this codebase's Python floor). The
+            # datetime param serializes exactly like the scan query in
+            # release_expired_leases, which is proven against stored rows.
+            won = await execute_raw(
+                "UPDATE issues SET status = 'TODO', assignee_id = NULL, "
+                "lease_expires_at = NULL, updated_at = ? "
+                "WHERE id = ? AND status = 'IN_PROGRESS' "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
+                "RETURNING id",
+                [now, issue.id, now],
+            )
+            if not won:
+                return None
             await OxydeIssueActivity.objects.create(
                 issue_id=issue.id,
                 user_id=old_assignee_id,
@@ -1318,6 +1428,11 @@ class IssueService:
         issues (``--mine``), or the sentinel ``"any"`` to widen to all
         issues regardless of assignee (``--include-assigned``).
 
+        Epics are excluded (PR #217 review finding 5): an epic is a
+        container for work, not work -- a fleet agent should never
+        'start' one. Its sub-issues surface individually on their own
+        merits.
+
         Lazily releases expired leases in this scope first (CHT-1246) so
         an issue whose lease just expired can appear as ready in this
         same call, not just the next one.
@@ -1333,7 +1448,11 @@ class IssueService:
 
         await self.release_expired_leases(project_id=project_id, team_id=team_id)
 
-        conditions = ["i.status IN ('BACKLOG', 'TODO')"]
+        conditions = [
+            "i.status IN ('BACKLOG', 'TODO')",
+            # Epics are containers, not startable work (finding 5).
+            "i.issue_type != 'EPIC'",
+        ]
         params: list = []
         if project_id:
             conditions.append("i.project_id = ?")

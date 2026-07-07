@@ -177,7 +177,9 @@ chaotic issue open CHT-123                # Open issue in browser
 agent's first shell-out, before touching `issue list`'s filters. It's
 Beads' `bd-ready` equivalent: open (`backlog`/`todo`), unblocked (no
 unresolved `blocks` relation), unassigned by default, priority-sorted
-(`urgent` first, then oldest-first within a tier).
+(`urgent` first, then oldest-first within a tier). Epics are excluded
+-- they're containers for work, not startable work; their sub-issues
+surface individually.
 
 ```bash
 chaotic issue ready --json                 # unassigned, unblocked, open work
@@ -205,11 +207,15 @@ chaotic issue wontfix CHT-123              # cancel (alias: issue cancel)
 `start`/`claim` acquire a **claim lease** -- a server-side expiry
 (default ~2h, `--lease` overrides). Re-running `start`/`claim` while you
 still hold the ticket extends (heartbeats) the lease instead of
-erroring. If the lease expires while the issue is still `in_progress`,
-the next read or list of that issue lazily releases it back to
-`todo`/unassigned and logs a `lease_expired` activity -- no cron, no
-silent wedge. See [docs/agents.md](../docs/agents.md#claim-leases) for
-the full semantics.
+erroring. Claiming a ticket someone else already holds under a valid
+lease fails with an "already claimed by X" error (`already_claimed` on
+the wire, exit 1) -- concurrent claims are serialized server-side, so
+of two racing `issue start`s exactly one wins. If the lease expires
+while the issue is still `in_progress`, the next read or list of that
+issue lazily releases it back to `todo`/unassigned and logs a
+`lease_expired` activity -- no cron, no silent wedge. See
+[docs/agents.md](../docs/agents.md#claim-leases) for the full
+semantics.
 
 ### Creating issues
 ```bash
@@ -386,6 +392,11 @@ want to wake on intents regardless of ritual name.
                     on its own ongoing activity. Note: if multiple agents
                     share one principal (e.g. a team bot), this filter
                     hides all of their activity, not just the caller's.
+                    Exception: `lease_expired` events are never filtered
+                    as self — their user_id is the *former* lease holder
+                    by attribution (the release is a system action), and
+                    the headline use is an agent awaiting its own lease's
+                    expiry.
 --timeout DURATION  Give up after DURATION. Accepted forms: integer
                     seconds (`30`), or suffixed units, combinable
                     (`30s`, `5m`, `8h`, `1h30m`; whitespace between

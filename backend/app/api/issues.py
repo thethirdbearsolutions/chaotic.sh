@@ -34,6 +34,7 @@ from app.services.issue_service import (
     ClaimRitualsError,
     IntentInFlightError,
     EstimateRequiredError,
+    IssueAlreadyClaimedError,
 )
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
@@ -471,6 +472,10 @@ async def list_issues(
         has_access = await check_user_project_access(current_user, project.id, project.team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this sprint")
+        # Lazy lease sweep (CHT-1246, PR #217 review finding 3): the web
+        # UI's sprint board queries by sprint_id alone, so without this a
+        # stale claim could sit on the board indefinitely.
+        await issue_service.release_expired_leases(project_id=sprint.project_id)
         issues = await issue_service.list_by_sprint(
             sprint_id, skip, limit, issue_type=issue_type, sort_by=sort_by, order=order
         )
@@ -484,6 +489,12 @@ async def list_issues(
         if not team_ids:
             issues = []
         else:
+            # Lazy lease sweep (CHT-1246, PR #217 review finding 3):
+            # `issue mine` queries by assignee alone -- an agent checking
+            # its own claims must not see a phantom still-mine issue
+            # whose lease already lapsed server-side.
+            for tid in team_ids:
+                await issue_service.release_expired_leases(team_id=tid)
             issues = await issue_service.list_by_assignee(
                 assignee_id, skip, limit,
                 statuses=statuses, priorities=priorities, issue_type=issue_type, team_ids=team_ids,
@@ -640,6 +651,15 @@ async def list_team_activities(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found",
             )
+
+    # Bounded lazy lease sweep (CHT-1246, PR #217 review finding 2).
+    # This is the read every waiter funnels through: `chaotic await`
+    # polls this feed, and the web UI's dashboard fetches it -- so
+    # running the sweep here is what lets an expired lease's
+    # LEASE_EXPIRED activity appear *because* something is waiting for
+    # it, with no third-party issue reads required. Cheap: the scan is
+    # backed by migration 0011's partial index and capped by scan_limit.
+    await issue_service.release_expired_leases(team_id=team_id)
 
     # Fetch both issue and document activities (CHT-639)
     # Get more than needed so we can merge and sort, then limit
@@ -935,6 +955,19 @@ async def update_issue(
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
                 "initiator_user_id": e.initiator_user_id,
+            },
+        )
+    except IssueAlreadyClaimedError as e:
+        # Self-claim lost -- either the fast-path guard (valid lease held
+        # by someone else) or the CAS (raced another claimant and lost).
+        # CHT-1246, PR #217 review finding 1.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "already_claimed",
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "assignee_id": e.assignee_id,
             },
         )
 

@@ -610,6 +610,36 @@ class TestPollingLoop:
         # Excluded → no match → timeout.
         assert result is None
 
+    def test_lease_expired_exempt_from_self_filter(self):
+        """CHT-1246 (PR #217 review finding 2): a lease_expired event's
+        user_id is the *former holder* by attribution -- the release is a
+        system action. The headline flow is an agent awaiting its own
+        lease's expiry, so the default exclude-self must not swallow it."""
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        later = watermark + timedelta(seconds=10)
+        events = [
+            _event("mine", later, activity_type="lease_expired", user_id="me"),
+        ]
+
+        def fetch(skip, limit):
+            return events
+
+        result = await_cmd._poll(
+            fetch, watermark=watermark, scope={}, type_filter={"lease_expired"},
+            exclude_user_id="me", until_cmd=None,
+            timeout_secs=0.2, interval_secs=0.05,
+        )
+        assert result is not None
+        assert result["id"] == "mine"
+
+    def test_event_is_self_helper_exempts_lease_expired(self):
+        assert await_cmd._event_is_self(
+            {"activity_type": "commented", "user_id": "me"}, "me",
+        ) is True
+        assert await_cmd._event_is_self(
+            {"activity_type": "lease_expired", "user_id": "me"}, "me",
+        ) is False
+
     def test_type_filter_rejects_non_matching(self):
         watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
         later = watermark + timedelta(seconds=10)

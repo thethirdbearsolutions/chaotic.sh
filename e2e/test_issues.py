@@ -492,6 +492,99 @@ class TestClaimLeases:
         ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
         assert issue["id"] in ready_ids
 
+    def test_second_claimant_gets_already_claimed_over_the_wire(self, api_client, test_team, test_project):
+        """PR #217 review finding 1, e2e: a rival principal's `issue
+        start`-shaped PATCH against an issue already claimed under a
+        valid lease gets the already_claimed 409, and the holder keeps
+        the ticket. (The interleaved-write CAS race is covered by the
+        backend gather test; this proves the wire contract. A second
+        principal needs its own scoped token patch -- the api_client /
+        api_client2 fixtures' get_token patches nest, so the innermost
+        wins for both; same pattern as test_teams' accept-invitation.)
+        """
+        import uuid as _uuid
+        from unittest.mock import patch
+        from conftest import _run_async, _create_user_in_db, TEST_BASE_URL
+        from cli.client import Client
+        from app.utils.security import create_access_token
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        rival = _run_async(_create_user_in_db(
+            f"rival-{_uuid.uuid4().hex[:8]}@example.com", "Rival Claimant",
+        ))
+
+        async def _add_member():
+            await OxydeTeamMember.objects.create(
+                team_id=test_team["id"], user_id=rival.id, role=TeamRole.MEMBER,
+            )
+
+        _run_async(_add_member())
+        rival_token = create_access_token(data={"sub": rival.id})
+
+        issue = api_client.create_issue(test_project["id"], "Race Target", status="todo")
+        me = api_client.get_me()
+
+        held = api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"],
+        )
+        assert held["assignee_id"] == me["id"]
+        assert held["lease_expires_at"] is not None
+
+        with patch("cli.client.get_api_url", return_value=TEST_BASE_URL), \
+             patch("cli.client.get_token", return_value=rival_token), \
+             patch("cli.client.get_api_key", return_value=None):
+            rival_client = Client()
+            with pytest.raises(APIError) as exc_info:
+                rival_client.update_issue(
+                    issue["id"], status="in_progress", assignee_id=rival.id,
+                )
+        assert "already claimed" in str(exc_info.value).lower()
+
+        final = api_client.get_issue(issue["id"])
+        assert final["assignee_id"] == me["id"]
+        assert final["status"] == "in_progress"
+
+    def test_await_lease_expired_self_triggers(self, api_client, test_team, test_project):
+        """PR #217 review acceptance bar for finding 2: `chaotic await
+        issue X --type lease_expired` must wake with NO third-party issue
+        reads occurring during the wait. The only traffic between claim
+        and wake is await's own activity-feed polling -- which now runs
+        the lazy sweep server-side, releasing the lease and emitting the
+        very event being awaited. Also exercises the lease_expired
+        self-filter exemption end-to-end: the event's user_id is the
+        awaiting principal itself.
+        """
+        import json
+        from unittest.mock import patch
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+
+        issue = api_client.create_issue(test_project["id"], "Await My Own Expiry", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=1,
+        )
+
+        # `await issue` resolves the issue once up-front (while the lease
+        # is still valid), then polls only GET /issues/activities.
+        with patch("cli.main.get_current_team", return_value=test_team["id"]):
+            result = CliRunner().invoke(chaotic_cli, [
+                "await", "issue", issue["identifier"],
+                "--type", "lease_expired", "--timeout", "30", "--json",
+            ])
+
+        assert result.exit_code == 0, result.output
+        event = json.loads(result.output)
+        assert event["activity_type"] == "lease_expired"
+        assert event["issue_id"] == issue["id"]
+        assert event["old_value"] == "IN_PROGRESS"
+        assert event["new_value"] == "TODO"
+
+        released = api_client.get_issue(issue["id"])
+        assert released["status"] == "todo"
+        assert released["assignee_id"] is None
+
 
 class TestIssueDescriptionRevisions:
     """CHT-1243: contract tests for issue description revision history."""

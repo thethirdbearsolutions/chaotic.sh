@@ -167,6 +167,15 @@ def _event_matches_type(event: dict, wire_filter: set[str] | None) -> bool:
 
 
 def _event_is_self(event: dict, principal_user_id: str | None) -> bool:
+    # lease_expired is exempt from self-filtering (CHT-1246): its
+    # user_id is the *former lease holder* by attribution -- the release
+    # itself is a system action (lazy expiry sweep), not something the
+    # principal authored. The headline use is precisely an agent
+    # watching for its own lease to lapse (`await issue X --type
+    # lease_expired`), which the default exclude-self would silently
+    # swallow forever.
+    if event.get("activity_type") == "lease_expired":
+        return False
     return bool(
         principal_user_id
         and event.get("user_id") == principal_user_id

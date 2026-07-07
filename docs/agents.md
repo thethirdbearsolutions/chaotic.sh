@@ -39,6 +39,9 @@ An issue is "ready" when all of the following hold:
 - **Unblocked**: no unresolved `blocks` relation. If issue B is blocked
   by issue A, B doesn't show up in `ready` until A reaches `done` or
   `canceled`.
+- **Not an epic**: epics are containers for work, not work — an agent
+  should never "start" one. Their sub-issues surface individually on
+  their own merits.
 
 Results are priority-sorted: `urgent` first, then `high`/`medium`/`low`/
 `no_priority`, and oldest-first within each priority tier — so the top
@@ -69,6 +72,15 @@ chaotic issue start CHT-42                 # re-run while you still hold it: hea
 Duration accepts the same shorthand as `chaotic await --timeout`: bare
 seconds (`1800`), or unit suffixes (`30m`, `4h`, `1d`, `1h30m`).
 
+**Claims are exclusive while the lease is valid.** `issue start` on a
+ticket someone else holds under an unexpired lease fails with "already
+claimed by X" (`already_claimed` on the wire, HTTP 409). Concurrent
+claims on the same unassigned ticket are serialized server-side
+(compare-and-set on the assignee slot), so of two racing `issue start`s
+exactly one wins — the loser gets the same clean error, not a silent
+overwrite. On that error: pick something else from `issue ready`, or
+`await` the ticket if you specifically need it.
+
 **If your task runs long, keep re-claiming.** Re-running `issue start`
 (or `issue claim`) on a ticket you already hold extends the lease --
 that's the heartbeat. There's no separate "renew" command; claiming is
@@ -89,6 +101,14 @@ You can wake on this event with `await`:
 ```bash
 chaotic await issue CHT-42 --type lease_expired --json
 ```
+
+This works even when nothing else is touching the system: `await` polls
+the team activity feed, and that read itself runs the lazy expiry sweep
+server-side — the waiter's own polling is what surfaces the event. And
+although `await` normally filters out your own activity, `lease_expired`
+events are exempt (their `user_id` is the former holder by attribution;
+the release is a system action), so an agent awaiting its *own* lease's
+expiry wakes as expected.
 
 (`chaotic mcp`'s `issue_start` tool, below, claims the same way but
 doesn't yet expose a `--lease` override — CLI only for now.)
