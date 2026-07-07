@@ -305,6 +305,29 @@ class Client:
     def get_issue(self, issue_id: str) -> dict:
         return self._request("GET", f"/issues/{issue_id}")
 
+    def get_ready_issues(
+        self, project_id: str = None, team_id: str = None,
+        mine: bool = False, include_assigned: bool = False, limit: int = None,
+    ) -> list:
+        """CHT-1245: 'what can I start right now'. Path-nested per the
+        CHT-1223 convention -- new endpoint, no flat query-param route.
+        """
+        if project_id:
+            path = f"/projects/{project_id}/issues/ready"
+        elif team_id:
+            path = f"/teams/{team_id}/issues/ready"
+        else:
+            raise ValueError("Must provide project_id or team_id")
+        params = {}
+        if mine:
+            params["mine"] = "true"
+        if include_assigned:
+            params["include_assigned"] = "true"
+        if limit is not None:
+            params["limit"] = limit
+        query = urlencode(params)
+        return self._request("GET", f"{path}?{query}" if query else path)
+
     def get_issue_by_identifier(self, identifier: str) -> dict:
         return self._request("GET", f"/issues/identifier/{identifier}")
 

@@ -43,6 +43,11 @@ Ritual *groups* (``rituals.py``'s ``/groups`` sub-resource) and
 ``GET /sprints/current`` also keep their existing ``?project_id=``
 query-param shape -- out of the finding's named surface, left alone to
 bound this change's blast radius.
+
+CHT-1245 added ``GET /projects/{project_id}/issues/ready`` and
+``GET /teams/{team_id}/issues/ready`` below -- a brand new endpoint, so
+it's path-nested from the start rather than getting a flat query-param
+route first and migrating later.
 """
 from fastapi import APIRouter, status
 
@@ -139,6 +144,38 @@ async def create_project_issue(project_id: str, issue_in: IssueCreate, current_u
     docstring; ``GET /issues`` keeps its original query-param shape.
     """
     return await _issues.create_issue(project_id=project_id, issue_in=issue_in, current_user=current_user)
+
+
+@router.get("/projects/{project_id}/issues/ready", response_model=list[IssueResponse])
+async def list_project_ready_issues(
+    project_id: str,
+    current_user: CurrentUser,
+    mine: bool = False,
+    include_assigned: bool = False,
+    limit: int = 50,
+):
+    """What can I start right now, project-scoped (CHT-1245). New
+    endpoint, path-nested from the start per CHT-1223's convention --
+    see module docstring."""
+    return await _issues.list_ready_issues(
+        current_user, project_id=project_id,
+        mine=mine, include_assigned=include_assigned, limit=limit,
+    )
+
+
+@router.get("/teams/{team_id}/issues/ready", response_model=list[IssueResponse])
+async def list_team_ready_issues(
+    team_id: str,
+    current_user: CurrentUser,
+    mine: bool = False,
+    include_assigned: bool = False,
+    limit: int = 50,
+):
+    """What can I start right now, team-wide -- ``--all-projects`` (CHT-1245)."""
+    return await _issues.list_ready_issues(
+        current_user, team_id=team_id,
+        mine=mine, include_assigned=include_assigned, limit=limit,
+    )
 
 
 @router.post("/projects/{project_id}/sprints", response_model=SprintResponse, status_code=status.HTTP_200_OK)

@@ -14,6 +14,7 @@ import json
 import pytest
 
 from cli.commands import await_cmd
+from cli.commands.shared import parse_duration
 
 
 # ---------------------------------------------------------------------------
@@ -22,39 +23,52 @@ from cli.commands import await_cmd
 
 
 class TestParseDuration:
+    """Covers cli.commands.shared.parse_duration, exercised here (and via
+    await's own --timeout tests below) since await was its original/only
+    caller before CHT-1246 gave `issue start/claim --lease` a second one
+    and the helper moved to shared.py. See test_issue_actions.py for the
+    --lease-specific flag_name wiring.
+    """
+
     def test_none_means_no_timeout(self):
-        assert await_cmd._parse_duration(None) is None
-        assert await_cmd._parse_duration("") is None
-        assert await_cmd._parse_duration("   ") is None
+        assert parse_duration(None) is None
+        assert parse_duration("") is None
+        assert parse_duration("   ") is None
 
     def test_bare_integer_is_seconds(self):
-        assert await_cmd._parse_duration("30") == 30.0
+        assert parse_duration("30") == 30.0
 
     def test_unit_suffixes(self):
-        assert await_cmd._parse_duration("30s") == 30.0
-        assert await_cmd._parse_duration("5m") == 300.0
-        assert await_cmd._parse_duration("2h") == 7200.0
-        assert await_cmd._parse_duration("1d") == 86400.0
+        assert parse_duration("30s") == 30.0
+        assert parse_duration("5m") == 300.0
+        assert parse_duration("2h") == 7200.0
+        assert parse_duration("1d") == 86400.0
 
     def test_compound(self):
-        assert await_cmd._parse_duration("1h30m") == 5400.0
+        assert parse_duration("1h30m") == 5400.0
 
     def test_compound_with_whitespace(self):
-        assert await_cmd._parse_duration("1h 30m") == 5400.0
-        assert await_cmd._parse_duration(" 30 s ") == 30.0
+        assert parse_duration("1h 30m") == 5400.0
+        assert parse_duration(" 30 s ") == 30.0
 
     def test_zero_is_rejected(self):
         import click
         for spec in ("0", "0s", "0m", "0h0m0s"):
             with pytest.raises(click.BadParameter) as exc_info:
-                await_cmd._parse_duration(spec)
+                parse_duration(spec)
             assert "zero" in str(exc_info.value)
 
     def test_malformed_raises(self):
         import click
         for spec in ("nope", "abc30", "5x", "30ss", "-5m"):
             with pytest.raises(click.BadParameter):
-                await_cmd._parse_duration(spec)
+                parse_duration(spec)
+
+    def test_flag_name_customizes_error_text(self):
+        import click
+        with pytest.raises(click.BadParameter) as exc_info:
+            parse_duration("0", flag_name="--lease")
+        assert "--lease" in str(exc_info.value)
 
 
 class TestTypeTokenResolution:
@@ -595,6 +609,36 @@ class TestPollingLoop:
         )
         # Excluded → no match → timeout.
         assert result is None
+
+    def test_lease_expired_exempt_from_self_filter(self):
+        """CHT-1246 (PR #217 review finding 2): a lease_expired event's
+        user_id is the *former holder* by attribution -- the release is a
+        system action. The headline flow is an agent awaiting its own
+        lease's expiry, so the default exclude-self must not swallow it."""
+        watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        later = watermark + timedelta(seconds=10)
+        events = [
+            _event("mine", later, activity_type="lease_expired", user_id="me"),
+        ]
+
+        def fetch(skip, limit):
+            return events
+
+        result = await_cmd._poll(
+            fetch, watermark=watermark, scope={}, type_filter={"lease_expired"},
+            exclude_user_id="me", until_cmd=None,
+            timeout_secs=0.2, interval_secs=0.05,
+        )
+        assert result is not None
+        assert result["id"] == "mine"
+
+    def test_event_is_self_helper_exempts_lease_expired(self):
+        assert await_cmd._event_is_self(
+            {"activity_type": "commented", "user_id": "me"}, "me",
+        ) is True
+        assert await_cmd._event_is_self(
+            {"activity_type": "lease_expired", "user_id": "me"}, "me",
+        ) is False
 
     def test_type_filter_rejects_non_matching(self):
         watermark = datetime(2026, 1, 1, tzinfo=timezone.utc)

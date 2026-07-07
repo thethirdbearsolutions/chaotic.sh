@@ -161,6 +161,8 @@ CREATE TABLE IF NOT EXISTS issues (
     parent_id VARCHAR(36) REFERENCES issues(id) ON DELETE SET NULL,
     due_date DATETIME,
     completed_at DATETIME,
+    -- CHT-1246 (migration 0009): claim lease expiry.
+    lease_expires_at DATETIME,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 );

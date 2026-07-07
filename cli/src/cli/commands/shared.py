@@ -12,6 +12,48 @@ import click
 from rich.console import Console
 
 
+# ── Duration parsing ─────────────────────────────────────────────────────────
+# Shared by `await --timeout` and `issue start/claim --lease` (CHT-1246);
+# originated in await_cmd.py as `_parse_duration`, moved here so a second
+# duration-taking flag doesn't re-implement it.
+
+_DURATION_RE = re.compile(r"(\d+)([smhd]?)", re.IGNORECASE)
+_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(spec: str | None, flag_name: str = "--timeout") -> float | None:
+    """Parse `30`, `30s`, `5m`, `8h`, `1h30m` → seconds. Whitespace is
+    ignored, so `1h 30m` works too. Returns None on empty input -- what
+    that means is the caller's call (await: wait forever; issue
+    start/claim --lease: use the server-configured default). Raises
+    BadParameter for malformed input and for a zero duration -- always
+    ambiguous (instant expiry either way), so this refuses to guess.
+    `flag_name` customizes the error text for the calling command's
+    actual flag (`--timeout`, `--lease`, ...).
+    """
+    if spec is None or not spec.strip():
+        return None
+    text = re.sub(r"\s+", "", spec.lower())
+    total = 0
+    pos = 0
+    while pos < len(text):
+        m = _DURATION_RE.match(text, pos)
+        if m is None or m.end() == pos:
+            raise click.BadParameter(
+                f"Invalid {flag_name} value: {spec!r}. "
+                "Use seconds (30), or unit suffixes like 30s/5m/8h/1h30m."
+            )
+        n, unit = m.group(1), m.group(2)
+        total += int(n) * _UNIT_SECONDS[unit]
+        pos = m.end()
+    if total == 0:
+        raise click.BadParameter(
+            f"{flag_name} {spec!r} is zero -- that's an instant expiry, "
+            f"which is never useful. Omit {flag_name} instead."
+        )
+    return float(total)
+
+
 class _JsonAwareConsole:
     """Proxy that redirects Rich output to stderr while --json mode is
     active (CHT-1222), so no command's status lines/tables/panels can leak

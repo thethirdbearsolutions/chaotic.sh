@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, print_ritual_prompt, resolve_content_value
+from .shared import _client, console, parse_duration, print_ritual_prompt, resolve_content_value
 
 
 def _main():
@@ -297,6 +297,88 @@ def register(cli):
                 str(i.get("estimate") or "-"),
                 sprint_names.get(i.get("sprint_id"), "-")
             )
+
+        console.print(table)
+
+    @issue.command("ready")
+    @click.option("--mine", is_flag=True, help="Restrict to issues assigned to you (default: unassigned only).")
+    @click.option("--all-projects", "all_projects", is_flag=True, help="Query across all projects in the team.")
+    @click.option("--include-assigned", "include_assigned", is_flag=True, help="Widen beyond unassigned-only to include already-assigned (but not-started) issues too.")
+    @click.option("--limit", "-n", type=int, default=20, help="Maximum number of issues to show (default: 20)")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def issue_ready(mine, all_projects, include_assigned, limit):
+        """List issues that are open, unblocked, and unclaimed -- ready to
+        start right now (CHT-1245). Beads' bd-ready equivalent; the
+        agent's first shell-out. Priority-sorted (urgent first), then
+        oldest-first.
+
+        Open + not-started (backlog/todo) issues only -- excludes
+        anything already in_progress/in_review/done/canceled. Excludes
+        issues with an unresolved blocking relation (a 'blocks' relation
+        whose blocker isn't done or canceled). Unassigned by default;
+        --mine restricts to your own assigned-but-not-started issues;
+        --include-assigned widens to all issues regardless of assignee.
+        A lease that just expired (CHT-1246) is auto-released before this
+        query runs, so it can show up as ready in this same call.
+        """
+        m = _main()
+        if mine and include_assigned:
+            raise click.UsageError("Cannot use both --mine and --include-assigned")
+        if not all_projects and not m.get_current_project():
+            raise click.ClickException(
+                "No project selected. Run 'chaotic project use <project_id>' or pass --all-projects."
+            )
+
+        if all_projects:
+            issues = _client().get_ready_issues(
+                team_id=m.get_current_team(), mine=mine,
+                include_assigned=include_assigned, limit=limit,
+            )
+        else:
+            issues = _client().get_ready_issues(
+                project_id=m.get_current_project(), mine=mine,
+                include_assigned=include_assigned, limit=limit,
+            )
+
+        if m.is_json_output():
+            m.output_json(issues)
+            return
+
+        if not issues:
+            console.print("[yellow]No ready issues.[/yellow]")
+            return
+
+        project_keys = {}
+        if all_projects:
+            projects = _client().get_projects(m.get_current_team())
+            project_keys = {p["id"]: p["key"] for p in projects}
+
+        table = Table(title="Ready Issues")
+        table.add_column("ID")
+        table.add_column("Title")
+        if all_projects:
+            table.add_column("Project")
+        table.add_column("Priority")
+        table.add_column("Type")
+        table.add_column("Estimate")
+        table.add_column("Assignee")
+
+        for i in issues:
+            row = [
+                i["identifier"],
+                i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
+            ]
+            if all_projects:
+                row.append(project_keys.get(i.get("project_id"), "-"))
+            row.extend([
+                i["priority"].replace("_", " ").title(),
+                i.get("issue_type", "task").replace("_", " ").title(),
+                str(i.get("estimate") or "-"),
+                "Unassigned" if not i.get("assignee_id") else i.get("assignee_id")[:8] + "...",
+            ])
+            table.add_row(*row)
 
         console.print(table)
 
@@ -1170,33 +1252,51 @@ def register(cli):
 
     @issue.command("claim")
     @click.argument("identifier")
+    @click.option("--lease", "lease_spec", default=None,
+                  help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
+                       "Default: server-configured (CHT-1246).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_claim(identifier):
+    def issue_claim(identifier, lease_spec):
         """Assign an issue to yourself and move to in_progress.
 
         Shortcut for 'issue assign IDENTIFIER me' + 'issue move IDENTIFIER in_progress'.
+        Acquires (or, if you already hold the ticket, extends/heartbeats)
+        a claim lease -- see 'chaotic issue ready' and CHT-1246. A lease
+        that expires while still IN_PROGRESS is auto-released back to
+        todo/unassigned the next time anyone reads or lists the issue.
         """
+        lease_seconds = parse_duration(lease_spec, flag_name="--lease")
         iss = _client().get_issue_by_identifier(identifier)
         user = _client().get_me()
-        _client().update_issue(iss["id"], assignee_id=user["id"], status="in_progress")
+        kwargs = {"assignee_id": user["id"], "status": "in_progress"}
+        if lease_seconds is not None:
+            kwargs["lease_seconds"] = int(lease_seconds)
+        _client().update_issue(iss["id"], **kwargs)
         console.print(f"[green]Issue {identifier} claimed and moved to In Progress.[/green]")
 
     @issue.command("start")
     @click.argument("identifier")
+    @click.option("--lease", "lease_spec", default=None,
+                  help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
+                       "Default: server-configured (CHT-1246).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_start(identifier):
+    def issue_start(identifier, lease_spec):
         """Start working on an issue.
 
-        Alias for 'issue claim IDENTIFIER'.
+        Alias for 'issue claim IDENTIFIER [--lease ...]'.
         """
         # See issue_complete's comment: no @json_result here, delegates
-        # to claim's own (CHT-1222).
-        issue_claim.callback(identifier)
+        # to claim's own (CHT-1222). Keyword call (unlike the other
+        # single-arg aliases above): claim's build lambda only spreads
+        # **kwargs, and Click's own normal invocation always calls by
+        # keyword too, so this matches that shape instead of overloading
+        # positional args onto a 2-arg callback.
+        issue_claim.callback(identifier=identifier, lease_spec=lease_spec)
 
     @issue.command("rituals")
     @click.argument("identifier")
