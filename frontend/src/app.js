@@ -40,6 +40,7 @@ import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler } from './keyboard.js';
 import { showInlineDropdown } from './inline-dropdown.js';
+import './revisions.js';
 import {
     toggleTeamDropdown,
     toggleUserDropdown,
