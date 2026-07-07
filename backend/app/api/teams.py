@@ -1,4 +1,5 @@
 """Team API routes."""
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access
@@ -12,9 +13,13 @@ from app.schemas.team import (
     TeamInvitationCreate,
     TeamInvitationResponse,
 )
+from app.config import get_settings
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
+from app.services.email_service import EmailService
 from app.enums import TeamRole
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -270,6 +275,26 @@ async def create_invitation(
             )
 
     invitation = await team_service.create_invitation(team, invitation_in, current_user)
+
+    # CHT-1251: the invitation token is otherwise undeliverable without DB
+    # access (TeamInvitationResponse deliberately omits it) -- email the
+    # accept link. send_invitation_email itself only schedules a
+    # fire-and-forget task (never blocks, never raises in normal
+    # operation) -- this try/except is the fail-soft backstop for that
+    # dispatch call itself, so the invitation create can never 500 on
+    # email trouble.
+    try:
+        accept_url = f"{get_settings().app_base_url.rstrip('/')}/invite/{invitation.token}"
+        EmailService().send_invitation_email(
+            invitation_in.email,
+            team_name=team.name,
+            role=invitation_in.role.value,
+            invited_by_name=current_user.name,
+            accept_url=accept_url,
+        )
+    except Exception:
+        logger.exception("Failed to dispatch invitation email for team=%s", team.id)
+
     return invitation
 
 

@@ -617,5 +617,6 @@ export {
     completeGateFromList,
     showReviewApprovalModal,
     handleReviewApproval,
-    approveReviewFromList
+    approveReviewFromList,
+    formatRelativeTime,
 };

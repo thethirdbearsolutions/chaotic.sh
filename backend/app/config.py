@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 24267
 
+    # Public base URL, used to build absolute links in outbound email
+    # (invitation accept links). No scheme/host detection from requests --
+    # explicit env var, same as everything else here.
+    app_base_url: str = "http://localhost:24267"
+
+    # Email (SMTP) -- CHT-1251. Empty smtp_host means "unconfigured": the
+    # mutating paths that would send email (gate-pending, invitations) log
+    # and skip rather than erroring. See EmailService.is_configured().
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@chaotic.sh"
+
     model_config = SettingsConfigDict(env_file=".env")
 
 

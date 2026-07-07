@@ -280,6 +280,14 @@ class IssueService:
         # that hasn't yet committed (or never commits on rollback).
         broadcast_intent_opened = False
 
+        # Rituals that got a genuinely NEW blocker row in this call (as
+        # opposed to a repeat/idempotent re-raise against an
+        # already-blocked intent) -- these are the ones that just became
+        # "pending for a human" and should fan out an inbox entry
+        # (CHT-1250). Collected inside the atomic block, acted on after
+        # it commits, same deferral reasoning as broadcast_intent_opened.
+        newly_blocked_rituals: list = []
+
         async with atomic():
             existing_lock = await self._enforce_exclusive_intent_lock(
                 issue.id, limbo_type, user_id,
@@ -316,6 +324,7 @@ class IssueService:
                             limbo_id=intent.id,
                             ritual_id=ritual.id,
                         )
+                        newly_blocked_rituals.append(ritual)
                     await self._record_intent_activity(
                         issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
                     )
@@ -342,6 +351,7 @@ class IssueService:
                             limbo_id=intent.id,
                             ritual_id=ritual.id,
                         )
+                        newly_blocked_rituals.append(ritual)
                     except IntegrityError:
                         pass
                 # Don't re-emit INTENT_OPENED on a same-principal
@@ -354,8 +364,40 @@ class IssueService:
                 issue, user_id, limbo_type, ActivityType.INTENT_OPENED,
             )
 
+        gate_rituals = [r for r in newly_blocked_rituals if r.approval_mode == ApprovalMode.GATE]
+        if gate_rituals:
+            try:
+                await self._notify_gate_pending(issue, user_id, gate_rituals)
+            except Exception:
+                logger.exception(
+                    "Failed to fan out gate-pending inbox/email for issue=%s", issue.id,
+                )
+
         pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
         raise error_class(issue.identifier, pending_info)
+
+    async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
+        """CHT-1250/CHT-1251: a GATE ritual just became blocking on
+        `issue`. Fan an inbox entry + email out to every team admin, one
+        per newly-blocked ritual. Best-effort -- caller wraps this in a
+        try/except so a notification hiccup never turns into a failed
+        claim/close attempt.
+        """
+        from app.services.inbox_service import InboxService
+        from app.services.user_service import UserService
+
+        project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+        if project is None:
+            return
+        requester = await UserService().get_by_id(requester_id) if requester_id else None
+        requester_name = requester.name if requester else "Someone"
+
+        inbox_service = InboxService()
+        for ritual in gate_rituals:
+            await inbox_service.notify_gate_pending(
+                ritual=ritual, issue=issue, project=project,
+                requested_by_name=requester_name,
+            )
 
     async def _record_intent_activity(
         self, issue, user_id: str, limbo_type: "LimboType",
@@ -732,6 +774,10 @@ class IssueService:
 
         # Track changes for activity log
         activities = []
+        # CHT-1250: the new assignee (if this update actually (re)assigns
+        # the issue), for an inbox-entry fan-out after the transaction
+        # commits. None for unassignment/no-op/non-human updates.
+        new_assignee_id = None
         if user_id:
             for field, new_value in update_data.items():
                 old_value = getattr(issue, field)
@@ -747,6 +793,8 @@ class IssueService:
                         activity_type = (
                             ActivityType.ASSIGNED if new_value else ActivityType.UNASSIGNED
                         )
+                        if new_value:
+                            new_assignee_id = new_value
                     elif field == "sprint_id":
                         activity_type = (
                             ActivityType.MOVED_TO_SPRINT
@@ -889,8 +937,31 @@ class IssueService:
             if needs_budget_deduction:
                 await self._deduct_from_sprint_budget(issue, user_id)
 
+        if new_assignee_id:
+            try:
+                await self._notify_assignment(issue, user_id, new_assignee_id)
+            except Exception:
+                logger.exception(
+                    "Failed to write assignment inbox entry for issue=%s", issue.id,
+                )
+
         # Reload with relations
         return await self.get_by_id(issue.id)
+
+    async def _notify_assignment(self, issue, actor_id: str | None, assignee_id: str) -> None:
+        """CHT-1250: an inbox entry for the new assignee. Skips
+        self-assignment (see InboxService.notify_assignment).
+        """
+        from app.services.inbox_service import InboxService
+        from app.services.user_service import UserService
+
+        project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+        if project is None:
+            return
+        actor = await UserService().get_by_id(actor_id) if actor_id else None
+        await InboxService().notify_assignment(
+            issue=issue, project=project, assignee_id=assignee_id, assigned_by=actor,
+        )
 
     async def _next_description_revision_version(self, issue_id: str) -> int:
         """Compute the next description-revision number for an issue.
@@ -1703,7 +1774,34 @@ class IssueService:
                 new_value=comment_in.content,
             )
         await comment.refresh()
+
+        try:
+            await self._notify_comment_mentions(issue_id, comment_in.content, author_id)
+        except Exception:
+            logger.exception(
+                "Failed to write mention inbox entries for issue=%s comment=%s",
+                issue_id, comment.id,
+            )
+
         return await self.get_comment_by_id(comment.id)
+
+    async def _notify_comment_mentions(self, issue_id: str, content: str, author_id: str) -> None:
+        """CHT-1250: @mention fan-out for an issue comment."""
+        from app.services.inbox_service import InboxService
+        from app.services.user_service import UserService
+
+        issue = await self.get_by_id(issue_id)
+        if issue is None:
+            return
+        project = await OxydeProject.objects.get_or_none(id=issue.project_id)
+        if project is None:
+            return
+        author = await UserService().get_by_id(author_id)
+        if author is None:
+            return
+        await InboxService().notify_mentions(
+            content=content, team_id=project.team_id, author=author, issue=issue,
+        )
 
     async def get_comment_by_id(self, comment_id: str) -> OxydeIssueComment | None:
         """Get comment by ID."""

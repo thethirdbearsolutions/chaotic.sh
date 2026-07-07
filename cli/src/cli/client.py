@@ -628,5 +628,25 @@ class Client:
         """Delete an agent."""
         return self._request("DELETE", f"/agents/{agent_id}")
 
+    # Inbox (CHT-1250)
+    def get_inbox(
+        self, team_id: str, unread: bool = False, skip: int = 0, limit: int = 50,
+    ) -> list:
+        """List the current user's inbox entries."""
+        params = {"team_id": team_id, "skip": skip, "limit": limit}
+        if unread:
+            params["unread"] = "true"
+        query = urlencode(params)
+        return self._request("GET", f"/inbox?{query}")
+
+    def get_inbox_unread_count(self, team_id: str) -> dict:
+        return self._request("GET", f"/inbox/unread-count?team_id={team_id}")
+
+    def mark_inbox_read(self, entry_id: str) -> dict:
+        return self._request("POST", f"/inbox/{entry_id}/read", {})
+
+    def mark_all_inbox_read(self, team_id: str) -> dict:
+        return self._request("POST", f"/inbox/mark-all-read?team_id={team_id}", {})
+
 
 client = Client()

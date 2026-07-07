@@ -85,6 +85,10 @@ vi.mock('./assignees.js', () => ({
   buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
 
+vi.mock('./inbox.js', () => ({
+  refreshInboxUnreadCount: vi.fn(() => Promise.resolve()),
+}));
+
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
 const teamsActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 

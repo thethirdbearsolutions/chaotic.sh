@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=62">
+    <link rel="stylesheet" href="/static/css/style.css?v=63">
     <!-- Fallback for when JS is disabled: show auth screen -->
     <noscript>
         <style>#auth-screen { display: block !important; }</style>
@@ -95,6 +95,14 @@
                             <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
                         </svg>
                         Dashboard
+                    </a>
+                    <a href="/inbox" class="nav-item" data-view="inbox">
+                        <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M2.628 4.253a1 1 0 01.722-.253h13.3a1 1 0 01.722.253L10 9.882 2.628 4.253z"/>
+                            <path d="M18 6.288V14a2 2 0 01-2 2H4a2 2 0 01-2-2V6.288l7.386 5.614a1 1 0 001.228 0L18 6.288z"/>
+                        </svg>
+                        Inbox
+                        <span id="inbox-unread-badge" class="nav-badge hidden">0</span>
                     </a>
                     <a href="/issues" class="nav-item" data-view="issues">
                         <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
@@ -228,6 +236,18 @@
                         </div>
                     </div>
                     <div id="approvals-list" class="list"></div>
+                </div>
+
+                <!-- Inbox view (CHT-1250): gates awaiting you, mentions, assignments, review requests -->
+                <div id="inbox-view" class="view hidden">
+                    <div class="view-header">
+                        <h2>Inbox</h2>
+                        <div class="view-actions">
+                            <button id="inbox-unread-toggle" class="btn btn-secondary" data-action="toggle-inbox-unread-filter">Unread only</button>
+                            <button class="btn btn-secondary" data-action="mark-all-inbox-read">Mark all read</button>
+                        </div>
+                    </div>
+                    <div id="inbox-list" class="list"></div>
                 </div>
 
                 <!-- Issues view with search -->
@@ -752,6 +772,6 @@
         <div id="toast-container"></div>
     </div>
 
-    <script src="/static/js/app.bundle.js?v=23"></script>
+    <script src="/static/js/app.bundle.js?v=24"></script>
 </body>
 </html>

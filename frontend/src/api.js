@@ -561,6 +561,25 @@ export class ApiClient {
     async deleteAgent(agentId) {
         return this.request('DELETE', `/agents/${agentId}`);
     }
+
+    // Inbox (CHT-1250)
+    async getInbox(teamId, { unread = false, skip = 0, limit = 50 } = {}) {
+        const params = new URLSearchParams({ team_id: teamId, skip, limit });
+        if (unread) params.set('unread', 'true');
+        return this.request('GET', `/inbox?${params.toString()}`);
+    }
+
+    async getInboxUnreadCount(teamId) {
+        return this.request('GET', `/inbox/unread-count?team_id=${teamId}`);
+    }
+
+    async markInboxRead(entryId) {
+        return this.request('POST', `/inbox/${entryId}/read`, {});
+    }
+
+    async markAllInboxRead(teamId) {
+        return this.request('POST', `/inbox/mark-all-read?team_id=${teamId}`, {});
+    }
 }
 
 // Create and export the singleton instance

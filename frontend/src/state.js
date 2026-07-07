@@ -31,9 +31,16 @@ const initialState = {
     selectedIssueIndex: -1,
     selectedDocIndex: -1,
     selectedBoardIndex: -1,
+    selectedInboxIndex: -1,
 
     // Pending gates for ritual completion
     pendingGates: [],
+
+    // Inbox (CHT-1250): entries for the current view + unread badge count
+    // (the count is independent of the loaded page -- it's a team-wide
+    // tally, kept fresh via ws 'created'/'read'/'read-all' events).
+    inboxEntries: [],
+    inboxUnreadCount: 0,
 
     // Timers (not reactive)
     searchDebounceTimer: null,
@@ -159,8 +166,17 @@ export const setSelectedDocIndex = (index) => setState('selectedDocIndex', index
 export const getSelectedBoardIndex = () => state.selectedBoardIndex;
 export const setSelectedBoardIndex = (index) => setState('selectedBoardIndex', index);
 
+export const getSelectedInboxIndex = () => state.selectedInboxIndex;
+export const setSelectedInboxIndex = (index) => setState('selectedInboxIndex', index);
+
 export const getPendingGates = () => state.pendingGates;
 export const setPendingGates = (gates) => setState('pendingGates', gates);
+
+export const getInboxEntries = () => state.inboxEntries;
+export const setInboxEntries = (entries) => setState('inboxEntries', entries);
+
+export const getInboxUnreadCount = () => state.inboxUnreadCount;
+export const setInboxUnreadCount = (count) => setState('inboxUnreadCount', count);
 
 export const getSearchDebounceTimer = () => state.searchDebounceTimer;
 export const setSearchDebounceTimer = (timer) => setState('searchDebounceTimer', timer);

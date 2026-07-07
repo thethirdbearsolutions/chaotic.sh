@@ -2,8 +2,11 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+import logging
 from datetime import datetime, timezone
 from oxyde import atomic, execute_raw, IntegrityError
+
+logger = logging.getLogger(__name__)
 from app.oxyde_models.document import (
     OxydeDocument,
     OxydeDocumentComment,
@@ -412,7 +415,29 @@ class DocumentService:
                 )
 
         await comment.refresh()
+
+        if document:
+            try:
+                await self._notify_comment_mentions(document, comment_in.content, author_id)
+            except Exception:
+                logger.exception(
+                    "Failed to write mention inbox entries for document=%s comment=%s",
+                    document_id, comment.id,
+                )
+
         return await self.get_comment_by_id(comment.id)
+
+    async def _notify_comment_mentions(self, document, content: str, author_id: str) -> None:
+        """CHT-1250: @mention fan-out for a document comment."""
+        from app.services.inbox_service import InboxService
+        from app.services.user_service import UserService
+
+        author = await UserService().get_by_id(author_id)
+        if author is None:
+            return
+        await InboxService().notify_mentions(
+            content=content, team_id=document.team_id, author=author, document=document,
+        )
 
     async def get_comment_by_id(self, comment_id: str) -> OxydeDocumentComment | None:
         """Get comment by ID."""

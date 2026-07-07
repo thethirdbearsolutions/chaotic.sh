@@ -119,8 +119,22 @@ def test_upgrade_runs_on_empty_tables(mig, conn):
 
 
 def test_frozen_map_matches_models():
-    """Every DbEnum column in the models is covered, and every frozen
-    rewrite pair matches the enum's actual value -> name mapping."""
+    """Every frozen rewrite pair in 0007 matches the enum's actual current
+    value -> name mapping (CHT-1267).
+
+    0007 is a point-in-time historical data-fix (docstring: "frozen at the
+    0.7-upgrade/CHT-1209 sweep") for the enum members that existed then --
+    it is NOT a live contract requiring every enum member (or model) added
+    afterward, on a new or pre-existing DbEnum column, to retroactively
+    appear here (e.g. CHT-1250's new InboxEntry.kind column, or
+    CHT-1251's new ActivityType.EMAIL_DELIVERY_FAILED member on the
+    pre-existing issue_activities.activity_type column). Those never had
+    legacy .value-written rows to correct, so 0007 correctly omits them.
+    This test only guards against the frozen map going stale relative to
+    the specific (value, name) pairs it DOES claim to cover -- e.g.
+    someone renaming an existing enum member's string value out from
+    under the migration's rewrite pairs.
+    """
     import app.oxyde_models  # noqa: F401
     from oxyde.models.registry import registered_tables
 
@@ -136,4 +150,13 @@ def test_frozen_map_matches_models():
                 if mapping:
                     from_models.setdefault(cls.get_table_name(), {})[col] = mapping
 
-    assert mig.ENUM_COLUMNS == from_models
+    for table, columns in mig.ENUM_COLUMNS.items():
+        assert table in from_models, f"{table} no longer has any DbEnum column"
+        for col, mapping in columns.items():
+            assert col in from_models[table], f"{table}.{col} no longer a DbEnum column"
+            live_mapping = from_models[table][col]
+            for value, name in mapping.items():
+                assert live_mapping.get(value) == name, (
+                    f"{table}.{col}: frozen rewrite {value!r} -> {name!r} no longer "
+                    f"matches the live enum (got {live_mapping.get(value)!r})"
+                )

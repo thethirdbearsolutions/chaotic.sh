@@ -92,6 +92,7 @@ TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
     "intent_cleared": ["intent_cleared"],
     "intent_canceled": ["intent_canceled"],
     "lease_expired": ["lease_expired"],
+    "email_failed": ["email_delivery_failed"],  # CHT-1251: loud note on a configured-but-failing send
 }
 """Logical token → list of backend wire values to match. `any` is handled
 specially (empty filter)."""
