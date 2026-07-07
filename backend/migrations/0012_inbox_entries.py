@@ -11,13 +11,15 @@ real schema change). None of that is part of this migration; it's
 pre-existing drift for a separate cleanup. Only the new inbox_entries
 table -- and its two lookup indexes -- belong here.
 
-NOTE: another agent is using migration number 0009 for lease_expires_at
-on a parallel branch. Expect this to be renumbered at merge time.
+Originally authored as 0009; renumbered 0009 -> 0012 after PRs #216
+(0009/0010, revision history) and #217 (0011, lease_expires_at) landed
+on main first. Re-rehearsed post-renumber: fresh full-chain 0001 -> 0012
+apply, plus an apply against a backup copy.
 
 Created: 2026-07-06
 """
 
-depends_on = "0008_unique_project_key_label_name"
+depends_on = "0011_add_issue_lease_expires_at"
 
 
 def upgrade(ctx):
