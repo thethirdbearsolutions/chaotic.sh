@@ -5,7 +5,7 @@ Phase 2 migration from SQLAlchemy.
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
@@ -31,6 +31,14 @@ class OxydeIssue(Model):
     parent_id: str | None = Field(default=None)
     due_date: DateTimeUTC | None = Field(default=None)
     completed_at: DateTimeUTC | None = Field(default=None)
+    # Claim lease (CHT-1246): set when an issue is self-claimed into
+    # IN_PROGRESS (assignee_id == the claiming principal), extended by
+    # re-claiming (heartbeat), and cleared whenever status leaves
+    # IN_PROGRESS. NULL means "not leased" -- either never claimed, or
+    # claimed via a path that doesn't grant a lease (e.g. a human
+    # reassigning the ticket to someone else). See IssueService.update()
+    # and IssueService.release_expired_leases().
+    lease_expires_at: DateTimeUTC | None = Field(default=None)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     labels: list["OxydeLabel"] = Field(default_factory=list, db_m2m=True, db_through="OxydeIssueLabel")
@@ -38,6 +46,13 @@ class OxydeIssue(Model):
     class Meta:
         is_table = True
         table_name = "issues"
+        indexes = [
+            # Mirrors migration 0011: keeps the lazy-release sweep's scan
+            # (team activity-feed reads, PR #217 review finding 2) cheap.
+            # Partial -- only actively-leased rows carry a value.
+            Index(("lease_expires_at",), name="ix_issues_lease_expires_at",
+                  where="lease_expires_at IS NOT NULL"),
+        ]
 
 
 class OxydeIssueComment(Model):
@@ -151,6 +166,32 @@ class OxydeTicketLimboBlocker(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo_blockers"
+
+
+class OxydeIssueDescriptionRevision(Model):
+    """Immutable snapshot of an issue's description at a point in time.
+
+    A new row is appended every time an issue update changes description.
+    Version numbers are monotonically increasing per issue; v1 is the
+    initial state at creation (even if the description was empty —
+    "I started with nothing" is useful history).
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    # No standalone index on issue_id: the composite UNIQUE
+    # (issue_id, version) below covers per-issue lookups.
+    issue_id: str = Field()
+    version: int = Field()
+    description: str | None = Field(default=None)
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        is_table = True
+        table_name = "issue_description_revisions"
+        indexes = [
+            Index(("issue_id", "version"), unique=True, name="uq_issue_description_revisions_issue_version"),
+        ]
 
 
 class OxydeBudgetTransaction(Model):

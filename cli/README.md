@@ -171,6 +171,52 @@ chaotic issue view CHT-123                # Alias for 'show'
 chaotic issue open CHT-123                # Open issue in browser
 ```
 
+### Ready to start (CHT-1245)
+
+`chaotic issue ready` answers "what can I start right now" -- the
+agent's first shell-out, before touching `issue list`'s filters. It's
+Beads' `bd-ready` equivalent: open (`backlog`/`todo`), unblocked (no
+unresolved `blocks` relation), unassigned by default, priority-sorted
+(`urgent` first, then oldest-first within a tier). Epics are excluded
+-- they're containers for work, not startable work; their sub-issues
+surface individually.
+
+```bash
+chaotic issue ready --json                 # unassigned, unblocked, open work
+chaotic issue ready --mine                 # your own assigned-but-not-started backlog
+chaotic issue ready --include-assigned     # widen: include everyone's claims too
+chaotic issue ready --all-projects         # team-wide instead of current project
+chaotic issue ready --limit 5
+```
+
+`--mine` and `--include-assigned` are mutually exclusive. See
+[docs/agents.md](../docs/agents.md) for the full agent operating loop
+(`ready` → `start` → work → `complete`) and how this interacts with
+claim leases below.
+
+### Claiming and completing
+
+```bash
+chaotic issue start CHT-123                # assign to self + move to in_progress
+chaotic issue start CHT-123 --lease 4h     # override the claim-lease duration (CHT-1246)
+chaotic issue claim CHT-123                # same thing (start is an alias for claim)
+chaotic issue close CHT-123                # mark done (alias: issue complete)
+chaotic issue wontfix CHT-123              # cancel (alias: issue cancel)
+```
+
+`start`/`claim` acquire a **claim lease** -- a server-side expiry
+(default ~2h, `--lease` overrides). Re-running `start`/`claim` while you
+still hold the ticket extends (heartbeats) the lease instead of
+erroring. Claiming a ticket someone else already holds under a valid
+lease fails with an "already claimed by X" error (`already_claimed` on
+the wire, exit 1) -- concurrent claims are serialized server-side, so
+of two racing `issue start`s exactly one wins. If the lease expires
+while the issue is still `in_progress`, the next read or list of that
+issue lazily releases it back to `todo`/unassigned and logs a
+`lease_expired` activity -- no cron, no silent wedge. See
+[docs/agents.md](../docs/agents.md#claim-leases) for the full
+semantics.
+
 ### Creating issues
 ```bash
 chaotic issue create --title "Bug fix"
@@ -332,7 +378,7 @@ want to wake on intents regardless of ritual name.
                       assigned, unassigned, labeled, unlabeled,
                       moved_to_sprint, removed_from_sprint,
                       attested, approved, intent_opened,
-                      intent_cleared, intent_canceled,
+                      intent_cleared, intent_canceled, lease_expired,
                       created, updated, deleted, any
                     Default: any. These tokens are a stable CLI contract;
                     they do not change if backend enum names are renamed.
@@ -346,6 +392,11 @@ want to wake on intents regardless of ritual name.
                     on its own ongoing activity. Note: if multiple agents
                     share one principal (e.g. a team bot), this filter
                     hides all of their activity, not just the caller's.
+                    Exception: `lease_expired` events are never filtered
+                    as self — their user_id is the *former* lease holder
+                    by attribution (the release is a system action), and
+                    the headline use is an agent awaiting its own lease's
+                    expiry.
 --timeout DURATION  Give up after DURATION. Accepted forms: integer
                     seconds (`30`), or suffixed units, combinable
                     (`30s`, `5m`, `8h`, `1h30m`; whitespace between
@@ -508,6 +559,67 @@ chaotic await sprint --include-self
   synchronously on every candidate event.
 - Concurrent `await` invocations are supported. No client-side
   coordination is required; each process maintains its own watermark.
+
+## MCP server
+
+`chaotic mcp` runs an MCP (Model Context Protocol) server over stdio,
+exposing a curated set of chaotic operations as tools -- so any
+MCP-speaking harness (Claude Code, etc.) gets native chaotic tools
+instead of shelling out to this CLI.
+
+It's a thin adapter over the same `Client` this CLI uses. There is no
+separate MCP login step: it inherits whatever `chaotic status` reports
+(profile, team, project, credentials) via the usual `CHAOTIC_PROFILE` /
+`CHAOTIC_HOME` / `config.json` resolution.
+
+### Add it to Claude Code
+
+```bash
+claude mcp add chaotic -- chaotic mcp
+```
+
+To pin a specific profile, pass the flag through:
+
+```bash
+claude mcp add chaotic -- chaotic --profile myprofile mcp
+```
+
+### Generic MCP client config
+
+```json
+{
+  "mcpServers": {
+    "chaotic": {
+      "command": "chaotic",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Equivalent to |
+|---|---|
+| `issue_list` | `issue list` (with `all_projects` for team-wide) |
+| `issue_view` | `issue show` |
+| `issue_create` | `issue create` |
+| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description; `assignee: "unassigned"` clears) |
+| `issue_comment` | `issue comment` |
+| `issue_start` | `issue start` |
+| `doc_list` | `doc list` |
+| `doc_view` | `doc show` |
+| `doc_create` | `doc create` |
+| `activity_recent` | `activity` |
+
+Every tool returns a JSON object. Failures come back as `{"error": "..."}`
+(the same shape as this CLI's `--json` error contract) rather than an
+MCP protocol-level error -- a bad identifier or missing team/project
+context is data for the caller to read, not a crash.
+
+No destructive tools (delete) are exposed in v1 -- those need a human
+in the loop. An `issue_ready` tool (open/unblocked/unclaimed work
+query) is expected once CHT-1245 lands; it isn't included here yet.
 
 ## Status Values
 

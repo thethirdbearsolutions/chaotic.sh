@@ -63,6 +63,7 @@ class ActivityType(str, Enum):
     INTENT_OPENED = "intent_opened"
     INTENT_CLEARED = "intent_cleared"
     INTENT_CANCELED = "intent_canceled"
+    LEASE_EXPIRED = "lease_expired"  # CHT-1246: lazy auto-release of a stale claim
     EMAIL_DELIVERY_FAILED = "email_delivery_failed"  # CHT-1251: loud note when a configured SMTP send fails
 
 

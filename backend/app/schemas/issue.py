@@ -48,6 +48,12 @@ class IssueUpdate(BaseModel):
     parent_id: str | None = None
     due_date: datetime | None = None
     label_ids: list[str] | None = None
+    # CHT-1246: claim lease duration override, in seconds. Not a stored
+    # column -- IssueService.update() reads it off this schema and
+    # excludes it from the generic field-diff/save path (same treatment
+    # as label_ids). Only has an effect on a self-claim (assignee_id ==
+    # the acting principal, status -> IN_PROGRESS); ignored otherwise.
+    lease_seconds: int | None = Field(default=None, ge=1)
 
 
 class IssueResponse(BaseModel):
@@ -70,6 +76,7 @@ class IssueResponse(BaseModel):
     parent_id: str | None
     due_date: DateTimeUTC | None
     completed_at: DateTimeUTC | None
+    lease_expires_at: DateTimeUTC | None = None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
     labels: list["LabelResponse"] = []
@@ -142,6 +149,33 @@ class LabelResponse(BaseModel):
     name: str
     color: str
     description: str | None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IssueDescriptionRevisionListItem(BaseModel):
+    """Lightweight description-revision entry for the history list (no body)."""
+
+    id: str
+    issue_id: str
+    version: int
+    author_id: str | None = None
+    author_name: str | None = None
+    created_at: DateTimeUTC
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IssueDescriptionRevisionResponse(BaseModel):
+    """Full description-revision snapshot."""
+
+    id: str
+    issue_id: str
+    version: int
+    description: str | None = None
+    author_id: str | None = None
+    author_name: str | None = None
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)

@@ -17,6 +17,8 @@ from app.schemas.issue import (
     IssueCommentResponse,
     IssueActivityResponse,
     IssueActivityFeedResponse,
+    IssueDescriptionRevisionListItem,
+    IssueDescriptionRevisionResponse,
     TeamCommentResponse,
     IssueRelationCreate,
     IssueRelationResponse,
@@ -32,6 +34,7 @@ from app.services.issue_service import (
     ClaimRitualsError,
     IntentInFlightError,
     EstimateRequiredError,
+    IssueAlreadyClaimedError,
 )
 from app.services.project_service import ProjectService
 from app.services.sprint_service import SprintService
@@ -171,6 +174,7 @@ def issue_to_response(issue: Issue) -> IssueResponse:
         parent_id=issue.parent_id,
         due_date=ensure_utc(issue.due_date),
         completed_at=ensure_utc(issue.completed_at),
+        lease_expires_at=ensure_utc(issue.lease_expires_at),
         created_at=ensure_utc(issue.created_at),
         updated_at=ensure_utc(issue.updated_at),
         labels=[LabelResponse.model_validate(label) for label in issue.labels] if issue.labels else [],
@@ -294,6 +298,59 @@ async def create_issue(
     return response
 
 
+async def list_ready_issues(
+    current_user: CurrentUser,
+    project_id: str | None = None,
+    team_id: str | None = None,
+    mine: bool = False,
+    include_assigned: bool = False,
+    limit: int = 50,
+) -> list[IssueResponse]:
+    """What can I start right now (CHT-1245) -- the agent's first
+    shell-out. Not directly routed here: canonical routes are the
+    path-nested ``GET /projects/{project_id}/issues/ready`` and
+    ``GET /teams/{team_id}/issues/ready`` in nested.py (CHT-1223's
+    convention for new endpoints -- see nested.py's module docstring).
+
+    ``mine``/``include_assigned`` resolve to the service's
+    ``assignee_id`` filter convention (None = unassigned only, a user id
+    = that principal only, "any" = no filter).
+    """
+    if mine and include_assigned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot use both mine and include_assigned",
+        )
+
+    issue_service = IssueService()
+    project_service = ProjectService()
+
+    if project_id:
+        project = await project_service.get_by_id(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not await check_user_project_access(current_user, project_id, project.team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+    elif team_id:
+        if not await check_user_team_access(current_user, team_id):
+            raise HTTPException(status_code=403, detail="Not authorized to access this team")
+    else:
+        raise HTTPException(status_code=400, detail="Must provide project_id or team_id")
+
+    if mine:
+        assignee_filter = current_user.id
+    elif include_assigned:
+        assignee_filter = "any"
+    else:
+        assignee_filter = None
+
+    issues = await issue_service.list_ready_issues(
+        project_id=project_id, team_id=team_id,
+        assignee_id=assignee_filter, limit=limit,
+    )
+    return [issue_to_response(issue) for issue in issues]
+
+
 @router.get("", response_model=list[IssueResponse])
 async def list_issues(
     current_user: CurrentUser,
@@ -346,6 +403,11 @@ async def list_issues(
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this project")
 
+        # Lazy auto-release of expired claim leases (CHT-1246) before
+        # listing, so a just-expired lease's issue shows up correctly
+        # released rather than still IN_PROGRESS in this same response.
+        await issue_service.release_expired_leases(project_id=project_id)
+
         # Use unified list_issues with project scope
         issues = await issue_service.list_issues(
             project_id=project_id,
@@ -372,6 +434,9 @@ async def list_issues(
         has_access = await check_user_team_access(current_user, team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this team")
+
+        # Lazy auto-release of expired claim leases (CHT-1246), team-wide.
+        await issue_service.release_expired_leases(team_id=team_id)
 
         # Use unified list_issues with team scope
         issues = await issue_service.list_issues(
@@ -407,6 +472,10 @@ async def list_issues(
         has_access = await check_user_project_access(current_user, project.id, project.team_id)
         if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized to access this sprint")
+        # Lazy lease sweep (CHT-1246, PR #217 review finding 3): the web
+        # UI's sprint board queries by sprint_id alone, so without this a
+        # stale claim could sit on the board indefinitely.
+        await issue_service.release_expired_leases(project_id=sprint.project_id)
         issues = await issue_service.list_by_sprint(
             sprint_id, skip, limit, issue_type=issue_type, sort_by=sort_by, order=order
         )
@@ -420,6 +489,12 @@ async def list_issues(
         if not team_ids:
             issues = []
         else:
+            # Lazy lease sweep (CHT-1246, PR #217 review finding 3):
+            # `issue mine` queries by assignee alone -- an agent checking
+            # its own claims must not see a phantom still-mine issue
+            # whose lease already lapsed server-side.
+            for tid in team_ids:
+                await issue_service.release_expired_leases(team_id=tid)
             issues = await issue_service.list_by_assignee(
                 assignee_id, skip, limit,
                 statuses=statuses, priorities=priorities, issue_type=issue_type, team_ids=team_ids,
@@ -576,6 +651,15 @@ async def list_team_activities(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found",
             )
+
+    # Bounded lazy lease sweep (CHT-1246, PR #217 review finding 2).
+    # This is the read every waiter funnels through: `chaotic await`
+    # polls this feed, and the web UI's dashboard fetches it -- so
+    # running the sweep here is what lets an expired lease's
+    # LEASE_EXPIRED activity appear *because* something is waiting for
+    # it, with no third-party issue reads required. Cheap: the scan is
+    # backed by migration 0011's partial index and capped by scan_limit.
+    await issue_service.release_expired_leases(team_id=team_id)
 
     # Fetch both issue and document activities (CHT-639)
     # Get more than needed so we can merge and sort, then limit
@@ -740,6 +824,11 @@ async def get_issue_by_identifier(
             detail="Issue not found",
         )
 
+    # Lazy auto-release of an expired claim lease (CHT-1246): an issue
+    # read is one of the surfaces that must never keep surfacing a
+    # crashed agent's stale claim.
+    issue = await issue_service.release_lease_if_expired(issue)
+
     return issue_to_response(issue)
 
 
@@ -763,6 +852,9 @@ async def get_issue(issue_id: str, current_user: CurrentUser):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this project",
         )
+
+    # Lazy auto-release of an expired claim lease (CHT-1246).
+    issue = await issue_service.release_lease_if_expired(issue)
 
     return issue_to_response(issue)
 
@@ -863,6 +955,19 @@ async def update_issue(
                 "issue_id": e.issue_id,
                 "intent_type": e.intent_type,
                 "initiator_user_id": e.initiator_user_id,
+            },
+        )
+    except IssueAlreadyClaimedError as e:
+        # Self-claim lost -- either the fast-path guard (valid lease held
+        # by someone else) or the CAS (raced another claimant and lost).
+        # CHT-1246, PR #217 review finding 1.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "already_claimed",
+                "message": str(e),
+                "issue_id": e.issue_id,
+                "assignee_id": e.assignee_id,
             },
         )
 
@@ -1066,6 +1171,90 @@ async def list_activities(
         )
         for a in activities
     ]
+
+
+def _description_revision_author_name(rev) -> str | None:
+    author = getattr(rev, "author", None)
+    return author.name if author else None
+
+
+async def _get_issue_checked(issue_id: str, current_user) -> "Issue":
+    """Load an issue and 404/403 like the other issue-scoped GETs."""
+    issue_service = IssueService()
+    project_service = ProjectService()
+
+    issue = await issue_service.get_by_id(issue_id)
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Issue not found",
+        )
+
+    project = await project_service.get_by_id(issue.project_id)
+    if not await check_user_project_access(current_user, issue.project_id, project.team_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this project",
+        )
+    return issue
+
+
+@router.get(
+    "/{issue_id}/description-revisions",
+    response_model=list[IssueDescriptionRevisionListItem],
+)
+async def list_description_revisions(
+    issue_id: str,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+):
+    """List description revisions for an issue, newest first."""
+    limit = min(limit, 10000)
+    await _get_issue_checked(issue_id, current_user)
+
+    revisions = await IssueService().list_description_revisions(issue_id, skip, limit)
+    return [
+        IssueDescriptionRevisionListItem(
+            id=rev.id,
+            issue_id=rev.issue_id,
+            version=rev.version,
+            author_id=rev.author_id,
+            author_name=_description_revision_author_name(rev),
+            created_at=ensure_utc(rev.created_at),
+        )
+        for rev in revisions
+    ]
+
+
+@router.get(
+    "/{issue_id}/description-revisions/{version}",
+    response_model=IssueDescriptionRevisionResponse,
+)
+async def get_description_revision(
+    issue_id: str,
+    version: int,
+    current_user: CurrentUser,
+):
+    """Get a single description-revision snapshot by version number."""
+    await _get_issue_checked(issue_id, current_user)
+
+    rev = await IssueService().get_description_revision(issue_id, version)
+    if not rev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Revision not found",
+        )
+
+    return IssueDescriptionRevisionResponse(
+        id=rev.id,
+        issue_id=rev.issue_id,
+        version=rev.version,
+        description=rev.description,
+        author_id=rev.author_id,
+        author_name=_description_revision_author_name(rev),
+        created_at=ensure_utc(rev.created_at),
+    )
 
 
 # Sub-issues

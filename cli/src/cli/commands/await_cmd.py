@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 import click
 import httpx
 
-from .shared import _client, console
+from .shared import _client, console, parse_duration
 from ..client import APIError
 
 
@@ -91,6 +91,7 @@ TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
     "intent_opened": ["intent_opened"],
     "intent_cleared": ["intent_cleared"],
     "intent_canceled": ["intent_canceled"],
+    "lease_expired": ["lease_expired"],
     "email_failed": ["email_delivery_failed"],  # CHT-1251: loud note on a configured-but-failing send
 }
 """Logical token → list of backend wire values to match. `any` is handled
@@ -123,44 +124,6 @@ def _resolve_type_filter(spec: str | None) -> set[str] | None:
             )
         wire.update(TYPE_TOKEN_TO_WIRE[key])
     return wire
-
-
-# ---------------------------------------------------------------------------
-# Duration parsing for --timeout
-# ---------------------------------------------------------------------------
-
-_DURATION_RE = re.compile(r"(\d+)([smhd]?)", re.IGNORECASE)
-_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
-
-
-def _parse_duration(spec: str | None) -> float | None:
-    """Parse `30`, `30s`, `5m`, `8h`, `1h30m` → seconds. Whitespace is
-    ignored, so `1h 30m` works too. Returns None on empty input
-    (meaning "no timeout"). Raises BadParameter for malformed input
-    and for a zero duration — `--timeout 0` is ambiguous (instant
-    expiry vs. no timeout), so we refuse to guess.
-    """
-    if spec is None or not spec.strip():
-        return None
-    text = re.sub(r"\s+", "", spec.lower())
-    total = 0
-    pos = 0
-    while pos < len(text):
-        m = _DURATION_RE.match(text, pos)
-        if m is None or m.end() == pos:
-            raise click.BadParameter(
-                f"Invalid --timeout value: {spec!r}. "
-                "Use seconds (30), or unit suffixes like 30s/5m/8h/1h30m."
-            )
-        n, unit = m.group(1), m.group(2)
-        total += int(n) * _UNIT_SECONDS[unit]
-        pos = m.end()
-    if total == 0:
-        raise click.BadParameter(
-            f"--timeout {spec!r} is zero. Omit --timeout to wait forever; "
-            "a zero timeout would expire on the first poll."
-        )
-    return float(total)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +168,15 @@ def _event_matches_type(event: dict, wire_filter: set[str] | None) -> bool:
 
 
 def _event_is_self(event: dict, principal_user_id: str | None) -> bool:
+    # lease_expired is exempt from self-filtering (CHT-1246): its
+    # user_id is the *former lease holder* by attribution -- the release
+    # itself is a system action (lazy expiry sweep), not something the
+    # principal authored. The headline use is precisely an agent
+    # watching for its own lease to lapse (`await issue X --type
+    # lease_expired`), which the default exclude-self would silently
+    # swallow forever.
+    if event.get("activity_type") == "lease_expired":
+        return False
     return bool(
         principal_user_id
         and event.get("user_id") == principal_user_id
@@ -762,7 +734,7 @@ def _await_event(
     """Common entry: resolve filters, run the poll loop, emit/exit."""
     try:
         type_filter = _resolve_type_filter(type_spec)
-        timeout_secs = _parse_duration(timeout_spec)
+        timeout_secs = parse_duration(timeout_spec)
     except click.BadParameter as exc:
         _stderr(f"await: {exc.message}")
         raise SystemExit(2) from exc

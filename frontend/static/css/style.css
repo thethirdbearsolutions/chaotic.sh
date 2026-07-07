@@ -8178,3 +8178,139 @@ input[type="checkbox"] {
         margin-left: auto;
     }
 }
+
+/* ============================================
+   Revision history viewer (CHT-1243)
+   ============================================ */
+
+.revision-viewer {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+    min-height: 400px;
+    max-height: 70vh;
+}
+
+.revision-list {
+    border-right: 1px solid var(--border-color);
+    padding-right: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.revision-list-header {
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.revision-list-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.revision-list-item {
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+}
+
+.revision-list-item:hover {
+    background: var(--bg-secondary);
+}
+
+.revision-list-item.is-selected {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+}
+
+.revision-version {
+    font-weight: 600;
+}
+
+.revision-meta {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-top: 2px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rev-tag {
+    display: inline-block;
+    font-size: 0.7em;
+    background: var(--accent-color);
+    color: white;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.revision-panel {
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.revision-panel-header {
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.revision-snapshot-title {
+    margin: 0 0 12px 0;
+    font-size: 1.2em;
+}
+
+.revision-title-change {
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: var(--font-sm);
+}
+
+.revision-title-change .diff-del,
+.revision-title-change .diff-add {
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.revision-diff {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--font-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.diff-line {
+    padding: 1px 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.diff-context {
+    color: var(--text-muted);
+}
+
+.diff-add {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--success-color);
+}
+
+.diff-del {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error-color);
+}

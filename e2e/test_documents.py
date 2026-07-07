@@ -146,3 +146,38 @@ class TestDocumentComments:
         assert len(comments) >= 2
         # CHT-995: verify join("author") populates author_name
         assert all(c.get("author_name") is not None for c in comments)
+
+
+class TestDocumentRevisions:
+    """CHT-1243: contract tests for document revision history."""
+
+    def test_create_writes_v1(self, api_client, test_team):
+        doc = api_client.create_document(test_team["id"], "Versioned", content="v1 body")
+        revs = api_client.get_document_revisions(doc["id"])
+        assert [r["version"] for r in revs] == [1]
+        assert revs[0]["title"] == "Versioned"
+        assert revs[0]["author_name"] is not None  # join("author") on real DB
+
+    def test_body_edits_append_revisions(self, api_client, test_team):
+        doc = api_client.create_document(test_team["id"], "Evolving", content="v1 body")
+        api_client.update_document(doc["id"], content="v2 body")
+        api_client.update_document(doc["id"], title="Renamed")
+
+        revs = api_client.get_document_revisions(doc["id"])
+        assert [r["version"] for r in revs] == [3, 2, 1]
+
+        v2 = api_client.get_document_revision(doc["id"], 2)
+        assert v2["content"] == "v2 body"
+        v3 = api_client.get_document_revision(doc["id"], 3)
+        assert v3["title"] == "Renamed"
+
+    def test_metadata_edit_does_not_bump(self, api_client, test_team):
+        doc = api_client.create_document(test_team["id"], "Stable", content="Body")
+        api_client.update_document(doc["id"], icon="📘")
+        revs = api_client.get_document_revisions(doc["id"])
+        assert [r["version"] for r in revs] == [1]
+
+    def test_revision_not_found(self, api_client, test_team):
+        doc = api_client.create_document(test_team["id"], "x")
+        with pytest.raises(APIError):
+            api_client.get_document_revision(doc["id"], 99)

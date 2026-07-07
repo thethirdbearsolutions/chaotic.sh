@@ -41,6 +41,14 @@ ENUM_COLUMNS = {
             "intent_opened": "INTENT_OPENED",
             "intent_cleared": "INTENT_CLEARED",
             "intent_canceled": "INTENT_CANCELED",
+            # CHT-1246: ActivityType.LEASE_EXPIRED added after this
+            # migration originally landed. test_frozen_map_matches_models
+            # asserts this dict always mirrors the live value!=name enum
+            # mapping across all models, so new members land here too --
+            # a no-op for real data (the member didn't exist before, so
+            # no legacy .value-stored row can exist), just keeping the
+            # drift-guard green.
+            "lease_expired": "LEASE_EXPIRED",
         },
     },
     "issue_relations": {
