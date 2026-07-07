@@ -10,6 +10,36 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
 _Drafted 2026-05-16, expanded 2026-07-05 before first publish; a16 never
 shipped in between, so everything below lands together._
 
+### Added (2026-07-06/07) — the feature wave
+
+- **`chaotic issue ready`** — "what can I start right now": open, unblocked,
+  unclaimed, priority-sorted, epics excluded. `--mine`, `--all-projects`, `--json`.
+- **Claim leases** — `issue start` atomically claims (409 `already_claimed` on
+  races) and takes a lease (default 2h, `--lease 4h`, re-claim extends). Expired
+  leases self-release lazily and loudly: activity event + broadcast, and
+  `chaotic await issue X --type lease_expired` wakes on it. Crashed agents no
+  longer wedge issues.
+- **MCP servers, both transports** — `chaotic mcp` (stdio) for local harnesses
+  (`claude mcp add chaotic -- chaotic mcp`) and `/mcp` on the backend
+  (Streamable HTTP) for claude.ai / Claude Code web / anything URL-based.
+  Ten identical tools, drift-tested. Auth: `Authorization: Bearer <api-key>` or
+  a `/mcp/<key>` capability URL (redacted from server logs; use a dedicated
+  key — `chaotic auth keys create phone --expires-in 90d`).
+- **Inbox** — one "awaiting you" surface: pending gates, mentions, assignments,
+  review requests. Unread badge, live updates, `g w`, `chaotic inbox --json`.
+- **Email delivery** — SMTP (env-configured, fail-soft when absent) for gate
+  requests (with issue deep-link) and team invitations (accept URL) — invites
+  are finally deliverable without reading the database.
+- **Revision history** — every issue-description and document edit snapshots
+  automatically; side-by-side diff viewer; `chaotic issue history` /
+  `chaotic doc history`; conflict warnings now guarantee overwrites are
+  recoverable.
+- **Project config templates + starter packs** — snapshot a project's rituals
+  and settings as a reusable template (`template create --from-project`,
+  `apply`, YAML `export`/`import`), or start from a bundled pack (`rigor`,
+  `consulting`, `human-led`, `solo-agent`): `chaotic project create KEY
+  --template rigor`. Apply is idempotent and never deletes.
+
 ### Added (2026-07-05)
 
 - **`chaotic await`** — block until matching activity arrives, then exit with the
