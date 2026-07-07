@@ -12,7 +12,7 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
@@ -36,8 +36,8 @@ class OxydeIssue(Model):
     creator: OxydeUser | None
     sprint_id: str | None
     parent_id: str | None
-    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None
-    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None
+    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None
+    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None
     created_at: datetime
     updated_at: datetime
     creator_id: str | None
@@ -62,8 +62,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -100,8 +100,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -219,8 +219,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -257,8 +257,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -549,8 +549,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -587,8 +587,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -706,8 +706,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -744,8 +744,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -1006,12 +1006,12 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         client: Any | None = None,
         using: str | None = None,
         assignee_id: str | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         creator: OxydeUser | None = None,
         creator_id: str | None = None,
         description: str | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
         estimate: int | None = None,
         id: str | None = None,
         identifier: str | None = None,
@@ -3568,7 +3568,7 @@ class OxydeTicketLimbo(Model):
     limbo_type: str
     requested_by_id: str
     requested_at: datetime
-    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None
+    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None
     cleared_by_id: str | None
     objects: ClassVar["OxydeTicketLimboManager"]
 
@@ -3581,8 +3581,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3653,8 +3653,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3898,8 +3898,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3970,8 +3970,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -4194,7 +4194,7 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
         instance: OxydeTicketLimbo | None = None,
         client: Any | None = None,
         using: str | None = None,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
         cleared_by_id: str | None = None,
         id: str | None = None,
         issue_id: str | None = None,
@@ -4235,7 +4235,7 @@ class OxydeTicketLimboBlocker(Model):
     id: str
     limbo_id: str
     ritual_id: str
-    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None
+    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None
     resolved_by_id: str | None
     objects: ClassVar["OxydeTicketLimboBlockerManager"]
 
@@ -4268,8 +4268,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4318,8 +4318,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4541,8 +4541,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4591,8 +4591,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4775,7 +4775,7 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         using: str | None = None,
         id: str | None = None,
         limbo_id: str | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x107943880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x10bbc1da0>, json_schema_input_type=PydanticUndefined)] | None = None,
         resolved_by_id: str | None = None,
         ritual_id: str | None = None,
     ) -> OxydeTicketLimboBlocker:
@@ -4796,6 +4796,671 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
     async def bulk_update(  # type: ignore[override]
         self,
         objects: list[OxydeTicketLimboBlocker],
+        fields: list[str],
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Bulk update objects."""
+        ...
+
+
+class OxydeIssueDescriptionRevision(Model):
+    class Meta:
+        is_table: bool
+        table_name: str
+    id: str
+    issue_id: str
+    version: int
+    description: str | None
+    author: OxydeUser | None
+    created_at: datetime
+    author_id: str | None
+    objects: ClassVar["OxydeIssueDescriptionRevisionManager"]
+
+
+class OxydeIssueDescriptionRevisionQuery(Query[OxydeIssueDescriptionRevision]):
+    """Type-safe Query for OxydeIssueDescriptionRevision model."""
+
+    # Query building methods (sync, return Query)
+
+    def filter(
+        self,
+        *args: Any,
+        author: OxydeUser | None = None,
+        author__in: list[OxydeUser] | None = None,
+        author__isnull: bool | None = None,
+        author_id: str | None = None,
+        author_id__contains: str | None = None,
+        author_id__icontains: str | None = None,
+        author_id__startswith: str | None = None,
+        author_id__istartswith: str | None = None,
+        author_id__endswith: str | None = None,
+        author_id__iendswith: str | None = None,
+        author_id__iexact: str | None = None,
+        author_id__in: list[str] | None = None,
+        author_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        description: str | None = None,
+        description__contains: str | None = None,
+        description__icontains: str | None = None,
+        description__startswith: str | None = None,
+        description__istartswith: str | None = None,
+        description__endswith: str | None = None,
+        description__iendswith: str | None = None,
+        description__iexact: str | None = None,
+        description__in: list[str] | None = None,
+        description__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        version: int | None = None,
+        version__gt: int | None = None,
+        version__gte: int | None = None,
+        version__lt: int | None = None,
+        version__lte: int | None = None,
+        version__between: tuple[int, int] | None = None,
+        version__range: int | None = None,
+        version__in: list[int] | None = None,
+        version__isnull: bool | None = None,
+    ) -> "OxydeIssueDescriptionRevisionQuery":
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        author: OxydeUser | None = None,
+        author__in: list[OxydeUser] | None = None,
+        author__isnull: bool | None = None,
+        author_id: str | None = None,
+        author_id__contains: str | None = None,
+        author_id__icontains: str | None = None,
+        author_id__startswith: str | None = None,
+        author_id__istartswith: str | None = None,
+        author_id__endswith: str | None = None,
+        author_id__iendswith: str | None = None,
+        author_id__iexact: str | None = None,
+        author_id__in: list[str] | None = None,
+        author_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        description: str | None = None,
+        description__contains: str | None = None,
+        description__icontains: str | None = None,
+        description__startswith: str | None = None,
+        description__istartswith: str | None = None,
+        description__endswith: str | None = None,
+        description__iendswith: str | None = None,
+        description__iexact: str | None = None,
+        description__in: list[str] | None = None,
+        description__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        version: int | None = None,
+        version__gt: int | None = None,
+        version__gte: int | None = None,
+        version__lt: int | None = None,
+        version__lte: int | None = None,
+        version__between: tuple[int, int] | None = None,
+        version__range: int | None = None,
+        version__in: list[int] | None = None,
+        version__isnull: bool | None = None,
+    ) -> "OxydeIssueDescriptionRevisionQuery":
+        """Exclude objects matching field lookups."""
+        ...
+
+    def order_by(self, *fields: Literal["author", "-author", "author_id", "-author_id", "created_at", "-created_at", "description", "-description", "id", "-id", "issue_id", "-issue_id", "version", "-version"]) -> "OxydeIssueDescriptionRevisionQuery":  # type: ignore[override]
+        """Order results by fields."""
+        ...
+
+    def limit(self, n: int) -> "OxydeIssueDescriptionRevisionQuery":
+        """Limit number of results."""
+        ...
+
+    def offset(self, n: int) -> "OxydeIssueDescriptionRevisionQuery":
+        """Skip first n results."""
+        ...
+
+    def distinct(self, value: bool = True) -> "OxydeIssueDescriptionRevisionQuery":
+        """Return distinct results."""
+        ...
+
+    def select(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"]) -> "OxydeIssueDescriptionRevisionQuery":  # type: ignore[override]
+        """Select specific fields."""
+        ...
+
+    def join(self, *paths: str) -> "OxydeIssueDescriptionRevisionQuery":
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> "OxydeIssueDescriptionRevisionQuery":
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> "OxydeIssueDescriptionRevisionQuery":
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> "OxydeIssueDescriptionRevisionQuery":
+        """Add FOR SHARE lock to query."""
+        ...
+
+    def annotate(self, **annotations: Any) -> "OxydeIssueDescriptionRevisionQuery":
+        """Add computed fields using aggregate functions."""
+        ...
+
+    def group_by(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"]) -> "OxydeIssueDescriptionRevisionQuery":  # type: ignore[override]
+        """Add GROUP BY clause."""
+        ...
+
+    def having(self, *q_exprs: Any, **kwargs: Any) -> "OxydeIssueDescriptionRevisionQuery":
+        """Add HAVING clause for filtering grouped results."""
+        ...
+
+    def values(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"]) -> "OxydeIssueDescriptionRevisionQuery":  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"], flat: bool = False) -> "OxydeIssueDescriptionRevisionQuery":  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeIssueDescriptionRevision]:
+        """Execute query and return all results."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Execute query and return first result."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Execute query and return last result."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count matching objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def update(  # type: ignore[override]
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **values: Any,
+    ) -> int:
+        """Update matching objects."""
+        ...
+
+    async def increment(
+        self,
+        field: str,
+        by: int | float = 1,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Atomically increment a field value."""
+        ...
+
+    async def delete(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Delete matching objects."""
+        ...
+
+class OxydeIssueDescriptionRevisionManager(QueryManager[OxydeIssueDescriptionRevision]):
+    """Type-safe Manager for OxydeIssueDescriptionRevision model."""
+
+    # Query building methods (sync, return Query)
+
+    def query(self) -> OxydeIssueDescriptionRevisionQuery:
+        """Return a Query builder for this model."""
+        ...
+
+    def filter(
+        self,
+        *args: Any,
+        author: OxydeUser | None = None,
+        author__in: list[OxydeUser] | None = None,
+        author__isnull: bool | None = None,
+        author_id: str | None = None,
+        author_id__contains: str | None = None,
+        author_id__icontains: str | None = None,
+        author_id__startswith: str | None = None,
+        author_id__istartswith: str | None = None,
+        author_id__endswith: str | None = None,
+        author_id__iendswith: str | None = None,
+        author_id__iexact: str | None = None,
+        author_id__in: list[str] | None = None,
+        author_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        description: str | None = None,
+        description__contains: str | None = None,
+        description__icontains: str | None = None,
+        description__startswith: str | None = None,
+        description__istartswith: str | None = None,
+        description__endswith: str | None = None,
+        description__iendswith: str | None = None,
+        description__iexact: str | None = None,
+        description__in: list[str] | None = None,
+        description__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        version: int | None = None,
+        version__gt: int | None = None,
+        version__gte: int | None = None,
+        version__lt: int | None = None,
+        version__lte: int | None = None,
+        version__between: tuple[int, int] | None = None,
+        version__range: int | None = None,
+        version__in: list[int] | None = None,
+        version__isnull: bool | None = None,
+    ) -> OxydeIssueDescriptionRevisionQuery:
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        author: OxydeUser | None = None,
+        author__in: list[OxydeUser] | None = None,
+        author__isnull: bool | None = None,
+        author_id: str | None = None,
+        author_id__contains: str | None = None,
+        author_id__icontains: str | None = None,
+        author_id__startswith: str | None = None,
+        author_id__istartswith: str | None = None,
+        author_id__endswith: str | None = None,
+        author_id__iendswith: str | None = None,
+        author_id__iexact: str | None = None,
+        author_id__in: list[str] | None = None,
+        author_id__isnull: bool | None = None,
+        created_at: datetime | None = None,
+        created_at__gt: datetime | None = None,
+        created_at__gte: datetime | None = None,
+        created_at__lt: datetime | None = None,
+        created_at__lte: datetime | None = None,
+        created_at__between: tuple[datetime, datetime] | None = None,
+        created_at__range: datetime | None = None,
+        created_at__year: int | None = None,
+        created_at__month: int | None = None,
+        created_at__day: int | None = None,
+        created_at__in: list[datetime] | None = None,
+        created_at__isnull: bool | None = None,
+        description: str | None = None,
+        description__contains: str | None = None,
+        description__icontains: str | None = None,
+        description__startswith: str | None = None,
+        description__istartswith: str | None = None,
+        description__endswith: str | None = None,
+        description__iendswith: str | None = None,
+        description__iexact: str | None = None,
+        description__in: list[str] | None = None,
+        description__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        version: int | None = None,
+        version__gt: int | None = None,
+        version__gte: int | None = None,
+        version__lt: int | None = None,
+        version__lte: int | None = None,
+        version__between: tuple[int, int] | None = None,
+        version__range: int | None = None,
+        version__in: list[int] | None = None,
+        version__isnull: bool | None = None,
+    ) -> OxydeIssueDescriptionRevisionQuery:
+        """Exclude objects matching field lookups."""
+        ...
+
+    def values(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"]) -> OxydeIssueDescriptionRevisionQuery:  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["author", "author_id", "created_at", "description", "id", "issue_id", "version"], flat: bool = False) -> OxydeIssueDescriptionRevisionQuery:  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    def distinct(self, distinct: bool = True) -> OxydeIssueDescriptionRevisionQuery:
+        """Return distinct results."""
+        ...
+
+    def join(self, *paths: str) -> OxydeIssueDescriptionRevisionQuery:
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> OxydeIssueDescriptionRevisionQuery:
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> OxydeIssueDescriptionRevisionQuery:
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> OxydeIssueDescriptionRevisionQuery:
+        """Add FOR SHARE lock to query."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def get(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeIssueDescriptionRevision:
+        """Get single object matching lookups."""
+        ...
+
+    async def get_or_none(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Get object or None if not found."""
+        ...
+
+    async def get_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeIssueDescriptionRevision, bool]:
+        """Get object or create if not found. Returns (object, created)."""
+        ...
+
+    async def update_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeIssueDescriptionRevision, bool]:
+        """Get object, create if missing, or update it when defaults are provided."""
+        ...
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        mode: str = "models",
+    ) -> list[OxydeIssueDescriptionRevision]:
+        """Get all objects."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Get first object."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeIssueDescriptionRevision | None:
+        """Get last object."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count all objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def create(  # type: ignore[override]
+        self,
+        *,
+        instance: OxydeIssueDescriptionRevision | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        author: OxydeUser | None = None,
+        author_id: str | None = None,
+        created_at: datetime | None = None,
+        description: str | None = None,
+        id: str | None = None,
+        issue_id: str | None = None,
+        version: int | None = None,
+    ) -> OxydeIssueDescriptionRevision:
+        """Create new object."""
+        ...
+
+    async def bulk_create(  # type: ignore[override]
+        self,
+        objects: list[OxydeIssueDescriptionRevision],
+        *,
+        batch_size: int | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeIssueDescriptionRevision]:
+        """Bulk create objects."""
+        ...
+
+    async def bulk_update(  # type: ignore[override]
+        self,
+        objects: list[OxydeIssueDescriptionRevision],
         fields: list[str],
         *,
         client: Any | None = None,

@@ -5,7 +5,7 @@ Phase 2 migration from SQLAlchemy.
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
@@ -151,6 +151,32 @@ class OxydeTicketLimboBlocker(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo_blockers"
+
+
+class OxydeIssueDescriptionRevision(Model):
+    """Immutable snapshot of an issue's description at a point in time.
+
+    A new row is appended every time an issue update changes description.
+    Version numbers are monotonically increasing per issue; v1 is the
+    initial state at creation (even if the description was empty —
+    "I started with nothing" is useful history).
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    # No standalone index on issue_id: the composite UNIQUE
+    # (issue_id, version) below covers per-issue lookups.
+    issue_id: str = Field()
+    version: int = Field()
+    description: str | None = Field(default=None)
+    author: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        is_table = True
+        table_name = "issue_description_revisions"
+        indexes = [
+            Index(("issue_id", "version"), unique=True, name="uq_issue_description_revisions_issue_version"),
+        ]
 
 
 class OxydeBudgetTransaction(Model):
