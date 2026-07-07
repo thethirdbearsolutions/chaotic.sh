@@ -60,23 +60,86 @@ def register(cli):
                   type=click.Choice(["fibonacci", "linear", "powers_of_2", "tshirt"]),
                   help="Estimation scale for issues")
     @click.option("--default-sprint-budget", type=int, help="Default budget for new sprints")
+    @click.option("--template", "template_name", metavar="NAME",
+                  help="Apply a saved template or bundled starter pack after "
+                       "creating (saved templates checked first, then packs; a "
+                       "pack is installed as a team template on first use).")
     @_main().json_option
     @_main().require_team
     @_main().handle_error
-    def project_create(name, key, description, color, estimate_scale, default_sprint_budget):
-        """Create a new project."""
+    def project_create(name, key, description, color, estimate_scale, default_sprint_budget, template_name):
+        """Create a new project.
+
+        With --template, applies a saved template (or bundled starter
+        pack) to the new project right after creating it -- rituals and
+        settings in one line. See 'chaotic template install' for the
+        bundled packs.
+        """
         m = _main()
+        team_id = m.get_current_team()
+
+        # Resolve --template BEFORE creating the project, so a typo'd
+        # name fails loud with no side effects (CHT-1262).
+        template = None
+        if template_name:
+            templates = _client().get_templates(team_id)
+            template = next((t for t in templates if t["name"] == template_name), None)
+            if template is None:
+                from .template_cmd import available_packs, _doc_to_body
+                packs = available_packs()
+                if template_name in packs:
+                    # First use of a bundled pack: install it as a team
+                    # template, then apply that.
+                    doc = packs[template_name]
+                    template = _client().create_template(
+                        team_id, doc["name"], _doc_to_body(doc),
+                        description=doc.get("description"),
+                    )
+                    console.print(
+                        f"[dim]Installed pack '{template_name}' as a team template.[/dim]"
+                    )
+                else:
+                    console.print(
+                        f"[red]No saved template or bundled pack named "
+                        f"'{template_name}'.[/red]"
+                    )
+                    console.print(
+                        "Run `chaotic template list` for saved templates or "
+                        "`chaotic template install` for bundled packs."
+                    )
+                    raise SystemExit(1)
+
         result = _client().create_project(
-            m.get_current_team(), name, key.upper(),
+            team_id, name, key.upper(),
             description=description or None, color=color, estimate_scale=estimate_scale,
             default_sprint_budget=default_sprint_budget
         )
         m.set_current_project(result["id"])
+
+        report = None
+        if template is not None:
+            # Fresh project: no ritual collisions possible, so apply with
+            # update_all rather than prompting per change.
+            report = _client().apply_template(
+                template["id"], result["id"], update_all=True,
+            )
+
         if m.is_json_output():
+            if report is not None:
+                result = {**result, "template_applied": report}
             m.output_json(result)
             return
         console.print(f"[green]Project created: {result['name']} ({result['key']})[/green]")
         console.print(f"[dim]Set as current project[/dim]")
+        if report is not None:
+            created = sum(1 for c in report["rituals"] if c["action"] == "create")
+            set_count = sum(1 for c in report["settings"] if c["action"] == "set")
+            console.print(
+                f"[green]Applied template '{report['template']}': "
+                f"{created} ritual(s) created, {set_count} setting(s) set.[/green]"
+            )
+            for warning in report.get("warnings", []):
+                console.print(f"[yellow]Warning: {warning}[/yellow]")
 
     @project.command("use")
     @click.argument("identifier")
