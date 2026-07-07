@@ -1530,6 +1530,41 @@ class TestRitualServiceMisc:
         next_sprint = await OxydeSprint.objects.get(id=next_sprint.id)
         assert next_sprint.status == SprintStatus.ACTIVE
 
+    async def test_check_limbo_self_heal_failure_reports_limbo_not_raises(
+        self, db, test_project, monkeypatch
+    ):
+        """PR #223 review: if the self-heal itself blows up, check_limbo
+        must NOT propagate -- every ritual endpoint (including
+        force-clear-limbo, the recovery path of last resort) calls
+        check_limbo first, so an unhandled error would 500 them all.
+        Instead it logs and reports the real limbo state so force-clear
+        can still reach complete_limbo directly.
+        """
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Stuck Sprint",
+            status=SprintStatus.ACTIVE,
+            limbo=True,
+        )
+
+        service = RitualService()
+
+        async def boom(sprint_id):
+            raise RuntimeError("simulated heal failure")
+
+        monkeypatch.setattr(service, "_maybe_clear_limbo", boom)
+
+        in_limbo, limbo_sprint, pending = await service.check_limbo(test_project.id)
+
+        # No exception; the true state is reported so callers can act.
+        assert in_limbo is True
+        assert limbo_sprint.id == sprint.id
+        assert pending == []
+
+        # Sprint untouched -- still in limbo for force-clear to handle.
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.limbo is True
+
     async def test_check_limbo_does_not_self_heal_with_real_pending_rituals(
         self, db, test_project
     ):
@@ -3493,6 +3528,50 @@ class TestLimboStatusAPI:
         assert data["sprint_id"] == limbo_sprint.id
         assert len(data["pending_rituals"]) == 1
         assert data["pending_rituals"][0]["name"] == "limbo-ritual"
+
+    async def test_get_limbo_status_self_heals_stuck_sprint(
+        self, client, auth_headers, test_project, db
+    ):
+        """CHT-1278 recovery at the API surface: a sprint stuck in
+        limbo=True with zero pending sprint rituals must resolve on the
+        very first GET /rituals/limbo -- the response reports
+        in_limbo=false AND the underlying sprint actually completes and
+        rotates (not just a cosmetic answer).
+        """
+        # Only a ticket-scoped ritual: never pending for a sprint.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="ticket-only",
+            prompt="Ticket ritual",
+            trigger=RitualTrigger.TICKET_CLOSE,
+        )
+        stuck_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Stuck Sprint",
+            status=SprintStatus.ACTIVE,
+            limbo=True,
+        )
+        next_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Next Sprint",
+            status=SprintStatus.PLANNED,
+        )
+
+        response = await client.get(
+            f"/api/rituals/limbo?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["in_limbo"] is False
+        assert data["sprint_id"] is None
+        assert data["pending_rituals"] == []
+
+        stuck_sprint = await OxydeSprint.objects.get(id=stuck_sprint.id)
+        assert stuck_sprint.limbo is False
+        assert stuck_sprint.status == SprintStatus.COMPLETED
+        next_sprint = await OxydeSprint.objects.get(id=next_sprint.id)
+        assert next_sprint.status == SprintStatus.ACTIVE
 
     async def test_get_limbo_status_project_not_found(self, client, auth_headers):
         """Test getting limbo status for non-existent project."""

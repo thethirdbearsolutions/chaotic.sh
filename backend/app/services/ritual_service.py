@@ -1579,7 +1579,23 @@ class RitualService:
                 "(CHT-1278).",
                 limbo_sprint.id, project_id,
             )
-            await self._maybe_clear_limbo(limbo_sprint.id)
+            try:
+                await self._maybe_clear_limbo(limbo_sprint.id)
+            except Exception:
+                # Same wrap as the attest/gate-complete callers. If the
+                # heal itself fails, report the real limbo state instead
+                # of raising: every ritual endpoint (including
+                # force-clear-limbo, the recovery path of last resort)
+                # calls check_limbo first, and an unhandled error here
+                # would 500 them all -- bricking the escape hatch behind
+                # the very mutation that's failing (PR #223 review).
+                logger.exception(
+                    "Self-heal failed for limbo sprint=%s (project %s); "
+                    "reporting limbo as-is so force-clear-limbo can still "
+                    "reach complete_limbo directly.",
+                    limbo_sprint.id, project_id,
+                )
+                return True, limbo_sprint, []
             return False, None, []
 
         return True, limbo_sprint, pending

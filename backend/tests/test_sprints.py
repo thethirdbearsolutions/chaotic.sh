@@ -151,13 +151,28 @@ async def test_complete_limbo_idempotent(db, test_project):
     assert result1.status == SprintStatus.COMPLETED
     assert result1.limbo is False
 
-    # Second call (simulating concurrent request) - the sprint is already COMPLETED
-    # so the atomic UPDATE WHERE limbo=1 is a no-op, but the service still
-    # proceeds to activate the next sprint. This is a known limitation (the
-    # idempotency guard only checks `sprint.limbo`, not the UPDATE row count).
+    # First call rotated: exactly one ACTIVE sprint now exists.
+    sprints_after_first = await OxydeSprint.objects.filter(
+        project_id=test_project.id,
+    ).all()
+    count_after_first = len(sprints_after_first)
+    assert len([s for s in sprints_after_first if s.status == SprintStatus.ACTIVE]) == 1
+
+    # Second call (simulating the loser of a concurrent race): the atomic
+    # UPDATE ... WHERE limbo = 1 matches zero rows, so the loser must
+    # return early WITHOUT activating or creating anything. PR #223
+    # review fixed the guard to check the UPDATE's row count (via
+    # RETURNING) -- the old refresh-based check was dead code, so every
+    # racer proceeded to _activate_next_sprint and could double-rotate.
     result2 = await sprint_service.complete_limbo(active_sprint)
     assert result2.status == SprintStatus.COMPLETED
     assert result2.limbo is False
+
+    sprints_after_second = await OxydeSprint.objects.filter(
+        project_id=test_project.id,
+    ).all()
+    assert len(sprints_after_second) == count_after_first  # no duplicate sprints
+    assert len([s for s in sprints_after_second if s.status == SprintStatus.ACTIVE]) == 1  # no double activation
 
 
 @pytest.mark.asyncio

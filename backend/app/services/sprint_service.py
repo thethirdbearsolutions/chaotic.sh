@@ -207,16 +207,24 @@ class SprintService:
             sprint = await OxydeSprint.objects.get_or_none(id=sprint.id)
             if not sprint:
                 raise ValueError("Sprint not found")
-        # Atomic check-and-update via raw SQL — .name strings for raw params
+        # Atomic check-and-update via raw SQL — .name strings for raw
+        # params. RETURNING makes the row count observable (execute_raw
+        # returns [] for a plain UPDATE), which is the actual race
+        # guard: only the caller whose UPDATE matched the limbo=1 row
+        # may activate the next sprint. The previous refresh-then-check
+        # guard was dead code — after ANY caller's UPDATE landed, a
+        # refresh showed limbo=0 for every racer, so all of them
+        # proceeded to _activate_next_sprint (PR #223 review, CHT-1278).
         result = await execute_raw(
-            "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1",
+            "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
             [SprintStatus.COMPLETED.name, sprint.id],
         )
-        # Refresh to check if the update took effect
-        await sprint.refresh()
-        if sprint.limbo:
-            # Another request already cleared limbo — nothing to do
+        if not result:
+            # Lost the race (or sprint wasn't in limbo): another request
+            # already cleared limbo and owns next-sprint activation.
+            await sprint.refresh()
             return sprint
+        await sprint.refresh()
 
         # Get and activate the next sprint
         next_sprint = await self.get_next_sprint(sprint.project_id)
