@@ -1,0 +1,90 @@
+# Bundled starter pack: rigor (CHT-1261)
+#
+# For teams that want engineering discipline enforced at the ticket
+# boundary: tests and traceability on every close, a design gate on
+# every claim, and one subsystem documented per sprint.
+name: rigor
+description: >-
+  Engineering discipline at the ticket boundary: tests and epic links on
+  close, a design-review gate on claim, one subsystem documented per sprint.
+version: 1
+sections:
+  rituals:
+    - name: write-tests
+      trigger: ticket_close
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before closing this ticket, account for its test coverage.
+
+        - If the change added or modified behavior, point to the new or
+          updated tests that pin it. Name the test file(s) and what they
+          assert.
+        - If you did not write tests, say why -- honestly and
+          specifically. "Refactor with existing coverage", "docs-only
+          change", and "spike, throwaway code" are honest reasons.
+          "Ran out of time" is also honest; write it down so the gap is
+          visible instead of silent.
+        - Confirm the full test suite passes. If anything is skipped or
+          flaky, name it.
+
+        Your note is the record. A reviewer reading only this note should
+        know what is covered and what is not.
+
+    - name: link-to-epic
+      trigger: ticket_close
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before closing this ticket, place it in the larger picture.
+
+        - If it belongs to an epic, confirm the parent link is set. If
+          it should belong to one and doesn't, set the link now.
+        - If it genuinely stands alone, say so in one line -- standalone
+          work is fine, orphaned work is not.
+        - Check for related tickets this work unblocked, duplicated, or
+          made obsolete, and update those relations.
+
+        The goal: no closed ticket whose context has to be reconstructed
+        from memory later.
+
+    - name: design-review
+      trigger: ticket_claim
+      approval_mode: review
+      note_required: true
+      is_active: true
+      prompt: |
+        Before starting work on this ticket, establish what "done" means
+        and how you intend to get there. A human reviews this attestation
+        before work proceeds.
+
+        - State the acceptance criteria. If the ticket already has them,
+          quote or summarize; if it doesn't, write them now.
+        - Sketch the approach: what you will touch, what you will not,
+          and any interface or schema changes.
+        - For anything non-obvious, post a short design proposal on the
+          ticket first and reference it here.
+
+        No code before this clears. Cheap course corrections happen at
+        design time; expensive ones happen in review.
+
+    - name: architecture-documentation
+      trigger: every_sprint
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Once per sprint, pick ONE subsystem and document it.
+
+        - Choose a part of the codebase that would confuse a competent
+          newcomer: a module boundary, a data flow, a lifecycle, a
+          gotcha-laden integration.
+        - Write or update its documentation: what it is for, how it fits
+          the whole, invariants that must hold, and the traps.
+        - Prefer updating a stale doc over writing a redundant new one.
+
+        In your note, name the subsystem and link the doc. One subsystem
+        per sprint, every sprint, compounds; zero per sprint also
+        compounds.

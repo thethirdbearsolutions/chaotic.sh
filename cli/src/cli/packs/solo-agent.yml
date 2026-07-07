@@ -1,0 +1,33 @@
+# Bundled starter pack: solo-agent (CHT-1261)
+#
+# The minimum viable guardrail for a solo agent working unsupervised:
+# one ticket-close ritual that keeps test coverage honest. Add more
+# rituals when the project earns them.
+name: solo-agent
+description: >-
+  Minimal solo-agent guardrail: a single ticket-close ritual holding the
+  line on test coverage.
+version: 1
+sections:
+  rituals:
+    - name: write-tests
+      trigger: ticket_close
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before closing this ticket, account for its test coverage.
+
+        - If the change added or modified behavior, point to the new or
+          updated tests that pin it. Name the test file(s) and what they
+          assert.
+        - If you did not write tests, say why -- honestly and
+          specifically. "Refactor with existing coverage", "docs-only
+          change", and "spike, throwaway code" are honest reasons.
+          "Ran out of time" is also honest; write it down so the gap is
+          visible instead of silent.
+        - Confirm the full test suite passes. If anything is skipped or
+          flaky, name it.
+
+        Your note is the record. A reviewer reading only this note should
+        know what is covered and what is not.

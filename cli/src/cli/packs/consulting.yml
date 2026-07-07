@@ -1,0 +1,115 @@
+# Bundled starter pack: consulting (CHT-1261)
+#
+# For work inside a codebase you don't own: orient before touching
+# anything, audit yourself for silent shortcuts on the way out, and
+# watch for drift at sprint boundaries.
+name: consulting
+description: >-
+  Guardrails for working in a codebase you don't own: orient before coding,
+  audit shortcuts and references on close, check pattern drift and API
+  surface each sprint.
+version: 1
+sections:
+  rituals:
+    - name: orientation
+      trigger: ticket_claim
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before writing any code for this ticket, study how this codebase
+        already solves problems like yours.
+
+        - Find at least two existing examples of the pattern you are
+          about to implement (an endpoint, a service, a migration, a
+          component -- whatever this ticket needs). Name them in your
+          note.
+        - Note the conventions they share: naming, file placement, error
+          handling, test shape.
+        - If your ticket seems to need something the codebase has no
+          precedent for, say so explicitly -- that is a design decision,
+          not a blank to fill silently.
+
+        You are a guest here. Match the house style before proposing a
+        new one.
+
+    - name: silent-shortcut-audit
+      trigger: ticket_close
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before closing, audit your own diff for shortcuts you took but
+        did not announce.
+
+        - Hardcoded values that should be configuration.
+        - Swallowed errors, bare excepts, TODO comments standing in for
+          real handling.
+        - Copy-pasted blocks you meant to refactor.
+        - Skipped edge cases you told yourself were unlikely.
+
+        For each one you find: fix it, ticket it, or defend it in your
+        note. The only wrong move is leaving it silent. "No shortcuts
+        found" is a fine note if it is true.
+
+    - name: reference-correctness
+      trigger: ticket_close
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Before closing, verify every reference your change relies on is
+        real and current.
+
+        - Names you call: functions, endpoints, config keys, environment
+          variables, CLI flags. Confirm each exists as spelled -- do not
+          trust memory or autocomplete.
+        - Docs or comments your change touches: confirm examples still
+          run and paths still resolve.
+        - Anything you cited from the ticket or an external source:
+          confirm it says what you claimed.
+
+        State in your note what you checked. Fabricated references are
+        the most expensive bug class to catch downstream.
+
+    - name: pattern-drift-audit
+      trigger: every_sprint
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Once per sprint, compare this sprint's changes against the
+        codebase's established patterns.
+
+        - Did any change introduce a second way of doing something that
+          already had one way? (Two error-handling styles, two config
+          mechanisms, two test idioms.)
+        - Was it deliberate? If yes, is the old way marked for
+          retirement, or are both now permanent?
+        - If drift was accidental, ticket the reconciliation now while
+          the context is fresh.
+
+        Name the drift you found (or state that you looked and found
+        none) in your note.
+
+    - name: api-surface-review
+      trigger: every_sprint
+      approval_mode: auto
+      note_required: true
+      is_active: true
+      prompt: |
+        Once per sprint, review what this sprint did to the project's
+        public surface -- everything a consumer outside this repo can
+        depend on.
+
+        - New endpoints, parameters, response fields, CLI commands,
+          config options: are they named consistently with what exists,
+          and are they things you want to support indefinitely?
+        - Anything removed or changed in shape: was the change announced
+          or versioned appropriately for this project's compatibility
+          promises?
+        - Anything exposed accidentally (debug routes, internal fields
+          serialized by default)?
+
+        Summarize additions/removals in your note, or state that the
+        surface did not change.

@@ -1245,6 +1245,7 @@ from .commands import issue_cmd as _issue_mod
 from .commands import await_cmd as _await_mod
 from .commands import mcp_cmd as _mcp_mod
 from .commands import inbox_cmd as _inbox_mod
+from .commands import template_cmd as _template_mod
 
 _config_mod.register(cli)
 _profile_mod.register(cli)
@@ -1261,6 +1262,7 @@ _issue_mod.register(cli)
 _await_mod.register(cli)
 _mcp_mod.register(cli)
 _inbox_mod.register(cli)
+_template_mod.register(cli)
 
 cli.add_command(system)
 

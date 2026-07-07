@@ -1,0 +1,71 @@
+# Bundled starter pack: human-led (CHT-1261)
+#
+# For teams where agents do the work but a human owns the cadence.
+# Every ritual here is sprint-close and REVIEW mode: an agent prepares
+# the material, a human reads and approves it before the next sprint
+# begins. Nothing rolls over unexamined.
+name: human-led
+description: >-
+  A human-owned sprint cadence: agent-prepared sprint review, backlog
+  grooming, and docs checkpoint, each requiring human approval at sprint
+  close.
+version: 1
+sections:
+  rituals:
+    - name: sprint-review
+      trigger: every_sprint
+      approval_mode: review
+      note_required: true
+      is_active: true
+      prompt: |
+        Prepare the sprint review for human sign-off.
+
+        - What shipped: each completed ticket in one line, plain
+          language, effect over mechanism.
+        - What didn't: tickets that rolled over or stalled, each with
+          the honest reason -- blocked, underestimated, deprioritized,
+          or abandoned.
+        - Surprises: anything discovered mid-sprint that should change
+          the plan (a dependency, a defect cluster, a wrong assumption).
+
+        Write it so the human can read it in two minutes and know
+        whether the sprint did what they thought it would.
+
+    - name: backlog-grooming
+      trigger: every_sprint
+      approval_mode: review
+      note_required: true
+      is_active: true
+      prompt: |
+        Groom the backlog and present the result for human approval.
+
+        - Flag stale tickets: anything untouched long enough that its
+          premise may no longer hold. Recommend close, merge, or refresh
+          for each.
+        - Flag missing structure: tickets without estimates, epics, or
+          clear acceptance criteria that are likely to be picked up next
+          sprint.
+        - Propose the top candidates for the next sprint, with one line
+          of reasoning each.
+
+        You propose; the human disposes. Do not close or reprioritize
+        anything yourself -- the note is a recommendation list.
+
+    - name: docs-checkpoint
+      trigger: every_sprint
+      approval_mode: review
+      note_required: true
+      is_active: true
+      prompt: |
+        Audit what this sprint's changes did to the documentation, and
+        present findings for human review.
+
+        - List the shipped changes that altered behavior a document
+          describes -- READMEs, setup guides, API references, runbooks.
+        - For each, state whether the doc was updated in-sprint, needs
+          an update (ticket it), or is now wrong in a way that could
+          mislead someone this week (fix or flag urgently).
+        - Note any new feature that shipped entirely undocumented.
+
+        The human approving this should come away knowing: can a
+        newcomer still trust our docs?
