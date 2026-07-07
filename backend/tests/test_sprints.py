@@ -483,13 +483,22 @@ async def test_close_sprint_already_in_limbo_fails(db, test_project):
     service = SprintService()
 
     with pytest.raises(ValueError, match="already in limbo"):
-        await service.close_sprint(sprint, has_rituals=False)
+        await service.close_sprint(sprint)
 
 
 @pytest.mark.asyncio
 async def test_close_sprint_with_rituals_enters_limbo(db, test_project):
-    """Test closing sprint with rituals enters limbo."""
+    """Test closing sprint with a pending EVERY_SPRINT ritual enters limbo."""
     from app.services.sprint_service import SprintService
+    from app.oxyde_models.ritual import OxydeRitual
+    from app.enums import RitualTrigger
+
+    await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="Sprint Ritual",
+        prompt="Attest something",
+        trigger=RitualTrigger.EVERY_SPRINT,
+    )
 
     sprint = await OxydeSprint.objects.create(
         project_id=test_project.id,
@@ -503,10 +512,52 @@ async def test_close_sprint_with_rituals_enters_limbo(db, test_project):
     )
 
     service = SprintService()
-    result = await service.close_sprint(sprint, has_rituals=True)
+    result = await service.close_sprint(sprint)
 
     assert result.limbo is True
     assert result.status == SprintStatus.ACTIVE  # Still active, just in limbo
+
+
+@pytest.mark.asyncio
+async def test_close_sprint_with_only_ticket_rituals_does_not_enter_limbo(db, test_project):
+    """CHT-1278: a project with only TICKET_CLOSE/TICKET_CLAIM rituals (no
+    EVERY_SPRINT ritual) must NOT enter limbo on close -- there would be
+    nothing to attest, and the old any-ritual has_rituals check left such
+    sprints stuck in limbo forever.
+    """
+    from app.services.sprint_service import SprintService
+    from app.oxyde_models.ritual import OxydeRitual
+    from app.enums import RitualTrigger
+
+    await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="Ticket Close Ritual",
+        prompt="Do a thing on close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+    )
+    await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="Ticket Claim Ritual",
+        prompt="Do a thing on claim",
+        trigger=RitualTrigger.TICKET_CLAIM,
+    )
+
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Current Sprint",
+        status=SprintStatus.ACTIVE,
+    )
+    await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Next Sprint",
+        status=SprintStatus.PLANNED,
+    )
+
+    service = SprintService()
+    result = await service.close_sprint(sprint)
+
+    assert result.limbo is False
+    assert result.status == SprintStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -539,46 +590,11 @@ async def test_close_sprint_moves_incomplete_issues(db, test_project, test_user)
     )
 
     service = SprintService()
-    await service.close_sprint(current_sprint, has_rituals=False)
+    await service.close_sprint(current_sprint)
 
     # Issue should be moved to next sprint (re-fetch to see updated DB state)
     issue = await OxydeIssue.objects.get(id=issue.id)
     assert issue.sprint_id == next_sprint.id
-
-
-@pytest.mark.asyncio
-async def test_enter_limbo(db, test_project):
-    """Test putting a sprint into limbo."""
-    from app.services.sprint_service import SprintService
-
-    sprint = await OxydeSprint.objects.create(
-        project_id=test_project.id,
-        name="Test Sprint",
-        status=SprintStatus.ACTIVE,
-        limbo=False,
-    )
-
-    service = SprintService()
-    result = await service.enter_limbo(sprint)
-
-    assert result.limbo is True
-
-
-@pytest.mark.asyncio
-async def test_enter_limbo_not_active_fails(db, test_project):
-    """Test that entering limbo on non-active sprint fails."""
-    from app.services.sprint_service import SprintService
-
-    sprint = await OxydeSprint.objects.create(
-        project_id=test_project.id,
-        name="Planned Sprint",
-        status=SprintStatus.PLANNED,
-    )
-
-    service = SprintService()
-
-    with pytest.raises(ValueError, match="active sprint"):
-        await service.enter_limbo(sprint)
 
 
 # ============== Additional edge case tests ==============
@@ -788,6 +804,55 @@ async def test_close_sprint_with_rituals_enters_limbo_via_api(client, auth_heade
     data = response.json()
     assert data["limbo"] is True
     assert data["status"] == "active"  # Still active, just in limbo
+
+
+@pytest.mark.asyncio
+async def test_close_sprint_with_only_ticket_rituals_does_not_enter_limbo_via_api(
+    client, auth_headers, test_project, db
+):
+    """CHT-1278 regression: a project configured with only ticket-scoped
+    rituals (TICKET_CLOSE/TICKET_CLAIM) must fully rotate on close, not
+    get stuck in limbo=True with nothing to attest. Mirrors the ticket's
+    repro: create_ritual(trigger="ticket_close") only, then close_sprint.
+    """
+    from app.oxyde_models.ritual import OxydeRitual
+    from app.enums import RitualTrigger, ApprovalMode
+
+    await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="Ticket Close Ritual",
+        prompt="Do a thing on close",
+        trigger=RitualTrigger.TICKET_CLOSE,
+        approval_mode=ApprovalMode.AUTO,
+    )
+
+    active_sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Current Sprint",
+        status=SprintStatus.ACTIVE,
+    )
+    await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Next Sprint",
+        status=SprintStatus.PLANNED,
+    )
+
+    response = await client.post(
+        f"/api/sprints/{active_sprint.id}/close",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["limbo"] is False
+    assert data["status"] == "completed"
+
+    # And the project must not report itself in limbo afterward.
+    limbo_response = await client.get(
+        f"/api/rituals/limbo?project_id={test_project.id}",
+        headers=auth_headers,
+    )
+    assert limbo_response.status_code == 200
+    assert limbo_response.json()["in_limbo"] is False
 
 
 # ============== Budget Transaction Tests (CHT-401) ==============

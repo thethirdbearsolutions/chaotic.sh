@@ -1483,47 +1483,84 @@ class TestRitualServiceMisc:
         with pytest.raises(ValueError, match="already exists"):
             await service.update(ritual1, update)
 
-    async def test_enter_limbo(self, db, test_project):
-        """Test entering limbo when sprint has rituals."""
-        sprint = await OxydeSprint.objects.create(
+    async def test_check_limbo_self_heals_stuck_limbo_with_no_pending_rituals(
+        self, db, test_project
+    ):
+        """CHT-1278 recovery: a sprint already stuck in limbo=True with zero
+        pending EVERY_SPRINT rituals (e.g. it entered limbo via the old
+        any-ritual has_rituals bug, or only ticket-scoped rituals exist)
+        must self-heal on the very next check_limbo call -- not stay
+        stuck forever requiring force-clear-limbo.
+        """
+        # Only a ticket-scoped ritual -- never gates a sprint, so
+        # get_pending_rituals for this sprint is always [].
+        await OxydeRitual.objects.create(
             project_id=test_project.id,
-            name="Test Sprint",
-            status=SprintStatus.ACTIVE,
-            limbo=False,
+            name="ticket-ritual",
+            prompt="Do it on ticket close",
+            trigger=RitualTrigger.TICKET_CLOSE,
         )
 
-        # Create EVERY_SPRINT ritual
-        ritual = await OxydeRitual.objects.create(
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Stuck Sprint",
+            status=SprintStatus.ACTIVE,
+            limbo=True,
+        )
+        next_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Next Sprint",
+            status=SprintStatus.PLANNED,
+        )
+
+        service = RitualService()
+        in_limbo, limbo_sprint, pending = await service.check_limbo(test_project.id)
+
+        # Self-healed: no longer reports as in limbo.
+        assert in_limbo is False
+        assert limbo_sprint is None
+        assert pending == []
+
+        # And the underlying sprint was actually completed + rotated,
+        # not just misreported.
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.limbo is False
+        assert sprint.status == SprintStatus.COMPLETED
+
+        next_sprint = await OxydeSprint.objects.get(id=next_sprint.id)
+        assert next_sprint.status == SprintStatus.ACTIVE
+
+    async def test_check_limbo_does_not_self_heal_with_real_pending_rituals(
+        self, db, test_project
+    ):
+        """Sanity check: check_limbo's self-heal must not fire when there
+        genuinely is a pending EVERY_SPRINT ritual to attest.
+        """
+        await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="sprint-ritual",
             prompt="Do it",
             trigger=RitualTrigger.EVERY_SPRINT,
         )
 
-        service = RitualService()
-        rituals = await service.enter_limbo(sprint)
-
-        # Re-fetch sprint to check limbo status
-        sprint = await OxydeSprint.objects.get(id=sprint.id)
-        assert sprint.limbo is True
-        assert len(rituals) == 1
-        assert rituals[0].name == "sprint-ritual"
-
-    async def test_enter_limbo_no_rituals(self, db, test_project):
-        """Test entering limbo when no EVERY_SPRINT rituals exist."""
         sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
-            name="Test Sprint",
+            name="Limbo Sprint",
             status=SprintStatus.ACTIVE,
-            limbo=False,
+            limbo=True,
         )
 
         service = RitualService()
-        rituals = await service.enter_limbo(sprint)
+        in_limbo, limbo_sprint, pending = await service.check_limbo(test_project.id)
 
-        # Sprint should not enter limbo
-        assert sprint.limbo is False
-        assert rituals == []
+        assert in_limbo is True
+        assert limbo_sprint.id == sprint.id
+        assert len(pending) == 1
+        assert pending[0].name == "sprint-ritual"
+
+        # Sprint must still be in limbo -- nothing was cleared.
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.limbo is True
 
     async def test_maybe_clear_limbo_for_project(self, db, test_project):
         """Test maybe_clear_limbo_for_project when limbo exists."""
@@ -3655,6 +3692,15 @@ class TestSprintRitualAttestationAPI:
             prompt="Auto",
             approval_mode=ApprovalMode.AUTO,
         )
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals, so this needs a genuinely-pending sprint ritual to
+        # keep the sprint in limbo long enough to reach the
+        # non-REVIEW-mode validation this test targets.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+        )
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
             name="Sprint 1",
@@ -4275,6 +4321,14 @@ class TestRitualAPIEdgeCases:
 
         # Ritual belongs to other_project
         ritual = await OxydeRitual.objects.create(project_id=other_project.id, name="test", prompt="Test")
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals, so test_project needs a genuinely-pending sprint
+        # ritual of its own to stay in limbo for this request.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+        )
         # But limbo is in test_project
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
@@ -4353,6 +4407,15 @@ class TestRitualAPIEdgeCases:
         from datetime import datetime
 
         ritual = await OxydeRitual.objects.create(project_id=test_project.id, name="test", prompt="Test", approval_mode=ApprovalMode.REVIEW)
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals -- an already-approved attestation doesn't count as
+        # pending, so add a genuinely-pending ritual to keep the sprint
+        # in limbo long enough to reach the already-approved check.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+        )
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
             name="Sprint 1",
@@ -4439,6 +4502,14 @@ class TestRitualAPIEdgeCases:
         other_project = await OxydeProject.objects.create(team_id=test_team.id, name="Other", key="OTH")
 
         ritual = await OxydeRitual.objects.create(project_id=other_project.id, name="test", prompt="Test", approval_mode=ApprovalMode.GATE)
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals, so test_project needs a genuinely-pending sprint
+        # ritual of its own to stay in limbo for this request.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+        )
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
             name="Sprint 1",
@@ -4886,7 +4957,22 @@ class TestForceClearLimboAPIEdgeCases:
     async def test_force_clear_limbo_api_success(
         self, client, auth_headers, test_project, db
     ):
-        """Test successfully force-clearing limbo."""
+        """Test successfully force-clearing limbo with a real pending ritual.
+
+        Needs an actual EVERY_SPRINT ritual so check_limbo's CHT-1278
+        self-heal doesn't beat the force-clear to the punch (a limbo
+        sprint with zero pending rituals now auto-resolves on the very
+        first check_limbo call, which force-clear-limbo itself makes --
+        see test_force_clear_limbo_api_self_heals_before_force_needed
+        below for that case).
+        """
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="Sprint Ritual",
+            prompt="Attest something",
+            trigger=RitualTrigger.EVERY_SPRINT,
+        )
+
         # Create limbo sprint and next sprint
         limbo_sprint = await OxydeSprint.objects.create(
             project_id=test_project.id,
@@ -4908,6 +4994,44 @@ class TestForceClearLimboAPIEdgeCases:
         data = response.json()
         assert data["message"] == "Limbo cleared successfully"
         assert data["next_sprint_name"] == "Next Sprint"
+
+    async def test_force_clear_limbo_api_self_heals_before_force_needed(
+        self, client, auth_headers, test_project, db
+    ):
+        """CHT-1278: a limbo sprint with zero pending rituals self-heals
+        the moment anything checks limbo status -- including force-clear-
+        limbo's own internal check_limbo call. So by the time the force
+        path would run, there's nothing left to force: the endpoint
+        correctly reports "not in limbo" (400), and the sprint has
+        already rotated on its own without needing the admin override.
+        """
+        limbo_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Limbo Sprint",
+            status=SprintStatus.ACTIVE,
+            limbo=True,
+        )
+        next_sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id,
+            name="Next Sprint",
+            status=SprintStatus.PLANNED,
+        )
+
+        response = await client.post(
+            f"/api/rituals/force-clear-limbo?project_id={test_project.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 400
+        assert "not in limbo" in response.json()["detail"]
+
+        # The self-heal already resolved it for real, not just in the
+        # response -- confirm the DB state actually rotated.
+        limbo_sprint = await OxydeSprint.objects.get(id=limbo_sprint.id)
+        assert limbo_sprint.limbo is False
+        assert limbo_sprint.status == SprintStatus.COMPLETED
+
+        next_sprint = await OxydeSprint.objects.get(id=next_sprint.id)
+        assert next_sprint.status == SprintStatus.ACTIVE
 
     async def test_force_clear_limbo_api_not_in_limbo(
         self, client, auth_headers, test_project, db
