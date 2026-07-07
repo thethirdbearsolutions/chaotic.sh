@@ -171,6 +171,46 @@ chaotic issue view CHT-123                # Alias for 'show'
 chaotic issue open CHT-123                # Open issue in browser
 ```
 
+### Ready to start (CHT-1245)
+
+`chaotic issue ready` answers "what can I start right now" -- the
+agent's first shell-out, before touching `issue list`'s filters. It's
+Beads' `bd-ready` equivalent: open (`backlog`/`todo`), unblocked (no
+unresolved `blocks` relation), unassigned by default, priority-sorted
+(`urgent` first, then oldest-first within a tier).
+
+```bash
+chaotic issue ready --json                 # unassigned, unblocked, open work
+chaotic issue ready --mine                 # your own assigned-but-not-started backlog
+chaotic issue ready --include-assigned     # widen: include everyone's claims too
+chaotic issue ready --all-projects         # team-wide instead of current project
+chaotic issue ready --limit 5
+```
+
+`--mine` and `--include-assigned` are mutually exclusive. See
+[docs/agents.md](../docs/agents.md) for the full agent operating loop
+(`ready` → `start` → work → `complete`) and how this interacts with
+claim leases below.
+
+### Claiming and completing
+
+```bash
+chaotic issue start CHT-123                # assign to self + move to in_progress
+chaotic issue start CHT-123 --lease 4h     # override the claim-lease duration (CHT-1246)
+chaotic issue claim CHT-123                # same thing (start is an alias for claim)
+chaotic issue close CHT-123                # mark done (alias: issue complete)
+chaotic issue wontfix CHT-123              # cancel (alias: issue cancel)
+```
+
+`start`/`claim` acquire a **claim lease** -- a server-side expiry
+(default ~2h, `--lease` overrides). Re-running `start`/`claim` while you
+still hold the ticket extends (heartbeats) the lease instead of
+erroring. If the lease expires while the issue is still `in_progress`,
+the next read or list of that issue lazily releases it back to
+`todo`/unassigned and logs a `lease_expired` activity -- no cron, no
+silent wedge. See [docs/agents.md](../docs/agents.md#claim-leases) for
+the full semantics.
+
 ### Creating issues
 ```bash
 chaotic issue create --title "Bug fix"
