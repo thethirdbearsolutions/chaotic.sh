@@ -509,6 +509,67 @@ chaotic await sprint --include-self
 - Concurrent `await` invocations are supported. No client-side
   coordination is required; each process maintains its own watermark.
 
+## MCP server
+
+`chaotic mcp` runs an MCP (Model Context Protocol) server over stdio,
+exposing a curated set of chaotic operations as tools -- so any
+MCP-speaking harness (Claude Code, etc.) gets native chaotic tools
+instead of shelling out to this CLI.
+
+It's a thin adapter over the same `Client` this CLI uses. There is no
+separate MCP login step: it inherits whatever `chaotic status` reports
+(profile, team, project, credentials) via the usual `CHAOTIC_PROFILE` /
+`CHAOTIC_HOME` / `config.json` resolution.
+
+### Add it to Claude Code
+
+```bash
+claude mcp add chaotic -- chaotic mcp
+```
+
+To pin a specific profile, pass the flag through:
+
+```bash
+claude mcp add chaotic -- chaotic --profile myprofile mcp
+```
+
+### Generic MCP client config
+
+```json
+{
+  "mcpServers": {
+    "chaotic": {
+      "command": "chaotic",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Equivalent to |
+|---|---|
+| `issue_list` | `issue list` (with `all_projects` for team-wide) |
+| `issue_view` | `issue show` |
+| `issue_create` | `issue create` |
+| `issue_update` | `issue update` (status/priority/estimate/assignee/title/description) |
+| `issue_comment` | `issue comment` |
+| `issue_start` | `issue start` |
+| `doc_list` | `doc list` |
+| `doc_view` | `doc show` |
+| `doc_create` | `doc create` |
+| `activity_recent` | `activity` |
+
+Every tool returns a JSON object. Failures come back as `{"error": "..."}`
+(the same shape as this CLI's `--json` error contract) rather than an
+MCP protocol-level error -- a bad identifier or missing team/project
+context is data for the caller to read, not a crash.
+
+No destructive tools (delete) are exposed in v1 -- those need a human
+in the loop. An `issue_ready` tool (open/unblocked/unclaimed work
+query) is expected once CHT-1245 lands; it isn't included here yet.
+
 ## Status Values
 
 - `backlog` - Not yet planned
