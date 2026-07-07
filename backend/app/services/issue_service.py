@@ -833,6 +833,17 @@ class IssueService:
         so this snapshot also benefits from that outer loop on create —
         the retry here covers the update path where there is no outer
         loop.
+
+        Retrying inside the caller's still-open atomic() relies on
+        SQLite not poisoning a transaction on statement failure: the
+        failed INSERT is discarded and the transaction stays usable.
+        Revisit if we ever move to Postgres, where an errored statement
+        aborts the transaction until rollback (each attempt would need
+        a savepoint).
+
+        Revisions are uncapped and unpruned by conscious decision:
+        bodies are kilobyte-scale and edits are human-paced at current
+        scale, so the table stays small. Revisit if either changes.
         """
         last_error = None
         for _ in range(5):
