@@ -3,13 +3,14 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 from datetime import datetime, timezone
-from oxyde import atomic, execute_raw
+from oxyde import atomic, execute_raw, IntegrityError
 from app.oxyde_models.document import (
     OxydeDocument,
     OxydeDocumentComment,
     OxydeDocumentActivity,
     OxydeDocumentIssue,
     OxydeDocumentLabel,
+    OxydeDocumentRevision,
 )
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
@@ -20,6 +21,7 @@ from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentComment
 Document = OxydeDocument
 DocumentComment = OxydeDocumentComment
 DocumentActivity = OxydeDocumentActivity
+DocumentRevision = OxydeDocumentRevision
 
 
 class DocumentService:
@@ -48,6 +50,56 @@ class DocumentService:
             document_icon=document_icon,
         )
 
+    async def _next_revision_version(self, document_id: str) -> int:
+        """Compute the next revision number for a document.
+
+        Revision numbers are dense and monotonic per-document. The
+        UNIQUE (document_id, version) index serializes concurrent
+        appends — a duplicate-key error means two writers raced, and
+        the loser retries in _snapshot_revision.
+        """
+        latest = await OxydeDocumentRevision.objects.filter(
+            document_id=document_id
+        ).max("version")
+        return (latest or 0) + 1
+
+    async def _snapshot_revision(
+        self,
+        document: OxydeDocument,
+        author_id: str | None,
+    ) -> OxydeDocumentRevision:
+        """Append a revision row capturing the document's current title/content.
+
+        Runs inside the caller's atomic() block, deliberately fail-loud:
+        an edit either persists together with its snapshot or the whole
+        save fails visibly. A best-effort snapshot would silently gap
+        the history, and the history is exactly what makes "Save again
+        to overwrite" conflict resolution safe — a quiet gap there is
+        worse than a retryable failed save (the editor + draft
+        machinery keep the user's text on failure).
+
+        Two concurrent writers can both read `MAX(version)=N` and both
+        attempt to INSERT `version=N+1`; the UNIQUE (document_id,
+        version) index serializes them and the loser raises
+        IntegrityError. We retry a handful of times — each retry
+        re-reads MAX and picks the next slot, which converges fast
+        because the winner has already committed.
+        """
+        last_error = None
+        for _ in range(5):
+            try:
+                version = await self._next_revision_version(document.id)
+                return await OxydeDocumentRevision.objects.create(
+                    document_id=document.id,
+                    version=version,
+                    title=document.title,
+                    content=document.content,
+                    author_id=author_id,
+                )
+            except IntegrityError as e:
+                last_error = e
+        raise last_error
+
     async def create(
         self, document_in: DocumentCreate, team_id: str, author_id: str
     ) -> OxydeDocument:
@@ -62,6 +114,8 @@ class DocumentService:
                 project_id=document_in.project_id,
                 sprint_id=document_in.sprint_id,
             )
+
+            await self._snapshot_revision(document, author_id)
 
             # Log activity (CHT-639)
             await self._log_activity(
@@ -87,12 +141,28 @@ class DocumentService:
     ) -> OxydeDocument:
         """Update a document."""
         update_data = document_in.model_dump(exclude_unset=True)
+
+        # Snapshot the pre-update title/content so we can decide
+        # whether this edit warrants a new revision row. Field updates
+        # like icon/project_id/sprint_id don't change document body and
+        # don't justify a new revision.
+        prev_title = document.title
+        prev_content = document.content
+
         for field, value in update_data.items():
             setattr(document, field, value)
         document.updated_at = datetime.now(timezone.utc)
 
+        body_changed = (
+            ("title" in update_data and document.title != prev_title)
+            or ("content" in update_data and document.content != prev_content)
+        )
+
         async with atomic():
             await document.save(update_fields=set(update_data.keys()) | {"updated_at"})
+
+            if body_changed:
+                await self._snapshot_revision(document, user_id)
 
             # Log activity (CHT-639)
             await self._log_activity(
@@ -124,6 +194,7 @@ class DocumentService:
             await OxydeDocumentIssue.objects.filter(document_id=document.id).delete()
             await OxydeDocumentLabel.objects.filter(document_id=document.id).delete()
             await OxydeDocumentActivity.objects.filter(document_id=document.id).delete()
+            await OxydeDocumentRevision.objects.filter(document_id=document.id).delete()
             await document.delete()
 
     async def list_by_team(
@@ -390,6 +461,22 @@ class DocumentService:
         doc_map = {d.id: d for d in docs}
 
         return [(c, doc_map.get(c.document_id)) for c in comments]
+
+    async def list_revisions(
+        self, document_id: str, skip: int = 0, limit: int = 100
+    ) -> list[OxydeDocumentRevision]:
+        """List revisions for a document, newest first."""
+        return await OxydeDocumentRevision.objects.filter(
+            document_id=document_id
+        ).join("author").order_by("-version").offset(skip).limit(limit).all()
+
+    async def get_revision(
+        self, document_id: str, version: int
+    ) -> OxydeDocumentRevision | None:
+        """Get a single revision by document_id + version."""
+        return await OxydeDocumentRevision.objects.filter(
+            document_id=document_id, version=version
+        ).join("author").first()
 
     async def list_team_activities(
         self, team_id: str, skip: int = 0, limit: int = 50, project_id: str | None = None,
