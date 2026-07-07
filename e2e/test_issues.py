@@ -1,4 +1,6 @@
 """E2E contract tests: Issues, sub-issues, relations, and comments."""
+import time
+
 import pytest
 import httpx
 from conftest import TEST_BASE_URL
@@ -349,3 +351,143 @@ class TestBatchUpdate:
         assert len(result) == 1
         # Verify prefetch("labels") works after batch update
         assert any(l["id"] == label["id"] for l in result[0].get("labels", []))
+
+
+class TestReadyIssues:
+    """CHT-1245: 'what can I start right now' -- full CLI-Client-to-real-
+    backend contract for the new path-nested ready endpoints."""
+
+    def test_ready_excludes_started_closed_and_assigned_by_default(self, api_client, test_project):
+        backlog = api_client.create_issue(test_project["id"], "ready-backlog", status="backlog")
+        todo = api_client.create_issue(test_project["id"], "ready-todo", status="todo")
+        api_client.create_issue(test_project["id"], "not-ready-inprogress", status="in_progress")
+        api_client.create_issue(test_project["id"], "not-ready-done", status="done")
+        assigned = api_client.create_issue(test_project["id"], "assigned-not-ready", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(assigned["id"], assignee_id=me["id"])
+
+        ready = api_client.get_ready_issues(project_id=test_project["id"])
+        ids = {i["id"] for i in ready}
+        assert backlog["id"] in ids
+        assert todo["id"] in ids
+        assert assigned["id"] not in ids
+        assert len(ready) == 2
+
+    def test_ready_mine_and_include_assigned(self, api_client, test_project):
+        api_client.create_issue(test_project["id"], "unassigned", status="todo")
+        mine = api_client.create_issue(test_project["id"], "mine", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(mine["id"], assignee_id=me["id"])
+
+        mine_only = api_client.get_ready_issues(project_id=test_project["id"], mine=True)
+        assert {i["id"] for i in mine_only} == {mine["id"]}
+
+        widened = api_client.get_ready_issues(project_id=test_project["id"], include_assigned=True)
+        widened_ids = {i["id"] for i in widened}
+        assert mine["id"] in widened_ids
+
+    def test_ready_excludes_blocked_issue(self, api_client, test_project):
+        blocker = api_client.create_issue(test_project["id"], "blocker", status="todo")
+        blocked = api_client.create_issue(test_project["id"], "blocked", status="todo")
+        api_client.create_relation(blocker["id"], blocked["id"], "blocks")
+
+        ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
+        assert blocker["id"] in ready_ids
+        assert blocked["id"] not in ready_ids
+
+        api_client.update_issue(blocker["id"], status="done")
+        ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
+        assert blocked["id"] in ready_ids
+
+    def test_ready_team_scoped_spans_projects(self, api_client, test_team, test_project):
+        other_project = api_client.create_project(test_team["id"], "Other Ready Project", "RDY2")
+        a = api_client.create_issue(test_project["id"], "ready-a", status="todo")
+        b = api_client.create_issue(other_project["id"], "ready-b", status="todo")
+
+        ready = api_client.get_ready_issues(team_id=test_team["id"])
+        ids = {i["id"] for i in ready}
+        assert a["id"] in ids
+        assert b["id"] in ids
+
+    def test_ready_mine_and_include_assigned_conflict_errors(self, api_client, test_project):
+        with pytest.raises(APIError):
+            api_client.get_ready_issues(project_id=test_project["id"], mine=True, include_assigned=True)
+
+    def test_ready_priority_sorted(self, api_client, test_project):
+        api_client.create_issue(test_project["id"], "low-prio", status="todo", priority="low")
+        urgent = api_client.create_issue(test_project["id"], "urgent-prio", status="todo", priority="urgent")
+
+        ready = api_client.get_ready_issues(project_id=test_project["id"])
+        assert ready[0]["id"] == urgent["id"]
+
+
+class TestClaimLeases:
+    """CHT-1246: claim leases through the real issue start/claim wire path."""
+
+    def test_claim_grants_a_lease(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "To Claim", status="todo")
+        me = api_client.get_me()
+
+        claimed = api_client.update_issue(issue["id"], status="in_progress", assignee_id=me["id"])
+
+        assert claimed["lease_expires_at"] is not None
+        assert claimed["status"] == "in_progress"
+        assert claimed["assignee_id"] == me["id"]
+
+    def test_lease_seconds_override_is_honored(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "Short Lease", status="todo")
+        me = api_client.get_me()
+
+        claimed = api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=3600,
+        )
+        assert claimed["lease_expires_at"] is not None
+
+    def test_reclaim_heartbeat_extends_lease(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "Heartbeat", status="todo")
+        me = api_client.get_me()
+
+        first = api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=100,
+        )
+        second = api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=9999,
+        )
+        assert second["lease_expires_at"] > first["lease_expires_at"]
+
+    def test_completing_issue_clears_lease(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "To Complete", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(issue["id"], status="in_progress", assignee_id=me["id"])
+
+        completed = api_client.update_issue(issue["id"], status="done")
+        assert completed["lease_expires_at"] is None
+
+    def test_expired_lease_auto_releases_on_read(self, api_client, test_project):
+        """Real-time wait (no mocked clock) -- proves the lazy release
+        fires over the actual CLI-Client-to-backend wire, not just in a
+        unit test with a hand-backdated timestamp."""
+        issue = api_client.create_issue(test_project["id"], "Stale Claim", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=1,
+        )
+
+        time.sleep(1.5)
+
+        released = api_client.get_issue(issue["id"])
+        assert released["status"] == "todo"
+        assert released["assignee_id"] is None
+        assert released["lease_expires_at"] is None
+
+    def test_expired_lease_reappears_in_ready_query(self, api_client, test_project):
+        issue = api_client.create_issue(test_project["id"], "Stale Then Ready", status="todo")
+        me = api_client.get_me()
+        api_client.update_issue(
+            issue["id"], status="in_progress", assignee_id=me["id"], lease_seconds=1,
+        )
+
+        time.sleep(1.5)
+
+        ready_ids = {i["id"] for i in api_client.get_ready_issues(project_id=test_project["id"])}
+        assert issue["id"] in ready_ids
