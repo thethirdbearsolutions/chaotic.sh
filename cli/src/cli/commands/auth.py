@@ -1,11 +1,12 @@
 """Authentication commands."""
 import sys
+from datetime import datetime, timedelta, timezone
 
 import click
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console
+from .shared import _client, console, parse_duration
 
 
 def _main():
@@ -127,15 +128,29 @@ def register(cli):
 
     @auth_keys.command("create")
     @click.argument("name")
+    @click.option(
+        "--expires-in",
+        default=None,
+        help="Expire the key after this long (e.g. 90d, 12h, 30m). "
+             "Omit for a non-expiring key. Recommended for keys embedded "
+             "in URLs (the /mcp/<key> capability URL, see docs/agents.md).",
+    )
     @_main().require_auth
     @_main().handle_error
-    def auth_keys_create(name):
+    def auth_keys_create(name, expires_in):
         """Create a new API key.
 
         The API key is displayed only once - save it immediately!
         """
-        result = _client().create_api_key(name)
+        expires_at = None
+        seconds = parse_duration(expires_in, flag_name="--expires-in")
+        if seconds is not None:
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+        result = _client().create_api_key(name, expires_at=expires_at)
         console.print(f"[green]API key '{result['name']}' created.[/green]")
+        if result.get("expires_at"):
+            console.print(f"Expires: {result['expires_at'][:19]}Z")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
         console.print(f"[cyan]{result['key']}[/cyan]")

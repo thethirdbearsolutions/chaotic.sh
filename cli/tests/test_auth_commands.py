@@ -205,6 +205,62 @@ class TestAuthKeysCreate:
         assert 'CI Key' in result.output
         assert 'ck_secret_new_key' in result.output
 
+    def test_keys_create_without_expires_in_sends_no_expiry(self, cli_runner):
+        """No --expires-in -> expires_at=None (a non-expiring key, unchanged)."""
+        from cli.main import cli, client
+
+        client.create_api_key = MagicMock(return_value={
+            "name": "CI Key",
+            "key": "ck_secret_new_key",
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'create', 'CI Key'])
+
+        assert result.exit_code == 0
+        client.create_api_key.assert_called_once_with('CI Key', expires_at=None)
+
+    def test_keys_create_with_expires_in(self, cli_runner):
+        """--expires-in 90d converts to an absolute UTC expires_at ~90 days out."""
+        from datetime import datetime, timedelta, timezone
+        from cli.main import cli, client
+
+        client.create_api_key = MagicMock(return_value={
+            "name": "Connector Key",
+            "key": "ck_secret_new_key",
+            "expires_at": "2026-10-05T12:00:00+00:00",
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'create', 'Connector Key', '--expires-in', '90d'])
+
+        assert result.exit_code == 0
+        assert 'Expires:' in result.output
+        (_name,), kwargs = client.create_api_key.call_args
+        expires_at = datetime.fromisoformat(kwargs['expires_at'])
+        delta = expires_at - datetime.now(timezone.utc)
+        assert timedelta(days=89, hours=23) < delta <= timedelta(days=90)
+
+    def test_keys_create_rejects_bad_expires_in(self, cli_runner):
+        """Malformed --expires-in fails loud, before any API call."""
+        from cli.main import cli, client
+
+        client.create_api_key = MagicMock()
+
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'create', 'CI Key', '--expires-in', 'ninety-days'])
+
+        assert result.exit_code != 0
+        assert '--expires-in' in result.output
+        client.create_api_key.assert_not_called()
+
+    def test_keys_create_rejects_zero_expires_in(self, cli_runner):
+        from cli.main import cli, client
+
+        client.create_api_key = MagicMock()
+
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'create', 'CI Key', '--expires-in', '0'])
+
+        assert result.exit_code != 0
+        client.create_api_key.assert_not_called()
+
 
 class TestAuthKeysRevoke:
     """Tests for auth keys revoke command."""
