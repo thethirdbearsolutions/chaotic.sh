@@ -1085,7 +1085,7 @@ export async function editDescription(issueId) {
         textarea.value = savedDescDraft;
         const draftBase = getDescriptionDraftBase(issueId);
         if (draftWarning && (draftBase === null || draftBase !== (issue.description || ''))) {
-            draftWarning.textContent = 'This description has changed since your draft — review before saving.';
+            draftWarning.textContent = 'This description has changed since your draft — review before saving. If you overwrite it, the current version stays recoverable via Description history.';
             draftWarning.classList.remove('hidden');
         }
     }
@@ -1166,7 +1166,9 @@ export async function editDescription(issueId) {
     // conflict warning the stale-draft path uses — this is the live-session
     // variant of exactly that scenario, which would otherwise silently
     // last-write-win over the other person's edit (PR #209 review finding 3).
-    // Saving again proceeds as an explicit overwrite.
+    // Saving again proceeds as an explicit overwrite — safe because every
+    // description edit is snapshotted into the revision history (CHT-1243),
+    // so the overwritten version stays recoverable via Description history.
     let remoteConflictAcknowledged = false;
     document.getElementById('save-description-edit').addEventListener('click', async () => {
         if (descriptionSubmitting) return;
@@ -1177,7 +1179,7 @@ export async function editDescription(issueId) {
             remoteConflictAcknowledged = true;
             const warnEl = document.getElementById('description-draft-warning');
             if (warnEl) {
-                warnEl.textContent = 'This description was changed by someone else while you were editing — review your text, then Save again to overwrite their version.';
+                warnEl.textContent = 'This description was changed by someone else while you were editing — review your text, then Save again to overwrite their version. It will stay recoverable via Description history.';
                 warnEl.classList.remove('hidden');
             }
             return;
