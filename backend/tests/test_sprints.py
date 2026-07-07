@@ -218,6 +218,48 @@ async def test_budget_deducted_on_done_not_claim(client, auth_headers, test_proj
 
 
 @pytest.mark.asyncio
+async def test_budget_not_deducted_on_sprint_add(client, auth_headers, test_project, test_user, db):
+    """CHT-1277: adding estimated tickets to a fresh sprint must not move
+    points_spent. Reproduced against current main via e2e/CLI before this
+    test was added: `sprint budget` correctly showed Spent: 0 right after
+    `sprint add`ing 4 tickets totaling 9pts -- the reported "stale Spent: 2"
+    did not reproduce. points_spent only moves on completion (see
+    test_budget_deducted_on_done_not_claim / CHT-347); this test locks that
+    in for the specific "just added, nothing completed" case.
+    """
+    sprint = await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Add Test Sprint",
+        status=SprintStatus.ACTIVE,
+        budget=20,
+        points_spent=0,
+    )
+
+    estimates = [2, 3, 2, 2]
+    for i, est in enumerate(estimates):
+        issue = await OxydeIssue.objects.create(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{300 + i}",
+            number=300 + i,
+            title=f"Ticket {i}",
+            estimate=est,
+            creator_id=test_user.id,
+        )
+        response = await client.patch(
+            f"/api/issues/{issue.id}",
+            headers=auth_headers,
+            json={"sprint_id": sprint.id},
+        )
+        assert response.status_code == 200
+
+    sprint = await OxydeSprint.objects.get(id=sprint.id)
+    assert sprint.points_spent == 0, (
+        "Adding tickets to a sprint must not deduct budget -- only "
+        "completion does (CHT-1277)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_budget_not_deducted_on_cancel(client, auth_headers, test_project, test_user, db):
     """Test that sprint budget is NOT deducted when issue is canceled.
 
