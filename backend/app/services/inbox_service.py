@@ -120,12 +120,19 @@ class InboxService:
         failing send, write a loud OxydeIssueActivity note (CHT-1251
         fail-loud doctrine) since there's an issue to attach it to.
         """
+        from app.config import get_settings
+
+        # The email's entire job is the clickthrough (PR #218 review
+        # finding 1): /issue/<identifier> is the frontend's canonical
+        # deep-link route (router.js's navigateToIssueByIdentifier).
+        base_url = get_settings().app_base_url.rstrip("/")
         subject, body = email_svc.render_gate_pending(
             requested_by_name=requested_by_name,
             issue_identifier=issue.identifier,
             issue_title=issue.title,
             ritual_name=ritual.name,
             ritual_prompt=ritual.prompt,
+            issue_url=f"{base_url}/issue/{issue.identifier}",
         )
 
         async def _job():

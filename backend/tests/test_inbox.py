@@ -131,6 +131,51 @@ class TestNotifyGatePending:
 
 
 # ---------------------------------------------------------------------------
+# Gate-pending email carries the issue deep link (PR #218 review finding 1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestGatePendingEmailLink:
+    async def test_gate_pending_email_includes_issue_deep_link(
+        self, db, test_project, test_issue, gate_close_ritual, monkeypatch,
+    ):
+        """The email's entire job is the clickthrough: with app_base_url
+        configured, the gate-pending body must contain the frontend's
+        canonical /issue/<identifier> deep link.
+        """
+        from unittest.mock import patch as mock_patch
+
+        from app.config import get_settings
+        from app.services.email_service import EmailService
+
+        monkeypatch.setenv("APP_BASE_URL", "https://chaotic.example.com")
+        get_settings.cache_clear()
+
+        sent = {}
+
+        async def fake_send(self, to, subject, body):
+            sent.update(to=to, subject=subject, body=body)
+            return True
+
+        # Capture the fire-and-forget coroutine and await it directly so
+        # the assertion is deterministic (no event-loop-turn roulette).
+        captured = []
+        with mock_patch.object(EmailService, "send", fake_send), \
+             mock_patch("app.services.inbox_service.fire_and_forget", side_effect=captured.append):
+            await InboxService().notify_gate_pending(
+                ritual=gate_close_ritual, issue=test_issue, project=test_project,
+                requested_by_name="Agent A",
+            )
+            assert len(captured) == 1
+            await captured[0]
+
+        assert sent["to"] == "test@example.com"  # the owner (test_user fixture)
+        assert f"https://chaotic.example.com/issue/{test_issue.identifier}" in sent["body"]
+
+        get_settings.cache_clear()  # don't leak APP_BASE_URL into later tests
+
+
+# ---------------------------------------------------------------------------
 # InboxService.notify_review_requested
 # ---------------------------------------------------------------------------
 
