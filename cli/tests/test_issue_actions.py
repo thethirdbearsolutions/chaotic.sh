@@ -379,6 +379,62 @@ class TestIssueClaim:
             'issue-uuid-123', assignee_id='user-uuid-me', status='in_progress',
         )
 
+    def test_claim_without_lease_omits_lease_seconds(self, cli_runner, mock_issue):
+        """No --lease: lease_seconds isn't sent, server default applies (CHT-1246)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'claim', 'CHT-100'])
+
+        assert result.exit_code == 0
+        kwargs = client.update_issue.call_args[1]
+        assert 'lease_seconds' not in kwargs
+
+    def test_claim_with_lease_passes_parsed_seconds(self, cli_runner, mock_issue):
+        """--lease 4h parses to seconds and is forwarded (CHT-1246)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'claim', 'CHT-100', '--lease', '4h'])
+
+        assert result.exit_code == 0
+        kwargs = client.update_issue.call_args[1]
+        assert kwargs['lease_seconds'] == 4 * 3600
+
+    def test_claim_with_zero_lease_rejected(self, cli_runner, mock_issue):
+        """--lease 0 is ambiguous (instant expiry); rejected like await --timeout 0."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'claim', 'CHT-100', '--lease', '0'])
+
+        assert result.exit_code == 2
+        assert '--lease' in result.output
+        client.update_issue.assert_not_called()
+
+    def test_start_alias_passes_lease_through(self, cli_runner, mock_issue):
+        """'issue start --lease' forwards to claim's lease handling (CHT-1246)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-uuid-me"})
+        client.update_issue = MagicMock()
+
+        result = cli_runner.invoke(cli, ['issue', 'start', 'CHT-100', '--lease', '30m'])
+
+        assert result.exit_code == 0, result.output
+        kwargs = client.update_issue.call_args[1]
+        assert kwargs['lease_seconds'] == 30 * 60
+
 
 class TestIssueRituals:
     """Tests for issue rituals command."""
