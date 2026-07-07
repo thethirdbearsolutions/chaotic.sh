@@ -71,11 +71,15 @@ When a sprint closes, it can enter **limbo** - a state where the sprint is done 
 
 Order matters: sprint-level (`every_sprint`) rituals can only be attested
 *after* the sprint has been closed and entered limbo, not before. This is
-intentional, not a bug (CHT-1276) - the close is what creates the limbo
-state the attestation resolves. `chaotic ritual attest` rejects a pre-close
-attempt with a pointer back to `sprint close`. (Ticket-level rituals -
-`ticket_close`/`ticket_claim` - are decoupled from their gate and can be
-attested in any issue status; see ADR-0001.)
+intentional, not a bug (CHT-1276). Sprint limbo is a project-wide gate that
+the close itself creates - unlike a ticket-level gate, there is no
+pre-existing per-issue intent for an early attestation to attach to; the
+attestation resolves a limbo state that doesn't exist until the sprint
+closes. `chaotic ritual attest` rejects a pre-close attempt with a pointer
+back to `sprint close`. (Ticket-level rituals - `ticket_close`/
+`ticket_claim` - are different: they gate a specific issue's transition and
+the intent can exist before the attest, so attest is decoupled from the
+gate and allowed in any issue status; see ADR-0001.)
 
 Rituals are project-configurable attestations:
 - "Reprioritize the backlog"
