@@ -227,8 +227,12 @@ separately, CHT-1266's follow-up); an existing `ck_...` API key is
 sufficient. Create one with:
 
 ```bash
-chaotic auth keys create --name "claude.ai connector"
+chaotic auth keys create "claude.ai connector" --expires-in 90d
 ```
+
+`--expires-in` (e.g. `90d`, `12h`) is optional -- omit it for a
+non-expiring key -- but recommended for any key that leaves your
+machine. An expired key gets the same 401 as an invalid one.
 
 ### Connecting Claude Code (`--transport http`)
 
@@ -255,15 +259,20 @@ https://your-chaotic-host/mcp/ck_...
 Paste that into the connector's "server URL" field. Functionally
 identical to the header mode -- same key, same auth check -- but
 **strictly worse for secret hygiene**: the key ends up in browser
-history, any server/proxy access logs along the way, and anywhere the
-URL gets copy-pasted (bug reports, chat transcripts, Slack). Mint a
-**dedicated** key for it so it's easy to tell apart and revoke
-independently of anything else:
+history, any proxy/CDN access logs *upstream* of chaotic, and anywhere
+the URL gets copy-pasted (bug reports, chat transcripts, Slack).
+Chaotic's own logs are covered -- the backend scrubs the key out of the
+request path before its access log or error log can record it (you'll
+see `/mcp/ck_...1a2b` in log lines, enough to correlate with `chaotic
+auth keys list`, never the full key) -- but nothing upstream of the
+process is. Mint a **dedicated, expiring** key for it so it's easy to
+tell apart, ages out on its own, and can be revoked independently of
+anything else:
 
 ```bash
-chaotic auth keys create --name "claude.ai connector"
+chaotic auth keys create "claude.ai connector" --expires-in 90d
 chaotic auth keys list                # find its id
-chaotic auth keys revoke <key-id>      # revoke it later, any time
+chaotic auth keys revoke <key-id>      # revoke it early, any time
 ```
 
 This is a gap in claude.ai's connector UI, not an MCP or chaotic

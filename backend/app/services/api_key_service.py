@@ -51,6 +51,7 @@ class APIKeyService:
             name=api_key_in.name,
             key_prefix=key_prefix,
             key_hash=key_hash,
+            expires_at=api_key_in.expires_at,
         )
         await api_key.refresh()
 

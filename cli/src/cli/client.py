@@ -166,8 +166,11 @@ class Client:
     def list_api_keys(self) -> list:
         return self._request("GET", "/api-keys")
 
-    def create_api_key(self, name: str) -> dict:
-        return self._request("POST", "/api-keys", {"name": name})
+    def create_api_key(self, name: str, expires_at: str | None = None) -> dict:
+        data = {"name": name}
+        if expires_at:
+            data["expires_at"] = expires_at
+        return self._request("POST", "/api-keys", data)
 
     def revoke_api_key(self, api_key_id: str):
         return self._request("DELETE", f"/api-keys/{api_key_id}")

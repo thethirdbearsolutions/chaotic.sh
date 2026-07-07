@@ -41,6 +41,59 @@ class TestRemoteMCP:
         assert resp.status_code == 200
         assert resp.json()["result"]["serverInfo"]["name"] == "chaotic"
 
+    def test_expired_key_401(self, test_server, api_client):
+        """PR #219 review finding 2: a key created with an already-past
+        expires_at is rejected on /mcp exactly like an invalid key.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        expired = api_client.create_api_key(
+            "expired mcp key",
+            expires_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        )["key"]
+        resp = httpx.post(
+            f"{MCP_URL}/{expired}", json=_rpc("initialize", _init_params()), headers=_HEADERS, timeout=5.0
+        )
+        assert resp.status_code == 401
+
+    def test_access_log_never_sees_raw_capability_key(self, test_server, api_key):
+        """PR #219 review finding 1: capture the REAL uvicorn access-log
+        record for a capability-URL request and assert the raw key was
+        scrubbed before the logger saw it. This is the actual production
+        leak path (uvicorn access logging is on by default in every
+        documented run command); the backend suite asserts the same via
+        the scope, this asserts the log line itself.
+        """
+        import logging
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        access_logger = logging.getLogger("uvicorn.access")
+        handler = _Capture(level=logging.INFO)
+        previous_level = access_logger.level
+        access_logger.addHandler(handler)
+        # The e2e server runs with log_level="error"; open the gate just
+        # for this logger, just for this test.
+        access_logger.setLevel(logging.INFO)
+        try:
+            resp = httpx.post(
+                f"{MCP_URL}/{api_key}", json=_rpc("initialize", _init_params()), headers=_HEADERS, timeout=5.0
+            )
+            assert resp.status_code == 200
+        finally:
+            access_logger.removeHandler(handler)
+            access_logger.setLevel(previous_level)
+
+        mcp_lines = [line for line in records if "/mcp/" in line]
+        assert mcp_lines, "expected an access-log line for the /mcp/<key> request"
+        for line in mcp_lines:
+            assert api_key not in line
+            assert f"ck_...{api_key[-4:]}" in line
+
     def test_tools_list_and_call_round_trip(self, test_server, api_key, test_project):
         headers = {**_HEADERS, "Authorization": f"Bearer {api_key}"}
 

@@ -22,6 +22,7 @@ async def create_api_key(
         key=full_key,
         key_prefix=api_key.key_prefix,
         created_at=api_key.created_at,
+        expires_at=api_key.expires_at,
     )
 
 

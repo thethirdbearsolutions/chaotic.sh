@@ -71,7 +71,7 @@ native chaotic tools over stdio. If your chaotic instance is reachable
 over the network (deployed somewhere, tunneled, whatever), it also
 speaks MCP directly over Streamable HTTP at `/mcp` -- point claude.ai's
 custom connectors, Claude Code web, or `claude mcp add --transport http`
-at it with an API key (`chaotic auth keys create --name "..."`). See
+at it with an API key (`chaotic auth keys create "..." --expires-in 90d`). See
 [docs/agents.md](docs/agents.md) for both, including the capability-URL
 option for connector UIs that can't set custom headers.
 
