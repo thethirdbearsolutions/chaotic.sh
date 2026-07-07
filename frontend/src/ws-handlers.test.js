@@ -97,6 +97,12 @@ vi.mock('./epics.js', () => ({
     loadEpics: vi.fn(() => Promise.resolve()),
 }));
 
+// Mock inbox.js (CHT-1250)
+vi.mock('./inbox.js', () => ({
+    loadInbox: vi.fn(),
+    refreshInboxUnreadCount: vi.fn(),
+}));
+
 import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
@@ -107,6 +113,7 @@ import { loadProjects, renderProjects } from './projects.js';
 import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { loadEpics } from './epics.js';
+import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { dispatch, resetWsState } from './ws.js';
@@ -682,6 +689,34 @@ describe('ws-handlers.js', () => {
         });
     });
 
+    describe('inbox', () => {
+        it('refreshes the unread count for the current user\'s own entry', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            dispatch({ type: 'created', entity: 'inbox', data: { recipient_user_id: 'user-1' } });
+            expect(refreshInboxUnreadCount).toHaveBeenCalled();
+        });
+
+        it('ignores events for a different recipient (team-wide broadcast filter)', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            dispatch({ type: 'created', entity: 'inbox', data: { recipient_user_id: 'someone-else' } });
+            expect(refreshInboxUnreadCount).not.toHaveBeenCalled();
+        });
+
+        it('reloads the inbox list when on the inbox view', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            getCurrentView.mockReturnValue('inbox');
+            dispatch({ type: 'created', entity: 'inbox', data: { recipient_user_id: 'user-1' } });
+            expect(loadInbox).toHaveBeenCalled();
+        });
+
+        it('does not reload the inbox list on other views', () => {
+            getCurrentUser.mockReturnValue({ id: 'user-1' });
+            getCurrentView.mockReturnValue('my-issues');
+            dispatch({ type: 'created', entity: 'inbox', data: { recipient_user_id: 'user-1' } });
+            expect(loadInbox).not.toHaveBeenCalled();
+        });
+    });
+
     describe('unknown entity', () => {
         it('does nothing for unknown entities', () => {
             dispatch({ type: 'created', entity: 'unknown', data: {} });
@@ -694,6 +729,18 @@ describe('ws-handlers.js', () => {
     // synthetic event (never a real server message) only when the reconnect
     // followed an actual outage, not a deliberate team switch.
     describe('connection:reconnected', () => {
+        it('refreshes the inbox unread badge regardless of current view', () => {
+            getCurrentView.mockReturnValue('issues');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(refreshInboxUnreadCount).toHaveBeenCalled();
+        });
+
+        it('reloads the inbox list on the inbox view', () => {
+            getCurrentView.mockReturnValue('inbox');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadInbox).toHaveBeenCalled();
+        });
+
         it('refetches the issues list on the issues view', () => {
             getCurrentView.mockReturnValue('issues');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });

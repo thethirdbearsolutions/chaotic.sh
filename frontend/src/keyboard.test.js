@@ -5,6 +5,7 @@ import {
     createListNavigationHandler,
     createDocListNavigationHandler,
     createBoardNavigationHandler,
+    createInboxNavigationHandler,
     updateKeyboardSelection,
 } from './keyboard.js';
 
@@ -269,6 +270,7 @@ describe('Keyboard Handler', () => {
                 ['t', 'team'],
                 ['e', 'epics'],
                 ['a', 'approvals'],
+                ['w', 'inbox'],
                 ['d', 'documents'],
             ])('g then %s navigates to %s when detail view is not active', (key, view) => {
                 actions.isDetailViewActive.mockReturnValue(false);
@@ -337,6 +339,12 @@ describe('Keyboard Handler', () => {
             handler(makeEvent('g'));
             handler(makeEvent('a'));
             expect(actions.navigateTo).toHaveBeenCalledWith('approvals');
+        });
+
+        it('g then w navigates to inbox', () => {
+            handler(makeEvent('g'));
+            handler(makeEvent('w'));
+            expect(actions.navigateTo).toHaveBeenCalledWith('inbox');
         });
 
         it('g then , navigates to settings', () => {
@@ -1383,6 +1391,122 @@ describe('Full listener-stack layering: j/k → Enter → p (CHT-1215)', () => {
             expect(navigateTo).toHaveBeenCalledTimes(1);
             expect(navigateTo).toHaveBeenCalledWith('documents');
             expect(detailShortcut).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// Inbox Navigation Handler (j/k/Enter/Escape for the Inbox) - CHT-1250
+// ============================================================================
+
+describe('Inbox Navigation Handler', () => {
+    let actions;
+    let handler;
+
+    beforeEach(() => {
+        actions = {
+            getCurrentView: vi.fn().mockReturnValue('inbox'),
+            getSelectedIndex: vi.fn().mockReturnValue(0),
+            setSelectedIndex: vi.fn(),
+            openInboxEntry: vi.fn(),
+            isModalOpen: vi.fn().mockReturnValue(false),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+        };
+        handler = createInboxNavigationHandler(actions);
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="inbox-list">
+                <div class="inbox-row" data-entry-id="e1">Entry 1</div>
+                <div class="inbox-row" data-entry-id="e2">Entry 2</div>
+                <div class="inbox-row" data-entry-id="e3">Entry 3</div>
+            </div>
+        `;
+    });
+
+    describe('guard conditions', () => {
+        it('ignores when not in inbox view', () => {
+            actions.getCurrentView.mockReturnValue('issues');
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on INPUT', () => {
+            handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when modal is open', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when command palette is open', () => {
+            actions.isCommandPaletteOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when no entries', () => {
+            document.body.innerHTML = '<div id="inbox-list"></div>';
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('j/k navigation', () => {
+        it('j moves selection down', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('k moves selection up', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('k');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+    });
+
+    describe('Enter to open entry', () => {
+        it('opens the selected entry element', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.openInboxEntry).toHaveBeenCalledTimes(1);
+            const openedEl = actions.openInboxEntry.mock.calls[0][0];
+            expect(openedEl.dataset.entryId).toBe('e2');
+        });
+
+        it('does nothing when no item selected (index -1)', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Enter'));
+            expect(actions.openInboxEntry).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Escape to deselect', () => {
+        it('clears selection when an item is selected', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            document.querySelectorAll('.inbox-row')[1].classList.add('keyboard-selected');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
+            expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        });
+    });
+
+    describe('unrecognized keys', () => {
+        it('does not act on other keys', () => {
+            handler(makeEvent('x'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.openInboxEntry).not.toHaveBeenCalled();
         });
     });
 });

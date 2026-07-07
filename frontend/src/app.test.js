@@ -88,6 +88,7 @@ vi.mock('./issues-view.js', () => ({
     showIssuesLoadingSkeleton: vi.fn(),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
+vi.mock('./inbox.js', () => ({ loadInbox: vi.fn(), openInboxEntryElement: vi.fn() }));
 vi.mock('./epics.js', () => ({ showCreateEpicModal: vi.fn(), loadEpics: vi.fn() }));
 vi.mock('./epic-detail-view.js', () => ({ viewEpicByPath: vi.fn(), viewEpic: vi.fn() }));
 vi.mock('./keyboard.js', () => ({
@@ -96,6 +97,7 @@ vi.mock('./keyboard.js', () => ({
     createListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createDocListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createBoardNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
+    createInboxNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
@@ -161,6 +163,8 @@ vi.mock('./state.js', () => ({
     setSelectedDocIndex: vi.fn(),
     getSelectedBoardIndex: vi.fn(),
     setSelectedBoardIndex: vi.fn(),
+    getSelectedInboxIndex: vi.fn(),
+    setSelectedInboxIndex: vi.fn(),
     setCurrentUser: vi.fn(),
     setCurrentProject: vi.fn(),
     setCurrentDetailIssue: vi.fn(),

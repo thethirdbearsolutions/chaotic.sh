@@ -21,6 +21,7 @@ const SHORTCUT_GROUPS = [
             { key: 'g e', description: 'Epics' },
             { key: 'g r', description: 'Rituals' },
             { key: 'g a', description: 'Approvals' },
+            { key: 'g w', description: 'Inbox' },
             { key: 'g t', description: 'Team' },
             { key: 'g ,', description: 'Settings' },
         ],
@@ -82,6 +83,13 @@ const SHORTCUT_GROUPS = [
         shortcuts: [
             { key: 'j / k', description: 'Navigate cards' },
             { key: 'Enter', description: 'Open selected card' },
+        ],
+    },
+    {
+        title: 'Inbox',
+        shortcuts: [
+            { key: 'j / k', description: 'Navigate entries' },
+            { key: 'Enter', description: 'Open selected entry (marks it read)' },
         ],
     },
     {

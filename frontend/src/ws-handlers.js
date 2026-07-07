@@ -19,6 +19,7 @@ import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRem
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
 import { loadGateApprovals } from './gate-approvals.js';
+import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
 
 /**
  * True while the issue detail view has its inline description editor open.
@@ -70,6 +71,10 @@ export function registerWsHandlers() {
     // all on create/update/delete, so the list/detail view went stale until
     // a manual reload.
     subscribe('document', handleDocument);
+
+    // Inbox events (CHT-1250) — new gate/mention/assignment/review entries,
+    // and read/read-all from any of this user's other sessions/tabs.
+    subscribe('inbox', handleInbox);
 
     // Reconnect resync (CHT-1225 item 3) — a synthetic event ws.js's onopen
     // dispatches only on a genuine reconnect (never a deliberate team
@@ -301,6 +306,19 @@ function handleAttestation(data) {
     }
 }
 
+/**
+ * Inbox events (CHT-1250) fan out team-wide (see broadcast_inbox_event's
+ * docstring) -- filter to this user's own entries client-side, same as
+ * issue events filter on assignee_id.
+ */
+function handleInbox(data) {
+    if (data.recipient_user_id !== getCurrentUser()?.id) return;
+    refreshInboxUnreadCount();
+    if (getCurrentView() === 'inbox') {
+        loadInbox();
+    }
+}
+
 function handleActivity(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
@@ -366,6 +384,9 @@ function handleSprint(data, { type } = {}) {
  */
 function handleReconnected() {
     const view = getCurrentView();
+    // The unread badge is visible from every view, not just 'inbox', so
+    // refresh it unconditionally on any reconnect (cheap: one count query).
+    refreshInboxUnreadCount();
     if (view === 'issues') {
         loadIssues().catch(e => console.error('Failed to resync issues:', e));
     } else if (view === 'my-issues') {
@@ -386,6 +407,8 @@ function handleReconnected() {
         refreshDocumentsListIfActive();
     } else if (view === 'approvals') {
         loadGateApprovals();
+    } else if (view === 'inbox') {
+        loadInbox();
     } else if (view === 'issue-detail') {
         const issueId = getCurrentDetailIssue()?.id;
         if (issueId) refreshOpenDetail(issueId);

@@ -457,6 +457,22 @@ textarea {
     background: var(--bg-tertiary);
 }
 
+/* CHT-1250: inbox unread-count badge in the sidebar nav item. */
+.nav-badge {
+    margin-left: auto;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent-color);
+    border-radius: 999px;
+    line-height: 1.4;
+}
+
+.nav-badge.hidden {
+    display: none;
+}
+
 .sidebar-footer {
     padding: 1rem;
     border-top: 1px solid var(--border-color);
@@ -7054,6 +7070,91 @@ input[type="checkbox"] {
 .badge-review {
     background: #3b2f63;
     color: #a78bfa;
+}
+
+/* ============================================================================
+   Inbox (CHT-1250)
+   ============================================================================ */
+
+.inbox-row {
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.inbox-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.inbox-row-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.inbox-row-source {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.inbox-row-unread-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    flex-shrink: 0;
+}
+
+.inbox-row-title {
+    font-weight: 500;
+}
+
+.inbox-row-unread .inbox-row-title {
+    font-weight: 600;
+}
+
+.inbox-row-body {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inbox-row-meta {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.badge-inbox-gate_pending {
+    background: #713f12;
+    color: #fcd34d;
+}
+
+.badge-inbox-review_requested {
+    background: #3b2f63;
+    color: #a78bfa;
+}
+
+.badge-inbox-assignment {
+    background: #1e3a5f;
+    color: #7dd3fc;
+}
+
+.badge-inbox-mention {
+    background: #164e3f;
+    color: #6ee7b7;
+}
+
+#inbox-unread-toggle.active {
+    background: var(--accent-color);
+    color: #fff;
+    border-color: var(--accent-color);
 }
 
 /* ============================================================================

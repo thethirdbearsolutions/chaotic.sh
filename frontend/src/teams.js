@@ -15,6 +15,7 @@ import { connectWebSocket } from './ws.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
 import { getAgents } from './agents.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { refreshInboxUnreadCount } from './inbox.js';
 
 // Module state
 let teams = [];
@@ -103,6 +104,7 @@ export async function selectTeam(team, isInitialLoad = false) {
     loadLabels(),
     loadTeamMembersQuiet(),
     loadTeamAgentsQuiet(),
+    refreshInboxUnreadCount(),
   ]);
 
   // On initial load, handle the URL route; otherwise navigate to current view

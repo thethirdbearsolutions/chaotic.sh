@@ -91,6 +91,7 @@ export function createKeyboardHandler(actions) {
                 case 'e': actions.navigateTo('epics'); break;
                 case 'r': actions.navigateTo('rituals'); break;
                 case 'a': actions.navigateTo('approvals'); break;
+                case 'w': actions.navigateTo('inbox'); break; // 'w' = awaiting you (CHT-1250)
                 case ',': actions.navigateTo('settings'); break;
             }
             return;
@@ -372,6 +373,58 @@ export function createDocListNavigationHandler(actions) {
                     e.preventDefault();
                     const docId = items[selectedIndex].dataset.documentId;
                     if (docId && actions.showEditDocumentModal) actions.showEditDocumentModal(docId);
+                }
+                break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    actions.setSelectedIndex(-1);
+                }
+                break;
+        }
+    };
+}
+
+/**
+ * Creates a handler for j/k/Enter/Escape list navigation in the inbox view
+ * (CHT-1250). Same shape as createDocListNavigationHandler -- Enter opens
+ * the selected entry (marks it read + deep-links), no separate 'e' action.
+ *
+ * @param {Object} actions
+ * @param {Function} actions.getCurrentView - Returns the current view name
+ * @param {Function} actions.getSelectedIndex - Returns the currently selected index
+ * @param {Function} actions.setSelectedIndex - Sets the selected index
+ * @param {Function} actions.openInboxEntry - Opens the entry at a given DOM row (element)
+ * @param {Function} actions.isModalOpen - Returns true if a modal is open
+ * @param {Function} actions.isCommandPaletteOpen - Returns true if command palette is open
+ * @returns {Function} The keydown event handler
+ */
+export function createInboxNavigationHandler(actions) {
+    const selector = '#inbox-list .inbox-row';
+    return function handleInboxNavigation(e) {
+        if (actions.getCurrentView() !== 'inbox') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (actions.isModalOpen()) return;
+        if (actions.isCommandPaletteOpen()) return;
+
+        const items = document.querySelectorAll(selector);
+        if (items.length === 0) return;
+
+        const selectedIndex = actions.getSelectedIndex();
+        switch (e.key) {
+            case 'j':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
+                break;
+            case 'k':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
+                break;
+            case 'Enter':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    actions.openInboxEntry(items[selectedIndex]);
                 }
                 break;
             case 'Escape':

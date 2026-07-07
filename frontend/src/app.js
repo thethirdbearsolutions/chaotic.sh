@@ -36,9 +36,10 @@ import {
     showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
+import { loadInbox, openInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler } from './keyboard.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import {
     toggleTeamDropdown,
@@ -92,6 +93,8 @@ import {
     setSelectedDocIndex,
     getSelectedBoardIndex,
     setSelectedBoardIndex,
+    getSelectedInboxIndex,
+    setSelectedInboxIndex,
     setCurrentUser,
     setCurrentProject,
     setCurrentDetailIssue,
@@ -182,6 +185,9 @@ registerViews({
     },
     'approvals': () => {
         loadGateApprovals();
+    },
+    'inbox': () => {
+        loadInbox();
     },
     'issues': () => {
         // Clear stale rows synchronously, before the async label/sprint
@@ -644,6 +650,16 @@ document.addEventListener('keydown', createBoardNavigationHandler({
     isDetailViewActive: isAnyDetailViewActive,
 }));
 
+// j/k/Enter list navigation for the Inbox (CHT-1250)
+document.addEventListener('keydown', createInboxNavigationHandler({
+    getCurrentView,
+    getSelectedIndex: getSelectedInboxIndex,
+    setSelectedIndex: setSelectedInboxIndex,
+    openInboxEntry: openInboxEntryElement,
+    isModalOpen,
+    isCommandPaletteOpen,
+}));
+
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
@@ -682,6 +698,7 @@ setCommandPaletteCommands([
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },
     { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'View project rituals', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
     { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
+    { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Gates, mentions, assignments, and reviews awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
     { id: 'nav-team', title: 'Go to Team', subtitle: 'Manage team members', icon: '👥', shortcut: 'G T', action: () => navigateTo('team'), category: 'Navigation' },
     { id: 'nav-settings', title: 'Go to Settings', subtitle: 'Project and team settings', icon: '⚙️', shortcut: 'G ,', action: () => navigateTo('settings'), category: 'Navigation' },
 
