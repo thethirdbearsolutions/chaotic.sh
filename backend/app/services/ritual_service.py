@@ -1549,7 +1549,21 @@ class RitualService:
             await self._maybe_clear_limbo(limbo_sprint.id)
 
     async def check_limbo(self, project_id: str) -> tuple[bool, OxydeSprint | None, list[OxydeRitual]]:
-        """Check if project is in limbo and get pending rituals."""
+        """Check if project is in limbo and get pending rituals.
+
+        Self-heals a limbo with nothing to attest (CHT-1278): a sprint
+        can be flagged limbo=True with zero pending EVERY_SPRINT rituals
+        -- e.g. it entered limbo via the old has_rituals-counts-any-ritual
+        bug (a project with only TICKET_CLOSE/TICKET_CLAIM rituals), or
+        every sprint ritual was attested/approved without any caller
+        happening to re-check afterward. Either way there is nothing
+        left to gate on, so this read path clears it via the same
+        `_maybe_clear_limbo` the attest/approve paths already call --
+        reusing that rule rather than re-implementing it here. This
+        means a stuck sprint recovers loudly on the very next status
+        check (`GET /rituals/limbo`, `chaotic ritual pending`, etc.)
+        instead of requiring force-clear-limbo.
+        """
         limbo_sprint = await OxydeSprint.objects.filter(
             project_id=project_id, limbo=True,
         ).first()
@@ -1558,34 +1572,33 @@ class RitualService:
             return False, None, []
 
         pending = await self.get_pending_rituals(project_id, limbo_sprint.id)
+        if not pending:
+            logger.warning(
+                "Sprint %s (project %s) was in limbo with zero pending "
+                "sprint rituals; self-healing by completing limbo "
+                "(CHT-1278).",
+                limbo_sprint.id, project_id,
+            )
+            try:
+                await self._maybe_clear_limbo(limbo_sprint.id)
+            except Exception:
+                # Same wrap as the attest/gate-complete callers. If the
+                # heal itself fails, report the real limbo state instead
+                # of raising: every ritual endpoint (including
+                # force-clear-limbo, the recovery path of last resort)
+                # calls check_limbo first, and an unhandled error here
+                # would 500 them all -- bricking the escape hatch behind
+                # the very mutation that's failing (PR #223 review).
+                logger.exception(
+                    "Self-heal failed for limbo sprint=%s (project %s); "
+                    "reporting limbo as-is so force-clear-limbo can still "
+                    "reach complete_limbo directly.",
+                    limbo_sprint.id, project_id,
+                )
+                return True, limbo_sprint, []
+            return False, None, []
+
         return True, limbo_sprint, pending
-
-    async def enter_limbo(self, sprint) -> list[OxydeRitual]:
-        """Put a sprint into limbo if it has EVERY_SPRINT rituals."""
-        sprint_id = sprint.id if hasattr(sprint, 'id') else sprint
-        project_id = sprint.project_id if hasattr(sprint, 'project_id') else None
-
-        if project_id is None:
-            s = await OxydeSprint.objects.get_or_none(id=sprint_id)
-            if not s:
-                return []
-            project_id = s.project_id
-
-        rituals = await self.list_by_project(project_id)
-        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
-
-        selected_rituals = await self._apply_group_selection(
-            sprint_rituals, sprint_id, advance_round_robin=True
-        )
-
-        if selected_rituals:
-            # Update sprint limbo flag
-            oxyde_sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
-            if oxyde_sprint:
-                oxyde_sprint.limbo = True
-                await oxyde_sprint.save(update_fields={"limbo"})
-            return selected_rituals
-        return []
 
     async def get_issues_with_pending_gates(self, project_id: str) -> list[dict]:
         """Get issues in limbo — waiting for GATE ritual approval."""

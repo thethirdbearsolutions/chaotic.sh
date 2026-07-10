@@ -146,6 +146,35 @@ class TestForceClearLimboHappyPath:
         assert status.get("in_limbo") is False
 
 
+class TestTicketRitualsOnlyNoLimboDeadlock:
+    """CHT-1278: ticket-scoped rituals must not trap sprint close in limbo."""
+
+    def test_close_with_only_ticket_rituals_rotates_cleanly(
+        self, api_client, test_project
+    ):
+        """The ticket's exact repro: create_ritual(trigger="ticket_close")
+        only -- no every_sprint ritual -- then close_sprint. Previously the
+        sprint got stuck in limbo=True with pending_rituals=[] forever.
+        Now it must rotate straight through with no limbo at all.
+        """
+        api_client.create_ritual(
+            test_project["id"], "ticket-only-ritual", "Runs on ticket close",
+            trigger="ticket_close", approval_mode="auto",
+        )
+        current = api_client.get_current_sprint(test_project["id"])
+        closed = api_client.close_sprint(current["id"])
+        assert closed["limbo"] is False
+        assert closed["status"] == "completed"
+
+        status = api_client.get_limbo_status(test_project["id"])
+        assert status.get("in_limbo") is False
+        assert status.get("pending_rituals") == []
+
+        # And the rotation actually happened: a new active sprint exists.
+        new_current = api_client.get_current_sprint(test_project["id"])
+        assert new_current["id"] != current["id"]
+
+
 class TestRitualHistory:
     def test_get_ritual_history(self, api_client, test_project):
         history = api_client.get_ritual_history(test_project["id"])

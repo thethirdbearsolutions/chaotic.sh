@@ -530,6 +530,17 @@ class TestLimboWithCompletedRituals:
         self, client, auth_headers, db, test_project, test_user, limbo_sprint
     ):
         """GET /rituals/limbo includes completed ritual attestation details."""
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals. This ritual is about to be fully attested+approved
+        # (not pending), so add a second, genuinely-pending ritual to
+        # keep the sprint in limbo long enough to inspect the response.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+            trigger=RitualTrigger.EVERY_SPRINT,
+        )
+
         # Create an EVERY_SPRINT ritual
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
@@ -596,6 +607,16 @@ class TestSprintLevelAttestEdgeCases:
         self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/attest with TICKET_CLOSE ritual returns 400."""
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals -- a TICKET_CLOSE ritual never counts as pending, so
+        # add a genuinely-pending EVERY_SPRINT ritual to keep the sprint
+        # in limbo long enough to reach the wrong-trigger validation.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+            trigger=RitualTrigger.EVERY_SPRINT,
+        )
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ticket-ritual",
@@ -693,6 +714,16 @@ class TestCompleteGateEdgeCases:
         self, client, auth_headers, db, test_project, limbo_sprint
     ):
         """POST /{ritual_id}/complete with TICKET_CLOSE ritual returns 400."""
+        # CHT-1278: check_limbo self-heals a limbo with zero pending
+        # rituals -- a TICKET_CLOSE ritual never counts as pending, so
+        # add a genuinely-pending EVERY_SPRINT ritual to keep the sprint
+        # in limbo long enough to reach the wrong-trigger validation.
+        await OxydeRitual.objects.create(
+            project_id=test_project.id,
+            name="gate-keeper-ritual",
+            prompt="Keeps the sprint in limbo",
+            trigger=RitualTrigger.EVERY_SPRINT,
+        )
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="ticket-gate",

@@ -5,7 +5,6 @@ from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.services.sprint_service import SprintService
 from app.services.project_service import ProjectService
-from app.services.ritual_service import RitualService
 from app.enums import SprintStatus
 from app.oxyde_models.issue import OxydeBudgetTransaction
 from app.websocket import broadcast_sprint_event
@@ -174,14 +173,16 @@ async def update_sprint(
 async def close_sprint(sprint_id: str, current_user: CurrentUser):
     """Close the current sprint.
 
-    If the project has rituals configured, the sprint enters limbo.
-    Rituals must be attested before the next sprint activates.
+    If the project has pending EVERY_SPRINT rituals for this sprint, it
+    enters limbo. Rituals must be attested before the next sprint
+    activates. Ticket-scoped rituals (TICKET_CLOSE/TICKET_CLAIM) never
+    gate a sprint close -- that decision is made by SprintService.close_sprint
+    (via RitualService.get_pending_rituals), not duplicated here (CHT-1278).
 
-    If no rituals, immediately rotates to next sprint.
+    If no pending sprint rituals, immediately rotates to next sprint.
     """
     sprint_service = SprintService()
     project_service = ProjectService()
-    ritual_service = RitualService()
 
     sprint = await sprint_service.get_by_id(sprint_id)
     if not sprint:
@@ -209,11 +210,7 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser):
             detail="Sprint is already in limbo. Complete pending rituals first, or use force-clear-limbo.",
         )
 
-    # Check if project has rituals
-    rituals = await ritual_service.list_by_project(project.id)
-    has_rituals = len(rituals) > 0
-
-    sprint = await sprint_service.close_sprint(sprint, has_rituals=has_rituals)
+    sprint = await sprint_service.close_sprint(sprint)
     response = SprintResponse.model_validate(sprint, from_attributes=True)
     await broadcast_sprint_event(project.team_id, "closed", response.model_dump(mode="json"))
     return response
