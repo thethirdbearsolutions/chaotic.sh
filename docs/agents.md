@@ -342,18 +342,27 @@ chaotic ritual attest pr-review --ticket CHT-123 \
           code of my authorship introduced."
 ```
 
-The note must (a) say what actually changed, or point to the
-`file:symbol` / original PR # where the already-shipped behavior lives
-and how you verified it, and (b) state that no new authored code was
-introduced. This is **not** a loophole: any ticket that *did* introduce
-new code of your authorship still requires the full
+An honest `NO-NEW-PR:` note (a) says what actually changed, or points to
+the `file:symbol` / original PR # where the already-shipped behavior
+lives and how you verified it, and (b) states that no new authored code
+was introduced. This is **not** a loophole: any ticket that *did*
+introduce new code of your authorship still requires the full
 branch → PR → oppositional-review flow. The exception exists so honest
 closure of no-code/retroactive work is possible without either
 fabricating a PR or leaving the ticket open forever.
 
-Configure a ritual's prompt to advertise this path with
+**This is an honor-system convention, not a code-enforced contract.**
+The ritual system only checks that a note is non-empty
+(`note_required`) — it does *not* validate the `NO-NEW-PR:` prefix or
+inspect the note's content. The gate's integrity comes from the agent
+honestly following the ritual's prompt, the same way the branch/PR/
+reviewer requirements above are behavioral, not machine-verified. The
+whole point of a ritual is to shape agent behavior (see
+[`docs/VISION.md`](VISION.md)); this path is only trustworthy if agents
+use it truthfully. Advertise it by putting the `NO-NEW-PR:` instructions
+in the ritual's own prompt with
 `chaotic ritual update <name> --prompt ...` (admin only — agents cannot
-edit their own gates).
+edit their own gates), so every agent that hits the gate reads them.
 
 ## Related
 
