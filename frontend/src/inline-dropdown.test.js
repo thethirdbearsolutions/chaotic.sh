@@ -87,6 +87,7 @@ import {
     PRIORITY_OPTIONS,
     ISSUE_TYPE_OPTIONS,
     showInlineDropdown,
+    isInlineDropdownOpen,
     showDetailDropdown,
     updateIssueField,
     updateDetailViewField,
@@ -312,6 +313,89 @@ describe('inline-dropdown', () => {
             // This test's own handler already removed itself; a second Tab
             // shouldn't add another call attributable to it.
             expect(closeAllDropdowns.mock.calls.length).toBe(callsAfterFirstTab);
+        });
+    });
+
+    // CHT-1290: options are real <button>s; Arrow/Home/End move native focus
+    // across them (Enter/Space activate natively via event delegation), and the
+    // first option is focused on open so the keyboard works immediately.
+    describe('Arrow-key option navigation + auto-focus (CHT-1290)', () => {
+        function mockEvent() {
+            return {
+                preventDefault: vi.fn(),
+                currentTarget: {
+                    getBoundingClientRect: () => ({ left: 100, right: 200, top: 50, bottom: 70 }),
+                },
+            };
+        }
+
+        function options() {
+            return document.querySelectorAll('.inline-dropdown .dropdown-option[data-action]');
+        }
+
+        it('isInlineDropdownOpen reflects whether a dropdown is in the DOM', async () => {
+            expect(isInlineDropdownOpen()).toBe(false);
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            expect(isInlineDropdownOpen()).toBe(true);
+        });
+
+        it('focuses the first option when the dropdown opens', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            expect(document.activeElement).toBe(options()[0]);
+        });
+
+        it('does NOT auto-focus an option for the labels dropdown (would steal the create-label input)', async () => {
+            await showInlineDropdown(mockEvent(), 'labels', 'issue-1');
+            // The labels branch returns before the auto-focus path — nothing
+            // inside the dropdown should have grabbed focus, or the "type a new
+            // label" input would be stolen out from under the user.
+            const focusedOption = document.activeElement?.closest?.('.dropdown-option');
+            expect(focusedOption).toBeFalsy();
+        });
+
+        it('ArrowDown moves focus to the next option', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            const opts = options();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            expect(document.activeElement).toBe(opts[1]);
+        });
+
+        it('ArrowUp moves focus to the previous option', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            const opts = options();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            expect(document.activeElement).toBe(opts[2]);
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+            expect(document.activeElement).toBe(opts[1]);
+        });
+
+        it('ArrowUp clamps at the first option', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            const opts = options();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+            expect(document.activeElement).toBe(opts[0]);
+        });
+
+        it('End jumps to the last option, Home back to the first', async () => {
+            await showInlineDropdown(mockEvent(), 'status', 'issue-1');
+            const opts = options();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+            expect(document.activeElement).toBe(opts[opts.length - 1]);
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+            expect(document.activeElement).toBe(opts[0]);
+        });
+
+        it('drives the sprint dropdown options too (sprintKeyHandler)', async () => {
+            await showInlineDropdown(mockEvent(), 'sprint', 'issue-1');
+            const opts = options();
+            expect(opts.length).toBeGreaterThan(0);
+            // Auto-focus + arrow routing go through the same shared helper as the
+            // status dropdown (multi-option movement covered above); with the
+            // single "No sprint" option here, ArrowDown clamps on it.
+            expect(document.activeElement).toBe(opts[0]);
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            expect(document.activeElement).toBe(opts[opts.length - 1]);
         });
     });
 

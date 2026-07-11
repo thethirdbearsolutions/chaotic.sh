@@ -674,6 +674,7 @@ describe('List Navigation Handler', () => {
             viewIssue: vi.fn(),
             showEditIssueModal: vi.fn(),
             showInlineDropdown: vi.fn(),
+            isInlineDropdownOpen: vi.fn().mockReturnValue(false),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
             isDetailViewActive: vi.fn().mockReturnValue(false),
@@ -707,6 +708,13 @@ describe('List Navigation Handler', () => {
     describe('guard conditions', () => {
         it('ignores when not in issues view', () => {
             actions.getCurrentView.mockReturnValue('projects');
+            handler(makeEvent('j'));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('yields to an open inline dropdown (CHT-1290)', () => {
+            actions.isInlineDropdownOpen.mockReturnValue(true);
+            handler(makeEvent('ArrowDown'));
             handler(makeEvent('j'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });

@@ -15,7 +15,7 @@ import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
-import { showDetailDropdown } from './inline-dropdown.js';
+import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
@@ -954,6 +954,12 @@ export async function viewIssue(issueId, pushHistory = true) {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
             if (document.querySelector('.modal-overlay:not(.hidden)')) return;
             if (document.querySelector('.description-inline-editor')) return;
+            // An open inline field dropdown (opened here via s/p/a/l/e/t) owns
+            // the keyboard — yield so prev/next nav or a metadata shortcut can't
+            // fire underneath it and leave the dropdown floating over a
+            // different issue, whose baked-in issue-id a later Enter would then
+            // wrongly update (CHT-1290 review finding 1).
+            if (isInlineDropdownOpen()) return;
             if (e.key === 'ArrowLeft' && detailNavPrevId) {
                 e.preventDefault();
                 viewIssue(detailNavPrevId);

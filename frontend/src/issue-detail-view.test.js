@@ -71,6 +71,7 @@ vi.mock('./gate-approvals.js', () => ({
 
 vi.mock('./inline-dropdown.js', () => ({
     showDetailDropdown: vi.fn(),
+    isInlineDropdownOpen: vi.fn(() => false),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -107,7 +108,7 @@ import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
-import { showDetailDropdown } from './inline-dropdown.js';
+import { showDetailDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
 import { renderTicketRitualActions } from './rituals-view.js';
 import { registerActions } from './event-delegation.js';
@@ -814,6 +815,25 @@ describe('issue-detail-view', () => {
                 await new Promise(r => setTimeout(r, 10));
 
                 expect(api.getIssue).not.toHaveBeenCalled();
+            });
+
+            it('ignores keyboard nav while an inline dropdown is open (CHT-1290 review finding 1)', async () => {
+                getDetailNavContext.mockReturnValue(issueList);
+
+                await viewIssue('issue-1');
+                api.getIssue.mockClear();
+
+                // An open inline field dropdown owns the keyboard; prev/next must
+                // not fire underneath it and strand the dropdown over a different
+                // issue (whose baked-in id a later Enter would wrongly update).
+                isInlineDropdownOpen.mockReturnValue(true);
+                try {
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+                    await new Promise(r => setTimeout(r, 10));
+                    expect(api.getIssue).not.toHaveBeenCalled();
+                } finally {
+                    isInlineDropdownOpen.mockReturnValue(false);
+                }
             });
 
             it('handles keyboard j to navigate to next issue', async () => {

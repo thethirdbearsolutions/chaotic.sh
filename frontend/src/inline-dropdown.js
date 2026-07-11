@@ -26,6 +26,38 @@ let createIssueLabelIds = [];
 let _labelToggleQueue = Promise.resolve();
 
 /**
+ * ArrowUp/ArrowDown/Home/End move native focus across a dropdown's actionable
+ * options (CHT-1290). Options are real <button>s, so Enter/Space activate them
+ * natively via event delegation — this only moves focus. Returns true if it
+ * consumed the key, so the caller can `return` early.
+ */
+function handleDropdownArrowKeys(e, dropdown) {
+    const step = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' }[e.key];
+    if (step === undefined) return false;
+    const opts = Array.from(dropdown.querySelectorAll('.dropdown-option[data-action]'));
+    if (opts.length === 0) return false;
+
+    e.preventDefault();
+    const idx = opts.indexOf(document.activeElement);
+    let target;
+    if (step === 'first') target = opts[0];
+    else if (step === 'last') target = opts[opts.length - 1];
+    else if (step === 1) target = opts[idx < 0 ? 0 : Math.min(opts.length - 1, idx + 1)];
+    else target = opts[idx < 0 ? opts.length - 1 : Math.max(0, idx - 1)];
+    if (target) target.focus();
+    return true;
+}
+
+/**
+ * True while an inline field dropdown is open (CHT-1290). Lets the issues-list
+ * keyboard handler yield arrows to the open dropdown instead of moving the list
+ * cursor underneath it.
+ */
+export function isInlineDropdownOpen() {
+    return !!document.querySelector('.inline-dropdown');
+}
+
+/**
  * Get create issue label IDs
  * @returns {Array} Current label IDs for create issue
  */
@@ -245,6 +277,8 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
                 setDropdownKeyHandler(null);
                 return;
             }
+            // Arrow/Home/End move focus across the options (CHT-1290)
+            if (handleDropdownArrowKeys(e, dropdown)) return;
             const num = parseInt(key);
             if (isNaN(num)) return;
             const sprintButtons = dropdown.querySelectorAll('.dropdown-option');
@@ -263,6 +297,9 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
         };
         setDropdownKeyHandler(sprintKeyHandler);
         document.addEventListener('keydown', sprintKeyHandler);
+
+        // Focus the first option so Arrow/Enter work immediately (CHT-1290)
+        dropdown.querySelector('.dropdown-option[data-action]')?.focus();
 
         return; // already appended and positioned
     }
@@ -303,6 +340,9 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
             return;
         }
 
+        // Arrow/Home/End move focus across the options (CHT-1290)
+        if (handleDropdownArrowKeys(e, dropdown)) return;
+
         const num = parseInt(key);
         if (isNaN(num)) return;
 
@@ -330,6 +370,9 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
 
     setDropdownKeyHandler(keyHandler);
     document.addEventListener('keydown', keyHandler);
+
+    // Focus the first option so Arrow/Enter work immediately (CHT-1290)
+    dropdown.querySelector('.dropdown-option[data-action]')?.focus();
 
     // Close on click outside
     registerDropdownClickOutside(dropdown);
