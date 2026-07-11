@@ -55,6 +55,30 @@ Use these priority levels:
 - `medium` - Normal priority
 - `low` - Backburner, do when time permits
 
+## Sprint & Budget Model (read this before calling any of it a bug)
+
+Chaotic has one deliberate, strictly-correct sprint philosophy. It is **not** a
+smell — treat the following as invariants:
+
+- **Exactly one active sprint** per project at a time. `ensure_sprints_exist`
+  only creates a sprint when none is active. To move on, you **close** the
+  active sprint (which rotates to the next planned one).
+- **Only closed tickets accrue budget.** Completing an issue (→ `done`) charges
+  the project's **currently-active** sprint — regardless of which sprint the
+  ticket belonged to, or whether it belonged to any sprint. Estimate points, or
+  **1 point if unestimated** (`unestimated_handling = DEFAULT_ONE_POINT`).
+  Documented + tested since CHT-351. Corollary: closing prior/backlog work
+  *after* a rotation lands on the new active sprint — by design, not a mis-charge.
+- Each completion writes a **`BudgetTransaction`** (the audit trail behind
+  `chaotic sprint transactions`) and atomically increments the sprint's
+  `points_spent`.
+- **Arrears is a hard stop.** Going over budget blocks status changes
+  project-wide until you `chaotic sprint close`, then complete the sprint-close
+  rituals (`chaotic ritual pending`) to clear limbo and rotate.
+
+If a budget number surprises you, reconcile it against *"points from tickets
+closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
+
 ## Project Structure
 
 - `backend/` - FastAPI backend (Python)

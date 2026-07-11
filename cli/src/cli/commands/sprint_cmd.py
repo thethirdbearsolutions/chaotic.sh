@@ -138,7 +138,9 @@ def register(cli):
             f"[bold]{name}[/bold]\n"
             f"Budget: {budget} points\n"
             f"Spent: {spent} points\n"
-            f"{status_line}",
+            f"{status_line}\n"
+            f"[dim]spent = points from tickets CLOSED while this sprint is active "
+            f"(unestimated = 1pt); one active sprint at a time, close to rotate[/dim]",
             title="Sprint Budget"
         ))
 
@@ -419,7 +421,10 @@ def register(cli):
             console.print("[yellow]No transactions found.[/yellow]")
             return
 
-        table = Table(title="Sprint Transactions")
+        table = Table(
+            title="Sprint Transactions",
+            caption="one row per ticket CLOSED while this sprint was active (unestimated = 1pt)",
+        )
         table.add_column("Date")
         table.add_column("Issue")
         table.add_column("Title")
