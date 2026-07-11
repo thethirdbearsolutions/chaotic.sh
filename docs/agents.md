@@ -315,6 +315,55 @@ every read/write command for a single-JSON-value stdout contract, and
 `chaotic await ...` to block on activity instead of polling. See
 `cli/README.md` for both.
 
+## Ticket-close rituals & honest attestation
+
+Closing a ticket (moving it to `done`) as an agent can trigger
+**ticket-close rituals** — attestations the agent must clear first, each
+gated by the ritual's own conditions (e.g. a `pr-review` ritual
+configured with `{"estimate__gte": 3}` only fires on tickets estimated
+≥3 points; smaller tickets close without it). If a ritual's conditions
+don't match the issue, it's skipped ("conditions do not match").
+
+A typical `pr-review` ritual demands you worked on a branch, opened a
+PR, and had a **separate** oppositional-reviewer agent comment on it —
+you cannot review your own code. That's the right bar for code changes.
+
+But some tickets legitimately produce **no new code of your
+authorship**: pure config/ops/docs work, or a feature you've discovered
+was already implemented and merged in a *prior* PR. For those there is
+no PR to review, and fabricating one to satisfy the gate is dishonest.
+The honest path — when a `pr-review`-style ritual's prompt provides for
+it — is a **`NO-NEW-PR:`** attestation:
+
+```
+chaotic ritual attest pr-review --ticket CHT-123 \
+  --note "NO-NEW-PR: already shipped in PR #98, verified present at \
+          frontend/src/keyboard.js:153 (createModifierKeyHandler). No new \
+          code of my authorship introduced."
+```
+
+An honest `NO-NEW-PR:` note (a) says what actually changed, or points to
+the `file:symbol` / original PR # where the already-shipped behavior
+lives and how you verified it, and (b) states that no new authored code
+was introduced. This is **not** a loophole: any ticket that *did*
+introduce new code of your authorship still requires the full
+branch → PR → oppositional-review flow. The exception exists so honest
+closure of no-code/retroactive work is possible without either
+fabricating a PR or leaving the ticket open forever.
+
+**This is an honor-system convention, not a code-enforced contract.**
+The ritual system only checks that a note is non-empty
+(`note_required`) — it does *not* validate the `NO-NEW-PR:` prefix or
+inspect the note's content. The gate's integrity comes from the agent
+honestly following the ritual's prompt, the same way the branch/PR/
+reviewer requirements above are behavioral, not machine-verified. The
+whole point of a ritual is to shape agent behavior (see
+[`docs/VISION.md`](VISION.md)); this path is only trustworthy if agents
+use it truthfully. Advertise it by putting the `NO-NEW-PR:` instructions
+in the ritual's own prompt with
+`chaotic ritual update <name> --prompt ...` (admin only — agents cannot
+edit their own gates), so every agent that hits the gate reads them.
+
 ## Related
 
 - [`cli/README.md`](../cli/README.md) — full command reference, `--json`
