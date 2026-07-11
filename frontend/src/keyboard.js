@@ -218,7 +218,7 @@ export function updateKeyboardSelection(newIndex, setSelectedIndex, selector = '
 }
 
 /**
- * Creates a handler for j/k/Enter/e list navigation in the issues view.
+ * Creates a handler for j/k (or arrow keys)/Enter/e list navigation in the issues view.
  *
  * @param {Object} actions
  * @param {Function} actions.getCurrentView - Returns the current view name
@@ -275,10 +275,12 @@ export function createListNavigationHandler(actions) {
         const selectedIndex = actions.getSelectedIndex();
         switch (e.key) {
             case 'j':
+            case 'ArrowDown':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
+            case 'ArrowUp':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;
@@ -321,7 +323,7 @@ export function createListNavigationHandler(actions) {
 }
 
 /**
- * Creates a handler for j/k/Enter/Escape list navigation in the documents view.
+ * Creates a handler for j/k (or arrow keys)/Enter/Escape list navigation in the documents view.
  *
  * @param {Object} actions
  * @param {Function} actions.getCurrentView - Returns the current view name
@@ -354,10 +356,12 @@ export function createDocListNavigationHandler(actions) {
         const selectedIndex = actions.getSelectedIndex();
         switch (e.key) {
             case 'j':
+            case 'ArrowDown':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
+            case 'ArrowUp':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;
@@ -387,7 +391,7 @@ export function createDocListNavigationHandler(actions) {
 }
 
 /**
- * Creates a handler for j/k/Enter/Escape list navigation in the inbox view
+ * Creates a handler for j/k (or arrow keys)/Enter/Escape list navigation in the inbox view
  * (CHT-1250). Same shape as createDocListNavigationHandler -- Enter opens
  * the selected entry (marks it read + deep-links), no separate 'e' action.
  *
@@ -414,10 +418,12 @@ export function createInboxNavigationHandler(actions) {
         const selectedIndex = actions.getSelectedIndex();
         switch (e.key) {
             case 'j':
+            case 'ArrowDown':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
+            case 'ArrowUp':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;
@@ -439,7 +445,7 @@ export function createInboxNavigationHandler(actions) {
 }
 
 /**
- * Creates a handler for j/k/Enter/Escape card navigation on the Board (kanban)
+ * Creates a handler for j/k (or arrow keys)/Enter/Escape card navigation on the Board (kanban)
  * view (CHT-1215). The Board had zero keyboard support despite being one of
  * the core triage surfaces alongside Issues/Documents, which both already
  * have this grammar.
@@ -481,10 +487,12 @@ export function createBoardNavigationHandler(actions) {
         const selectedIndex = actions.getSelectedIndex();
         switch (e.key) {
             case 'j':
+            case 'ArrowDown':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
+            case 'ArrowUp':
                 e.preventDefault();
                 updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;

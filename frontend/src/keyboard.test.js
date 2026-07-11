@@ -770,6 +770,22 @@ describe('List Navigation Handler', () => {
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
         });
 
+        it('ArrowDown moves selection down (alias for j) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('ArrowUp moves selection up (alias for k) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('ArrowUp');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
         it('k moves selection up', () => {
             actions.getSelectedIndex.mockReturnValue(2);
             const event = makeEvent('k');
@@ -1012,6 +1028,22 @@ describe('Document List Navigation Handler', () => {
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
         });
 
+        it('ArrowDown moves selection down (alias for j) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('ArrowUp moves selection up (alias for k) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('ArrowUp');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
         it('k moves selection up', () => {
             actions.getSelectedIndex.mockReturnValue(2);
             const event = makeEvent('k');
@@ -1157,6 +1189,24 @@ describe('Board Navigation Handler', () => {
         it('j moves the cursor to the next card, crossing into the next column', () => {
             actions.getSelectedIndex.mockReturnValue(0);
             const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+            expect(document.querySelectorAll('.kanban-card')[1].classList.contains('keyboard-selected')).toBe(true);
+        });
+
+        it('ArrowDown moves the cursor to the next card (alias for j) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+            expect(document.querySelectorAll('.kanban-card')[1].classList.contains('keyboard-selected')).toBe(true);
+        });
+
+        it('ArrowUp moves the cursor to the previous card (alias for k) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('ArrowUp');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
@@ -1458,6 +1508,22 @@ describe('Inbox Navigation Handler', () => {
         it('j moves selection down', () => {
             actions.getSelectedIndex.mockReturnValue(0);
             const event = makeEvent('j');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('ArrowDown moves selection down (alias for j) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(0);
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('ArrowUp moves selection up (alias for k) (CHT-1288)', () => {
+            actions.getSelectedIndex.mockReturnValue(2);
+            const event = makeEvent('ArrowUp');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(1);
