@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getMemberHandle } from './mention-autocomplete.js';
+import { getMemberHandle, isInsideCodeSpan } from './mention-autocomplete.js';
 
 describe('getMemberHandle', () => {
     it('returns first name lowercased', () => {
@@ -16,6 +16,43 @@ describe('getMemberHandle', () => {
 
     it('returns email prefix when name is empty string', () => {
         expect(getMemberHandle({ name: '', email: 'test@example.com' })).toBe('test');
+    });
+});
+
+// CHT-1272: mirrors backend/app/services/inbox_service.py's
+// _strip_code_spans -- an @handle inside a ``` fence or inline `code`
+// span isn't a real mention on either side.
+describe('isInsideCodeSpan (CHT-1272)', () => {
+    it('is false for plain text with no backticks', () => {
+        const text = 'hey @bob can you take a look?';
+        expect(isInsideCodeSpan(text, text.indexOf('@bob'))).toBe(false);
+    });
+
+    it('is true for a caret inside a closed fenced code block', () => {
+        const text = 'before\n```\n@bob do the thing\n```\nafter';
+        const pos = text.indexOf('@bob') + 2;
+        expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
+
+    it('is true for a caret inside a still-open (unclosed) fence', () => {
+        const text = 'before\n```\n@bob';
+        expect(isInsideCodeSpan(text, text.length)).toBe(true);
+    });
+
+    it('is false for a caret after a closed fence', () => {
+        const text = 'before\n```\ncode\n```\n@bob';
+        expect(isInsideCodeSpan(text, text.length)).toBe(false);
+    });
+
+    it('is true for a caret inside an inline `code` span', () => {
+        const text = 'run `@bob` as a literal example';
+        const pos = text.indexOf('@bob') + 2;
+        expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
+
+    it('is false for a caret after an unclosed single backtick', () => {
+        const text = 'hello `@bob unclosed';
+        expect(isInsideCodeSpan(text, text.length)).toBe(false);
     });
 });
 
@@ -246,6 +283,38 @@ describe('textarea/container parameterization (CHT-1214)', () => {
     it('does nothing if the given textarea id does not exist', () => {
         document.body.innerHTML = `<div id="mention-suggestions" class="hidden"></div>`;
         expect(() => setupMentionAutocomplete('does-not-exist', 'mention-suggestions')).not.toThrow();
+    });
+
+    it('CHT-1272: suppresses suggestions when typing @handle inside a ``` fence, but still shows them outside it', async () => {
+        vi.resetModules();
+        vi.doMock('./teams.js', () => ({
+            getMembers: vi.fn(() => [{ id: '1', name: 'Ada Lovelace', email: 'ada@example.com' }]),
+        }));
+        ({ setupMentionAutocomplete } = await import('./mention-autocomplete.js'));
+
+        document.body.innerHTML = `
+            <textarea id="new-comment"></textarea>
+            <div id="mention-suggestions" class="hidden"></div>
+        `;
+        setupMentionAutocomplete();
+        const textarea = document.getElementById('new-comment');
+        const container = document.getElementById('mention-suggestions');
+
+        function typeAt(text, pos) {
+            textarea.value = text;
+            textarea.selectionStart = pos;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        // Caret right after "@a" inside a fenced block -- no suggestions.
+        const fenced = 'before\n```\n@a';
+        typeAt(fenced, fenced.length);
+        expect(container.classList.contains('hidden')).toBe(true);
+
+        // Same "@a" query, but outside the fence -- suggestions still show.
+        const outside = 'before\n```\ncode\n```\n@a';
+        typeAt(outside, outside.length);
+        expect(container.classList.contains('hidden')).toBe(false);
     });
 
     it('does not double-bind when called twice for the same textarea', () => {

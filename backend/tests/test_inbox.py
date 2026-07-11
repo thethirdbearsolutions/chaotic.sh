@@ -287,6 +287,58 @@ class TestNotifyMentions:
         assert entries[0].document_id == test_document.id
         assert entries[0].issue_id is None
 
+    async def test_handle_inside_fenced_code_block_is_not_mentioned(
+        self, db, test_team, test_issue, test_user,
+    ):
+        """CHT-1272: a literal @handle pasted as example code inside a ```
+        fence must not page anyone -- mirrors the frontend, which only
+        highlights/links mentions in rendered markdown text nodes (never
+        inside <pre>/<code>).
+        """
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+
+        await InboxService().notify_mentions(
+            content=f"see this snippet:\n```\n@{handle} do the thing\n```\nno real mention here",
+            team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+
+        assert await OxydeInboxEntry.objects.count() == 0
+
+    async def test_handle_outside_fence_still_mentioned_alongside_one_inside(
+        self, db, test_team, test_issue, test_user,
+    ):
+        """A real @handle outside the fence still notifies even when the
+        same content also has one fenced inside -- the fence strip must not
+        eat legitimate mentions elsewhere in the comment.
+        """
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+
+        await InboxService().notify_mentions(
+            content=f"@{handle} check this:\n```\n@{handle} example\n```\nthanks",
+            team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+
+        entries = await OxydeInboxEntry.objects.filter(recipient_user_id=mentioned.id).all()
+        assert len(entries) == 1
+
+    async def test_handle_inside_inline_code_span_is_not_mentioned(
+        self, db, test_team, test_issue, test_user,
+    ):
+        """Same treatment for a single-backtick inline code span (the
+        frontend's addIssueLinksAndMentions skips <code> the same way it
+        skips <pre>)."""
+        mentioned = await _add_distinct_member(test_team.id, "Zara")
+        handle = _member_handle(mentioned.name, mentioned.email)
+
+        await InboxService().notify_mentions(
+            content=f"run `@{handle}` as a literal example",
+            team_id=test_team.id, author=test_user, issue=test_issue,
+        )
+
+        assert await OxydeInboxEntry.objects.count() == 0
+
 
 # ---------------------------------------------------------------------------
 # InboxService readers/mark-read

@@ -33,6 +33,23 @@ logger = logging.getLogger(__name__)
 # committed text rather than a live-typing prefix.
 _MENTION_RE = re.compile(r"(?:^|(?<=\s))@([a-zA-Z0-9._-]+)")
 
+# CHT-1272: fenced ``` code blocks and inline `code` spans are stripped
+# before mention-matching -- a literal @handle pasted as example code
+# shouldn't page anyone. Mirrors the frontend's rendering pipeline
+# (rich-text.js's addIssueLinksAndMentions walks the *rendered* markdown
+# DOM and skips text nodes under <code>/<pre>, which marked already
+# produces for both ``` fences and inline `code`); this strips the same
+# spans out of the raw markdown source before regex-matching, since the
+# backend never renders to DOM. Fences are stripped first (DOTALL, so a
+# fence spanning multiple lines is removed as one block), then any
+# remaining inline spans.
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def _strip_code_spans(text: str) -> str:
+    return _INLINE_CODE_RE.sub("", _CODE_FENCE_RE.sub("", text))
+
 
 def _member_handle(name: str | None, email: str | None) -> str:
     """Mirror frontend/src/mention-autocomplete.js's getMemberHandle():
@@ -199,8 +216,11 @@ class InboxService:
         """Parse @handles out of `content`; write a MENTION entry for each
         resolved team member (excluding the author). Exactly one of
         issue/document should be given.
+
+        @handles inside fenced ``` blocks or inline `code` spans are not
+        real mentions (CHT-1272) -- see _strip_code_spans.
         """
-        handles = {m.lower() for m in _MENTION_RE.findall(content or "")}
+        handles = {m.lower() for m in _MENTION_RE.findall(_strip_code_spans(content or ""))}
         if not handles:
             return
 
