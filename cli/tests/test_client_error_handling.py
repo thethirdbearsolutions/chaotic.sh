@@ -347,3 +347,33 @@ class TestFormatError:
         client = Client()
         result = client._request("DELETE", "/test")
         assert result is None
+
+
+class TestInteractiveHeader:
+    """CHT-1302: the client stamps X-Chaotic-Interactive from isatty() so the
+    backend can require BOTH a human account AND an interactive caller for the
+    ritual/estimate exemption. Verify the client computes the header value."""
+
+    @patch("cli.client.sys")
+    def test_interactive_when_both_tty(self, mock_sys):
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdout.isatty.return_value = True
+        assert Client()._headers()["X-Chaotic-Interactive"] == "1"
+
+    @patch("cli.client.sys")
+    def test_non_interactive_when_stdout_piped(self, mock_sys):
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdout.isatty.return_value = False
+        assert Client()._headers()["X-Chaotic-Interactive"] == "0"
+
+    @patch("cli.client.sys")
+    def test_non_interactive_when_stdin_piped(self, mock_sys):
+        mock_sys.stdin.isatty.return_value = False
+        mock_sys.stdout.isatty.return_value = True
+        assert Client()._headers()["X-Chaotic-Interactive"] == "0"
+
+    @patch("cli.client.sys")
+    def test_non_interactive_when_both_piped(self, mock_sys):
+        mock_sys.stdin.isatty.return_value = False
+        mock_sys.stdout.isatty.return_value = False
+        assert Client()._headers()["X-Chaotic-Interactive"] == "0"

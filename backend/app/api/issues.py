@@ -224,6 +224,12 @@ async def create_issue(
     # signal is client-asserted via X-Chaotic-Interactive: best-effort
     # defense against an agent accidentally authed as a human, not a
     # guard against a malicious client forging the header.
+    # Who sends "1": the CLI when both stdin+stdout are a TTY, and the web
+    # app unconditionally (a browser is a live human). Callers that omit the
+    # header — the MCP tools (remote /mcp and the stdio adapter, whose stdio
+    # is piped) and any raw API script — are treated as non-interactive and
+    # thus gated. That is intentional: MCP/programmatic traffic is agentic
+    # regardless of whose credentials back it.
     interactive = x_chaotic_interactive == "1"
     is_human_request = not current_user.is_agent and interactive
 

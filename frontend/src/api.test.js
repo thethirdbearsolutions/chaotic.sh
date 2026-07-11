@@ -99,6 +99,18 @@ describe('ApiClient', () => {
       );
     });
 
+    it('always sends X-Chaotic-Interactive: 1 (web app is a live human) (CHT-1302)', async () => {
+      await client.request('GET', '/test');
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/test',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Chaotic-Interactive': '1',
+          }),
+        })
+      );
+    });
+
     it('includes Authorization header when token is set', async () => {
       client.setToken('test-token');
       await client.request('GET', '/test');
