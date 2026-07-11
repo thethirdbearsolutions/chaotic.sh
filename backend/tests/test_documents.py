@@ -1269,3 +1269,28 @@ class TestCreateDocumentProjectScopedAgent:
             json={"title": "TeamWide", "content": "x", "icon": "📄"},
         )
         assert resp.status_code == 403
+
+    async def test_project_scoped_agent_cannot_cross_team_via_project_id(self, client, db, test_team, test_project):
+        """CHT-1273 review CRITICAL: project_id (body) must belong to the URL-path
+        team. A project-scoped agent must NOT POST to a different team T2 with its
+        own project_id (in T1) and land a doc in T2."""
+        other_team = await OxydeTeam.objects.create(name="Other T", key="OTT")
+        _, headers = await self._project_agent(test_project.id, email="xagent@agent.local")
+        resp = await client.post(
+            f"/api/teams/{other_team.id}/documents",  # a team the agent has nothing to do with
+            headers=headers,
+            json={"title": "Cross", "content": "x", "project_id": test_project.id, "icon": "📄"},
+        )
+        # test_project belongs to test_team, not other_team -> rejected pre-auth.
+        assert resp.status_code == 400
+
+    async def test_human_cannot_cross_team_via_project_id(self, client, auth_headers, db, test_team, test_project):
+        """Same guard for humans: cannot attach a doc to a project from a
+        different team via a path-team/body-project mismatch."""
+        other_team = await OxydeTeam.objects.create(name="Other H", key="OTH")
+        resp = await client.post(
+            f"/api/teams/{other_team.id}/documents",
+            headers=auth_headers,
+            json={"title": "CrossH", "content": "x", "project_id": test_project.id},
+        )
+        assert resp.status_code in (400, 403)
