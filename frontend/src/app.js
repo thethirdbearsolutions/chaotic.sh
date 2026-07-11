@@ -39,7 +39,7 @@ import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, openInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler } from './keyboard.js';
 import { showInlineDropdown } from './inline-dropdown.js';
 import './revisions.js';
 import {
@@ -660,6 +660,10 @@ document.addEventListener('keydown', createInboxNavigationHandler({
     isModalOpen,
     isCommandPaletteOpen,
 }));
+
+// ArrowUp/Down/Home/End roving focus through the sidebar nav links (CHT-1289).
+// Self-scopes to when a .nav-item is focused, so no view/modal/input guards.
+document.addEventListener('keydown', createSidebarNavigationHandler());
 
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({

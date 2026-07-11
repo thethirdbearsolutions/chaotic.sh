@@ -513,3 +513,54 @@ export function createBoardNavigationHandler(actions) {
         }
     };
 }
+
+/**
+ * Creates a handler for ArrowUp/ArrowDown/Home/End roving focus through the
+ * sidebar nav items (CHT-1289). Unlike the list handlers above — which drive a
+ * `.keyboard-selected` cursor over non-focusable rows — the sidebar entries are
+ * real `<a href>` links, so this moves NATIVE focus between them (correct
+ * semantics + Enter activates the link natively via the SPA click handler, no
+ * interception needed here).
+ *
+ * Self-scoping: it only acts when a `.nav-item` is already focused (entered via
+ * Tab or click), so it never competes for arrows anywhere else — no view guard,
+ * modal guard, or input guard is needed. The `g`-prefix jumps (createKeyboardHandler)
+ * remain the fast path; this is the discoverable, keyboard-accessible complement.
+ *
+ * Movement clamps at the ends (consistent with the list handlers' clamp), rather
+ * than wrapping.
+ */
+export function createSidebarNavigationHandler() {
+    const selector = '.sidebar-nav .nav-item';
+    return function handleSidebarNavigation(e) {
+        const active = document.activeElement;
+        if (!active || !active.classList.contains('nav-item')) return;
+
+        const items = Array.from(document.querySelectorAll(selector));
+        const idx = items.indexOf(active);
+        if (idx === -1) return;
+
+        let target;
+        switch (e.key) {
+            case 'ArrowDown':
+                target = items[Math.min(items.length - 1, idx + 1)];
+                break;
+            case 'ArrowUp':
+                target = items[Math.max(0, idx - 1)];
+                break;
+            case 'Home':
+                target = items[0];
+                break;
+            case 'End':
+                target = items[items.length - 1];
+                break;
+            default:
+                return;
+        }
+
+        if (target) {
+            e.preventDefault();
+            target.focus();
+        }
+    };
+}
