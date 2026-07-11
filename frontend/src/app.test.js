@@ -98,6 +98,7 @@ vi.mock('./keyboard.js', () => ({
     createDocListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createBoardNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createInboxNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
+    createSidebarNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
@@ -219,7 +220,7 @@ import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
 import { navigateTo } from './router.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createSidebarNavigationHandler } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
 import { showAuthScreen } from './auth.js';
@@ -250,6 +251,7 @@ const keyboardHandlerConfig = createKeyboardHandler.mock.calls[0]?.[0];
 const modifierHandlerConfig = createModifierKeyHandler.mock.calls[0]?.[0];
 const listNavCallCount = createListNavigationHandler.mock.calls.length;
 const docListNavCallCount = createDocListNavigationHandler.mock.calls.length;
+const sidebarNavCallCount = createSidebarNavigationHandler.mock.calls.length;
 
 // Clear mock call counts after import-time side effects so each test
 // starts fresh and assertions aren't cumulative.
@@ -565,6 +567,10 @@ describe('app.js keyboard handler wiring', () => {
     it('creates list navigation handlers for issues and documents', () => {
         expect(listNavCallCount).toBe(1);
         expect(docListNavCallCount).toBe(1);
+    });
+
+    it('creates the sidebar navigation handler (CHT-1289)', () => {
+        expect(sidebarNavCallCount).toBe(1);
     });
 });
 

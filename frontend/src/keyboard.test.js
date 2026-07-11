@@ -6,6 +6,7 @@ import {
     createDocListNavigationHandler,
     createBoardNavigationHandler,
     createInboxNavigationHandler,
+    createSidebarNavigationHandler,
     updateKeyboardSelection,
 } from './keyboard.js';
 
@@ -715,6 +716,13 @@ describe('List Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
         it('ignores when focused on TEXTAREA', () => {
             handler(makeEvent('j', { target: { tagName: 'TEXTAREA' } }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
@@ -988,6 +996,13 @@ describe('Document List Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
         it('ignores when modal is open', () => {
             actions.isModalOpen.mockReturnValue(true);
             handler(makeEvent('j'));
@@ -1151,6 +1166,13 @@ describe('Board Navigation Handler', () => {
 
         it('ignores when focused on INPUT', () => {
             handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
@@ -1485,6 +1507,13 @@ describe('Inbox Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
         it('ignores when modal is open', () => {
             actions.isModalOpen.mockReturnValue(true);
             handler(makeEvent('j'));
@@ -1573,6 +1602,104 @@ describe('Inbox Navigation Handler', () => {
             handler(makeEvent('x'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
             expect(actions.openInboxEntry).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// Sidebar Navigation Handler (Arrow/Home/End roving focus) - CHT-1289
+// ============================================================================
+
+describe('Sidebar Navigation Handler', () => {
+    let handler;
+
+    beforeEach(() => {
+        handler = createSidebarNavigationHandler();
+        document.body.innerHTML = `
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item" data-view="my-issues">My Issues</a>
+                <a href="/inbox" class="nav-item" data-view="inbox">Inbox</a>
+                <a href="/issues" class="nav-item" data-view="issues">Issues</a>
+            </nav>
+            <input id="outside" />
+        `;
+    });
+
+    function items() {
+        return Array.from(document.querySelectorAll('.sidebar-nav .nav-item'));
+    }
+
+    describe('guard conditions', () => {
+        it('ignores keys when no nav-item is focused', () => {
+            document.getElementById('outside').focus();
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('ignores when the focused element is not a nav-item', () => {
+            // Nothing focused -> activeElement is body
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('ignores unrelated keys while a nav-item is focused', () => {
+            items()[0].focus();
+            const event = makeEvent('x');
+            handler(event);
+            expect(event.preventDefault).not.toHaveBeenCalled();
+            expect(document.activeElement).toBe(items()[0]);
+        });
+    });
+
+    describe('arrow movement', () => {
+        it('ArrowDown moves focus to the next nav-item', () => {
+            items()[0].focus();
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(document.activeElement).toBe(items()[1]);
+        });
+
+        it('ArrowUp moves focus to the previous nav-item', () => {
+            items()[2].focus();
+            const event = makeEvent('ArrowUp');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(document.activeElement).toBe(items()[1]);
+        });
+
+        it('ArrowDown clamps at the last item', () => {
+            items()[2].focus();
+            const event = makeEvent('ArrowDown');
+            handler(event);
+            expect(document.activeElement).toBe(items()[2]);
+        });
+
+        it('ArrowUp clamps at the first item', () => {
+            items()[0].focus();
+            const event = makeEvent('ArrowUp');
+            handler(event);
+            expect(document.activeElement).toBe(items()[0]);
+        });
+    });
+
+    describe('Home/End', () => {
+        it('Home jumps focus to the first nav-item', () => {
+            items()[2].focus();
+            const event = makeEvent('Home');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(document.activeElement).toBe(items()[0]);
+        });
+
+        it('End jumps focus to the last nav-item', () => {
+            items()[0].focus();
+            const event = makeEvent('End');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(document.activeElement).toBe(items()[2]);
         });
     });
 });
