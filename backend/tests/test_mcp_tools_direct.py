@@ -174,6 +174,19 @@ class TestProjectList:
         result = await tools.project_list(team="no-such-team")
         assert "error" in result
 
+    async def test_empty_team_returns_empty_list(self, db, test_user, test_team):
+        # A team the user belongs to but which has no projects -> a clean
+        # empty list, not an error (mirrors the CLI's empty-list branch).
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+
+        empty_team = await OxydeTeam.objects.create(name="Empty Team", key="EMPTY")
+        await OxydeTeamMember.objects.create(
+            team_id=empty_team.id, user_id=test_user.id, role=TeamRole.MEMBER
+        )
+        result = await tools.project_list(team=empty_team.key)
+        assert result == {"projects": []}
+
     async def test_team_scoped_agent_sees_its_team(self, db, test_team, test_project):
         from app.oxyde_models.user import OxydeUser
         from app.utils.security import get_password_hash

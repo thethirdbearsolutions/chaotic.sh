@@ -602,7 +602,8 @@ class TestProjectList:
         result = mcp_mod.project_list()
 
         assert result == {"projects": projects}
-        client.get_projects.assert_called_once_with("test-team-123")
+        # limit=1000 keeps stdio in parity with the HTTP transport's cap.
+        client.get_projects.assert_called_once_with("test-team-123", limit=1000)
 
     def test_empty_returns_empty_list(self, mcp_mod):
         from cli.main import client

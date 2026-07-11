@@ -230,8 +230,11 @@ class Client:
         data = {"name": name, "key": key, **kwargs}
         return self._request("POST", f"/teams/{team_id}/projects", data)
 
-    def get_projects(self, team_id: str) -> list:
-        return self._request("GET", f"/teams/{team_id}/projects")
+    def get_projects(self, team_id: str, limit: int = None) -> list:
+        path = f"/teams/{team_id}/projects"
+        if limit is not None:
+            path = f"{path}?{urlencode({'limit': limit})}"
+        return self._request("GET", path)
 
     def get_project(self, project_id: str) -> dict:
         return self._request("GET", f"/projects/{project_id}")

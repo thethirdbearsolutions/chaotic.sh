@@ -8,11 +8,11 @@ a user, and tools resolve context from *that user's* memberships,
 mirroring the exact access rules ``app.api.deps`` already enforces for
 every other authenticated endpoint:
 
-* Team-wide tools (``activity_recent``, ``issue_list``/``doc_list`` with
-  ``all_projects=true``) mirror ``check_user_team_access``: a human must
-  be a team member; an agent must be team-scoped (``agent_team_id``) --
-  a *project*-scoped agent has no team-wide access via REST either, so it
-  gets none here.
+* Team-wide tools (``activity_recent``, ``project_list``, and
+  ``issue_list``/``doc_list`` with ``all_projects=true``) mirror
+  ``check_user_team_access``: a human must be a team member; an agent
+  must be team-scoped (``agent_team_id``) -- a *project*-scoped agent has
+  no team-wide access via REST either, so it gets none here.
 * Project-scoped tools mirror ``check_user_project_access``: a
   project-scoped agent defaults to (and is confined to) its own project;
   everyone else resolves within an accessible team.
@@ -65,9 +65,9 @@ async def resolve_team(user: User, team: str | None) -> str:
         if not user.agent_team_id:
             raise ToolContextError(
                 "This API key is scoped to a single project, not a team -- "
-                "team-wide tools (activity_recent, all_projects=true) aren't "
-                "available for it. Pass `project` instead, or use a "
-                "team-scoped or human API key."
+                "team-wide tools (activity_recent, project_list, "
+                "all_projects=true) aren't available for it. Pass `project` "
+                "instead, or use a team-scoped or human API key."
             )
         if team:
             this_team = await TeamService().get_by_id(user.agent_team_id)

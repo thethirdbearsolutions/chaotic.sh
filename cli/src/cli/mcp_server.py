@@ -466,7 +466,11 @@ def project_list() -> dict:
     parameter for API keys that can see more than one.
     """
     team_id = _require_team()
-    projects = _client().get_projects(team_id)
+    # limit=1000 keeps this transport in parity with the HTTP server's
+    # project_list (backend/app/mcp_server/tools.py), which lists at the
+    # same cap -- without it, get_projects would fall to the REST
+    # endpoint's default of 100 and silently truncate large teams.
+    projects = _client().get_projects(team_id, limit=1000)
     return {"projects": projects or []}
 
 
