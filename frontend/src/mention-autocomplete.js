@@ -19,6 +19,34 @@ export function getMemberHandle(member) {
 }
 
 /**
+ * True if `pos` in `text` falls inside a fenced ``` code block or an
+ * inline `code` span (CHT-1272). Mirrors
+ * backend/app/services/inbox_service.py's _strip_code_spans: an @handle
+ * typed as example code shouldn't offer mention autocomplete, since it
+ * won't produce a real inbox notification either (rendered comments skip
+ * mentions under <pre>/<code>, and the backend strips the same spans
+ * before matching).
+ *
+ * Fence state is tracked by toggling on every ``` before `pos` -- an
+ * opening fence the user hasn't closed yet (still typing inside it) also
+ * counts as "inside", same as it would once submitted.
+ */
+export function isInsideCodeSpan(text, pos) {
+    // Ask the exact question the notification path answers: "would a mention at
+    // this caret be stripped as code?" Mark the caret, run the SAME strip
+    // regexes as the backend (inbox_service.py _CODE_FENCE_RE / _INLINE_CODE_RE),
+    // and see if the marker survived. Keeps FE/BE in parity across the edge cases
+    // (unclosed fences → EOF, longer fences swallowing inner runs, 1-2-backtick +
+    // multi-line inline spans; an unclosed inline run stays literal). (CHT-1272)
+    const MARK = String.fromCharCode(0);  // NUL — cannot occur in user-typed text
+    const marked = text.slice(0, pos) + MARK + text.slice(pos);
+    const stripped = marked
+        .replace(/(`{3,})[\s\S]*?(?:\1|$)/g, '')
+        .replace(/(`{1,2})[\s\S]*?\1/g, '');
+    return !stripped.includes(MARK);
+}
+
+/**
  * Wire up @mention autocomplete on a textarea.
  *
  * Defaults to the comment box for backward compatibility; the issue
@@ -64,6 +92,10 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
 
     const update = () => {
         const caret = textarea.selectionStart || 0;
+        if (isInsideCodeSpan(textarea.value, caret)) {
+            hide();
+            return;
+        }
         const prefix = textarea.value.slice(0, caret);
         const match = prefix.match(/(^|\s)@([a-zA-Z0-9._-]*)$/);
         if (!match) {
