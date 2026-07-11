@@ -519,15 +519,22 @@ describe('inline-dropdown', () => {
 
     describe('updateDetailViewField', () => {
         beforeEach(() => {
+            // Mirrors the real markup in issue-detail-view.js: data-field lives
+            // on the .property-row, the focusable trigger is the nested
+            // .property-value button.
             document.body.innerHTML = `
                 <div id="issue-detail-view">
                     <div class="detail-sidebar">
-                        <div class="property-row">
+                        <div class="property-row" data-field="status">
                             <span class="property-label">Status</span>
                             <button class="property-value"></button>
                         </div>
-                        <div class="property-row">
+                        <div class="property-row" data-field="priority">
                             <span class="property-label">Priority</span>
+                            <button class="property-value"></button>
+                        </div>
+                        <div class="property-row" data-field="assignee">
+                            <span class="property-label">Assignee</span>
                             <button class="property-value"></button>
                         </div>
                     </div>
@@ -558,6 +565,36 @@ describe('inline-dropdown', () => {
             updateDetailViewField('status', { status: 'done' });
 
             // Should not throw, just return early
+        });
+
+        it('returns focus to the field trigger button on the property row (CHT-1297)', () => {
+            updateDetailViewField('status', { status: 'done' });
+
+            const trigger = document.querySelector('.property-row[data-field="status"] .property-value');
+            expect(trigger).not.toBeNull();
+            expect(document.activeElement).toBe(trigger);
+        });
+
+        it('maps the non-identity field name to its trigger (assignee_id -> assignee) (CHT-1297)', () => {
+            updateDetailViewField('assignee_id', { assignee_id: null });
+
+            const trigger = document.querySelector('.property-row[data-field="assignee"] .property-value');
+            expect(trigger).not.toBeNull();
+            expect(document.activeElement).toBe(trigger);
+        });
+
+        it('does not throw when the property row has no trigger button', () => {
+            document.body.innerHTML = `
+                <div id="issue-detail-view">
+                    <div class="detail-sidebar">
+                        <div class="property-row" data-field="status">
+                            <span class="property-label">Status</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            expect(() => updateDetailViewField('status', { status: 'done' })).not.toThrow();
         });
     });
 
