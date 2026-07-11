@@ -460,6 +460,27 @@ class TestBudgetDeductionRaceSafe:
         assert sprint.points_spent == 115
 
     @pytest.mark.asyncio
+    async def test_create_as_done_blocked_when_over_budget(self, client, auth_headers, test_project, test_user, db):
+        """The create-issue-as-DONE path shares _deduct, so it must honor
+        the same arrears backstop (create() wraps _deduct in atomic() just
+        like update()). Creating a DONE issue while over budget is a 409,
+        with no deduction and no transaction row."""
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=3, points_spent=5,  # already over budget
+        )
+        resp = await client.post(
+            f"/api/projects/{test_project.id}/issues",
+            headers=auth_headers,
+            json={"title": "Born done", "status": "done", "estimate": 2},
+        )
+        assert resp.status_code == 409, "creating an issue as DONE while over budget must be rejected"
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 5, "no deduction on a blocked create-as-done"
+        txns = await OxydeBudgetTransaction.objects.filter(sprint_id=sprint.id).all()
+        assert len(txns) == 0, "no transaction row for a blocked create-as-done"
+
+    @pytest.mark.asyncio
     async def test_close_blocked_when_already_over_budget_rolls_back(self, client, auth_headers, test_project, test_user, db):
         """End-to-end: closing a ticket while the sprint is already over
         budget returns an arrears error, does NOT deduct, does NOT mark
