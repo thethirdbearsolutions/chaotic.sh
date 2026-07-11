@@ -5,7 +5,7 @@ Sprints are now created automatically via the cadence system (ensure_sprints_exi
 """
 import pytest
 from app.oxyde_models.sprint import OxydeSprint
-from app.oxyde_models.issue import OxydeIssue
+from app.oxyde_models.issue import OxydeIssue, OxydeBudgetTransaction
 from app.oxyde_models.team import OxydeTeamMember
 from app.enums import SprintStatus, TeamRole, UnestimatedHandling
 
@@ -367,6 +367,139 @@ async def test_budget_deduction_unestimated_defaults_to_one(client, auth_headers
     # Budget should be deducted by 1 (default for unestimated)
     sprint = await OxydeSprint.objects.get(id=sprint.id)
     assert sprint.points_spent == 1, "Unestimated issue should deduct 1 point (DEFAULT_ONE_POINT)"
+
+
+class TestBudgetDeductionRaceSafe:
+    """CHT-329: the budget deduction must be race-safe.
+
+    The arrears *gate* (_check_sprint_arrears) is a read done before the
+    increment, so two concurrent DONE closes could both pass it and both
+    increment, overshooting the budget without either being blocked. The
+    fix makes the increment a conditional atomic UPDATE (increment only
+    while not already over budget) + RETURNING to detect a lost race, so
+    it — not the read-based gate — is the real serializer.
+
+    These tests exhaustively pin the deduction's boundary behavior and,
+    critically, exercise the conditional-UPDATE backstop directly (two
+    deductions that both got past the fast-path gate — the exact race
+    scenario), which HTTP-level serialized closes can't reproduce because
+    the fast-path gate catches the second one first.
+    """
+
+    async def _issue(self, test_project, test_user, n, estimate=1):
+        return await OxydeIssue.objects.create(
+            project_id=test_project.id,
+            identifier=f"{test_project.key}-{n}",
+            number=n,
+            title=f"Issue {n}",
+            estimate=estimate,
+            creator_id=test_user.id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_crossing_ticket_is_allowed(self, test_project, test_user, db):
+        """A close that crosses the budget line is allowed (block only
+        once *over* budget), matching the pre-fix boundary."""
+        from app.services.issue_service import IssueService
+
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=3, points_spent=3,  # exactly at budget
+        )
+        issue = await self._issue(test_project, test_user, 900, estimate=2)
+        await IssueService()._deduct_from_sprint_budget(issue, test_user.id)
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 5, "at-budget close should cross the line, not be blocked"
+
+    @pytest.mark.asyncio
+    async def test_deduct_backstops_a_bypassed_fastpath(self, test_project, test_user, db):
+        """The core TOCTOU fix: two deductions that both got past the
+        read-based gate (simulated by calling _deduct directly). The
+        first crosses over budget; the second must be blocked by the
+        conditional UPDATE, raise SprintInArrearsError, NOT increment,
+        and leave NO orphan transaction row."""
+        from app.services.issue_service import IssueService, SprintInArrearsError
+
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=5, points_spent=5,  # at budget: first close will cross
+        )
+        svc = IssueService()
+        first = await self._issue(test_project, test_user, 901, estimate=2)
+        second = await self._issue(test_project, test_user, 902, estimate=2)
+
+        # First crosses (5 -> 7, over budget) — allowed.
+        await svc._deduct_from_sprint_budget(first, test_user.id)
+        # Second got past the fast-path gate too, but the sprint is now
+        # over budget — the conditional UPDATE must block it.
+        with pytest.raises(SprintInArrearsError):
+            await svc._deduct_from_sprint_budget(second, test_user.id)
+
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 7, "blocked deduction must NOT increment (no overshoot)"
+        txns = await OxydeBudgetTransaction.objects.filter(sprint_id=sprint.id).all()
+        assert len(txns) == 1, "blocked deduction must leave no orphan transaction row"
+        assert txns[0].issue_id == first.id
+
+    @pytest.mark.asyncio
+    async def test_null_budget_never_blocks(self, test_project, test_user, db):
+        """An uncapped sprint (budget IS NULL) always increments — the
+        conditional UPDATE's `budget IS NULL` branch."""
+        from app.services.issue_service import IssueService
+
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=None, points_spent=100,
+        )
+        svc = IssueService()
+        for n in (910, 911, 912):
+            await svc._deduct_from_sprint_budget(
+                await self._issue(test_project, test_user, n, estimate=5), test_user.id
+            )
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 115
+
+    @pytest.mark.asyncio
+    async def test_create_as_done_blocked_when_over_budget(self, client, auth_headers, test_project, test_user, db):
+        """The create-issue-as-DONE path shares _deduct, so it must honor
+        the same arrears backstop (create() wraps _deduct in atomic() just
+        like update()). Creating a DONE issue while over budget is a 409,
+        with no deduction and no transaction row."""
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=3, points_spent=5,  # already over budget
+        )
+        resp = await client.post(
+            f"/api/projects/{test_project.id}/issues",
+            headers=auth_headers,
+            json={"title": "Born done", "status": "done", "estimate": 2},
+        )
+        assert resp.status_code == 409, "creating an issue as DONE while over budget must be rejected"
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 5, "no deduction on a blocked create-as-done"
+        txns = await OxydeBudgetTransaction.objects.filter(sprint_id=sprint.id).all()
+        assert len(txns) == 0, "no transaction row for a blocked create-as-done"
+
+    @pytest.mark.asyncio
+    async def test_close_blocked_when_already_over_budget_rolls_back(self, client, auth_headers, test_project, test_user, db):
+        """End-to-end: closing a ticket while the sprint is already over
+        budget returns an arrears error, does NOT deduct, does NOT mark
+        the issue done, and creates no transaction (full rollback)."""
+        sprint = await OxydeSprint.objects.create(
+            project_id=test_project.id, name="S", status=SprintStatus.ACTIVE,
+            budget=3, points_spent=5,  # already over budget
+        )
+        issue = await self._issue(test_project, test_user, 920, estimate=2)
+        resp = await client.patch(
+            f"/api/issues/{issue.id}", headers=auth_headers, json={"status": "done"},
+        )
+        assert resp.status_code == 409, "arrears close must be rejected"
+        sprint = await OxydeSprint.objects.get(id=sprint.id)
+        assert sprint.points_spent == 5, "no deduction on a blocked close"
+        issue = await OxydeIssue.objects.get(id=issue.id)
+        assert issue.status != "DONE", "blocked close must not mark the issue done"
+        txns = await OxydeBudgetTransaction.objects.filter(issue_id=issue.id).all()
+        assert len(txns) == 0, "no transaction row for a blocked close"
 
 
 @pytest.mark.asyncio

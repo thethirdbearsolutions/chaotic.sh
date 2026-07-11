@@ -528,7 +528,38 @@ class IssueService:
                 f"Project '{project.name}' requires estimates on completion."
             )
 
-        # Create transaction record
+        # Race-safe budget deduction (CHT-329). The arrears gate earlier
+        # in the flow (_check_sprint_arrears) is a *read*, taken BEFORE
+        # atomic() opens: two concurrent DONE closes could both pass that
+        # stale read and both increment, overshooting budget without
+        # either being blocked. This conditional UPDATE is what actually
+        # closes the window -- same shape as the claim-lease CAS above:
+        # increment ONLY while the sprint isn't already over budget, and
+        # RETURNING tells us whether it applied. A NULL budget means "no
+        # cap". The serialization boundary is the enclosing atomic()
+        # itself: SQLite (WAL) takes the DB-wide writer lock at the
+        # transaction's first write (the issue.save above, before this)
+        # and holds it to commit, so two racing closes fully serialize
+        # there. When the second finally gets the lock, this WHERE
+        # re-validates against the just-committed points_spent, matches
+        # zero rows, and we raise inside the caller's atomic() so the
+        # issue's status change rolls back with it. `points_spent <=
+        # budget` mirrors the fast-path boundary (block only once *over*
+        # budget, so the ticket that crosses the line is still allowed).
+        won = await execute_raw(
+            "UPDATE sprints SET points_spent = points_spent + ? "
+            "WHERE id = ? AND (budget IS NULL OR points_spent <= budget) "
+            "RETURNING id",
+            [points, current_sprint.id],
+        )
+        if not won:
+            # Lost the race (or entered already in arrears). Re-read the
+            # live row for accurate budget+spent figures in the 409 body.
+            fresh = await OxydeSprint.objects.filter(id=current_sprint.id).first() or current_sprint
+            raise SprintInArrearsError(fresh.budget, fresh.points_spent)
+
+        # Record the transaction only after the increment actually applied,
+        # so a blocked deduction never leaves an orphan transaction row.
         await OxydeBudgetTransaction.objects.create(
             sprint_id=current_sprint.id,
             issue_id=issue.id,
@@ -537,12 +568,6 @@ class IssueService:
             issue_identifier=issue.identifier,
             issue_title=issue.title,
             sprint_name=current_sprint.name,
-        )
-
-        # Atomically increment points_spent
-        await execute_raw(
-            "UPDATE sprints SET points_spent = points_spent + ? WHERE id = ?",
-            [points, current_sprint.id],
         )
 
     async def apply_intent_transition(
