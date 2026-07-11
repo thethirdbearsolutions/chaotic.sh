@@ -444,6 +444,35 @@ describe('inline-dropdown', () => {
             expect(document.activeElement).toBe(trigger);
         });
 
+        it('maps the non-identity field name to the trigger type (assignee_id -> assignee) (CHT-1293)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', assignee_id: 'u-2' });
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            renderIssueRow.mockReturnValueOnce(
+                '<div class="issue-row" data-issue-id="issue-1">' +
+                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>'
+            );
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
+                '<button data-dropdown-type="assignee">A</button></div></div>';
+
+            await updateIssueField('issue-1', 'assignee_id', 'u-2');
+
+            const trigger = document.querySelector('.issue-row[data-issue-id="issue-1"] [data-dropdown-type="assignee"]');
+            expect(document.activeElement).toBe(trigger);
+        });
+
+        it('no-ops focus restoration when the field has no list trigger (issue_type)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', issue_type: 'bug' });
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            renderIssueRow.mockReturnValueOnce('<div class="issue-row" data-issue-id="issue-1">no triggers</div>');
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">x</div></div>';
+
+            // Must not throw even though issue_type maps to no trigger
+            await updateIssueField('issue-1', 'issue_type', 'bug');
+            expect(document.querySelector('[data-dropdown-type]')).toBeNull();
+        });
+
         it('updates local issues state on success', async () => {
             const updatedIssue = { id: 'issue-1', status: 'done' };
             api.updateIssue.mockResolvedValue(updatedIssue);

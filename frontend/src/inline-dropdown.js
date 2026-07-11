@@ -27,11 +27,12 @@ let _labelToggleQueue = Promise.resolve();
 
 // Maps an API field name -> the row trigger button's data-dropdown-type, so a
 // completed inline edit can return focus to the right control (CHT-1293).
+// issue_type is intentionally absent: it isn't editable from a list row (it
+// renders as a static badge, no trigger button), so there's nothing to refocus.
 const DROPDOWN_TYPE_FOR_FIELD = {
     status: 'status',
     priority: 'priority',
     assignee_id: 'assignee',
-    issue_type: 'type',
     estimate: 'estimate',
     sprint_id: 'sprint',
 };
