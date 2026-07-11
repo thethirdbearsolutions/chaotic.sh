@@ -241,6 +241,8 @@ class TestSprintBudget:
         assert '20' in result.output  # budget
         assert '11' in result.output  # spent
         assert '9' in result.output   # remaining
+        # CHT-1296: legend explains what "spent" means so the model is legible
+        assert 'CLOSED' in result.output and 'unestimated' in result.output
 
     def test_sprint_budget_unlimited(self, cli_runner, mock_sprint):
         """sprint budget with no budget set shows unlimited."""
