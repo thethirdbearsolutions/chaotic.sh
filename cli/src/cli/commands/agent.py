@@ -131,4 +131,51 @@ def register(cli):
         _client().delete_agent(agent_obj["id"])
         console.print(f"[green]Agent '{agent_obj['name']}' deleted.[/green]")
 
+    @agent.group("keys")
+    def agent_keys():
+        """Agent API key management commands."""
+        pass
+
+    @agent_keys.command("create")
+    @click.argument("agent_ref", metavar="AGENT")
+    @_main().require_team
+    @_main().handle_error
+    def agent_keys_create(agent_ref):
+        """Mint a new API key for an existing agent.
+
+        AGENT can be the agent's full ID, an ID prefix (e.g., the first 8
+        characters), or its exact name.
+
+        The new key is displayed only once - save it immediately!
+
+        Example:
+            chaotic agent keys create claude-bot
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        agents = _client().get_team_agents(team_id)
+
+        # Find agent by ID, ID prefix, or exact name
+        agent_obj = None
+        for a in agents:
+            if a["id"] == agent_ref or a["id"].startswith(agent_ref) or a["name"] == agent_ref:
+                if agent_obj is not None:
+                    console.print(f"[red]Ambiguous agent identifier '{agent_ref}'. Please be more specific.[/red]")
+                    raise SystemExit(1)
+                agent_obj = a
+
+        if not agent_obj:
+            console.print(f"[red]Agent '{agent_ref}' not found.[/red]")
+            raise SystemExit(1)
+
+        result = _client().create_agent_key(agent_obj["id"])
+
+        console.print(f"[green]New API key minted for agent '{agent_obj['name']}'.[/green]")
+        console.print()
+        console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
+        console.print(f"[cyan]{result['key']}[/cyan]")
+        console.print()
+        console.print("To configure the CLI with this agent's key:")
+        console.print(f"  chaotic auth set-key {result['key']}")
+
     return agent

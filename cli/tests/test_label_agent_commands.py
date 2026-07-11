@@ -279,3 +279,86 @@ class TestAgentDelete:
 
         assert result.exit_code != 0
         assert 'not found' in result.output.lower()
+
+
+class TestAgentKeysCreate:
+    """Tests for agent keys create command (CHT-1303)."""
+
+    def test_agent_keys_create_by_id(self, cli_runner):
+        """agent keys create with a full agent ID mints a new key."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.create_agent_key = MagicMock(return_value={
+            "id": "key-uuid-1",
+            "key": "ck_newsecretkey",
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'create', 'agent-uuid-123'])
+
+        assert result.exit_code == 0
+        assert 'claude-bot' in result.output
+        assert 'ck_newsecretkey' in result.output
+        client.create_agent_key.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_keys_create_by_name(self, cli_runner):
+        """agent keys create resolves agent by exact name."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.create_agent_key = MagicMock(return_value={
+            "id": "key-uuid-1",
+            "key": "ck_newsecretkey",
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'create', 'claude-bot'])
+
+        assert result.exit_code == 0
+        assert 'ck_newsecretkey' in result.output
+        client.create_agent_key.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_keys_create_by_prefix(self, cli_runner):
+        """agent keys create with an ID prefix matches."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123456789", "name": "claude-bot"},
+        ])
+        client.create_agent_key = MagicMock(return_value={
+            "id": "key-uuid-1",
+            "key": "ck_newsecretkey",
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'create', 'agent-uuid'])
+
+        assert result.exit_code == 0
+        client.create_agent_key.assert_called_once_with('agent-uuid-123456789')
+
+    def test_agent_keys_create_ambiguous(self, cli_runner):
+        """agent keys create with an ambiguous identifier shows error."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "bot-1"},
+            {"id": "agent-uuid-456", "name": "bot-2"},
+        ])
+
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'create', 'agent-uuid'])
+
+        assert result.exit_code != 0
+        assert 'Ambiguous' in result.output
+
+    def test_agent_keys_create_not_found(self, cli_runner):
+        """agent keys create with an unknown identifier shows error."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['agent', 'keys', 'create', 'nonexistent'])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output.lower()

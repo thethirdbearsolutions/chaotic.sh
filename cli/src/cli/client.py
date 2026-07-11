@@ -631,6 +631,10 @@ class Client:
         """Delete an agent."""
         return self._request("DELETE", f"/agents/{agent_id}")
 
+    def create_agent_key(self, agent_id: str) -> dict:
+        """Mint a new API key for an existing agent."""
+        return self._request("POST", f"/agents/{agent_id}/keys")
+
     # Inbox (CHT-1250)
     def get_inbox(
         self, team_id: str, unread: bool = False, skip: int = 0, limit: int = 50,

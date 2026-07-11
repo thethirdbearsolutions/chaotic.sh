@@ -149,6 +149,54 @@ class TestAgentServiceDelete:
 
 
 @pytest.mark.asyncio
+class TestAgentServiceCreateKey:
+    """Tests for minting a new API key for an existing agent."""
+
+    async def test_create_key_returns_agent_linked_key(self, db, test_user, test_team):
+        """Should mint a new key with agent_user_id set on the agent."""
+        from app.services.api_key_service import APIKeyService
+
+        service = AgentService()
+        agent, _, _ = await service.create(
+            AgentCreate(name="Bot"), test_user, test_team.id
+        )
+
+        full_key, api_key_id = await service.create_key(agent.id, test_user)
+
+        assert full_key.startswith("ck_")
+
+        api_key_service = APIKeyService()
+        api_key = await api_key_service.get_by_id(api_key_id)
+        assert api_key.agent_user_id == agent.id
+
+    async def test_create_key_authenticates_as_agent(self, db, test_user, test_team):
+        """A newly minted key should resolve auth to the agent."""
+        from app.services.api_key_service import APIKeyService
+
+        service = AgentService()
+        agent, _, _ = await service.create(
+            AgentCreate(name="Bot"), test_user, test_team.id
+        )
+
+        full_key, _ = await service.create_key(agent.id, test_user)
+
+        api_key_service = APIKeyService()
+        key_record = await api_key_service.validate_key(full_key)
+
+        assert key_record is not None
+        assert key_record.agent_user_id == agent.id
+
+    async def test_create_key_agent_not_found(self, db, test_user):
+        """Should raise ValueError for a non-existent agent."""
+        service = AgentService()
+
+        with pytest.raises(ValueError):
+            await service.create_key(
+                "00000000-0000-0000-0000-000000000001", test_user
+            )
+
+
+@pytest.mark.asyncio
 class TestAgentAuthentication:
     """Tests for agent authentication."""
 
@@ -313,6 +361,88 @@ class TestAgentAPIEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 1
+
+    async def test_create_agent_key_endpoint(self, client, auth_headers, test_team, db, test_user):
+        """POST /agents/{agent_id}/keys should mint a new key for the agent."""
+        service = AgentService()
+        agent, _, _ = await service.create(
+            AgentCreate(name="Bot"), test_user, test_team.id
+        )
+
+        response = await client.post(
+            f"/api/agents/{agent.id}/keys",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["key"].startswith("ck_")
+        assert "id" in data
+
+        # The minted key should authenticate as the agent
+        me_response = await client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {data['key']}"},
+        )
+        assert me_response.status_code == 200
+        assert me_response.json()["is_agent"] is True
+
+    async def test_create_agent_key_not_found(self, client, auth_headers):
+        """POST /agents/{agent_id}/keys should return 404 for non-existent agent."""
+        response = await client.post(
+            "/api/agents/00000000-0000-0000-0000-000000000001/keys",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 404
+
+    async def test_create_agent_key_not_authorized(
+        self, client, auth_headers2, test_team, test_user2, db, test_user
+    ):
+        """POST /agents/{agent_id}/keys should return 403 for unauthorized users."""
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        service = AgentService()
+        agent, _, _ = await service.create(
+            AgentCreate(name="Bot"), test_user, test_team.id
+        )
+
+        # Add user2 as a regular member (not admin)
+        await OxydeTeamMember.objects.create(
+            team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER
+        )
+
+        response = await client.post(
+            f"/api/agents/{agent.id}/keys",
+            headers=auth_headers2,
+        )
+
+        assert response.status_code == 403
+
+    async def test_create_agent_key_team_admin_authorized(
+        self, client, auth_headers2, test_team, test_user2, db, test_user
+    ):
+        """POST /agents/{agent_id}/keys should succeed for a team admin who isn't the owner."""
+        from app.oxyde_models.team import OxydeTeamMember
+        from app.enums import TeamRole
+
+        service = AgentService()
+        agent, _, _ = await service.create(
+            AgentCreate(name="Bot"), test_user, test_team.id
+        )
+
+        # Add user2 as a team admin
+        await OxydeTeamMember.objects.create(
+            team_id=test_team.id, user_id=test_user2.id, role=TeamRole.ADMIN
+        )
+
+        response = await client.post(
+            f"/api/agents/{agent.id}/keys",
+            headers=auth_headers2,
+        )
+
+        assert response.status_code == 201
 
     async def test_delete_agent_endpoint(self, client, auth_headers, test_team, db, test_user):
         """DELETE /agents/{agent_id} should delete agent."""

@@ -136,6 +136,7 @@ export function renderAgents() {
             <span class="agent-date">Created by ${safeParentName} ${formatDate(agent.created_at)}</span>
           </div>
         </div>
+        <button class="btn btn-secondary" data-action="generate-agent-key" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Generate new key</button>
         <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Delete</button>
       </div>
     `;
@@ -193,6 +194,31 @@ export function showCreateAgentModal() {
 }
 
 /**
+ * Show the one-time API key reveal modal shared by agent creation and key rotation
+ * @param {string} title - Modal title
+ * @param {string} apiKey - Full API key (shown only once)
+ */
+function showAgentKeyRevealModal(title, apiKey) {
+  const safeApiKey = escapeHtml(apiKey);
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-content').innerHTML = `
+    <div class="api-key-created">
+      <p class="warning-text">Copy the agent's API key now. You won't be able to see it again!</p>
+      <div class="api-key-display">
+        <code id="new-agent-key">${safeApiKey}</code>
+        <button type="button" class="btn btn-secondary" data-action="copy-agent-key">Copy</button>
+      </div>
+      <div class="api-key-instructions">
+        <p>Configure the CLI to use this agent:</p>
+        <code>chaotic auth set-key ${safeApiKey}</code>
+      </div>
+      <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
+    </div>
+  `;
+  showModal();
+}
+
+/**
  * Handle create agent form submission
  * @param {Event} event - Form submit event
  */
@@ -220,27 +246,33 @@ export async function handleCreateAgent(event) {
     closeModal();
 
     // Show the API key in a new modal (only shown once)
-    const safeApiKey = escapeHtml(result.api_key);
-    document.getElementById('modal-title').textContent = 'Agent Created';
-    document.getElementById('modal-content').innerHTML = `
-      <div class="api-key-created">
-        <p class="warning-text">Copy the agent's API key now. You won't be able to see it again!</p>
-        <div class="api-key-display">
-          <code id="new-agent-key">${safeApiKey}</code>
-          <button type="button" class="btn btn-secondary" data-action="copy-agent-key">Copy</button>
-        </div>
-        <div class="api-key-instructions">
-          <p>Configure the CLI to use this agent:</p>
-          <code>chaotic auth set-key ${safeApiKey}</code>
-        </div>
-        <button type="button" class="btn btn-primary" data-action="dismiss-agent-modal">Done</button>
-      </div>
-    `;
-    showModal();
+    showAgentKeyRevealModal('Agent Created', result.api_key);
   } catch (e) {
     showApiError('create agent', e);
   }
   return false;
+}
+
+/**
+ * Mint a new API key for an existing agent and show it once
+ * @param {string} agentId - Agent ID
+ * @param {string} agentName - Agent name (for the confirmation prompt)
+ */
+export async function generateAgentKey(agentId, agentName) {
+  if (
+    !confirm(
+      `Generate a new API key for "${agentName}"? Existing keys will keep working.`
+    )
+  ) {
+    return;
+  }
+
+  try {
+    const result = await api.createAgentKey(agentId);
+    showAgentKeyRevealModal('New Agent Key', result.key);
+  } catch (e) {
+    showApiError('generate agent key', e);
+  }
 }
 
 /**
@@ -296,5 +328,8 @@ registerActions({
     },
     'delete-agent': (_event, data) => {
         deleteAgent(data.agentId, data.agentName);
+    },
+    'generate-agent-key': (_event, data) => {
+        generateAgentKey(data.agentId, data.agentName);
     },
 });
