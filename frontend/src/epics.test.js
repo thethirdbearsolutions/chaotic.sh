@@ -32,7 +32,7 @@ vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
 }));
 
-import { setCurrentTeam } from './state.js';
+import { setCurrentTeam, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
 import { loadEpics, renderEpics, getCurrentEpics } from './epics.js';
 import { api } from './api.js';
 import { navigateToEpicByIdentifier } from './router.js';
@@ -47,6 +47,13 @@ describe('loadEpics', () => {
         setupDom();
         vi.clearAllMocks();
         setCurrentTeam({ id: 'team-1' });
+    });
+
+    it('resets the keyboard cursor on (re)load (CHT-1291 review)', async () => {
+        api.getTeamIssues.mockResolvedValue([]);
+        setSelectedEpicIndex(5);
+        await loadEpics();
+        expect(getSelectedEpicIndex()).toBe(-1);
     });
 
     it('shows empty state when no epics exist', async () => {

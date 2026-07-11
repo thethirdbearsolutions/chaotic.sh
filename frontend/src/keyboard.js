@@ -584,3 +584,69 @@ export function createSidebarNavigationHandler() {
         }
     };
 }
+
+/**
+ * Factory for a "simple" list-nav handler (CHT-1291): a linear keyboard cursor
+ * over rows/cards with j/k or arrows, Enter to open, Escape to deselect — the
+ * exact grammar the issues/documents/board/inbox handlers already share, minus
+ * their per-view extras (field-edit keys, inline-dropdown yielding). Used to
+ * wire the sprints and epics views, which had no keyboard nav at all.
+ *
+ * The issues/documents handlers stay bespoke (they carry `e`/`s`/`p`/`a` and
+ * the inline-dropdown guard); Board and Inbox predate this factory and could
+ * migrate onto it later. Same guard order and `.keyboard-selected` /
+ * `updateKeyboardSelection` primitive as every other handler.
+ *
+ * @param {Object} config
+ * @param {string} config.view - view name this handler is active in
+ * @param {string} config.selector - CSS selector for the navigable rows
+ * @param {Function} config.open - called with the selected element on Enter
+ * @param {Function} config.getCurrentView
+ * @param {Function} config.getSelectedIndex
+ * @param {Function} config.setSelectedIndex
+ * @param {Function} config.isModalOpen
+ * @param {Function} config.isCommandPaletteOpen
+ * @param {Function} [config.isDetailViewActive]
+ * @returns {Function} The keydown event handler
+ */
+export function createSimpleListNavigationHandler(config) {
+    const { view, selector, open } = config;
+    return function handleSimpleListNavigation(e) {
+        if (config.getCurrentView() !== view) return;
+        if (config.isDetailViewActive?.()) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.target.closest?.('.sidebar-nav')) return;
+        if (config.isModalOpen()) return;
+        if (config.isCommandPaletteOpen()) return;
+
+        const items = document.querySelectorAll(selector);
+        if (items.length === 0) return;
+
+        const selectedIndex = config.getSelectedIndex();
+        switch (e.key) {
+            case 'j':
+            case 'ArrowDown':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex + 1, config.setSelectedIndex, selector);
+                break;
+            case 'k':
+            case 'ArrowUp':
+                e.preventDefault();
+                updateKeyboardSelection(selectedIndex - 1, config.setSelectedIndex, selector);
+                break;
+            case 'Enter':
+                if (selectedIndex >= 0 && items[selectedIndex]) {
+                    e.preventDefault();
+                    open(items[selectedIndex]);
+                }
+                break;
+            case 'Escape':
+                if (selectedIndex >= 0) {
+                    e.preventDefault();
+                    items.forEach(item => item.classList.remove('keyboard-selected'));
+                    config.setSelectedIndex(-1);
+                }
+                break;
+        }
+    };
+}

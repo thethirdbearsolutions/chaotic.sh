@@ -70,7 +70,7 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn(s => s || ''),
 }));
 
-import { setCurrentTeam, setState, getDetailNavContext } from './state.js';
+import { setCurrentTeam, setState, getDetailNavContext, getSelectedSprintIndex } from './state.js';
 import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { registerActions } from './event-delegation.js';
@@ -231,6 +231,13 @@ describe('loadSprints', () => {
         expect(api.getCurrentSprint).toHaveBeenCalledWith('p1');
         expect(api.getSprints).toHaveBeenCalledWith('p1');
         expect(getSprints()).toHaveLength(1);
+    });
+
+    it('resets the keyboard cursor on (re)load (CHT-1291 review)', async () => {
+        setState('selectedSprintIndex', 7);
+        setState('currentProject', null);
+        await loadSprints();
+        expect(getSelectedSprintIndex()).toBe(-1);
     });
 
     it('does nothing without project ID', async () => {

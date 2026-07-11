@@ -99,6 +99,7 @@ vi.mock('./keyboard.js', () => ({
     createBoardNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createInboxNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     createSidebarNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
+    createSimpleListNavigationHandler: vi.fn().mockReturnValue(vi.fn()),
     updateKeyboardSelection: vi.fn(),
 }));
 vi.mock('./teams.js', () => ({
@@ -166,6 +167,10 @@ vi.mock('./state.js', () => ({
     setSelectedBoardIndex: vi.fn(),
     getSelectedInboxIndex: vi.fn(),
     setSelectedInboxIndex: vi.fn(),
+    getSelectedSprintIndex: vi.fn(),
+    setSelectedSprintIndex: vi.fn(),
+    getSelectedEpicIndex: vi.fn(),
+    setSelectedEpicIndex: vi.fn(),
     setCurrentUser: vi.fn(),
     setCurrentProject: vi.fn(),
     setCurrentDetailIssue: vi.fn(),
@@ -178,6 +183,7 @@ vi.mock('./issue-tooltip.js', () => ({
 vi.mock('./router.js', () => ({
     navigateTo: vi.fn(),
     navigateToIssueByIdentifier: vi.fn(),
+    navigateToEpicByIdentifier: vi.fn(),
     configureRouter: vi.fn((cfg) => { routerConfig = cfg; }),
     registerViews: vi.fn((views) => { registeredViews = views; }),
     initRouter: vi.fn(),
@@ -219,8 +225,8 @@ import { initApp } from './init.js';
 import { initIssueTooltip } from './issue-tooltip.js';
 import { closeSidebar } from './sidebar.js';
 import { hideTooltip } from './issue-tooltip.js';
-import { navigateTo } from './router.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createSidebarNavigationHandler } from './keyboard.js';
+import { navigateTo, navigateToEpicByIdentifier } from './router.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
 import { initEventDelegation } from './event-delegation.js';
 import { initAuth } from './auth.js';
 import { showAuthScreen } from './auth.js';
@@ -252,6 +258,9 @@ const modifierHandlerConfig = createModifierKeyHandler.mock.calls[0]?.[0];
 const listNavCallCount = createListNavigationHandler.mock.calls.length;
 const docListNavCallCount = createDocListNavigationHandler.mock.calls.length;
 const sidebarNavCallCount = createSidebarNavigationHandler.mock.calls.length;
+const simpleNavCallCount = createSimpleListNavigationHandler.mock.calls.length;
+const simpleNavConfigs = createSimpleListNavigationHandler.mock.calls.map((c) => c[0]);
+const simpleNavViews = simpleNavConfigs.map((c) => c?.view);
 
 // Clear mock call counts after import-time side effects so each test
 // starts fresh and assertions aren't cumulative.
@@ -571,6 +580,23 @@ describe('app.js keyboard handler wiring', () => {
 
     it('creates the sidebar navigation handler (CHT-1289)', () => {
         expect(sidebarNavCallCount).toBe(1);
+    });
+
+    it('creates simple list-nav handlers for the sprints and epics views (CHT-1291)', () => {
+        expect(simpleNavCallCount).toBe(2);
+        expect(simpleNavViews).toEqual(expect.arrayContaining(['sprints', 'epics']));
+    });
+
+    it('sprints open() calls viewSprint with the row sprint id (CHT-1291)', () => {
+        const cfg = simpleNavConfigs.find((c) => c.view === 'sprints');
+        cfg.open({ dataset: { sprintId: 'sprint-9' } });
+        expect(viewSprint).toHaveBeenCalledWith('sprint-9');
+    });
+
+    it('epics open() matches the row click — navigateToEpicByIdentifier, not a bare render (CHT-1291 review)', () => {
+        const cfg = simpleNavConfigs.find((c) => c.view === 'epics');
+        cfg.open({ dataset: { identifier: 'CHT-42' } });
+        expect(navigateToEpicByIdentifier).toHaveBeenCalledWith('CHT-42');
     });
 });
 
