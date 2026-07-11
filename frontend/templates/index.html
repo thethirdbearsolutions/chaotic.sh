@@ -4,11 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chaotic - Issue Tracking</title>
+    <!-- Deploy/build legibility (CHT-1294): what commit + bundle is live,
+         visible without grepping the minified JS. See GET /api/version. -->
+    <meta name="chaotic-version"
+          content="{{ git_sha_short | default('unknown', true) }}"
+          data-bundle="{{ asset_version | default('dev', true) }}"
+          data-css="{{ css_version | default('dev', true) }}">
+    <script>console.info('chaotic build:', '{{ git_sha_short | default("unknown", true) }}', '· bundle', '{{ asset_version | default("dev", true) }}');</script>
     <link rel="icon" href="/static/favicon.ico" sizes="48x48">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=63">
+    <link rel="stylesheet" href="/static/css/style.css?v={{ css_version | default('dev', true) }}">
     <!-- Fallback for when JS is disabled: show auth screen -->
     <noscript>
         <style>#auth-screen { display: block !important; }</style>
@@ -772,6 +779,6 @@
         <div id="toast-container"></div>
     </div>
 
-    <script src="/static/js/app.bundle.js?v=35"></script>
+    <script src="/static/js/app.bundle.js?v={{ asset_version | default('dev', true) }}"></script>
 </body>
 </html>
