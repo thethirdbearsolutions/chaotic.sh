@@ -260,11 +260,36 @@ class InboxService:
     # Readers
     # ------------------------------------------------------------------
 
+    async def current_team_ids(self, user_id: str) -> list[str]:
+        """Team ids the user CURRENTLY has access to.
+
+        Inbox reads must be scoped to live access: entries only cascade on
+        user/team DELETION, never on member removal, so a removed member would
+        otherwise keep reading (and live-refetching) entries from a team they've
+        left (CHT-1274/CHT-1271). Every inbox entry has a non-null team_id, so
+        scoping reads to this set is sufficient; an empty set correctly yields
+        no entries.
+
+        Delegates to TeamService.get_user_teams so it branches correctly for
+        AGENTS (scoped via user.agent_team_id, no TeamMember row) as well as
+        humans (TeamMember membership) — a direct TeamMember query would lock
+        every agent out of its own inbox.
+        """
+        teams = await TeamService().get_user_teams(user_id)
+        return [t.id for t in teams]
+
+    async def is_member_of_entry_team(self, user_id: str, entry: OxydeInboxEntry) -> bool:
+        """Whether the user is currently a member of the entry's team (CHT-1274)."""
+        return entry.team_id in await self.current_team_ids(user_id)
+
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,
         unread_only: bool = False, skip: int = 0, limit: int = 50,
     ) -> list[OxydeInboxEntry]:
-        query = OxydeInboxEntry.objects.filter(recipient_user_id=user_id)
+        query = OxydeInboxEntry.objects.filter(
+            recipient_user_id=user_id,
+            team_id__in=await self.current_team_ids(user_id),
+        )
         if team_id:
             query = query.filter(team_id=team_id)
         if unread_only:
@@ -272,7 +297,10 @@ class InboxService:
         return await query.order_by("-created_at").offset(skip).limit(limit).all()
 
     async def unread_count(self, user_id: str, *, team_id: str | None = None) -> int:
-        query = OxydeInboxEntry.objects.filter(recipient_user_id=user_id, read_at=None)
+        query = OxydeInboxEntry.objects.filter(
+            recipient_user_id=user_id, read_at=None,
+            team_id__in=await self.current_team_ids(user_id),
+        )
         if team_id:
             query = query.filter(team_id=team_id)
         return await query.count()
@@ -287,7 +315,10 @@ class InboxService:
         return entry
 
     async def mark_all_read(self, user_id: str, *, team_id: str | None = None) -> int:
-        query = OxydeInboxEntry.objects.filter(recipient_user_id=user_id, read_at=None)
+        query = OxydeInboxEntry.objects.filter(
+            recipient_user_id=user_id, read_at=None,
+            team_id__in=await self.current_team_ids(user_id),
+        )
         if team_id:
             query = query.filter(team_id=team_id)
         return await query.update(read_at=datetime.now(timezone.utc))
