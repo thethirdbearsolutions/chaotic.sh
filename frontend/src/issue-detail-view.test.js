@@ -58,6 +58,9 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn((text) => text || ''),
     sanitizeColor: vi.fn((c) => c || '#888'),
     renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
+    renderAgentBadge: vi.fn((isAgent) =>
+        isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : ''
+    ),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -1014,6 +1017,34 @@ describe('issue-detail-view', () => {
 
                 const detailView = document.getElementById('issue-detail-view');
                 expect(detailView.innerHTML).not.toContain('Comments failed to load');
+            });
+        });
+
+        describe('comment author agent badge (CHT-1304)', () => {
+            it('renders an agent badge next to a comment authored by an agent', async () => {
+                api.getComments.mockResolvedValue([
+                    { id: 'c1', author_id: 'agent-1', author_name: 'Opus', content: 'hi', created_at: '2024-01-16T10:00:00Z' },
+                ]);
+                getAssigneeById.mockImplementation(
+                    (id) => (id === 'agent-1' ? { id: 'agent-1', name: 'Opus', is_agent: true } : null)
+                );
+
+                await viewIssue('issue-1');
+
+                expect(document.getElementById('issue-detail-view').innerHTML).toContain('badge-agent');
+            });
+
+            it('renders no agent badge for a human comment author', async () => {
+                api.getComments.mockResolvedValue([
+                    { id: 'c2', author_id: 'human-1', author_name: 'Bob', content: 'hi', created_at: '2024-01-16T10:00:00Z' },
+                ]);
+                getAssigneeById.mockImplementation(
+                    (id) => (id === 'human-1' ? { id: 'human-1', name: 'Bob', is_agent: false } : null)
+                );
+
+                await viewIssue('issue-1');
+
+                expect(document.getElementById('issue-detail-view').innerHTML).not.toContain('badge-agent');
             });
         });
     });

@@ -28,6 +28,9 @@ vi.mock('./ui.js', () => ({
 vi.mock('./utils.js', () => ({
   escapeHtml: vi.fn((str) => str),
   escapeAttr: vi.fn((str) => str),
+  renderAgentBadge: vi.fn((isAgent) =>
+    isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : ''
+  ),
 }));
 
 import { api } from './api.js';
@@ -571,5 +574,37 @@ describe('updateUserInfo', () => {
     updateUserInfo();
     const avatarEl = document.getElementById('user-avatar');
     expect(avatarEl.textContent).toBe('T');
+  });
+
+  it('renders an agent badge when the current user is an agent (CHT-1304)', () => {
+    setCurrentUser({ name: 'Bot', avatar_url: null, is_agent: true });
+    updateUserInfo();
+    const badge = document.querySelector('.badge-agent');
+    expect(badge).not.toBeNull();
+    expect(badge.textContent).toBe('agent');
+    // The name element itself is untouched by the badge
+    expect(document.getElementById('user-name').textContent).toBe('Bot');
+  });
+
+  it('does not render an agent badge for a human user', () => {
+    setCurrentUser({ name: 'Alice', avatar_url: null, is_agent: false });
+    updateUserInfo();
+    expect(document.querySelector('.badge-agent')).toBeNull();
+  });
+
+  it('does not render an agent badge when is_agent is absent', () => {
+    setCurrentUser({ name: 'Alice', avatar_url: null });
+    updateUserInfo();
+    expect(document.querySelector('.badge-agent')).toBeNull();
+  });
+
+  it('removes a stale agent badge when switching to a non-agent user', () => {
+    setCurrentUser({ name: 'Bot', avatar_url: null, is_agent: true });
+    updateUserInfo();
+    expect(document.querySelector('.badge-agent')).not.toBeNull();
+
+    setCurrentUser({ name: 'Alice', avatar_url: null, is_agent: false });
+    updateUserInfo();
+    expect(document.querySelector('.badge-agent')).toBeNull();
   });
 });

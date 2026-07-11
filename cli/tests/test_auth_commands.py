@@ -150,6 +150,54 @@ class TestAuthWhoami:
         assert result.exit_code == 0
         assert 'Alice' in result.output
 
+    def test_whoami_shows_human_for_regular_user(self, cli_runner):
+        """auth whoami labels a non-agent user as human."""
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "name": "Alice",
+            "email": "alice@test.com",
+            "is_agent": False,
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'whoami'])
+
+        assert result.exit_code == 0
+        assert 'human' in result.output
+        assert 'AGENT' not in result.output
+
+    def test_whoami_shows_agent_with_parent(self, cli_runner):
+        """auth whoami labels an agent user as AGENT and shows the parent."""
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "name": "Bot",
+            "email": "bot@test.com",
+            "is_agent": True,
+            "parent_user_name": "Alice",
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'whoami'])
+
+        assert result.exit_code == 0
+        assert 'AGENT' in result.output
+        assert 'Alice' in result.output
+
+    def test_whoami_shows_agent_without_parent_name(self, cli_runner):
+        """auth whoami still labels AGENT when parent_user_name is missing."""
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "name": "Bot",
+            "email": "bot@test.com",
+            "is_agent": True,
+        })
+
+        result = cli_runner.invoke(cli, ['auth', 'whoami'])
+
+        assert result.exit_code == 0
+        assert 'AGENT' in result.output
+
 
 class TestAuthKeysList:
     """Tests for auth keys list command."""
