@@ -72,9 +72,13 @@ smell — treat the following as invariants:
 - Each completion writes a **`BudgetTransaction`** (the audit trail behind
   `chaotic sprint transactions`) and atomically increments the sprint's
   `points_spent`.
-- **Arrears is a hard stop.** Going over budget blocks status changes
-  project-wide until you `chaotic sprint close`, then complete the sprint-close
-  rituals (`chaotic ritual pending`) to clear limbo and rotate.
+- **Arrears is a hard stop.** Going over budget blocks moving any ticket into
+  `in_progress` / `done` / `canceled` (project-wide, keyed on the active
+  sprint — other transitions like `todo`/`in_review` are unaffected) until you
+  `chaotic sprint close`. If the project has per-sprint (`EVERY_SPRINT`)
+  rituals, close enters **limbo** until you complete them
+  (`chaotic ritual pending`); otherwise close rotates to the next sprint
+  immediately.
 
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
