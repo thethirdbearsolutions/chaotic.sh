@@ -76,6 +76,7 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
+import { renderIssueRow } from './issue-list.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
@@ -423,6 +424,53 @@ describe('inline-dropdown', () => {
             await updateIssueField('issue-1', 'status', 'done');
 
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
+        });
+
+        it('returns focus to the field trigger button on the re-rendered row (CHT-1293)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            renderIssueRow.mockReturnValueOnce(
+                '<div class="issue-row" data-issue-id="issue-1">' +
+                '<button class="status-btn" data-dropdown-type="status">S</button></div>'
+            );
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
+                '<button data-dropdown-type="status">S</button></div></div>';
+
+            await updateIssueField('issue-1', 'status', 'done');
+
+            const trigger = document.querySelector('.issue-row[data-issue-id="issue-1"] [data-dropdown-type="status"]');
+            expect(trigger).not.toBeNull();
+            expect(document.activeElement).toBe(trigger);
+        });
+
+        it('maps the non-identity field name to the trigger type (assignee_id -> assignee) (CHT-1293)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', assignee_id: 'u-2' });
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            renderIssueRow.mockReturnValueOnce(
+                '<div class="issue-row" data-issue-id="issue-1">' +
+                '<button class="assignee-btn" data-dropdown-type="assignee">A</button></div>'
+            );
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
+                '<button data-dropdown-type="assignee">A</button></div></div>';
+
+            await updateIssueField('issue-1', 'assignee_id', 'u-2');
+
+            const trigger = document.querySelector('.issue-row[data-issue-id="issue-1"] [data-dropdown-type="assignee"]');
+            expect(document.activeElement).toBe(trigger);
+        });
+
+        it('no-ops focus restoration when the field has no list trigger (issue_type)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', issue_type: 'bug' });
+            getIssues.mockReturnValue([{ id: 'issue-1' }]);
+            renderIssueRow.mockReturnValueOnce('<div class="issue-row" data-issue-id="issue-1">no triggers</div>');
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">x</div></div>';
+
+            // Must not throw even though issue_type maps to no trigger
+            await updateIssueField('issue-1', 'issue_type', 'bug');
+            expect(document.querySelector('[data-dropdown-type]')).toBeNull();
         });
 
         it('updates local issues state on success', async () => {
