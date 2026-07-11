@@ -562,6 +562,10 @@ export class ApiClient {
         return this.request('DELETE', `/agents/${agentId}`);
     }
 
+    async createAgentKey(agentId) {
+        return this.request('POST', `/agents/${agentId}/keys`);
+    }
+
     // Inbox (CHT-1250)
     async getInbox(teamId, { unread = false, skip = 0, limit = 50 } = {}) {
         const params = new URLSearchParams({ team_id: teamId, skip, limit });

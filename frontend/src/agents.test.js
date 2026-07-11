@@ -10,6 +10,7 @@ import {
   handleCreateAgent,
   copyAgentKey,
   deleteAgent,
+  generateAgentKey,
 } from './agents.js';
 import { api } from './api.js';
 import { getProjects } from './projects.js';
@@ -22,6 +23,7 @@ vi.mock('./api.js', () => ({
     createTeamAgent: vi.fn(),
     createProjectAgent: vi.fn(),
     deleteAgent: vi.fn(),
+    createAgentKey: vi.fn(),
   },
 }));
 
@@ -237,6 +239,22 @@ describe('renderAgents', () => {
     setCurrentTeam(null);
   });
 
+  it('renders a Generate new key action for each agent', async () => {
+    const agents = [
+      { id: 'agent-1', name: 'TestBot', created_at: '2024-01-01', parent_user_name: 'Admin' },
+    ];
+    api.getTeamAgents.mockResolvedValue(agents);
+    setCurrentTeam({ id: 'team-1' });
+    mockBuildAssignees.mockClear();
+    mockUpdateAssigneeFilter.mockClear();
+    await loadAgents();
+    const list = document.getElementById('agents-list');
+    expect(list.innerHTML).toContain('data-action="generate-agent-key"');
+    expect(list.innerHTML).toContain('data-agent-id="agent-1"');
+    expect(list.innerHTML).toContain('Generate new key');
+    setCurrentTeam(null);
+  });
+
   it('shows project-scoped vs team-wide label', async () => {
     const agents = [
       { id: 'agent-1', name: 'ProjectBot', agent_project_id: 'proj-1', created_at: '2024-01-01', parent_user_name: 'Admin' },
@@ -413,5 +431,66 @@ describe('deleteAgent', () => {
     api.getTeamAgents.mockResolvedValue([]);
     await deleteAgent('agent-1', 'TestBot');
     expect(api.deleteAgent).toHaveBeenCalledWith('agent-1');
+  });
+});
+
+describe('generateAgentKey', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-title"></div>
+      <div id="modal-content"></div>
+    `;
+    vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prompts for confirmation with agent name', async () => {
+    api.createAgentKey.mockResolvedValue({ key: 'ck_new-secret' });
+    await generateAgentKey('agent-1', 'TestBot');
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Generate a new API key for "TestBot"? Existing keys will keep working.'
+    );
+  });
+
+  it('does nothing if user cancels', async () => {
+    window.confirm.mockReturnValue(false);
+    await generateAgentKey('agent-1', 'TestBot');
+    expect(api.createAgentKey).not.toHaveBeenCalled();
+  });
+
+  it('calls the API with the agent id', async () => {
+    api.createAgentKey.mockResolvedValue({ key: 'ck_new-secret' });
+    await generateAgentKey('agent-1', 'TestBot');
+    expect(api.createAgentKey).toHaveBeenCalledWith('agent-1');
+  });
+
+  it('shows the new key in the same one-time reveal modal as agent creation', async () => {
+    api.createAgentKey.mockResolvedValue({ key: 'ck_new-secret' });
+    await generateAgentKey('agent-1', 'TestBot');
+    expect(document.getElementById('modal-title').textContent).toBe('New Agent Key');
+    const content = document.getElementById('modal-content');
+    expect(content.innerHTML).toContain('ck_new-secret');
+    expect(content.innerHTML).toContain('chaotic auth set-key');
+    expect(content.innerHTML).toContain('id="new-agent-key"');
+    expect(content.innerHTML).toContain('data-action="copy-agent-key"');
+    expect(content.innerHTML).toContain('data-action="dismiss-agent-modal"');
+  });
+
+  it('escapes the new key in display', async () => {
+    api.createAgentKey.mockResolvedValue({ key: '<script>xss</script>' });
+    await generateAgentKey('agent-1', 'TestBot');
+    const content = document.getElementById('modal-content');
+    expect(content.innerHTML).not.toContain('<script>xss</script>');
+    expect(content.innerHTML).toContain('&lt;script&gt;');
+  });
+
+  it('shows an API error toast on failure', async () => {
+    api.createAgentKey.mockRejectedValue(new Error('boom'));
+    await generateAgentKey('agent-1', 'TestBot');
+    expect(showApiError).toHaveBeenCalledWith('generate agent key', expect.objectContaining({ message: 'boom' }));
   });
 });

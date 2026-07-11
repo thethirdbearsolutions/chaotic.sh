@@ -108,3 +108,29 @@ class AgentService:
         return await OxydeAPIKey.objects.filter(
             agent_user_id=agent_id
         ).order_by("-created_at").all()
+
+    async def create_key(self, agent_id: str, requester_user: OxydeUser) -> tuple[str, str]:
+        """Mint a new API key for an existing agent.
+
+        Returns:
+            Tuple of (full API key, API key ID)
+        """
+        agent = await self.get_by_id(agent_id)
+        if not agent:
+            raise ValueError("Agent not found")
+
+        async with atomic():
+            api_key_service = APIKeyService()
+            api_key_create = APIKeyCreate(name=f"Key for {agent.name}")
+            api_key, full_key = await api_key_service.create(
+                agent.parent_user_id,  # Owner is the parent human user
+                api_key_create,
+            )
+
+            # Link the API key to the agent
+            api_key.agent_user_id = agent.id
+            await api_key.save(update_fields={"agent_user_id"})
+
+        await api_key.refresh()
+
+        return full_key, api_key.id

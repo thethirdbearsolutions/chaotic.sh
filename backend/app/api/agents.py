@@ -2,7 +2,9 @@
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
+from app.schemas.api_key import APIKeyCreated
 from app.services.agent_service import AgentService
+from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
 
@@ -240,6 +242,51 @@ async def update_agent(
         agent_project_id=agent.agent_project_id,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/keys",
+    response_model=APIKeyCreated,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_key(
+    agent_id: str,
+    current_user: CurrentUser,
+):
+    """Mint a new API key for an existing agent. The key is only shown once."""
+    agent_service = AgentService()
+    agent = await agent_service.get_by_id(agent_id)
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    # Only the parent user or team admins can mint a new key for an agent
+    team_service = TeamService()
+    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
+    is_owner = agent.parent_user_id == current_user.id
+
+    if not (is_admin or is_owner):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to mint a key for this agent",
+        )
+
+    full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
+
+    api_key_service = APIKeyService()
+    api_key = await api_key_service.get_by_id(api_key_id)
+
+    return APIKeyCreated(
+        id=api_key.id,
+        name=api_key.name,
+        key=full_key,
+        key_prefix=api_key.key_prefix,
+        created_at=api_key.created_at,
+        expires_at=api_key.expires_at,
     )
 
 
