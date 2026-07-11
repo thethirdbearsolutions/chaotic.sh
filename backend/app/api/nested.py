@@ -49,7 +49,7 @@ CHT-1245 added ``GET /projects/{project_id}/issues/ready`` and
 it's path-nested from the start rather than getting a flat query-param
 route first and migrating later.
 """
-from fastapi import APIRouter, status
+from fastapi import APIRouter, status, Header
 
 from app.api.deps import CurrentUser
 from app.schemas.project import ProjectCreate, ProjectResponse
@@ -136,7 +136,12 @@ async def list_team_documents(
 
 
 @router.post("/projects/{project_id}/issues", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
-async def create_project_issue(project_id: str, issue_in: IssueCreate, current_user: CurrentUser):
+async def create_project_issue(
+    project_id: str,
+    issue_in: IssueCreate,
+    current_user: CurrentUser,
+    x_chaotic_interactive: str | None = Header(default=None),
+):
     """Create an issue (CHT-1223). Replaces ``POST /issues?project_id=...``.
 
     This is the exact scenario the taste-pass finding named: creating an
@@ -144,7 +149,12 @@ async def create_project_issue(project_id: str, issue_in: IssueCreate, current_u
     and the body (everything else). No ``GET`` route here -- see module
     docstring; ``GET /issues`` keeps its original query-param shape.
     """
-    return await _issues.create_issue(project_id=project_id, issue_in=issue_in, current_user=current_user)
+    return await _issues.create_issue(
+        project_id=project_id,
+        issue_in=issue_in,
+        current_user=current_user,
+        x_chaotic_interactive=x_chaotic_interactive,
+    )
 
 
 @router.get("/projects/{project_id}/issues/ready", response_model=list[IssueResponse])

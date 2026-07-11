@@ -1,4 +1,5 @@
 """API client for CLI."""
+import sys
 import httpx
 from urllib.parse import quote, urlencode
 from cli.config import get_api_url, get_token, get_api_key
@@ -34,6 +35,12 @@ class Client:
             token = get_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
+        # Signals whether this invocation is an interactive (TTY) session,
+        # as opposed to an agent or other non-interactive automation. Used
+        # by the backend to require both a human account AND an interactive
+        # caller for the ritual/estimate exemption (CHT-1302).
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        headers["X-Chaotic-Interactive"] = "1" if interactive else "0"
         return headers
 
     def _request(self, method: str, path: str, data: dict = None) -> dict | None:

@@ -1,7 +1,11 @@
 """Tests for require_estimate_on_claim setting (CHT-405).
 
 This setting should only enforce estimate requirements for AGENTS claiming tickets,
-not for HUMANS creating or claiming tickets through the web UI.
+not for interactive HUMANS creating or claiming tickets through the CLI/web UI.
+
+CHT-1302 (hybrid gate): the human exemption requires BOTH a human account AND
+an interactive (TTY) caller. A human account driving the API non-interactively
+(no X-Chaotic-Interactive header) is gated exactly like an agent.
 """
 import pytest
 from app.enums import IssueStatus
@@ -9,9 +13,10 @@ from app.enums import IssueStatus
 
 @pytest.mark.asyncio
 async def test_human_can_claim_without_estimate_when_required(
-    client, auth_headers, test_project, test_issue, db
+    client, auth_headers, interactive_headers, test_project, test_issue, db
 ):
-    """Test that humans (JWT auth) can claim tickets without estimates even when require_estimate_on_claim is True."""
+    """Test that interactive humans (JWT auth + TTY signal) can claim tickets
+    without estimates even when require_estimate_on_claim is True."""
     # Enable require_estimate_on_claim
     response = await client.patch(
         f"/api/projects/{test_project.id}",
@@ -20,16 +25,42 @@ async def test_human_can_claim_without_estimate_when_required(
     )
     assert response.status_code == 200
 
-    # Human user (JWT token) should be able to claim without estimate
+    # Interactive human user (JWT token + X-Chaotic-Interactive: 1) should
+    # be able to claim without estimate.
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
-        headers=auth_headers,
+        headers=interactive_headers,
         json={"status": "in_progress"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "in_progress"
-    assert data["estimate"] is None  # No estimate required for humans
+    assert data["estimate"] is None  # No estimate required for interactive humans
+
+
+@pytest.mark.asyncio
+async def test_human_without_interactive_header_blocked_from_claiming_without_estimate(
+    client, auth_headers, test_project, test_issue, db
+):
+    """CHT-1302: a human account WITHOUT the interactive header is gated the
+    same as an agent -- human auth alone is no longer sufficient."""
+    # Enable require_estimate_on_claim
+    response = await client.patch(
+        f"/api/projects/{test_project.id}",
+        headers=auth_headers,
+        json={"require_estimate_on_claim": True},
+    )
+    assert response.status_code == 200
+
+    # Human user without the interactive signal should be blocked, just
+    # like an agent.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=auth_headers,
+        json={"status": "in_progress"},
+    )
+    assert response.status_code == 400
+    assert "Estimate is required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -252,9 +283,10 @@ async def test_agent_can_claim_with_existing_estimate(
 
 @pytest.mark.asyncio
 async def test_human_can_update_status_after_claiming(
-    client, auth_headers, test_project, test_issue, db
+    client, auth_headers, interactive_headers, test_project, test_issue, db
 ):
-    """Test that humans can update status after claiming without estimate."""
+    """Test that an interactive human can update status after claiming
+    without estimate (CHT-1302: requires the interactive signal)."""
     # Enable require_estimate_on_claim
     response = await client.patch(
         f"/api/projects/{test_project.id}",
@@ -266,7 +298,7 @@ async def test_human_can_update_status_after_claiming(
     # Claim the ticket without estimate
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
-        headers=auth_headers,
+        headers=interactive_headers,
         json={"status": "in_progress"},
     )
     assert response.status_code == 200
@@ -274,7 +306,7 @@ async def test_human_can_update_status_after_claiming(
     # Move to in_review
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
-        headers=auth_headers,
+        headers=interactive_headers,
         json={"status": "in_review"},
     )
     assert response.status_code == 200
@@ -282,7 +314,7 @@ async def test_human_can_update_status_after_claiming(
     # Complete the ticket
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
-        headers=auth_headers,
+        headers=interactive_headers,
         json={"status": "done"},
     )
     assert response.status_code == 200

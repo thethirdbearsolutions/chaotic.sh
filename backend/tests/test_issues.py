@@ -127,11 +127,15 @@ async def test_create_issue_not_member(client, auth_headers2, test_project):
 
 
 @pytest.mark.asyncio
-async def test_claim_requires_estimate_when_configured(client, auth_headers, test_project, test_issue, test_user, test_team, db):
+async def test_claim_requires_estimate_when_configured(
+    client, auth_headers, interactive_headers, test_project, test_issue, test_user, test_team, db
+):
     """Test that claiming without estimate is blocked for AGENTS when configured (CHT-405).
 
-    Note: This requirement only applies to agents, not humans.
-    Humans can claim tickets without estimates even when require_estimate_on_claim is True.
+    Note: This requirement only applies to agents, not humans -- and (CHT-1302)
+    only to *interactive* humans. Humans can claim tickets without estimates
+    even when require_estimate_on_claim is True, but only when the request
+    carries the interactive (TTY) signal.
     """
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
@@ -163,10 +167,21 @@ async def test_claim_requires_estimate_when_configured(client, auth_headers, tes
     assert response.status_code == 400
     assert "Estimate is required" in response.json()["detail"]
 
-    # But humans should be able to claim without estimate
+    # A human account WITHOUT the interactive header is gated the same as
+    # an agent (CHT-1302): human auth alone is no longer sufficient.
     response = await client.patch(
         f"/api/issues/{test_issue.id}",
         headers=auth_headers,
+        json={"status": "in_progress"},
+    )
+    assert response.status_code == 400
+    assert "Estimate is required" in response.json()["detail"]
+
+    # But an interactive human (TTY session, e.g. the CLI) can claim
+    # without estimate.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}",
+        headers=interactive_headers,
         json={"status": "in_progress"},
     )
     assert response.status_code == 200
@@ -2988,12 +3003,14 @@ async def test_list_issue_activities_not_found(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_create_issue_with_done_status_checks_rituals(
-    client, auth_headers, test_project, test_user, test_team, db
+    client, auth_headers, interactive_headers, test_project, test_user, test_team, db
 ):
-    """Test that creating issue with status=done checks ticket-close rituals for agents (CHT-536).
+    """Test that creating issue with status=done checks ticket-close rituals for agents (CHT-536),
+    and that the human exemption additionally requires an interactive caller (CHT-1302).
 
     Agents should be blocked from creating issues as done when there are pending
-    TICKET_CLOSE rituals. Humans can bypass this check.
+    TICKET_CLOSE rituals. A human account WITHOUT the interactive (TTY) signal
+    is gated exactly like an agent -- only an interactive human bypasses.
     """
     from app.services.agent_service import AgentService
     from app.schemas.agent import AgentCreate
@@ -3032,12 +3049,27 @@ async def test_create_issue_with_done_status_checks_rituals(
     data = response.json()
     assert "pending rituals" in data["detail"]["message"].lower()
 
-    # Human can create issue with status=done (bypasses rituals)
+    # Human account WITHOUT the interactive header is gated the same as an
+    # agent (CHT-1302 hybrid gate): human auth alone is no longer exempt.
     response = await client.post(
         f"/api/projects/{test_project.id}/issues",
         headers=auth_headers,
         json={
-            "title": "Human Issue Created as Done",
+            "title": "Non-Interactive Human Issue Created as Done",
+            "status": "done",
+        },
+    )
+    assert response.status_code == 409
+    data = response.json()
+    assert "pending rituals" in data["detail"]["message"].lower()
+
+    # Human WITH the interactive header (X-Chaotic-Interactive: 1, as sent
+    # by the CLI in a TTY session) bypasses rituals.
+    response = await client.post(
+        f"/api/projects/{test_project.id}/issues",
+        headers=interactive_headers,
+        json={
+            "title": "Interactive Human Issue Created as Done",
             "status": "done",
         },
     )
