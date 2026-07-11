@@ -344,6 +344,15 @@ describe('inline-dropdown', () => {
             expect(document.activeElement).toBe(options()[0]);
         });
 
+        it('does NOT auto-focus an option for the labels dropdown (would steal the create-label input)', async () => {
+            await showInlineDropdown(mockEvent(), 'labels', 'issue-1');
+            // The labels branch returns before the auto-focus path — nothing
+            // inside the dropdown should have grabbed focus, or the "type a new
+            // label" input would be stolen out from under the user.
+            const focusedOption = document.activeElement?.closest?.('.dropdown-option');
+            expect(focusedOption).toBeFalsy();
+        });
+
         it('ArrowDown moves focus to the next option', async () => {
             await showInlineDropdown(mockEvent(), 'status', 'issue-1');
             const opts = options();
