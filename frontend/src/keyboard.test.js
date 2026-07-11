@@ -716,6 +716,13 @@ describe('List Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
         it('ignores when focused on TEXTAREA', () => {
             handler(makeEvent('j', { target: { tagName: 'TEXTAREA' } }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
@@ -989,6 +996,13 @@ describe('Document List Navigation Handler', () => {
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
         it('ignores when modal is open', () => {
             actions.isModalOpen.mockReturnValue(true);
             handler(makeEvent('j'));
@@ -1152,6 +1166,13 @@ describe('Board Navigation Handler', () => {
 
         it('ignores when focused on INPUT', () => {
             handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 
@@ -1483,6 +1504,13 @@ describe('Inbox Navigation Handler', () => {
 
         it('ignores when focused on INPUT', () => {
             handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores keys while focus is in the sidebar nav (CHT-1289 review finding 1)', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            handler(makeEvent('j', { target }));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
         });
 

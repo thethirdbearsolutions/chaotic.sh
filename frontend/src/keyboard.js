@@ -266,6 +266,10 @@ export function createListNavigationHandler(actions) {
         // later) ever sees the key, killing the documented detail shortcuts.
         if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        // Yield to the sidebar's own roving-focus handler while a nav link is
+        // focused — these list handlers register earlier and would otherwise
+        // ALSO move the list cursor on the same arrow press (CHT-1289 review).
+        if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
@@ -347,6 +351,10 @@ export function createDocListNavigationHandler(actions) {
         // .list-item elements in the DOM.
         if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        // Yield to the sidebar's own roving-focus handler while a nav link is
+        // focused — these list handlers register earlier and would otherwise
+        // ALSO move the list cursor on the same arrow press (CHT-1289 review).
+        if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
@@ -409,6 +417,10 @@ export function createInboxNavigationHandler(actions) {
     return function handleInboxNavigation(e) {
         if (actions.getCurrentView() !== 'inbox') return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        // Yield to the sidebar's own roving-focus handler while a nav link is
+        // focused — these list handlers register earlier and would otherwise
+        // ALSO move the list cursor on the same arrow press (CHT-1289 review).
+        if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
@@ -478,6 +490,10 @@ export function createBoardNavigationHandler(actions) {
         // on the detail view would re-open the stale board selection.
         if (actions.isDetailViewActive?.()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        // Yield to the sidebar's own roving-focus handler while a nav link is
+        // focused — these list handlers register earlier and would otherwise
+        // ALSO move the list cursor on the same arrow press (CHT-1289 review).
+        if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
 
