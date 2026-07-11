@@ -76,6 +76,7 @@ vi.mock('./issues-view.js', () => ({
 
 // Import mocked modules to get references to mock functions
 import { api } from './api.js';
+import { renderIssueRow } from './issue-list.js';
 import { getIssues, setIssues, getCurrentTeam, getCurrentDetailIssue, setCurrentDetailIssue, getLabels } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
 import { closeAllDropdowns, showToast, showApiError } from './ui.js';
@@ -423,6 +424,24 @@ describe('inline-dropdown', () => {
             await updateIssueField('issue-1', 'status', 'done');
 
             expect(api.updateIssue).toHaveBeenCalledWith('issue-1', { status: 'done' });
+        });
+
+        it('returns focus to the field trigger button on the re-rendered row (CHT-1293)', async () => {
+            api.updateIssue.mockResolvedValue({ id: 'issue-1', status: 'done' });
+            getIssues.mockReturnValue([{ id: 'issue-1', status: 'todo' }]);
+            renderIssueRow.mockReturnValueOnce(
+                '<div class="issue-row" data-issue-id="issue-1">' +
+                '<button class="status-btn" data-dropdown-type="status">S</button></div>'
+            );
+            document.body.innerHTML =
+                '<div id="issues-list"><div class="issue-row" data-issue-id="issue-1">' +
+                '<button data-dropdown-type="status">S</button></div></div>';
+
+            await updateIssueField('issue-1', 'status', 'done');
+
+            const trigger = document.querySelector('.issue-row[data-issue-id="issue-1"] [data-dropdown-type="status"]');
+            expect(trigger).not.toBeNull();
+            expect(document.activeElement).toBe(trigger);
         });
 
         it('updates local issues state on success', async () => {

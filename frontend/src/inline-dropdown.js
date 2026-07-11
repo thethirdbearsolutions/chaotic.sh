@@ -25,6 +25,17 @@ export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 't
 let createIssueLabelIds = [];
 let _labelToggleQueue = Promise.resolve();
 
+// Maps an API field name -> the row trigger button's data-dropdown-type, so a
+// completed inline edit can return focus to the right control (CHT-1293).
+const DROPDOWN_TYPE_FOR_FIELD = {
+    status: 'status',
+    priority: 'priority',
+    assignee_id: 'assignee',
+    issue_type: 'type',
+    estimate: 'estimate',
+    sprint_id: 'sprint',
+};
+
 /**
  * ArrowUp/ArrowDown/Home/End move native focus across a dropdown's actionable
  * options (CHT-1290). Options are real <button>s, so Enter/Space activate them
@@ -708,6 +719,14 @@ export async function updateIssueField(issueId, field, value) {
                 if (newRow) {
                     newRow.classList.add('updated');
                     setTimeout(() => newRow.classList.remove('updated'), 500);
+                    // Return focus to the field's trigger button on the fresh row
+                    // (CHT-1293): closeAllDropdowns + this re-render dropped the
+                    // focused option, stranding a keyboard user on <body>. Focus
+                    // the re-rendered trigger (mirrors standard menu-close focus
+                    // return) so j/k and re-opening keep working.
+                    const dropdownType = DROPDOWN_TYPE_FOR_FIELD[field];
+                    const trigger = dropdownType && newRow.querySelector(`[data-dropdown-type="${dropdownType}"]`);
+                    if (trigger) trigger.focus();
                 }
             }
         }
