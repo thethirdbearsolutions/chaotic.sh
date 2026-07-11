@@ -835,6 +835,16 @@ export function updateDetailViewField(field, updatedIssue) {
     // Add a subtle animation to indicate the change
     valueButton.classList.add('updated');
     setTimeout(() => valueButton.classList.remove('updated'), 500);
+
+    // Return focus to the property row's trigger button (CHT-1297): unlike
+    // the list-row path (updateIssueField, CHT-1293), the detail view keeps
+    // the same DOM instead of re-rendering, but the picked-from trigger is
+    // still stranded without this — closeAllDropdowns drops the focused
+    // option and nothing here claims focus, leaving a keyboard user on
+    // <body>. valueButton is the same trigger the row's click/data-action
+    // opened the dropdown from, so just re-focus it; guard defensively in
+    // case it's ever missing.
+    valueButton?.focus();
 }
 
 // Register delegated event handlers (CHT-1062)
