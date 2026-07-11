@@ -523,6 +523,16 @@ async def auth_headers2(test_user2):
 
 
 @pytest_asyncio.fixture
+async def interactive_headers(auth_headers):
+    """auth_headers plus the X-Chaotic-Interactive signal the CLI sends
+    for a TTY session (CHT-1302). Human-account requests only get the
+    ritual/estimate exemption when this is also present -- plain
+    auth_headers now models a human account driven non-interactively
+    (e.g. scripted/agent-as-human), which is gated like an agent."""
+    return {**auth_headers, "X-Chaotic-Interactive": "1"}
+
+
+@pytest_asyncio.fixture
 async def test_team(db, test_user):
     """Create test team with test_user as owner."""
     from app.oxyde_models.team import OxydeTeam, OxydeTeamMember

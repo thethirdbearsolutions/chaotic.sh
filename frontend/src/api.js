@@ -23,6 +23,11 @@ export class ApiClient {
     async request(method, path, data = null) {
         const headers = {
             'Content-Type': 'application/json',
+            // The web app is always a human interacting in real time, so it is
+            // always "interactive" for the CHT-1302 ritual/estimate exemption
+            // (browsers have no TTY; the CLI derives this from isatty instead).
+            // Without this, every web user would be gated like an agent.
+            'X-Chaotic-Interactive': '1',
         };
 
         if (this.token) {

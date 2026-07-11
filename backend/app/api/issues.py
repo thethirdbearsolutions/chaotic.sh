@@ -1,7 +1,7 @@
 """Issue API routes."""
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
 
@@ -185,6 +185,7 @@ async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
+    x_chaotic_interactive: str | None = Header(default=None),
 ):
     """Create a new issue.
 
@@ -218,8 +219,19 @@ async def create_issue(
     await _validate_labels(issue_in.label_ids, project.team_id)
     await _validate_parent(issue_in.parent_id, project_id)
 
-    # Check if this is a human user (not an agent)
-    is_human_request = not current_user.is_agent
+    # Ritual/estimate exemption requires BOTH a human account AND an
+    # interactive (TTY) caller (CHT-1302, hybrid gate). The interactive
+    # signal is client-asserted via X-Chaotic-Interactive: best-effort
+    # defense against an agent accidentally authed as a human, not a
+    # guard against a malicious client forging the header.
+    # Who sends "1": the CLI when both stdin+stdout are a TTY, and the web
+    # app unconditionally (a browser is a live human). Callers that omit the
+    # header — the MCP tools (remote /mcp and the stdio adapter, whose stdio
+    # is piped) and any raw API script — are treated as non-interactive and
+    # thus gated. That is intentional: MCP/programmatic traffic is agentic
+    # regardless of whose credentials back it.
+    interactive = x_chaotic_interactive == "1"
+    is_human_request = not current_user.is_agent and interactive
 
     # Ritual and constraint checks are now enforced in create() when status
     # is DONE or IN_PROGRESS (CHT-536)
@@ -864,6 +876,7 @@ async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
     current_user: CurrentUser,
+    x_chaotic_interactive: str | None = Header(default=None),
 ):
     """Update an issue."""
     issue_service = IssueService()
@@ -894,9 +907,14 @@ async def update_issue(
     if issue_in.parent_id is not None:
         await _validate_parent(issue_in.parent_id, issue.project_id, issue_id=issue_id)
 
-    # Check if this is a human user (not an agent)
-    # Human users can use either JWT or API key auth
-    is_human_request = not current_user.is_agent
+    # Ritual/estimate exemption requires BOTH a human account AND an
+    # interactive (TTY) caller (CHT-1302, hybrid gate). Human users can use
+    # either JWT or API key auth. The interactive signal is client-asserted
+    # via X-Chaotic-Interactive: best-effort defense against an agent
+    # accidentally authed as a human, not a guard against a malicious
+    # client forging the header.
+    interactive = x_chaotic_interactive == "1"
+    is_human_request = not current_user.is_agent and interactive
 
     try:
         issue = await issue_service.update(issue, issue_in, current_user.id, is_human_request=is_human_request)
