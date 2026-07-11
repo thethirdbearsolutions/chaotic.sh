@@ -346,6 +346,12 @@ class TestInboxReaders:
         service = InboxService()
         from app.oxyde_models.team import OxydeTeam
         other_team = await OxydeTeam.objects.create(name="Other", key="OTHR")
+        # test_user must be a current member of both teams for their entries to
+        # be visible (CHT-1274 scopes reads to membership); this test is about
+        # mark_all_read's team_id filter, not membership.
+        await OxydeTeamMember.objects.create(
+            team_id=other_team.id, user_id=test_user.id, role=TeamRole.MEMBER,
+        )
         await OxydeInboxEntry.objects.create(
             recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
             team_id=test_team.id, title="in-team",
@@ -364,6 +370,42 @@ class TestInboxReaders:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+class TestInboxTeamScoping:
+    """Inbox reads must be scoped to CURRENT team membership (CHT-1274/CHT-1271):
+    a removed member must not read or re-fetch entries from a team they left.
+    Entries only cascade on user/team deletion, never on member removal."""
+
+    async def test_list_and_count_exclude_left_team(self, db, test_team, test_user):
+        service = InboxService()
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="scoped",
+        )
+        # Baseline: a current member sees the entry across the read paths.
+        assert len(await service.list_for_user(test_user.id)) == 1
+        assert await service.unread_count(test_user.id) == 1
+        # Remove membership (user + team still exist; the entry does NOT cascade).
+        await OxydeTeamMember.objects.filter(
+            team_id=test_team.id, user_id=test_user.id,
+        ).delete()
+        # Now scoped out of every read path.
+        assert await service.list_for_user(test_user.id) == []
+        assert await service.unread_count(test_user.id) == 0
+        assert await service.mark_all_read(test_user.id) == 0
+
+    async def test_mark_read_404_after_team_removal(self, client, db, test_team, test_user, auth_headers):
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=test_team.id, title="scoped",
+        )
+        await OxydeTeamMember.objects.filter(
+            team_id=test_team.id, user_id=test_user.id,
+        ).delete()
+        resp = await client.post(f"/api/inbox/{entry.id}/read", headers=auth_headers)
+        # 404 (not 403) so a revoked member can't even confirm the entry exists.
+        assert resp.status_code == 404
+
+
 class TestResolveGateOrReview:
     async def test_resolves_gate_pending_only_for_matching_ritual_issue(
         self, db, test_project, test_issue, gate_close_ritual, review_close_ritual,
