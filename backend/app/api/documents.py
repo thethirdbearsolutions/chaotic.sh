@@ -75,7 +75,30 @@ async def create_document(
     """
     document_service = DocumentService()
 
-    if not await check_user_team_access(current_user, team_id):
+    # Authorize at the project level when the doc is project-scoped, so a
+    # project-scoped agent (agent_project_id set, agent_team_id None) can create
+    # docs in its own project — check_user_team_access only matches agent_team_id
+    # and would always reject such agents (CHT-1273).
+    #
+    # check_user_project_access's agent branch matches agent_project_id==project_id
+    # with NO relation to team_id, and project_id is a request-body field, so we
+    # MUST first pin the project to the URL-path team — otherwise a project-scoped
+    # agent could POST to any other team T2 with its own project_id and land a doc
+    # in T2 (CHT-1273 review CRITICAL). Mirror create_issue, which derives the
+    # team from the fetched project rather than trusting an independent path+body.
+    if document_in.project_id:
+        project = await ProjectService().get_by_id(document_in.project_id)
+        if not project or project.team_id != team_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Project not found in this team",
+            )
+        authorized = await check_user_project_access(
+            current_user, document_in.project_id, team_id,
+        )
+    else:
+        authorized = await check_user_team_access(current_user, team_id)
+    if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this team",
