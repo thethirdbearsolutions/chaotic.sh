@@ -1,6 +1,10 @@
 # Databases
 *.db
 *.db-journal
+# SQLite WAL-mode sidecar files -- these are what `git add -A` swept into
+# PR #243 when *.db-journal didn't cover them (CHT-1309).
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 *.backup*
