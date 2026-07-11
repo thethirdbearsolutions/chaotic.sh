@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     is_active: bool
     is_agent: bool = False
+    parent_user_name: str | None = None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
 

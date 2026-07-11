@@ -58,6 +58,9 @@ vi.mock('./utils.js', () => ({
     escapeAttr: vi.fn((text) => text || ''),
     sanitizeColor: vi.fn((c) => c || '#888'),
     renderAvatar: vi.fn(() => '<span class="avatar"></span>'),
+    renderAgentBadge: vi.fn((isAgent) =>
+        isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : ''
+    ),
 }));
 
 vi.mock('./issue-list.js', () => ({

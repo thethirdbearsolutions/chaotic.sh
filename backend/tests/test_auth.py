@@ -1,6 +1,9 @@
 """Tests for authentication endpoints."""
 import pytest
 
+from app.services.agent_service import AgentService
+from app.schemas.agent import AgentCreate
+
 
 @pytest.mark.asyncio
 async def test_signup_success(client):
@@ -119,3 +122,33 @@ async def test_get_me_invalid_token(client):
         headers={"Authorization": "Bearer invalid_token"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_me_human_is_not_agent(client, auth_headers):
+    """A regular human user's /auth/me response reports is_agent=False
+    and no parent_user_name (CHT-1304)."""
+    response = await client.get("/api/auth/me", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_agent"] is False
+    assert data.get("parent_user_name") is None
+
+
+@pytest.mark.asyncio
+async def test_get_me_agent_reports_is_agent_and_parent_name(db, client, test_user, test_team):
+    """An agent's /auth/me response reports is_agent=True and the parent
+    human user's name, derived from parent_user_id (CHT-1304)."""
+    agent_service = AgentService()
+    agent, api_key, _ = await agent_service.create(
+        AgentCreate(name="Test Agent"), test_user, test_team.id, project_id=None
+    )
+
+    response = await client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {api_key}"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_agent"] is True
+    assert data["name"] == agent.name
+    assert data["parent_user_name"] == test_user.name

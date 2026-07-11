@@ -44,4 +44,20 @@ async def login(user_in: UserLogin):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: CurrentUser):
     """Get current user info."""
-    return current_user
+    parent_user_name = None
+    if current_user.is_agent and current_user.parent_user_id:
+        user_service = UserService()
+        parent_user = await user_service.get_by_id(current_user.parent_user_id)
+        parent_user_name = parent_user.name if parent_user else None
+
+    return UserResponse(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        avatar_url=current_user.avatar_url,
+        is_active=current_user.is_active,
+        is_agent=current_user.is_agent,
+        parent_user_name=parent_user_name,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+    )

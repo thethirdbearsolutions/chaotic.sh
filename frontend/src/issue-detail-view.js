@@ -10,7 +10,7 @@ import { showToast, showModal, closeModal, showApiError } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate, isOutOfScale } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
-import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
+import { formatStatus, formatPriority, formatIssueType, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor, renderAvatar, renderAgentBadge } from './utils.js';
 import { getStatusIcon, getPriorityIcon } from './issue-list.js';
 import { renderMarkdown } from './gate-approvals.js';
 import { setupMentionAutocomplete } from './mention-autocomplete.js';
@@ -723,6 +723,7 @@ export async function viewIssue(issueId, pushHistory = true) {
                                     <div class="comment-body">
                                         <div class="comment-header">
                                             <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
+                                            ${renderAgentBadge(getAssigneeById(comment.author_id)?.is_agent)}
                                             ${comment.is_attestation ? `<span class="comment-ritual-badge">${comment.is_pending ? 'Pending approval — ' : ''}Ritual: ${escapeHtml(comment.ritual_name)}</span>` : ''}
                                             <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
                                         </div>

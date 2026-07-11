@@ -5,7 +5,7 @@
 
 import { api } from './api.js';
 import { showToast, showApiError } from './ui.js';
-import { escapeAttr } from './utils.js';
+import { escapeAttr, renderAgentBadge } from './utils.js';
 import { getCurrentUser, setCurrentUser, setCurrentTeam } from './state.js';
 import { initApp } from './init.js';
 
@@ -142,6 +142,13 @@ export function updateUserInfo() {
   const nameEl = document.getElementById('user-name');
   if (nameEl) {
     nameEl.textContent = user.name;
+    // Agent indicator (CHT-1304): a small badge next to the name,
+    // rendered as a sibling so it never clobbers user-name's textContent.
+    const existingBadge = nameEl.parentElement?.querySelector('.badge-agent');
+    if (existingBadge) existingBadge.remove();
+    if (user.is_agent) {
+      nameEl.insertAdjacentHTML('afterend', renderAgentBadge(true));
+    }
   }
 
   const avatarEl = document.getElementById('user-avatar');

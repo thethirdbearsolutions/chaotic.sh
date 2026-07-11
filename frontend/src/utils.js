@@ -268,3 +268,12 @@ export function renderAvatar(assignee, sizeClass = 'avatar-small') {
     }
     return `<div class="${sizeClass}">${name.charAt(0).toUpperCase()}</div>`;
 }
+
+/**
+ * Small inline badge marking an actor as an AI agent, vs. a human (CHT-1304).
+ * @param {boolean} isAgent
+ * @returns {string} HTML string, or '' when isAgent is falsy
+ */
+export function renderAgentBadge(isAgent) {
+    return isAgent ? '<span class="badge badge-agent" title="AI agent">agent</span>' : '';
+}

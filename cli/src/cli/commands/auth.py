@@ -83,7 +83,17 @@ def register(cli):
         if m.is_json_output():
             m.output_json(user)
             return
-        console.print(Panel(f"[bold]{user['name']}[/bold]\n{user['email']}", title="Current User"))
+        if user.get("is_agent"):
+            identity = "[cyan]AGENT[/cyan]"
+            parent_name = user.get("parent_user_name")
+            if parent_name:
+                identity += f" (parent: {parent_name})"
+        else:
+            identity = "human"
+        console.print(Panel(
+            f"[bold]{user['name']}[/bold]\n{user['email']}\n{identity}",
+            title="Current User",
+        ))
 
     @auth.group("keys")
     def auth_keys():
