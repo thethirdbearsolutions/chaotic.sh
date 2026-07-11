@@ -528,7 +528,34 @@ class IssueService:
                 f"Project '{project.name}' requires estimates on completion."
             )
 
-        # Create transaction record
+        # Race-safe budget deduction (CHT-329). The arrears gate earlier
+        # in the flow (_check_sprint_arrears) is a *read*: two concurrent
+        # DONE closes could both pass it and both increment, overshooting
+        # budget without either being blocked. This conditional UPDATE is
+        # the real serializer -- same shape as the claim-lease CAS above:
+        # increment ONLY while the sprint isn't already over budget, and
+        # RETURNING tells us whether it applied. A NULL budget means "no
+        # cap". SQLite serializes writers, so of two racing closes the
+        # first commits and the second sees the new points_spent and is
+        # blocked here -- inside the caller's atomic(), so the issue's
+        # status change rolls back with it. `points_spent <= budget`
+        # mirrors the fast-path boundary (block only once *over* budget,
+        # so the ticket that crosses the line is still allowed).
+        won = await execute_raw(
+            "UPDATE sprints SET points_spent = points_spent + ? "
+            "WHERE id = ? AND (budget IS NULL OR points_spent <= budget) "
+            "RETURNING id",
+            [points, current_sprint.id],
+        )
+        if not won:
+            # Lost the race (or entered already in arrears). Re-read for an
+            # accurate figure, then raise to roll back the whole transition.
+            fresh = await OxydeSprint.objects.filter(id=current_sprint.id).first()
+            spent = fresh.points_spent if fresh else current_sprint.points_spent
+            raise SprintInArrearsError(current_sprint.budget, spent)
+
+        # Record the transaction only after the increment actually applied,
+        # so a blocked deduction never leaves an orphan transaction row.
         await OxydeBudgetTransaction.objects.create(
             sprint_id=current_sprint.id,
             issue_id=issue.id,
@@ -537,12 +564,6 @@ class IssueService:
             issue_identifier=issue.identifier,
             issue_title=issue.title,
             sprint_name=current_sprint.name,
-        )
-
-        # Atomically increment points_spent
-        await execute_raw(
-            "UPDATE sprints SET points_spent = points_spent + ? WHERE id = ?",
-            [points, current_sprint.id],
         )
 
     async def apply_intent_transition(
