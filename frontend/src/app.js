@@ -39,7 +39,7 @@ import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, openInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
-import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler } from './keyboard.js';
+import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import './revisions.js';
 import {
@@ -96,6 +96,10 @@ import {
     setSelectedBoardIndex,
     getSelectedInboxIndex,
     setSelectedInboxIndex,
+    getSelectedSprintIndex,
+    setSelectedSprintIndex,
+    getSelectedEpicIndex,
+    setSelectedEpicIndex,
     setCurrentUser,
     setCurrentProject,
     setCurrentDetailIssue,
@@ -665,6 +669,32 @@ document.addEventListener('keydown', createInboxNavigationHandler({
 // ArrowUp/Down/Home/End roving focus through the sidebar nav links (CHT-1289).
 // Self-scopes to when a .nav-item is focused, so no view/modal/input guards.
 document.addEventListener('keydown', createSidebarNavigationHandler());
+
+// j/k/arrows/Enter/Escape list nav for the Sprints and Epics views (CHT-1291).
+// Sprints nav covers the always-visible NOW/NEXT cards (completed sprints live
+// behind a <details> disclosure and are intentionally out of the cursor).
+document.addEventListener('keydown', createSimpleListNavigationHandler({
+    view: 'sprints',
+    selector: '#sprints-list .sprint-card',
+    open: (el) => { if (el.dataset.sprintId) viewSprint(el.dataset.sprintId); },
+    getCurrentView,
+    getSelectedIndex: getSelectedSprintIndex,
+    setSelectedIndex: setSelectedSprintIndex,
+    isModalOpen,
+    isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
+}));
+document.addEventListener('keydown', createSimpleListNavigationHandler({
+    view: 'epics',
+    selector: '#epics-list .epic-row',
+    open: (el) => { if (el.dataset.identifier) viewEpicByPath(el.dataset.identifier); },
+    getCurrentView,
+    getSelectedIndex: getSelectedEpicIndex,
+    setSelectedIndex: setSelectedEpicIndex,
+    isModalOpen,
+    isCommandPaletteOpen,
+    isDetailViewActive: isAnyDetailViewActive,
+}));
 
 // Keyboard shortcuts (logic in keyboard.js)
 document.addEventListener('keydown', createKeyboardHandler({

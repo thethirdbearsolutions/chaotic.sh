@@ -32,6 +32,8 @@ const initialState = {
     selectedDocIndex: -1,
     selectedBoardIndex: -1,
     selectedInboxIndex: -1,
+    selectedSprintIndex: -1,
+    selectedEpicIndex: -1,
 
     // Pending gates for ritual completion
     pendingGates: [],
@@ -168,6 +170,12 @@ export const setSelectedBoardIndex = (index) => setState('selectedBoardIndex', i
 
 export const getSelectedInboxIndex = () => state.selectedInboxIndex;
 export const setSelectedInboxIndex = (index) => setState('selectedInboxIndex', index);
+
+export const getSelectedSprintIndex = () => state.selectedSprintIndex;
+export const setSelectedSprintIndex = (index) => setState('selectedSprintIndex', index);
+
+export const getSelectedEpicIndex = () => state.selectedEpicIndex;
+export const setSelectedEpicIndex = (index) => setState('selectedEpicIndex', index);
 
 export const getPendingGates = () => state.pendingGates;
 export const setPendingGates = (gates) => setState('pendingGates', gates);

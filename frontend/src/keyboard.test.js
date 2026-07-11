@@ -7,6 +7,7 @@ import {
     createBoardNavigationHandler,
     createInboxNavigationHandler,
     createSidebarNavigationHandler,
+    createSimpleListNavigationHandler,
     updateKeyboardSelection,
 } from './keyboard.js';
 
@@ -1708,6 +1709,166 @@ describe('Sidebar Navigation Handler', () => {
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
             expect(document.activeElement).toBe(items()[2]);
+        });
+    });
+});
+
+// ============================================================================
+// Simple List Navigation Handler factory (sprints/epics) - CHT-1291
+// ============================================================================
+
+describe('Simple List Navigation Handler (CHT-1291)', () => {
+    let config;
+    let handler;
+
+    beforeEach(() => {
+        config = {
+            view: 'sprints',
+            selector: '#sprints-list .sprint-card',
+            open: vi.fn(),
+            getCurrentView: vi.fn().mockReturnValue('sprints'),
+            getSelectedIndex: vi.fn().mockReturnValue(0),
+            setSelectedIndex: vi.fn(),
+            isModalOpen: vi.fn().mockReturnValue(false),
+            isCommandPaletteOpen: vi.fn().mockReturnValue(false),
+            isDetailViewActive: vi.fn().mockReturnValue(false),
+        };
+        handler = createSimpleListNavigationHandler(config);
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.innerHTML = `
+            <div id="sprints-list">
+                <div class="sprint-card" data-sprint-id="s-1">NOW</div>
+                <div class="sprint-card" data-sprint-id="s-2">NEXT</div>
+                <div class="sprint-card" data-sprint-id="s-3">SOON</div>
+            </div>
+        `;
+    });
+
+    function cards() {
+        return document.querySelectorAll('#sprints-list .sprint-card');
+    }
+
+    describe('guard conditions', () => {
+        it('ignores when not on the configured view', () => {
+            config.getCurrentView.mockReturnValue('issues');
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when focused on INPUT', () => {
+            handler(makeEvent('j', { target: { tagName: 'INPUT' } }));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores keys while focus is in the sidebar nav', () => {
+            const target = { tagName: 'A', closest: (sel) => (sel === '.sidebar-nav' ? {} : null) };
+            handler(makeEvent('ArrowDown', { target }));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when a modal is open', () => {
+            config.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when the command palette is open', () => {
+            config.isCommandPaletteOpen.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when a detail view is active', () => {
+            config.isDetailViewActive.mockReturnValue(true);
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+
+        it('ignores when there are no rows', () => {
+            document.body.innerHTML = '<div id="sprints-list"></div>';
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('movement', () => {
+        it('j / ArrowDown move selection down', () => {
+            config.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(1);
+            config.setSelectedIndex.mockClear();
+            handler(makeEvent('ArrowDown'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('k / ArrowUp move selection up', () => {
+            config.getSelectedIndex.mockReturnValue(2);
+            handler(makeEvent('k'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(1);
+            config.setSelectedIndex.mockClear();
+            handler(makeEvent('ArrowUp'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(1);
+        });
+
+        it('clamps at the ends', () => {
+            config.getSelectedIndex.mockReturnValue(2);
+            handler(makeEvent('j'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(2);
+            config.setSelectedIndex.mockClear();
+            config.getSelectedIndex.mockReturnValue(0);
+            handler(makeEvent('k'));
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(0);
+        });
+    });
+
+    describe('Enter opens the selected row', () => {
+        it('calls open() with the selected element', () => {
+            config.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Enter');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(config.open).toHaveBeenCalledWith(cards()[1]);
+        });
+
+        it('does nothing when nothing is selected', () => {
+            config.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('Enter'));
+            expect(config.open).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Escape deselects', () => {
+        it('clears the selection', () => {
+            config.getSelectedIndex.mockReturnValue(1);
+            cards()[1].classList.add('keyboard-selected');
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(config.setSelectedIndex).toHaveBeenCalledWith(-1);
+            expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        });
+    });
+
+    describe('works for the epics config too', () => {
+        it('opens an epic row by its selector/open callback', () => {
+            const epicConfig = {
+                ...config,
+                view: 'epics',
+                selector: '#epics-list .epic-row',
+                open: vi.fn(),
+                getCurrentView: vi.fn().mockReturnValue('epics'),
+                getSelectedIndex: vi.fn().mockReturnValue(0),
+            };
+            const epicHandler = createSimpleListNavigationHandler(epicConfig);
+            document.body.innerHTML = `
+                <table id="epics-list"><tbody>
+                    <tr class="epic-row" data-identifier="CHT-1">A</tr>
+                    <tr class="epic-row" data-identifier="CHT-2">B</tr>
+                </tbody></table>
+            `;
+            const rows = document.querySelectorAll('#epics-list .epic-row');
+            epicHandler(makeEvent('Enter'));
+            expect(epicConfig.open).toHaveBeenCalledWith(rows[0]);
         });
     });
 });
