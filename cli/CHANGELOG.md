@@ -5,6 +5,21 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [0.1.0a17] - 2026-07-11
+
+Keyboard-navigation wave for the web UI. No CLI changes since a16 — this
+release republishes the CLI in lockstep with the frontend it ships alongside.
+
+### Added
+
+- **Roving keyboard focus across list views** — Arrow/Home/End move focus
+  through the sidebar nav links, and `j`/`k` alias ArrowDown/ArrowUp in every
+  list-nav handler (CHT-1288, CHT-1289).
+- **Keyboard nav inside inline field dropdowns** — open, move through, and
+  select inline field editors without reaching for the mouse (CHT-1290).
+- **List navigation on the Sprints and Epics views** — the same roving-focus
+  list nav now covers the Sprints and Epics views (CHT-1291).
+
 ## [0.1.0a16] - 2026-07-05
 
 _Drafted 2026-05-16, expanded 2026-07-05 before first publish; a16 never
