@@ -185,12 +185,14 @@ the same command:
 
 ### Toolset
 
-Ten tools, curated for quality over coverage:
+Eleven tools, curated for quality over coverage:
 
 - `issue_list`, `issue_view`, `issue_create`, `issue_update`,
   `issue_comment`, `issue_start`
 - `doc_list`, `doc_view`, `doc_create`
 - `activity_recent`
+- `project_list` (enumerate the team's projects -- every other tool
+  filters by project, this one tells you which projects exist)
 
 Every tool returns a JSON object. Failures come back as
 `{"error": "..."}` -- the same shape as the CLI's `--json` error
@@ -215,9 +217,10 @@ If you'd rather point a *hosted* client at your chaotic instance instead
 of running `chaotic mcp` as a local subprocess -- claude.ai's custom
 connectors, Claude Code web, or Claude Code CLI's `--transport http` --
 the backend also speaks MCP directly over Streamable HTTP at `/mcp`.
-Same 10 tools, same names (see Toolset below); five of them
+Same 11 tools, same names (see Toolset below); six of them
 (`issue_list`, `issue_create`, `doc_list`, `doc_create`,
-`activity_recent`) additionally accept an optional `team` parameter,
+`activity_recent`, `project_list`) additionally accept an optional
+`team` parameter,
 because a hosted server has no single active profile to inherit context
 from -- see "Auth and scoping" below.
 

@@ -615,6 +615,14 @@
         "title": "issue_viewArguments",
         "type": "object"
       }
+    },
+    "project_list": {
+      "description": "List the projects in your team: id, key, name, and issue count.\n\n    The one call that answers \"what projects exist\" -- every other tool\n    takes a `project` filter but none enumerate them. Scoped to the\n    current team (`chaotic status`); the HTTP transport adds a `team`\n    parameter for API keys that can see more than one.\n    ",
+      "inputSchema": {
+        "properties": {},
+        "title": "project_listArguments",
+        "type": "object"
+      }
     }
   }
 }

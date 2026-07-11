@@ -2,7 +2,7 @@
 mounted on the backend at /mcp (see CHT-1266).
 
 Sibling to ``chaotic mcp`` (cli/src/cli/mcp_server.py, stdio transport,
-CHT-1247/#215): same 10 tools, same names, same-shaped schemas -- see
+CHT-1247/#215): same 11 tools, same names, same-shaped schemas -- see
 ``tools.py``'s module docstring for exactly what's shared and what isn't.
 The stdio server is a thin adapter over the CLI's own HTTP client and
 inherits its auth/context from local profile config; this server IS the

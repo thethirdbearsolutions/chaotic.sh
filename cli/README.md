@@ -611,6 +611,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 | `doc_view` | `doc show` |
 | `doc_create` | `doc create` |
 | `activity_recent` | `activity` |
+| `project_list` | `project list` |
 
 Every tool returns a JSON object. Failures come back as `{"error": "..."}`
 (the same shape as this CLI's `--json` error contract) rather than an

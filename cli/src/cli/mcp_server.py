@@ -9,9 +9,10 @@ CHAOTIC_PROFILE / CHAOTIC_HOME / config.json resolution the CLI itself
 uses (see ``cli.config``); whatever ``chaotic status`` reports is what
 this server sees. There is no MCP-specific auth or session state.
 
-Toolset (10, curated for quality over coverage — see CHT-1247):
+Toolset (11, curated for quality over coverage — see CHT-1247):
     issue_list, issue_view, issue_create, issue_update, issue_comment,
-    issue_start, doc_list, doc_view, doc_create, activity_recent.
+    issue_start, doc_list, doc_view, doc_create, activity_recent,
+    project_list.
 
 Deliberately NOT included in v1:
   * Any delete tool (issue/doc/comment). Destructive operations need a
@@ -452,6 +453,24 @@ def doc_create(
 
 
 # ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+@_boundary
+def project_list() -> dict:
+    """List the projects in your team: id, key, name, and issue count.
+
+    The one call that answers "what projects exist" -- every other tool
+    takes a `project` filter but none enumerate them. Scoped to the
+    current team (`chaotic status`); the HTTP transport adds a `team`
+    parameter for API keys that can see more than one.
+    """
+    team_id = _require_team()
+    projects = _client().get_projects(team_id)
+    return {"projects": projects or []}
+
+
+# ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
 
@@ -476,7 +495,7 @@ def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    doc_list, doc_view, doc_create, activity_recent,
+    doc_list, doc_view, doc_create, activity_recent, project_list,
 )
 
 
