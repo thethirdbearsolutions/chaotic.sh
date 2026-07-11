@@ -40,7 +40,7 @@ import { loadInbox, openInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler } from './keyboard.js';
-import { showInlineDropdown } from './inline-dropdown.js';
+import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
@@ -623,6 +623,7 @@ document.addEventListener('keydown', createListNavigationHandler({
     viewIssue,
     showEditIssueModal,
     showInlineDropdown,
+    isInlineDropdownOpen,
     isModalOpen,
     isCommandPaletteOpen,
     isDetailViewActive: isAnyDetailViewActive,

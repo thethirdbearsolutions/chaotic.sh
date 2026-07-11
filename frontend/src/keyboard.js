@@ -272,6 +272,10 @@ export function createListNavigationHandler(actions) {
         if (e.target.closest?.('.sidebar-nav')) return;
         if (actions.isModalOpen()) return;
         if (actions.isCommandPaletteOpen()) return;
+        // Once an inline field dropdown (opened here via s/p/a) is up, its own
+        // handler owns Arrow/Enter — yield so we don't move the list cursor
+        // underneath it (CHT-1290).
+        if (actions.isInlineDropdownOpen?.()) return;
 
         const items = document.querySelectorAll(selector);
         if (items.length === 0) return;
