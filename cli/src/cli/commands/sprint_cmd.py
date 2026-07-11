@@ -406,12 +406,16 @@ def register(cli):
         """
         m = _main()
         if not sprint_id:
+            # Resolve THE current sprint via the dedicated /sprints/current
+            # primitive, not get_sprints(status="active")[0] — the latter picks
+            # the newest of any active sprints by creation order rather than the
+            # one canonical current sprint (CHT-1301, follow-up to CHT-1295).
             project_id = m.get_current_project()
-            sprints = _client().get_sprints(project_id, status="active")
-            if not sprints:
+            current = _client().get_current_sprint(project_id)
+            if not current:
                 console.print("[yellow]No active sprint found.[/yellow]")
                 return
-            sprint_id = sprints[0]["id"]
+            sprint_id = current["id"]
 
         txns = _client().get_sprint_transactions(sprint_id)
         if m.is_json_output():

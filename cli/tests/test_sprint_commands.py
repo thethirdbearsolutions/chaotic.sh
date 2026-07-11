@@ -274,6 +274,29 @@ class TestSprintBudget:
         assert 'BLOCKED' in result.output
 
 
+class TestSprintTransactions:
+    """Tests for sprint transactions command (CHT-1301)."""
+
+    def test_no_arg_resolves_current_sprint_via_get_current_sprint(self, cli_runner, mock_sprint):
+        """No-arg `sprint transactions` must resolve THE current sprint via the
+        dedicated get_current_sprint primitive, not get_sprints(active)[0]
+        (which picks the newest active by creation order) — CHT-1301."""
+        from cli.main import cli, client
+
+        client.get_current_sprint = MagicMock(return_value=mock_sprint)
+        client.get_sprint_transactions = MagicMock(return_value=[])
+        client.get_sprints = MagicMock(
+            side_effect=AssertionError("must not use get_sprints for current-sprint resolution")
+        )
+
+        with patch('cli.main.get_current_project', return_value='p1'):
+            result = cli_runner.invoke(cli, ['sprint', 'transactions'])
+
+        assert result.exit_code == 0
+        client.get_current_sprint.assert_called_once_with('p1')
+        client.get_sprint_transactions.assert_called_once_with(mock_sprint['id'])
+
+
 class TestSprintClose:
     """Tests for sprint close command."""
 
