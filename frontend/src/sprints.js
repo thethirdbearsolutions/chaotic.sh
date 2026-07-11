@@ -9,7 +9,7 @@ import { api } from './api.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getEstimateScaleHint } from './projects.js';
 import { formatTimeAgo, escapeHtml, escapeAttr } from './utils.js';
-import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setDetailNavContext, setSelectedSprintIndex } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { OPEN_STATUSES, BOARD_STATUSES } from './constants.js';
@@ -68,6 +68,10 @@ subscribe((key) => {
 let loadSprintsRequestId = 0;
 
 export async function loadSprints() {
+    // Reset the keyboard cursor before the skeleton wipe destroys the selected
+    // card — a stale index would positionally clamp into the re-rendered list
+    // and Enter could open the wrong sprint (CHT-1291 review; mirrors loadBoard).
+    setSelectedSprintIndex(-1);
     const projectId = getCurrentProject();
     if (!projectId) {
         const list = document.getElementById('sprints-list');

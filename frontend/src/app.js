@@ -109,6 +109,7 @@ import { initIssueTooltip, hideTooltip } from './issue-tooltip.js';
 import {
     navigateTo,
     navigateToIssueByIdentifier,
+    navigateToEpicByIdentifier,
     configureRouter,
     registerViews,
     initRouter,
@@ -613,7 +614,7 @@ async function viewDocumentByPath(docId) {
 // currentView and the list DOM intact, so list/board nav handlers need an
 // explicit "a detail view is overlaying me" disengage check.
 const isAnyDetailViewActive = () =>
-    ['issue-detail-view', 'epic-detail-view', 'document-detail-view'].some((id) => {
+    ['issue-detail-view', 'epic-detail-view', 'document-detail-view', 'sprint-detail-view'].some((id) => {
         const el = document.getElementById(id);
         return el && !el.classList.contains('hidden');
     });
@@ -687,7 +688,9 @@ document.addEventListener('keydown', createSimpleListNavigationHandler({
 document.addEventListener('keydown', createSimpleListNavigationHandler({
     view: 'epics',
     selector: '#epics-list .epic-row',
-    open: (el) => { if (el.dataset.identifier) viewEpicByPath(el.dataset.identifier); },
+    // navigateToEpicByIdentifier (not viewEpicByPath) so keyboard-Enter matches
+    // the row click: saves scroll + pushes /epic/<id> history (CHT-1291 review).
+    open: (el) => { if (el.dataset.identifier) navigateToEpicByIdentifier(el.dataset.identifier); },
     getCurrentView,
     getSelectedIndex: getSelectedEpicIndex,
     setSelectedIndex: setSelectedEpicIndex,

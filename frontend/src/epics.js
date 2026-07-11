@@ -7,7 +7,7 @@ import { escapeHtml, escapeAttr } from './utils.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
-import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setSelectedEpicIndex } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 
 // Last-loaded epics list, exposed so epic-detail-view.js can build prev/next
@@ -38,6 +38,10 @@ let loadEpicsRequestId = 0;
  * Load and render the epics list view.
  */
 export async function loadEpics() {
+    // Reset the keyboard cursor before the skeleton wipe destroys the selected
+    // row — a stale index would positionally clamp into the re-rendered list
+    // and Enter could open the wrong epic (CHT-1291 review; mirrors loadBoard).
+    setSelectedEpicIndex(-1);
     const listEl = document.getElementById('epics-list');
     if (!listEl) return;
 
