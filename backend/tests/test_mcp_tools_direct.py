@@ -153,6 +153,82 @@ class TestActivityRecentExplicitProject:
         assert len(result["activities"]) >= 1
 
 
+class TestProjectList:
+    async def test_lists_team_projects(self, test_project):
+        result = await tools.project_list()
+        assert "error" not in result
+        ids = {p["id"] for p in result["projects"]}
+        assert test_project.id in ids
+        # Serialized via ProjectResponse -- id/key/name/issue_count present.
+        me = next(p for p in result["projects"] if p["id"] == test_project.id)
+        assert me["key"] == test_project.key
+        assert me["name"] == test_project.name
+        assert "issue_count" in me
+
+    async def test_explicit_team(self, test_team, test_project):
+        result = await tools.project_list(team=test_team.key)
+        assert "error" not in result
+        assert any(p["id"] == test_project.id for p in result["projects"])
+
+    async def test_unknown_team_is_error(self, test_project):
+        result = await tools.project_list(team="no-such-team")
+        assert "error" in result
+
+    async def test_empty_team_returns_empty_list(self, db, test_user, test_team):
+        # A team the user belongs to but which has no projects -> a clean
+        # empty list, not an error (mirrors the CLI's empty-list branch).
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+
+        empty_team = await OxydeTeam.objects.create(name="Empty Team", key="EMPTY")
+        await OxydeTeamMember.objects.create(
+            team_id=empty_team.id, user_id=test_user.id, role=TeamRole.MEMBER
+        )
+        result = await tools.project_list(team=empty_team.key)
+        assert result == {"projects": []}
+
+    async def test_team_scoped_agent_sees_its_team(self, db, test_team, test_project):
+        from app.oxyde_models.user import OxydeUser
+        from app.utils.security import get_password_hash
+
+        agent = await OxydeUser.objects.create(
+            email="team-agent-projlist@example.com",
+            hashed_password=get_password_hash("x"),
+            name="Team Agent",
+            is_agent=True,
+            agent_team_id=test_team.id,
+        )
+        token = context.current_mcp_user.set(agent)
+        try:
+            result = await tools.project_list()
+            assert "error" not in result
+            assert any(p["id"] == test_project.id for p in result["projects"])
+        finally:
+            context.current_mcp_user.reset(token)
+
+    async def test_project_scoped_agent_has_no_team_wide_access(self, db, test_project):
+        # project_list is team-wide; a purely project-scoped agent has no
+        # team-wide access via REST either, so resolve_team refuses it with
+        # a clean {"error": ...}, never a crash (mirrors activity_recent).
+        from app.oxyde_models.user import OxydeUser
+        from app.utils.security import get_password_hash
+
+        agent = await OxydeUser.objects.create(
+            email="project-agent-projlist@example.com",
+            hashed_password=get_password_hash("x"),
+            name="Project Agent",
+            is_agent=True,
+            agent_project_id=test_project.id,
+        )
+        token = context.current_mcp_user.set(agent)
+        try:
+            result = await tools.project_list()
+            assert "error" in result
+            assert "scoped to a single project" in result["error"]
+        finally:
+            context.current_mcp_user.reset(token)
+
+
 class TestDocViewFuzzyMatch:
     async def test_fuzzy_match_by_title(self, test_team):
         created = await tools.doc_create(title="Unique Fuzzy Title", is_global=True)

@@ -80,12 +80,13 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """Exactly the 10 tools named in CHT-1247, no more, no less."""
+        """Exactly the 11 tools (the 10 from CHT-1247 plus project_list,
+        CHT-1284), no more, no less."""
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
             "issue_list", "issue_view", "issue_create", "issue_update",
             "issue_comment", "issue_start", "doc_list", "doc_view",
-            "doc_create", "activity_recent",
+            "doc_create", "activity_recent", "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -583,6 +584,45 @@ class TestActivityRecent:
         from cli.main import client
         client.get_team_activities = MagicMock(return_value=None)
         assert mcp_mod.activity_recent() == {"activities": []}
+
+
+# ---------------------------------------------------------------------------
+# project_list (CHT-1284)
+# ---------------------------------------------------------------------------
+
+class TestProjectList:
+    def test_lists_current_team_projects(self, mcp_mod):
+        from cli.main import client
+        projects = [
+            {"id": "p1", "key": "CHT", "name": "Chaotic", "issue_count": 42},
+            {"id": "p2", "key": "OPS", "name": "Ops", "issue_count": 3},
+        ]
+        client.get_projects = MagicMock(return_value=projects)
+
+        result = mcp_mod.project_list()
+
+        assert result == {"projects": projects}
+        # limit=1000 keeps stdio in parity with the HTTP transport's cap.
+        client.get_projects.assert_called_once_with("test-team-123", limit=1000)
+
+    def test_empty_returns_empty_list(self, mcp_mod):
+        from cli.main import client
+        client.get_projects = MagicMock(return_value=None)
+        assert mcp_mod.project_list() == {"projects": []}
+
+    def test_no_team_selected_is_clean_error(self, mcp_mod, monkeypatch):
+        # Team-scoped like activity_recent: no team -> {"error": ...}, never a crash.
+        monkeypatch.setattr("cli.main.get_current_team", lambda: None)
+        result = mcp_mod.project_list()
+        assert "No team selected" in result["error"]
+
+    def test_takes_no_parameters(self, mcp_mod):
+        # The stdio tool is param-less (the HTTP transport adds `team`);
+        # guards the snapshot-parity contract at the source.
+        server = mcp_mod.build_server()
+        tools = asyncio.run(server.list_tools())
+        by_name = {t.name: t for t in tools}
+        assert by_name["project_list"].inputSchema.get("properties", {}) == {}
 
 
 # ---------------------------------------------------------------------------

@@ -310,7 +310,7 @@ class TestCapabilityPathRedaction:
 
 
 class TestToolsList:
-    async def test_tools_list_returns_all_ten(self, client, bearer_headers):
+    async def test_tools_list_returns_all_eleven(self, client, bearer_headers):
         resp = await client.post("/mcp", json=_rpc("tools/list"), headers=bearer_headers)
         assert resp.status_code == 200
         tools = resp.json()["result"]["tools"]
@@ -319,7 +319,7 @@ class TestToolsList:
             "issue_list", "issue_view", "issue_create", "issue_update",
             "issue_comment", "issue_start",
             "doc_list", "doc_view", "doc_create",
-            "activity_recent",
+            "activity_recent", "project_list",
         }
 
 
@@ -404,6 +404,14 @@ class TestToolsCall:
         resp = await _tool_call(client, bearer_headers, "activity_recent", id=2)
         payload = json.loads(resp.json()["result"]["content"][0]["text"])
         assert len(payload["activities"]) >= 1
+
+    async def test_project_list(self, client, bearer_headers, test_project):
+        resp = await _tool_call(client, bearer_headers, "project_list")
+        assert resp.status_code == 200
+        payload = json.loads(resp.json()["result"]["content"][0]["text"])
+        assert any(p["id"] == test_project.id for p in payload["projects"])
+        me = next(p for p in payload["projects"] if p["id"] == test_project.id)
+        assert me["key"] == test_project.key and "issue_count" in me
 
     async def test_multiple_teams_requires_disambiguation(self, client, bearer_headers, test_user, test_team):
         """A user on more than one team gets a clear error, not a silent

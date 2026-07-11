@@ -1,7 +1,7 @@
 """Remote MCP tool definitions (CHT-1266) -- the backend-hosted sibling of
 ``chaotic mcp`` (cli/src/cli/mcp_server.py, stdio transport, CHT-1247/#215).
 
-Same 10 tools, same names, same docstrings/descriptions, same shared
+Same 11 tools, same names, same docstrings/descriptions, same shared
 parameters (name, type, default, description) -- see cli/src/cli/mcp_server.py
 for the canonical prose on each. What's DIFFERENT here, and why this
 isn't a shared import between the cli/ and backend/ packages:
@@ -17,12 +17,13 @@ isn't a shared import between the cli/ and backend/ packages:
   (``auth.py`` -> ``context.py``), and an API key's user can belong to
   more than one team/project where a CLI profile can't. That's the one
   place the schemas legitimately diverge: ``issue_list``, ``doc_list``,
-  ``issue_create``, ``doc_create``, and ``activity_recent`` gain an
-  additional optional ``team`` parameter the stdio version doesn't have
-  (``project`` already existed on all of them; see ``scope.py``). The
-  other four tools (``issue_view``, ``issue_update``, ``issue_comment``,
-  ``issue_start``) key off a globally-unique issue identifier and need no
-  extra scoping parameter at all.
+  ``issue_create``, ``doc_create``, ``activity_recent``, and
+  ``project_list`` gain an additional optional ``team`` parameter the
+  stdio version doesn't have (``project`` already existed on all but
+  ``project_list``; see ``scope.py``). The other four tools
+  (``issue_view``, ``issue_update``, ``issue_comment``, ``issue_start``)
+  key off a globally-unique issue identifier and need no extra scoping
+  parameter at all.
 * ``cli/tests/test_mcp_server.py`` and ``backend/tests/test_mcp_toolset_sync.py``
   both assert their live toolset against the same checked-in snapshot
   (``docs/mcp-toolset-schema.json``) -- if either side's tool names,
@@ -61,6 +62,7 @@ from app.mcp_server.scope import (
 )
 from app.schemas.document import DocumentCreate
 from app.schemas.issue import IssueCommentCreate, IssueCreate, IssueUpdate
+from app.schemas.project import ProjectResponse
 from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
@@ -509,6 +511,27 @@ async def doc_create(
 
 
 # ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+@_boundary
+async def project_list(
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """List the projects in your team: id, key, name, and issue count.
+
+    The one call that answers "what projects exist" -- every other tool
+    takes a `project` filter but none enumerate them. Scoped to the
+    current team (`chaotic status`); the HTTP transport adds a `team`
+    parameter for API keys that can see more than one.
+    """
+    user = get_current_mcp_user()
+    team_id = await resolve_team(user, team)
+    projects = await ProjectService().list_by_team(team_id, limit=1000)
+    return {"projects": [ProjectResponse.model_validate(p).model_dump(mode="json") for p in projects]}
+
+
+# ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
 
@@ -542,7 +565,7 @@ async def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    doc_list, doc_view, doc_create, activity_recent,
+    doc_list, doc_view, doc_create, activity_recent, project_list,
 )
 
 
