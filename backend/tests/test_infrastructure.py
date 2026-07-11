@@ -27,6 +27,9 @@ class TestHealthEndpoint:
         assert body["status"] == "healthy"
         assert body["db"] == "ok"
         assert "version" in body
+        # CHT-1294: /health now also reports the live git sha so a poll
+        # answers "what's deployed" in one call.
+        assert isinstance(body["git_sha"], str) and body["git_sha"]
 
     @pytest.mark.asyncio
     async def test_health_check_unmigrated_db(self, client):
@@ -45,6 +48,9 @@ class TestHealthEndpoint:
         assert body["status"] == "healthy"
         assert body["db"] == "error"
         assert "version" in body
+        # git_sha is assembled independently of the DB round-trip, so it's
+        # present even when the DB is broken (CHT-1294).
+        assert isinstance(body["git_sha"], str) and body["git_sha"]
 
 
 class TestUnhandledExceptionHandler:
@@ -131,6 +137,121 @@ class TestRootEndpoint:
         response = await client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
+
+
+class TestVersionEndpoint:
+    """Deploy/build legibility endpoint (CHT-1294)."""
+
+    @pytest.mark.asyncio
+    async def test_version_reports_git_and_assets(self, client):
+        response = await client.get("/api/version")
+        assert response.status_code == 200
+        body = response.json()
+        for key in ("git_sha", "git_sha_short", "start_time",
+                    "bundle_hash", "css_hash", "app_version"):
+            assert key in body, f"/api/version missing {key}"
+        assert isinstance(body["git_sha"], str) and body["git_sha"]
+        assert isinstance(body["git_dirty"], bool)
+        # start_time is an ISO-8601 stamp captured at import.
+        assert "T" in body["start_time"]
+
+    @pytest.mark.asyncio
+    async def test_version_is_unauthenticated(self, client):
+        # Deploy metadata, not secrets -- must not require a token.
+        response = await client.get("/api/version")
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_index_stamps_content_hash_cache_buster(self, client):
+        """The served page carries the content-hash ?v= (CHT-1294), not the
+        old hand-incremented counter, and exposes the sha in a meta tag."""
+        from app.main import _version_info
+
+        info = _version_info()
+        html = (await client.get("/")).text
+        assert f"app.bundle.js?v={info['bundle_hash']}" in html
+        assert f"style.css?v={info['css_hash']}" in html
+        assert 'name="chaotic-version"' in html
+        # The manual counter is gone.
+        assert "app.bundle.js?v=35" not in html
+
+
+class TestVersionModule:
+    """Unit tests for app.version's fail-soft helpers (CHT-1294)."""
+
+    def test_asset_cache_buster_is_deterministic_8_hex(self, tmp_path):
+        from app.version import asset_cache_buster
+
+        f = tmp_path / "asset-a.js"
+        f.write_bytes(b"console.log('hi')")
+        h = asset_cache_buster(str(f))
+        assert len(h) == 8 and all(c in "0123456789abcdef" for c in h)
+        # Same bytes -> same buster (this is what makes the cache stable).
+        assert asset_cache_buster(str(f)) == h
+
+    def test_asset_cache_buster_changes_with_content(self, tmp_path):
+        from app.version import asset_cache_buster
+
+        a = tmp_path / "one.js"
+        a.write_bytes(b"AAAA")
+        b = tmp_path / "two.js"
+        b.write_bytes(b"BBBB")
+        assert asset_cache_buster(str(a)) != asset_cache_buster(str(b))
+
+    def test_asset_cache_buster_missing_file_is_soft(self, tmp_path):
+        from app.version import asset_cache_buster
+
+        assert asset_cache_buster(str(tmp_path / "nope.js")) == "missing"
+
+    def test_get_version_info_on_non_git_dir_is_unknown(self, tmp_path):
+        """A deploy that isn't a git checkout degrades to 'unknown', never
+        raises -- legibility must not be able to break a request."""
+        from app.version import get_version_info
+
+        info = get_version_info(str(tmp_path), str(tmp_path))
+        assert info["git_sha"] == "unknown"
+        assert info["git_sha_short"] == "unknown"
+        # Every field degrades uniformly -- commit_time included (it used to
+        # be the one field that returned None instead of "unknown").
+        assert info["git_commit_time"] == "unknown"
+        assert info["git_dirty"] is False
+        # No static/ under tmp_path -> assets soft-degrade, don't crash.
+        assert info["bundle_hash"] == "missing"
+        assert info["css_hash"] == "missing"
+
+    def test_git_dirty_flips_true_on_uncommitted_changes(self, tmp_path):
+        """The dirty flag exists to loudly signal a hand-edited prod
+        checkout -- exercise the positive case against a real git repo."""
+        import subprocess
+
+        from app.version import get_version_info
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(repo), *args],
+                           check=True, capture_output=True)
+
+        git("init")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (repo / "f.txt").write_text("one")
+        git("add", "f.txt")
+        git("commit", "-m", "init")
+        # Clean tree first: distinct paths so lru_cache doesn't collide.
+        clean = get_version_info(str(repo), str(repo))
+        assert clean["git_dirty"] is False
+        assert clean["git_sha"] != "unknown"
+        assert clean["git_commit_time"] != "unknown"
+
+        # Now dirty it -- a fresh checkout dir keeps the cache key distinct.
+        (repo / "f.txt").write_text("two")
+        dirty_view = tmp_path / "repo-dirty-view"
+        subprocess.run(["cp", "-a", str(repo), str(dirty_view)],
+                       check=True, capture_output=True)
+        dirty = get_version_info(str(dirty_view), str(dirty_view))
+        assert dirty["git_dirty"] is True
 
 
 class TestConnectionManager:

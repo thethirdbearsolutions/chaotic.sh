@@ -18,6 +18,7 @@ from app.utils.security import decode_token
 from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
+from app.version import get_version_info
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -45,6 +46,13 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
+    # CHT-1294: prime the version cache at startup so the git subprocesses
+    # (up to 4, each a blocking call) run here rather than on the first
+    # request after a restart -- which is exactly when a deploy/health
+    # check hammers the server. Every /health, /, and /api/version after
+    # this is a pure dict read off the lru_cache, never touching the event
+    # loop with a subprocess. Fail-soft, so a git-less deploy still boots.
+    get_version_info(REPO_ROOT, FRONTEND_DIR)
     # CHT-1266: the MCP session manager owns a task group that must run
     # for the app's whole lifetime -- Starlette doesn't cascade a mounted
     # sub-app's own lifespan, so it's entered explicitly here (the mcp
@@ -142,11 +150,46 @@ if os.path.exists(os.path.join(FRONTEND_DIR, "static")):
 # Templates
 templates = Jinja2Templates(directory=os.path.join(FRONTEND_DIR, "templates"))
 
+# Deploy/build legibility (CHT-1294). REPO_ROOT is the git checkout root
+# (one level up from backend/, where FRONTEND_DIR also lives).
+REPO_ROOT = os.path.dirname(BASE_DIR)
+
+
+def _version_info() -> dict:
+    return get_version_info(REPO_ROOT, FRONTEND_DIR)
+
+
+def _render_index(request: Request):
+    """Serve index.html with content-hashed asset cache-busters (CHT-1294).
+
+    The ``?v=`` values are derived from the actual bytes of the bundle and
+    stylesheet, so the browser cache busts exactly when the content changes
+    -- replacing the hand-incremented counters that used to silently serve
+    stale JS when someone forgot to bump them. ``git_sha_short`` is exposed
+    in the page so "what's live" is visible without grepping the bundle.
+    """
+    info = _version_info()
+    return templates.TemplateResponse(request, "index.html", {
+        "asset_version": info["bundle_hash"],
+        "css_version": info["css_hash"],
+        "git_sha_short": info["git_sha_short"],
+    })
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     """Serve the main page."""
-    return templates.TemplateResponse(request, "index.html")
+    return _render_index(request)
+
+
+@app.get("/api/version")
+async def version_info():
+    """Report what commit/build is live (CHT-1294): git sha, commit time,
+    process start time, and the content-hash cache-busters currently
+    stamped onto the JS/CSS. Unauthenticated on purpose -- it's deploy
+    metadata, not secrets -- and fail-soft (unknown/missing, never 500).
+    """
+    return {**_version_info(), "app_version": app.version}
 
 
 @app.get("/health")
@@ -169,7 +212,14 @@ async def health():
     except Exception:
         db_status = "error"
 
-    return {"status": "healthy", "db": db_status, "version": app.version}
+    # `git_sha` is additive (CHT-1294): a health poll now also answers
+    # "what commit is live" in one call, without hitting /api/version.
+    return {
+        "status": "healthy",
+        "db": db_status,
+        "version": app.version,
+        "git_sha": _version_info()["git_sha_short"],
+    }
 
 
 @app.websocket("/ws")
@@ -247,7 +297,7 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa_fallback(request: Request, full_path: str):
     """Serve the SPA for all non-API routes."""
-    return templates.TemplateResponse(request, "index.html")
+    return _render_index(request)
 
 
 if __name__ == "__main__":
