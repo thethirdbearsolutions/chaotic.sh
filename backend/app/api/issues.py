@@ -42,6 +42,7 @@ from app.services.team_service import TeamService
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.issue import OxydeIssueRelation
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import DocumentActivityType
 
@@ -152,6 +153,27 @@ async def _validate_parent(parent_id: str | None, project_id: str, issue_id: str
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Parent issue does not belong to this project",
         )
+    # CHT-297: reject cycles. The direct self-parent case is caught above;
+    # here we walk the proposed parent's ancestor chain, and if this issue
+    # appears in it, linking would close a loop (A→B→A). Bounded so a
+    # pre-existing corrupt chain can't loop forever.
+    if issue_id:
+        ancestor_id = parent.parent_id
+        depth = 0
+        while ancestor_id is not None:
+            if ancestor_id == issue_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot set parent: would create a cycle in the issue hierarchy",
+                )
+            if depth >= 1000:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Parent chain too deep (possible pre-existing cycle)",
+                )
+            ancestor = await issue_service.get_by_id(ancestor_id)
+            ancestor_id = ancestor.parent_id if ancestor else None
+            depth += 1
 
 
 def issue_to_response(issue: Issue) -> IssueResponse:
@@ -1555,6 +1577,31 @@ async def create_relation(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot create relations between issues in different teams",
+        )
+
+    # CHT-298: no self-relations (an issue can't block/duplicate/relate to itself).
+    if issue_id == relation_in.related_issue_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An issue cannot have a relation to itself",
+        )
+    # CHT-298: no circular relations — reject the inverse of an existing
+    # relation of the same type (e.g. creating "A blocks B" when "B blocks
+    # A" already exists, which would deadlock the ready/unblock logic).
+    # The (issue_id, related_issue_id) pair is UNIQUE, so there is at most
+    # one inverse row; fetch it and compare types in Python (relation_type
+    # is stored as the enum NAME, so a direct enum-valued filter misses).
+    def _norm(rt) -> str:
+        return (rt if isinstance(rt, str) else rt.name).upper()
+
+    inverse = await OxydeIssueRelation.objects.filter(
+        issue_id=relation_in.related_issue_id,
+        related_issue_id=issue_id,
+    ).first()
+    if inverse is not None and _norm(inverse.relation_type) == _norm(relation_in.relation_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A relation of this type already exists in the opposite direction",
         )
 
     relation = await issue_service.create_relation(issue_id, relation_in)

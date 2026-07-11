@@ -4117,3 +4117,101 @@ async def test_description_revisions_limit_capped(
     )
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+class TestParentAndRelationCycles:
+    """CHT-297 (parent_id cycle/self detection) + CHT-298 (relation
+    self-reference and circular/inverse detection)."""
+
+    async def _mk(self, client, auth_headers, test_project, title):
+        r = await client.post(
+            f"/api/projects/{test_project.id}/issues",
+            headers=auth_headers, json={"title": title},
+        )
+        assert r.status_code in (200, 201), r.text
+        return r.json()["id"]
+
+    async def _set_parent(self, client, auth_headers, child_id, parent_id):
+        return await client.patch(
+            f"/api/issues/{child_id}", headers=auth_headers,
+            json={"parent_id": parent_id},
+        )
+
+    async def _relate(self, client, auth_headers, src, dst, rtype="blocks"):
+        return await client.post(
+            f"/api/issues/{src}/relations", headers=auth_headers,
+            json={"related_issue_id": dst, "relation_type": rtype},
+        )
+
+    # --- CHT-297: parent cycles ---
+
+    async def test_self_parent_rejected(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        r = await self._set_parent(client, auth_headers, a, a)
+        assert r.status_code == 400
+        assert "own parent" in r.json()["detail"].lower()
+
+    async def test_direct_cycle_rejected(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        # B's parent = A  (chain: B -> A)
+        assert (await self._set_parent(client, auth_headers, b, a)).status_code == 200
+        # Now A's parent = B would close A -> B -> A
+        r = await self._set_parent(client, auth_headers, a, b)
+        assert r.status_code == 400
+        assert "cycle" in r.json()["detail"].lower()
+
+    async def test_deep_cycle_rejected(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        c = await self._mk(client, auth_headers, test_project, "C")
+        # chain: C -> B -> A
+        assert (await self._set_parent(client, auth_headers, b, a)).status_code == 200
+        assert (await self._set_parent(client, auth_headers, c, b)).status_code == 200
+        # A's parent = C would close A -> C -> B -> A
+        r = await self._set_parent(client, auth_headers, a, c)
+        assert r.status_code == 400
+        assert "cycle" in r.json()["detail"].lower()
+
+    async def test_valid_reparent_allowed(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        # B -> A is a plain, acyclic parent link.
+        r = await self._set_parent(client, auth_headers, b, a)
+        assert r.status_code == 200
+        assert r.json()["parent_id"] == a
+
+    # --- CHT-298: relation self / inverse ---
+
+    async def test_self_relation_rejected(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        r = await self._relate(client, auth_headers, a, a, "blocks")
+        assert r.status_code == 400
+        assert "itself" in r.json()["detail"].lower()
+
+    async def test_inverse_same_type_rejected(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        assert (await self._relate(client, auth_headers, a, b, "blocks")).status_code == 201
+        # B blocks A is the inverse of A blocks B -> circular deadlock -> reject
+        r = await self._relate(client, auth_headers, b, a, "blocks")
+        assert r.status_code == 400
+        assert "opposite direction" in r.json()["detail"].lower()
+
+    async def test_inverse_different_type_allowed(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        assert (await self._relate(client, auth_headers, a, b, "blocks")).status_code == 201
+        # B relates_to A is a different type from A blocks B -> allowed
+        r = await self._relate(client, auth_headers, b, a, "relates_to")
+        assert r.status_code == 201
+
+    async def test_same_direction_is_idempotent_not_error(self, client, auth_headers, test_project, db):
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        assert (await self._relate(client, auth_headers, a, b, "blocks")).status_code == 201
+        # Same direction again is the existing idempotent no-op, NOT the
+        # new inverse rejection.
+        r = await self._relate(client, auth_headers, a, b, "blocks")
+        assert r.status_code == 201
