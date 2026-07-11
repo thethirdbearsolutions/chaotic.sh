@@ -9,7 +9,7 @@ from app.oxyde_models.team import OxydeTeamMember
 from app.schemas.document import DocumentCommentCreate
 from app.schemas.issue import IssueCommentCreate, IssueUpdate
 from app.services.document_service import DocumentService
-from app.services.inbox_service import InboxService, _member_handle
+from app.services.inbox_service import InboxService, _member_handle, _strip_code_spans, _MENTION_RE
 from app.services.issue_service import ClaimRitualsError, IssueService, TicketRitualsError
 from app.services.ritual_service import RitualService
 
@@ -822,3 +822,46 @@ class TestInboxApi:
     async def test_list_requires_auth(self, client, db):
         resp = await client.get("/api/inbox")
         assert resp.status_code == 401
+
+
+class TestStripCodeSpans:
+    """CHT-1272 review: code-span stripping must handle the leak edge cases the
+    naive regex missed — unclosed fences, nested/variable-length fences, and
+    double-backtick / multi-line inline spans — while preserving the deliberate
+    '@handle.' wart and still firing real mentions outside code."""
+
+    def _mentions(self, text):
+        return _MENTION_RE.findall(_strip_code_spans(text))
+
+    def test_closed_fence_stripped(self):
+        assert self._mentions("```\n@bob\n```") == []
+
+    def test_unclosed_fence_stripped_to_eof(self):
+        assert self._mentions("before\n```\n@zara do the thing") == []
+
+    def test_nested_longer_fence_stripped(self):
+        # A 4-backtick fence quoting a literal ``` run (GFM) — the inner @handle
+        # must not leak.
+        assert self._mentions("````\n```\n@nested\n```\n````") == []
+
+    def test_double_backtick_inline_stripped(self):
+        assert self._mentions("``@dbl``") == []
+
+    def test_single_backtick_inline_stripped(self):
+        assert self._mentions("`@one`") == []
+
+    def test_multiline_inline_span_stripped(self):
+        assert self._mentions("``multi\n@line``") == []
+
+    def test_unclosed_single_backtick_is_literal(self):
+        # CommonMark: an unclosed inline backtick is literal text, so a mention
+        # after it still fires (matches the frontend).
+        assert self._mentions("a ` b @real") == ["real"]
+
+    def test_real_mention_outside_code_still_fires(self):
+        assert self._mentions("```\n@inside\n``` and @outside") == ["outside"]
+
+    def test_trailing_period_wart_preserved(self):
+        # The deliberate mirror-wart: a mention immediately followed by a period
+        # is captured with the period (unchanged by this fix).
+        assert self._mentions("@bob.") == ["bob."]

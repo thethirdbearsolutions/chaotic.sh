@@ -54,6 +54,26 @@ describe('isInsideCodeSpan (CHT-1272)', () => {
         const text = 'hello `@bob unclosed';
         expect(isInsideCodeSpan(text, text.length)).toBe(false);
     });
+
+    // Edge cases the earlier toggle/single-line impl missed (CHT-1272 review) —
+    // must stay in parity with the backend _strip_code_spans regex.
+    it('is true inside a longer (4-backtick) fence quoting an inner ``` run', () => {
+        const text = 'x\n````\n```\n@bob\n```\n````\ny';
+        const pos = text.indexOf('@bob') + 2;
+        expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
+
+    it('is true inside a double-backtick inline span', () => {
+        const text = 'see ``@bob`` here';
+        const pos = text.indexOf('@bob') + 2;
+        expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
+
+    it('is true inside a multi-line inline span', () => {
+        const text = 'a ``line1\n@bob line2`` b';
+        const pos = text.indexOf('@bob') + 2;
+        expect(isInsideCodeSpan(text, pos)).toBe(true);
+    });
 });
 
 // CHT-1215: Escape inside the suggestion popup used to also bubble to the
