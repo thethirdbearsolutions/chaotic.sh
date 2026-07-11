@@ -405,6 +405,26 @@ class TestInboxTeamScoping:
         # 404 (not 403) so a revoked member can't even confirm the entry exists.
         assert resp.status_code == 404
 
+    async def test_agent_scoped_by_agent_team_id_sees_own_inbox(self, db, test_team):
+        """A production agent (is_agent + agent_team_id, NO TeamMember row, as
+        AgentService.create builds them) must still read its own inbox —
+        membership scoping delegates to get_user_teams, which branches for
+        agents (CHT-1274 review CRITICAL: a direct TeamMember query would lock
+        every agent out of its own inbox)."""
+        from app.oxyde_models.user import OxydeUser
+        agent = await OxydeUser.objects.create(
+            email="prodagent@agent.local", hashed_password="", name="ProdAgent",
+            is_agent=True, agent_team_id=test_team.id,
+        )
+        service = InboxService()
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=agent.id, kind=InboxEntryKind.ASSIGNMENT,
+            team_id=test_team.id, title="agent entry",
+        )
+        assert len(await service.list_for_user(agent.id)) == 1
+        assert await service.unread_count(agent.id) == 1
+        assert await service.is_member_of_entry_team(agent.id, entry) is True
+
 
 class TestResolveGateOrReview:
     async def test_resolves_gate_pending_only_for_matching_ritual_issue(

@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 
 from app.enums import ActivityType, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
-from app.oxyde_models.team import OxydeTeamMember
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.team_service import TeamService
 
@@ -262,17 +261,22 @@ class InboxService:
     # ------------------------------------------------------------------
 
     async def current_team_ids(self, user_id: str) -> list[str]:
-        """Team ids the user is CURRENTLY a member of.
+        """Team ids the user CURRENTLY has access to.
 
-        Inbox reads must be scoped to live membership: entries only cascade on
+        Inbox reads must be scoped to live access: entries only cascade on
         user/team DELETION, never on member removal, so a removed member would
         otherwise keep reading (and live-refetching) entries from a team they've
         left (CHT-1274/CHT-1271). Every inbox entry has a non-null team_id, so
-        scoping reads to this set is sufficient; an empty set (no memberships)
-        correctly yields no entries.
+        scoping reads to this set is sufficient; an empty set correctly yields
+        no entries.
+
+        Delegates to TeamService.get_user_teams so it branches correctly for
+        AGENTS (scoped via user.agent_team_id, no TeamMember row) as well as
+        humans (TeamMember membership) — a direct TeamMember query would lock
+        every agent out of its own inbox.
         """
-        members = await OxydeTeamMember.objects.filter(user_id=user_id).all()
-        return [m.team_id for m in members]
+        teams = await TeamService().get_user_teams(user_id)
+        return [t.id for t in teams]
 
     async def is_member_of_entry_team(self, user_id: str, entry: OxydeInboxEntry) -> bool:
         """Whether the user is currently a member of the entry's team (CHT-1274)."""
