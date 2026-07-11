@@ -48,6 +48,9 @@ class TestHealthEndpoint:
         assert body["status"] == "healthy"
         assert body["db"] == "error"
         assert "version" in body
+        # git_sha is assembled independently of the DB round-trip, so it's
+        # present even when the DB is broken (CHT-1294).
+        assert isinstance(body["git_sha"], str) and body["git_sha"]
 
 
 class TestUnhandledExceptionHandler:
@@ -208,10 +211,47 @@ class TestVersionModule:
         info = get_version_info(str(tmp_path), str(tmp_path))
         assert info["git_sha"] == "unknown"
         assert info["git_sha_short"] == "unknown"
+        # Every field degrades uniformly -- commit_time included (it used to
+        # be the one field that returned None instead of "unknown").
+        assert info["git_commit_time"] == "unknown"
         assert info["git_dirty"] is False
         # No static/ under tmp_path -> assets soft-degrade, don't crash.
         assert info["bundle_hash"] == "missing"
         assert info["css_hash"] == "missing"
+
+    def test_git_dirty_flips_true_on_uncommitted_changes(self, tmp_path):
+        """The dirty flag exists to loudly signal a hand-edited prod
+        checkout -- exercise the positive case against a real git repo."""
+        import subprocess
+
+        from app.version import get_version_info
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(repo), *args],
+                           check=True, capture_output=True)
+
+        git("init")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (repo / "f.txt").write_text("one")
+        git("add", "f.txt")
+        git("commit", "-m", "init")
+        # Clean tree first: distinct paths so lru_cache doesn't collide.
+        clean = get_version_info(str(repo), str(repo))
+        assert clean["git_dirty"] is False
+        assert clean["git_sha"] != "unknown"
+        assert clean["git_commit_time"] != "unknown"
+
+        # Now dirty it -- a fresh checkout dir keeps the cache key distinct.
+        (repo / "f.txt").write_text("two")
+        dirty_view = tmp_path / "repo-dirty-view"
+        subprocess.run(["cp", "-a", str(repo), str(dirty_view)],
+                       check=True, capture_output=True)
+        dirty = get_version_info(str(dirty_view), str(dirty_view))
+        assert dirty["git_dirty"] is True
 
 
 class TestConnectionManager:

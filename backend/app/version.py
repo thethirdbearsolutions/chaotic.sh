@@ -72,7 +72,7 @@ def get_version_info(repo_root: str, frontend_dir: str) -> dict:
     return {
         "git_sha": _git(repo_root, "rev-parse", "HEAD") or "unknown",
         "git_sha_short": _git(repo_root, "rev-parse", "--short", "HEAD") or "unknown",
-        "git_commit_time": _git(repo_root, "show", "-s", "--format=%cI", "HEAD"),
+        "git_commit_time": _git(repo_root, "show", "-s", "--format=%cI", "HEAD") or "unknown",
         # True only when the working tree has uncommitted changes -- a
         # loud signal that a prod checkout was hand-edited off a clean sha.
         "git_dirty": bool(_git(repo_root, "status", "--porcelain")),

@@ -46,6 +46,13 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
+    # CHT-1294: prime the version cache at startup so the git subprocesses
+    # (up to 4, each a blocking call) run here rather than on the first
+    # request after a restart -- which is exactly when a deploy/health
+    # check hammers the server. Every /health, /, and /api/version after
+    # this is a pure dict read off the lru_cache, never touching the event
+    # loop with a subprocess. Fail-soft, so a git-less deploy still boots.
+    get_version_info(REPO_ROOT, FRONTEND_DIR)
     # CHT-1266: the MCP session manager owns a task group that must run
     # for the app's whole lifetime -- Starlette doesn't cascade a mounted
     # sub-app's own lifespan, so it's entered explicitly here (the mcp
