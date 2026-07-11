@@ -56,6 +56,7 @@ from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.issue import IssueCreate, IssueResponse, LabelCreate, LabelResponse
 from app.schemas.document import DocumentCreate, DocumentResponse
 from app.schemas.sprint import SprintCreate, SprintResponse
+from app.enums import SprintStatus
 from app.schemas.ritual import RitualCreate, RitualResponse
 
 from app.api import projects as _projects
@@ -192,11 +193,20 @@ async def create_project_sprint(
 async def list_project_sprints(
     project_id: str,
     current_user: CurrentUser,
+    sprint_status: SprintStatus | None = None,
     skip: int = 0,
     limit: int = 100,
 ):
-    """List a project's sprints (CHT-1223). Replaces ``GET /sprints?project_id=...``."""
-    return await _sprints.list_sprints(project_id=project_id, current_user=current_user, skip=skip, limit=limit)
+    """List a project's sprints (CHT-1223). Replaces ``GET /sprints?project_id=...``.
+
+    ``sprint_status`` filters by status (e.g. ``active``); dropping it silently
+    made callers like ``chaotic sprint transactions`` (no-arg) resolve the wrong
+    sprint (CHT-1295).
+    """
+    return await _sprints.list_sprints(
+        project_id=project_id, current_user=current_user,
+        sprint_status=sprint_status, skip=skip, limit=limit,
+    )
 
 
 @router.post("/projects/{project_id}/rituals", response_model=RitualResponse, status_code=status.HTTP_201_CREATED)

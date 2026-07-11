@@ -25,11 +25,23 @@ async def test_list_sprints(client, auth_headers, test_project, test_sprint):
 
 @pytest.mark.asyncio
 async def test_list_sprints_with_status_filter(client, auth_headers, test_project, db):
-    """Test listing sprints with status filter."""
-    sprint = await OxydeSprint.objects.create(
+    """Status filter must EXCLUDE non-matching sprints.
+
+    CHT-1295: the nested route ``GET /projects/{id}/sprints`` silently dropped
+    ``sprint_status``, so this filter was a no-op. The old test created only an
+    active sprint and asserted ``all(status == "active")`` — trivially true even
+    when the filter is ignored. This creates a completed sprint too and asserts
+    it's excluded, which fails without the forward-through fix.
+    """
+    await OxydeSprint.objects.create(
         project_id=test_project.id,
         name="Active Sprint",
         status=SprintStatus.ACTIVE,
+    )
+    await OxydeSprint.objects.create(
+        project_id=test_project.id,
+        name="Old Completed Sprint",
+        status=SprintStatus.COMPLETED,
     )
 
     response = await client.get(
@@ -38,6 +50,9 @@ async def test_list_sprints_with_status_filter(client, auth_headers, test_projec
     )
     assert response.status_code == 200
     data = response.json()
+    names = {s["name"] for s in data}
+    assert "Active Sprint" in names
+    assert "Old Completed Sprint" not in names  # the filter must exclude it
     assert all(s["status"] == "active" for s in data)
 
 
