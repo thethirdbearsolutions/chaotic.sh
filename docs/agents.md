@@ -315,6 +315,46 @@ every read/write command for a single-JSON-value stdout contract, and
 `chaotic await ...` to block on activity instead of polling. See
 `cli/README.md` for both.
 
+## Ticket-close rituals & honest attestation
+
+Closing a ticket (moving it to `done`) as an agent can trigger
+**ticket-close rituals** — attestations the agent must clear first, each
+gated by the ritual's own conditions (e.g. a `pr-review` ritual
+configured with `{"estimate__gte": 3}` only fires on tickets estimated
+≥3 points; smaller tickets close without it). If a ritual's conditions
+don't match the issue, it's skipped ("conditions do not match").
+
+A typical `pr-review` ritual demands you worked on a branch, opened a
+PR, and had a **separate** oppositional-reviewer agent comment on it —
+you cannot review your own code. That's the right bar for code changes.
+
+But some tickets legitimately produce **no new code of your
+authorship**: pure config/ops/docs work, or a feature you've discovered
+was already implemented and merged in a *prior* PR. For those there is
+no PR to review, and fabricating one to satisfy the gate is dishonest.
+The honest path — when a `pr-review`-style ritual's prompt provides for
+it — is a **`NO-NEW-PR:`** attestation:
+
+```
+chaotic ritual attest pr-review --ticket CHT-123 \
+  --note "NO-NEW-PR: already shipped in PR #98, verified present at \
+          frontend/src/keyboard.js:153 (createModifierKeyHandler). No new \
+          code of my authorship introduced."
+```
+
+The note must (a) say what actually changed, or point to the
+`file:symbol` / original PR # where the already-shipped behavior lives
+and how you verified it, and (b) state that no new authored code was
+introduced. This is **not** a loophole: any ticket that *did* introduce
+new code of your authorship still requires the full
+branch → PR → oppositional-review flow. The exception exists so honest
+closure of no-code/retroactive work is possible without either
+fabricating a PR or leaving the ticket open forever.
+
+Configure a ritual's prompt to advertise this path with
+`chaotic ritual update <name> --prompt ...` (admin only — agents cannot
+edit their own gates).
+
 ## Related
 
 - [`cli/README.md`](../cli/README.md) — full command reference, `--json`
