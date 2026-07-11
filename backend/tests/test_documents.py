@@ -1233,3 +1233,39 @@ class TestDocumentRevisions:
         )
         assert resp.status_code == 200
         assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+class TestCreateDocumentProjectScopedAgent:
+    """CHT-1273: a project-scoped agent (agent_project_id set, agent_team_id
+    None) must be able to create docs in its own project. create_document
+    previously gated on check_user_team_access, which such agents always fail."""
+
+    async def _project_agent(self, project_id, email="pagent@agent.local"):
+        agent = await OxydeUser.objects.create(
+            email=email, hashed_password="", name="PAgent",
+            is_agent=True, agent_project_id=project_id,
+        )
+        headers = {"Authorization": f"Bearer {create_access_token(data={'sub': agent.id})}"}
+        return agent, headers
+
+    async def test_project_scoped_agent_can_create_doc_in_its_project(self, client, db, test_team, test_project):
+        _, headers = await self._project_agent(test_project.id)
+        resp = await client.post(
+            f"/api/teams/{test_team.id}/documents",
+            headers=headers,
+            json={"title": "Agent Doc", "content": "x", "project_id": test_project.id, "icon": "📄"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["project_id"] == test_project.id
+
+    async def test_project_scoped_agent_cannot_create_teamwide_doc(self, client, db, test_team, test_project):
+        # A team-wide doc (no project_id) still requires team access, which a
+        # project-scoped agent lacks — the fix must not over-permit.
+        _, headers = await self._project_agent(test_project.id, email="pagent2@agent.local")
+        resp = await client.post(
+            f"/api/teams/{test_team.id}/documents",
+            headers=headers,
+            json={"title": "TeamWide", "content": "x", "icon": "📄"},
+        )
+        assert resp.status_code == 403
