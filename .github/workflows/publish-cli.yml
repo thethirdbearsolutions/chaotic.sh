@@ -124,7 +124,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   publish-pypi:
-    needs: [build, publish-test-pypi]
+    needs: [build]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
