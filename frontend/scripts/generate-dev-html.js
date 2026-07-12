@@ -37,8 +37,11 @@ let output = source;
 //    /static/css/style.css -> /css/style.css
 output = output.replace(/(?<==")\/static\//g, '/');
 
-// 2. Remove cache-busting query strings (?v=NN) in attribute values
-output = output.replace(/\?v=\d+(?=")/g, '');
+// 2. Remove cache-busting query strings in attribute values. Handles both
+//    the legacy numeric form (?v=42) and the content-hash form rendered
+//    from a Jinja expression (?v={{ asset_version | default('dev', true) }})
+//    introduced in CHT-1294 — the dev entry needs neither.
+output = output.replace(/\?v=(?:\d+|\{\{[^}]*\}\})(?=")/g, '');
 
 // 3. Replace the production bundle script with Vite module entry
 output = output.replace(
