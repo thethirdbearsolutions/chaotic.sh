@@ -15,11 +15,14 @@ def _main():
 
 
 def _parse_budget_amount(value):
-    """Parse a budget CLI arg as an integer point count."""
+    """Parse a budget CLI arg as an integer point count (>= 1, mirrors backend ge=1)."""
     try:
-        return int(value)
+        amount = int(value)
     except ValueError:
         raise click.ClickException(f"Invalid budget amount: '{value}' (expected an integer).")
+    if amount < 1:
+        raise click.ClickException(f"Invalid budget amount: {amount} (must be at least 1).")
+    return amount
 
 
 def _print_budget_panel(result):
@@ -171,10 +174,14 @@ def register(cli):
             target_id = m.resolve_sprint_id(sprint_id, project_id)
             set_amount = _parse_budget_amount(amount)
         elif sprint_id is not None:
+            # A lone numeric arg is AMOUNT-for-active; a non-numeric arg is a
+            # SPRINT_ID read. Only validate the range once we know it's numeric.
             try:
-                set_amount = int(sprint_id)
+                int(sprint_id)
             except ValueError:
                 target_id = m.resolve_sprint_id(sprint_id, project_id)
+            else:
+                set_amount = _parse_budget_amount(sprint_id)
 
         if set_amount is not None:
             if target_id is None:

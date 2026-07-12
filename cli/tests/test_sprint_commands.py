@@ -355,6 +355,38 @@ class TestSprintBudget:
         assert 'Invalid budget amount' in result.output
         client.update_sprint.assert_not_called()
 
+    def test_sprint_budget_set_zero_rejected(self, cli_runner):
+        """sprint budget 0 is rejected client-side (backend requires ge=1)
+        instead of hitting a cryptic backend validation error (CHT-343)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock()
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '0'])
+
+        assert result.exit_code != 0
+        assert 'must be at least 1' in result.output
+        client.update_sprint.assert_not_called()
+
+    def test_sprint_budget_set_negative_rejected(self, cli_runner):
+        """sprint budget <SPRINT_ID> -5 is rejected client-side (CHT-343).
+
+        (A bare leading-dash arg is parsed by Click as an option, so the
+        negative case reaches _parse_budget_amount via the two-arg form.)"""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock()
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 30', '--', '-5'])
+
+        assert result.exit_code != 0
+        assert 'must be at least 1' in result.output
+        client.update_sprint.assert_not_called()
+
     def test_sprint_budget_set_api_error(self, cli_runner):
         """sprint budget 25 surfaces an APIError (e.g. arrears/limbo
         rejection) the same way other sprint write commands do (CHT-343)."""
