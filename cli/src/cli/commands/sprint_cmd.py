@@ -14,6 +14,46 @@ def _main():
     return sys.modules['cli.main']
 
 
+def _parse_budget_amount(value):
+    """Parse a budget CLI arg as an integer point count."""
+    try:
+        return int(value)
+    except ValueError:
+        raise click.ClickException(f"Invalid budget amount: '{value}' (expected an integer).")
+
+
+def _print_budget_panel(result):
+    """Render the read-only budget breakdown panel for a sprint."""
+    name = result["name"]
+    budget = result.get("budget")
+    spent = result.get("points_spent", 0)
+
+    if budget is None:
+        console.print(Panel(
+            f"[bold]{name}[/bold]\n"
+            f"Budget: [dim]Unlimited[/dim]\n"
+            f"Spent: {spent} points",
+            title="Sprint Budget"
+        ))
+        return
+
+    remaining = budget - spent
+    if remaining < 0:
+        status_line = f"Arrears: [red]{abs(remaining)} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
+    else:
+        status_line = f"Remaining: {remaining} points\nStatus: [green]OK[/green]"
+
+    console.print(Panel(
+        f"[bold]{name}[/bold]\n"
+        f"Budget: {budget} points\n"
+        f"Spent: {spent} points\n"
+        f"{status_line}\n"
+        f"[dim]spent = points from tickets CLOSED while this sprint is active "
+        f"(unestimated = 1pt); one active sprint at a time, close to rotate[/dim]",
+        title="Sprint Budget"
+    ))
+
+
 def register(cli):
     """Register sprint commands on the CLI group."""
 
@@ -104,45 +144,54 @@ def register(cli):
         sprint_current.callback()
 
     @sprint.command("budget")
+    @click.argument("sprint_id", required=False)
+    @click.argument("amount", required=False)
     @_main().json_option
     @_main().require_project
     @_main().handle_error
-    def sprint_budget():
-        """Show current sprint budget status."""
+    def sprint_budget(sprint_id, amount):
+        """Show or set a sprint's point budget.
+
+        \b
+        No args:           show the active sprint's budget.
+        AMOUNT:             set the active sprint's budget, e.g. 'sprint budget 25'.
+        SPRINT_ID AMOUNT:   set that sprint's budget instead of the active one.
+
+        A lone numeric arg is always AMOUNT for the active sprint (never a
+        sprint-number lookup); a lone non-numeric arg is SPRINT_ID and shows
+        that sprint's budget read-only.
+        """
         m = _main()
-        result = _client().get_current_sprint(m.get_current_project())
+        project_id = m.get_current_project()
+
+        set_amount = None
+        target_id = None
+        if amount is not None:
+            # Two args: SPRINT_ID AMOUNT.
+            target_id = m.resolve_sprint_id(sprint_id, project_id)
+            set_amount = _parse_budget_amount(amount)
+        elif sprint_id is not None:
+            try:
+                set_amount = int(sprint_id)
+            except ValueError:
+                target_id = m.resolve_sprint_id(sprint_id, project_id)
+
+        if set_amount is not None:
+            if target_id is None:
+                target_id = m.resolve_sprint_id("current", project_id)
+            # Same write path as 'sprint update --budget'.
+            result = _client().update_sprint(target_id, budget=set_amount)
+            if m.is_json_output():
+                m.output_json(result)
+                return
+            console.print(f"[green]Budget for '{result['name']}' set to {set_amount} points.[/green]")
+            return
+
+        result = _client().get_sprint(target_id) if target_id else _client().get_current_sprint(project_id)
         if m.is_json_output():
             m.output_json(result)
             return
-
-        name = result["name"]
-        budget = result.get("budget")
-        spent = result.get("points_spent", 0)
-
-        if budget is None:
-            console.print(Panel(
-                f"[bold]{name}[/bold]\n"
-                f"Budget: [dim]Unlimited[/dim]\n"
-                f"Spent: {spent} points",
-                title="Sprint Budget"
-            ))
-            return
-
-        remaining = budget - spent
-        if remaining < 0:
-            status_line = f"Arrears: [red]{abs(remaining)} points over budget[/red]\nStatus: [red bold]BLOCKED - close sprint to continue[/red bold]"
-        else:
-            status_line = f"Remaining: {remaining} points\nStatus: [green]OK[/green]"
-
-        console.print(Panel(
-            f"[bold]{name}[/bold]\n"
-            f"Budget: {budget} points\n"
-            f"Spent: {spent} points\n"
-            f"{status_line}\n"
-            f"[dim]spent = points from tickets CLOSED while this sprint is active "
-            f"(unestimated = 1pt); one active sprint at a time, close to rotate[/dim]",
-            title="Sprint Budget"
-        ))
+        _print_budget_panel(result)
 
     @sprint.command("show")
     @click.argument("sprint_id", required=False)
@@ -440,6 +489,6 @@ def register(cli):
     @_main().handle_error
     def budget_shortcut():
         """Show current sprint budget status (shortcut for 'sprint budget')."""
-        sprint_budget.callback()
+        sprint_budget.callback(sprint_id=None, amount=None)
 
     return sprint

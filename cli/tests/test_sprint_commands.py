@@ -273,6 +273,102 @@ class TestSprintBudget:
         assert 'over budget' in result.output.lower()
         assert 'BLOCKED' in result.output
 
+    def test_sprint_budget_set_active_sprint(self, cli_runner):
+        """sprint budget 25 (one numeric arg) sets the ACTIVE sprint's
+        budget via the same write path as 'sprint update --budget' (CHT-343)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={"name": "Sprint 30"})
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '25'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('current', 'test-project-123')
+        client.update_sprint.assert_called_once_with('sprint-uuid-123', budget=25)
+        assert 'Sprint 30' in result.output
+        assert '25' in result.output
+
+    def test_sprint_budget_set_by_id(self, cli_runner):
+        """sprint budget <SPRINT_ID> 25 (two args) sets that sprint's
+        budget instead of the active one (CHT-343)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={"name": "Sprint 29"})
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-999') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 29', '25'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('Sprint 29', 'test-project-123')
+        client.update_sprint.assert_called_once_with('sprint-uuid-999', budget=25)
+        assert 'Sprint 29' in result.output
+        assert '25' in result.output
+
+    def test_sprint_budget_set_by_numeric_sprint_id_and_amount(self, cli_runner):
+        """A numeric-looking first arg is still treated as SPRINT_ID when a
+        second arg is present -- only a LONE numeric arg means 'amount for
+        the active sprint' (CHT-343)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock(return_value={"name": "Sprint 5"})
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-5') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '5', '25'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('5', 'test-project-123')
+        client.update_sprint.assert_called_once_with('sprint-uuid-5', budget=25)
+
+    def test_sprint_budget_read_by_sprint_id(self, cli_runner, mock_sprint):
+        """A lone non-numeric arg is a SPRINT_ID and reads that sprint's
+        budget read-only (CHT-343)."""
+        from cli.main import cli, client
+
+        client.get_sprint = MagicMock(return_value=mock_sprint)
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123') as mock_resolve:
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 30'])
+
+        assert result.exit_code == 0, result.output
+        mock_resolve.assert_called_once_with('Sprint 30', 'test-project-123')
+        client.get_sprint.assert_called_once_with('sprint-uuid-123')
+        assert 'Sprint 30' in result.output
+        assert '9' in result.output  # remaining
+
+    def test_sprint_budget_set_invalid_amount(self, cli_runner):
+        """sprint budget <SPRINT_ID> <non-numeric> gives a clear error
+        instead of a raw ValueError (CHT-343)."""
+        from cli.main import cli, client
+
+        client.update_sprint = MagicMock()
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', 'Sprint 30', 'abc'])
+
+        assert result.exit_code != 0
+        assert 'Invalid budget amount' in result.output
+        client.update_sprint.assert_not_called()
+
+    def test_sprint_budget_set_api_error(self, cli_runner):
+        """sprint budget 25 surfaces an APIError (e.g. arrears/limbo
+        rejection) the same way other sprint write commands do (CHT-343)."""
+        from cli.main import cli, client, APIError
+
+        client.update_sprint = MagicMock(side_effect=APIError("Sprint not found"))
+
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'budget', '25'])
+
+        assert result.exit_code != 0
+        assert 'Sprint not found' in result.output
+
 
 class TestSprintClose:
     """Tests for sprint close command."""
