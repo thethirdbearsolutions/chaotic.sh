@@ -14,6 +14,7 @@ vi.mock('./api.js', () => ({
 
 vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
+    isModalOpen: vi.fn(() => false),
 }));
 
 vi.mock('./utils.js', () => ({
@@ -48,7 +49,7 @@ vi.mock('./state.js', () => ({
 }));
 
 import { api } from './api.js';
-import { showApiError } from './ui.js';
+import { showApiError, isModalOpen } from './ui.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import {
@@ -282,6 +283,31 @@ describe('archiveInboxEntry (CHT-1250 UX: clear from inbox in place)', () => {
         await archiveInboxEntry('nope');
         expect(setInboxEntries).not.toHaveBeenCalled();
         expect(api.markInboxRead).not.toHaveBeenCalled();
+    });
+});
+
+describe('loadInbox focus gating (PR #252 review finding 1)', () => {
+    it('focuses the first row on an intentional entry (focusFirst) with no modal', async () => {
+        api.getInbox.mockResolvedValue([ENTRY]);
+        getInboxEntries.mockReturnValue([ENTRY]); // what renderInbox reads
+        isModalOpen.mockReturnValue(false);
+        await loadInbox({ focusFirst: true });
+        expect(document.activeElement).toBe(document.querySelector('#inbox-list .inbox-row'));
+    });
+
+    it('does NOT focus on a background load (focusFirst omitted)', async () => {
+        api.getInbox.mockResolvedValue([ENTRY]);
+        getInboxEntries.mockReturnValue([ENTRY]);
+        await loadInbox(); // ws/reconnect path
+        expect(document.activeElement).not.toBe(document.querySelector('#inbox-list .inbox-row'));
+    });
+
+    it('does NOT steal focus while a modal is open, even on focusFirst', async () => {
+        api.getInbox.mockResolvedValue([ENTRY]);
+        getInboxEntries.mockReturnValue([ENTRY]);
+        isModalOpen.mockReturnValue(true);
+        await loadInbox({ focusFirst: true });
+        expect(document.activeElement).not.toBe(document.querySelector('#inbox-list .inbox-row'));
     });
 });
 

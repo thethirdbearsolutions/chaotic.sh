@@ -193,7 +193,7 @@ registerViews({
         loadGateApprovals();
     },
     'inbox': () => {
-        loadInbox();
+        loadInbox({ focusFirst: true });
     },
     'issues': () => {
         // Clear stale rows synchronously, before the async label/sprint

@@ -7,7 +7,7 @@
  * documents.js/issue-list.js's deep-link actions.
  */
 import { api } from './api.js';
-import { showApiError } from './ui.js';
+import { showApiError, isModalOpen } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { registerActions } from './event-delegation.js';
@@ -62,7 +62,7 @@ export function renderInboxBadge() {
 /**
  * Load and render the inbox list view.
  */
-export async function loadInbox() {
+export async function loadInbox({ focusFirst = false } = {}) {
     const team = getCurrentTeam();
     if (!team) return;
 
@@ -94,7 +94,14 @@ export async function loadInbox() {
         // the list handler yields while a .sidebar-nav link is focused. Move
         // focus into the list and pre-select the first row so j/k/Enter work
         // on the very first keypress -- Gmail-style.
-        focusFirstInboxRow();
+        //
+        // ONLY on an intentional view-entry (focusFirst), and never while a
+        // modal is open: loadInbox also fires from background ws events /
+        // reconnects while the inbox view is active-but-covered (e.g. a
+        // Create-Issue modal open over it), and stealing focus onto a
+        // background row there would hijack the user's keystrokes (PR #252
+        // review finding 1).
+        if (focusFirst && !isModalOpen()) focusFirstInboxRow();
     } catch (e) {
         if (requestId !== loadInboxRequestId) return;
         container.innerHTML = renderEmptyState({
@@ -169,7 +176,7 @@ export function toggleInboxUnreadFilter() {
     showUnreadOnly = !showUnreadOnly;
     const btn = document.getElementById('inbox-unread-toggle');
     if (btn) btn.classList.toggle('active', showUnreadOnly);
-    loadInbox();
+    loadInbox({ focusFirst: true });
 }
 
 function renderInboxRow(entry) {
@@ -305,12 +312,15 @@ registerActions({
         openInboxEntry(data);
     },
     'archive-inbox-entry': (event, data) => {
-        // Don't let the click bubble to the row's open-inbox-entry handler.
+        // event-delegation dispatches to the nearest [data-action]
+        // ancestor, so a click on this button resolves to the button --
+        // never the row's open-inbox-entry -- on its own. preventDefault
+        // stops the button's native activation side effects; that's all
+        // that's needed here.
         event.preventDefault();
-        event.stopPropagation();
         if (data.entryId) archiveInboxEntry(data.entryId);
     },
     'toggle-inbox-unread-filter': () => toggleInboxUnreadFilter(),
     'mark-all-inbox-read': () => markAllInboxRead(),
-    'retry-load-inbox': () => loadInbox(),
+    'retry-load-inbox': () => loadInbox({ focusFirst: true }),
 });
