@@ -586,6 +586,10 @@ export class ApiClient {
         return this.request('POST', `/inbox/${entryId}/read`, {});
     }
 
+    async archiveInbox(entryId) {
+        return this.request('POST', `/inbox/${entryId}/archive`, {});
+    }
+
     async markAllInboxRead(teamId) {
         return this.request('POST', `/inbox/mark-all-read?team_id=${teamId}`, {});
     }

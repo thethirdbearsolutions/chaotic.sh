@@ -307,6 +307,7 @@ class InboxService:
         query = OxydeInboxEntry.objects.filter(
             recipient_user_id=user_id,
             team_id__in=await self.current_team_ids(user_id),
+            archived_at=None,  # CHT-1316: archived entries leave the inbox
         )
         if team_id:
             query = query.filter(team_id=team_id)
@@ -317,6 +318,7 @@ class InboxService:
     async def unread_count(self, user_id: str, *, team_id: str | None = None) -> int:
         query = OxydeInboxEntry.objects.filter(
             recipient_user_id=user_id, read_at=None,
+            archived_at=None,  # CHT-1316: archived entries don't count
             team_id__in=await self.current_team_ids(user_id),
         )
         if team_id:
@@ -330,6 +332,19 @@ class InboxService:
         if entry.read_at is None:
             entry.read_at = datetime.now(timezone.utc)
             await entry.save(update_fields={"read_at"})
+        return entry
+
+    async def archive(self, entry: OxydeInboxEntry) -> OxydeInboxEntry:
+        """Archive an entry (CHT-1316): it leaves the inbox list + unread
+        count. Archiving implies handled, so also mark it read if it wasn't."""
+        if entry.archived_at is None:
+            now = datetime.now(timezone.utc)
+            entry.archived_at = now
+            fields = {"archived_at"}
+            if entry.read_at is None:
+                entry.read_at = now
+                fields.add("read_at")
+            await entry.save(update_fields=fields)
         return entry
 
     async def mark_all_read(self, user_id: str, *, team_id: str | None = None) -> int:

@@ -8,6 +8,7 @@ vi.mock('./api.js', () => ({
         getInbox: vi.fn(() => Promise.resolve([])),
         getInboxUnreadCount: vi.fn(() => Promise.resolve({ unread_count: 0 })),
         markInboxRead: vi.fn(() => Promise.resolve({})),
+        archiveInbox: vi.fn(() => Promise.resolve({})),
         markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
     },
 }));
@@ -260,20 +261,20 @@ describe('archiveInboxEntry (CHT-1250 UX: clear from inbox in place)', () => {
     const B = { ...ENTRY, id: 'b', read_at: null };
     const C = { ...ENTRY, id: 'c', read_at: '2026-07-06T13:00:00Z' };
 
-    it('removes an unread entry from the list and marks it read', async () => {
+    it('removes an unread entry from the list and archives it server-side', async () => {
         getInboxEntries.mockReturnValue([A, B, C]);
         getInboxUnreadCount.mockReturnValue(2);
         await archiveInboxEntry('a');
         expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['b', 'c']);
-        expect(api.markInboxRead).toHaveBeenCalledWith('a');
+        expect(api.archiveInbox).toHaveBeenCalledWith('a');
         expect(setInboxUnreadCount).toHaveBeenCalledWith(1);
     });
 
-    it('does not re-mark an already-read entry', async () => {
+    it('archives an already-read entry (persist) but does not touch the unread count', async () => {
         getInboxEntries.mockReturnValue([A, B, C]);
         getInboxUnreadCount.mockReturnValue(2);
         await archiveInboxEntry('c');
-        expect(api.markInboxRead).not.toHaveBeenCalled();
+        expect(api.archiveInbox).toHaveBeenCalledWith('c'); // archive is its own action
         expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['a', 'b']);
         expect(setInboxUnreadCount).not.toHaveBeenCalled();
     });
@@ -282,7 +283,17 @@ describe('archiveInboxEntry (CHT-1250 UX: clear from inbox in place)', () => {
         getInboxEntries.mockReturnValue([A]);
         await archiveInboxEntry('nope');
         expect(setInboxEntries).not.toHaveBeenCalled();
-        expect(api.markInboxRead).not.toHaveBeenCalled();
+        expect(api.archiveInbox).not.toHaveBeenCalled();
+    });
+
+    it('still removes the row optimistically and swallows a failed archive POST', async () => {
+        getInboxEntries.mockReturnValue([A, B]);
+        getInboxUnreadCount.mockReturnValue(2);
+        api.archiveInbox.mockRejectedValueOnce(new Error('network'));
+        // Must not throw; the row is already gone locally (self-heals on refetch).
+        await expect(archiveInboxEntry('a')).resolves.toBeUndefined();
+        expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['b']);
+        expect(api.archiveInbox).toHaveBeenCalledWith('a');
     });
 });
 
