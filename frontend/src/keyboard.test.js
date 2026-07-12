@@ -1490,6 +1490,7 @@ describe('Inbox Navigation Handler', () => {
             getSelectedIndex: vi.fn().mockReturnValue(0),
             setSelectedIndex: vi.fn(),
             openInboxEntry: vi.fn(),
+            archiveInboxEntry: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
         };
@@ -1591,6 +1592,23 @@ describe('Inbox Navigation Handler', () => {
             actions.getSelectedIndex.mockReturnValue(-1);
             handler(makeEvent('Enter'));
             expect(actions.openInboxEntry).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('e to archive entry (CHT-1250 UX)', () => {
+        it('archives the selected entry element', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('e');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.archiveInboxEntry).toHaveBeenCalledTimes(1);
+            expect(actions.archiveInboxEntry.mock.calls[0][0].dataset.entryId).toBe('e2');
+        });
+
+        it('does nothing when no item selected (index -1)', () => {
+            actions.getSelectedIndex.mockReturnValue(-1);
+            handler(makeEvent('e'));
+            expect(actions.archiveInboxEntry).not.toHaveBeenCalled();
         });
     });
 

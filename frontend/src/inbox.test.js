@@ -53,11 +53,12 @@ import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import {
     getCurrentTeam, getInboxEntries, setInboxEntries,
-    getInboxUnreadCount, setInboxUnreadCount,
+    getInboxUnreadCount, setInboxUnreadCount, setSelectedInboxIndex,
 } from './state.js';
 import {
     loadInbox, renderInbox, renderInboxBadge, refreshInboxUnreadCount,
     markAllInboxRead, toggleInboxUnreadFilter, openInboxEntryElement,
+    archiveInboxEntry, focusFirstInboxRow,
 } from './inbox.js';
 
 const ENTRY = {
@@ -250,5 +251,66 @@ describe('openInboxEntryElement', () => {
         row.dataset.issueId = 'issue-1';
         openInboxEntryElement(row);
         expect(api.markInboxRead).not.toHaveBeenCalled();
+    });
+});
+
+describe('archiveInboxEntry (CHT-1250 UX: clear from inbox in place)', () => {
+    const A = { ...ENTRY, id: 'a', read_at: null };
+    const B = { ...ENTRY, id: 'b', read_at: null };
+    const C = { ...ENTRY, id: 'c', read_at: '2026-07-06T13:00:00Z' };
+
+    it('removes an unread entry from the list and marks it read', async () => {
+        getInboxEntries.mockReturnValue([A, B, C]);
+        getInboxUnreadCount.mockReturnValue(2);
+        await archiveInboxEntry('a');
+        expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['b', 'c']);
+        expect(api.markInboxRead).toHaveBeenCalledWith('a');
+        expect(setInboxUnreadCount).toHaveBeenCalledWith(1);
+    });
+
+    it('does not re-mark an already-read entry', async () => {
+        getInboxEntries.mockReturnValue([A, B, C]);
+        getInboxUnreadCount.mockReturnValue(2);
+        await archiveInboxEntry('c');
+        expect(api.markInboxRead).not.toHaveBeenCalled();
+        expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['a', 'b']);
+        expect(setInboxUnreadCount).not.toHaveBeenCalled();
+    });
+
+    it('no-ops for an unknown entry id', async () => {
+        getInboxEntries.mockReturnValue([A]);
+        await archiveInboxEntry('nope');
+        expect(setInboxEntries).not.toHaveBeenCalled();
+        expect(api.markInboxRead).not.toHaveBeenCalled();
+    });
+});
+
+describe('focusFirstInboxRow (CHT-1250 UX: keyboard nav engages immediately)', () => {
+    it('selects and focuses the first row', () => {
+        getInboxEntries.mockReturnValue([ENTRY]);
+        renderInbox();
+        focusFirstInboxRow();
+        expect(setSelectedInboxIndex).toHaveBeenCalledWith(0);
+        const row = document.querySelector('#inbox-list .inbox-row');
+        expect(row.classList.contains('keyboard-selected')).toBe(true);
+        expect(document.activeElement).toBe(row);
+    });
+
+    it('sets index -1 when the list is empty', () => {
+        getInboxEntries.mockReturnValue([]);
+        renderInbox();
+        focusFirstInboxRow();
+        expect(setSelectedInboxIndex).toHaveBeenCalledWith(-1);
+    });
+});
+
+describe('renderInboxRow archive button (CHT-1250 UX)', () => {
+    it('renders a per-row archive button wired to archive-inbox-entry', () => {
+        getInboxEntries.mockReturnValue([ENTRY]);
+        renderInbox();
+        const btn = document.querySelector('.inbox-row-archive');
+        expect(btn).not.toBeNull();
+        expect(btn.getAttribute('data-action')).toBe('archive-inbox-entry');
+        expect(btn.getAttribute('data-entry-id')).toBe('entry-1');
     });
 });
