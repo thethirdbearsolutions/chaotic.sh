@@ -11,7 +11,7 @@ from fastapi import Request
 import os
 
 from app.config import get_settings
-from app.oxyde_db import init_oxyde, close_oxyde
+from app.oxyde_db import init_oxyde, close_oxyde, verify_migrations_current
 from app.api import api_router
 from app.websocket import manager
 from app.utils.security import decode_token
@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
+    # CHT-1318: refuse to serve if the DB is behind the code's migrations,
+    # rather than 500 at runtime on the first query of a not-yet-added
+    # column (the CHT-1317 incident). No-op on a non-migration-managed DB.
+    await verify_migrations_current()
     # CHT-1294: prime the version cache at startup so the git subprocesses
     # (up to 4, each a blocking call) run here rather than on the first
     # request after a restart -- which is exactly when a deploy/health
