@@ -13,8 +13,26 @@
 #   CHAOTIC_SKIP_SYSTEM_INSTALL=1  Skip 'chaotic system install' (CLI only)
 #   CHAOTIC_PORT=<port>            Port for the server (default: 24267)
 #   CHAOTIC_HOST=<host>            Host/IP to bind (default: 127.0.0.1)
+#
+# CHT-210: if the CLI install succeeds but 'chaotic system install' fails,
+# the on_error trap below prints what state ~/.chaotic is left in and what
+# to do next, instead of dying silently.
 
-set -e
+set -eu
+# pipefail isn't POSIX (dash, a common /bin/sh, lacks it) -- enable it
+# opportunistically on shells that support it (bash, macOS's /bin/sh)
+# without breaking dash. No internal pipelines rely on it today; this is
+# belt-and-suspenders for future changes.
+(set -o pipefail 2>/dev/null) && set -o pipefail || true
+
+# Normalize optional env vars up front so `set -u` doesn't trip on them.
+CHAOTIC_SKIP_SYSTEM_INSTALL="${CHAOTIC_SKIP_SYSTEM_INSTALL:-0}"
+CHAOTIC_PORT="${CHAOTIC_PORT:-}"
+CHAOTIC_HOST="${CHAOTIC_HOST:-}"
+
+# Milestone flags read by on_error to tailor the failure message.
+CLI_INSTALLED=0
+SYSTEM_INSTALL_ATTEMPTED=0
 
 # Colors for output (only if terminal supports it)
 if [ -t 1 ]; then
@@ -49,6 +67,50 @@ error() {
     printf "${RED}Error:${NC} %s\n" "$1" >&2
     exit 1
 }
+
+# Fires on any nonzero exit (set -e, `error()`, or a failing final command).
+# Before the CLI is installed, nothing persistent has happened yet, so the
+# error()/prereq messages already printed are sufficient -- stay quiet.
+# After the CLI is installed, the user has a partial install on disk and
+# needs to know it; tailor the message to how far we got.
+on_error() {
+    ec=$?
+    if [ "$ec" -eq 0 ]; then
+        exit 0
+    fi
+    if [ "$SYSTEM_INSTALL_ATTEMPTED" = "1" ]; then
+        echo "" >&2
+        printf "${RED}Installation did not finish.${NC}\n" >&2
+        echo "The 'chaotic' CLI is installed, but 'chaotic system install' failed" >&2
+        echo "(see the error above). You may be left with a partial ~/.chaotic:" >&2
+        echo "  - ~/.chaotic/server/  may hold a partial or full git clone" >&2
+        echo "  - ~/.chaotic/data/    may or may not have a migrated database" >&2
+        echo "  - the systemd/launchd service may not be installed or started" >&2
+        echo "" >&2
+        echo "Next steps:" >&2
+        echo "  1. chaotic system status        # see what actually happened" >&2
+        echo "  2. Fix the issue reported above, then retry:" >&2
+        echo "       chaotic system install $INSTALL_ARGS" >&2
+        echo "     If that now says 'already installed', the clone step" >&2
+        echo "     succeeded previously -- use this instead:" >&2
+        echo "       chaotic system upgrade --yes" >&2
+        echo "       chaotic system start" >&2
+        echo "  3. We never delete ~/.chaotic for you. For a clean slate," >&2
+        echo "     back it up and move it aside yourself, then retry:" >&2
+        echo "       mv ~/.chaotic ~/.chaotic.bak" >&2
+        echo "" >&2
+    elif [ "$CLI_INSTALLED" = "1" ]; then
+        echo "" >&2
+        printf "${RED}Installation did not finish.${NC}\n" >&2
+        echo "The 'chaotic' CLI package installed, but a step before" >&2
+        echo "'chaotic system install' failed (see above) -- no server" >&2
+        echo "files were touched. Fix the issue and re-run this installer," >&2
+        echo "or run 'chaotic system install' yourself once ready." >&2
+        echo "" >&2
+    fi
+    exit "$ec"
+}
+trap on_error EXIT
 
 # Detect OS
 detect_os() {
@@ -249,6 +311,7 @@ main() {
     # resolution for all transitive dependencies.
     uv tool install "chaotic-cli>=0.1.0a0"
     success "Chaotic CLI installed"
+    CLI_INSTALLED=1
 
     # Ensure ~/.local/bin is in the user's shell profile for future sessions
     PROFILE_UPDATED=0
@@ -284,7 +347,9 @@ main() {
         if [ -n "$CHAOTIC_HOST" ]; then
             INSTALL_ARGS="$INSTALL_ARGS --host $CHAOTIC_HOST"
         fi
+        SYSTEM_INSTALL_ATTEMPTED=1
         "$CHAOTIC_CMD" system install $INSTALL_ARGS
+        SYSTEM_INSTALL_ATTEMPTED=0
     fi
 
     echo ""
