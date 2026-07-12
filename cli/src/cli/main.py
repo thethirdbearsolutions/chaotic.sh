@@ -75,6 +75,29 @@ def confirm_action(prompt: str, **kwargs) -> bool:
     return click.confirm(prompt, **kwargs)
 
 
+def sanitize_text_input(value: str, max_len: int = 255) -> str:
+    """Basic sanity-check for free-text prompt input (CHT-759).
+
+    quickstart and friends feed these straight into signup / team /
+    project names, so keep out control characters (incl. NUL) and
+    pathologically long strings before they reach the API. Drops any
+    non-printable character (`str.isprintable()` is False for C0/C1
+    controls, tabs, and newlines — all garbage in a single-line prompt),
+    trims surrounding whitespace, and caps the length.
+    """
+    if not isinstance(value, str):
+        return value
+    cleaned = "".join(ch for ch in value if ch.isprintable()).strip()
+    return cleaned[:max_len]
+
+
+def sanitized_prompt(*args, max_len: int = 255, **kwargs) -> str:
+    """click.prompt wrapper that runs the result through
+    sanitize_text_input (CHT-759). Use for free-text prompts (names,
+    emails); NOT for passwords (hide_input) or keys (own validation)."""
+    return sanitize_text_input(click.prompt(*args, **kwargs), max_len=max_len)
+
+
 def json_option(f):
     """Add --json flag to a subcommand so it works after the subcommand name.
 
@@ -723,15 +746,15 @@ def _run_quickstart_wizard():
         console.print()
 
         if has_account:
-            email = click.prompt("  Email")
+            email = sanitized_prompt("  Email")
             password = click.prompt("  Password", hide_input=True)
             result = client.login(email, password)
             set_token(result["access_token"])
             me = client.get_me()
             console.print(f"  [green]✓ Signed in as {me['name']}[/green]")
         else:
-            name = click.prompt("  Your name")
-            email = click.prompt("  Email")
+            name = sanitized_prompt("  Your name")
+            email = sanitized_prompt("  Email")
             password = click.prompt("  Password", hide_input=True)
             try:
                 client.signup(name, email, password)
@@ -773,7 +796,7 @@ def _run_quickstart_wizard():
         console.print()
 
         for _attempt in range(5):
-            team_name = click.prompt("  Team name", default="My Team")
+            team_name = sanitized_prompt("  Team name", default="My Team")
             default_key = suggest_key(team_name)
             team_key = click.prompt("  Team key (2-10 chars, used in issue IDs)", default=default_key).upper()
             try:
@@ -817,7 +840,7 @@ def _run_quickstart_wizard():
         console.print()
 
         for _attempt in range(5):
-            project_name = click.prompt("  Project name", default="My Project")
+            project_name = sanitized_prompt("  Project name", default="My Project")
             default_key = suggest_key(project_name)
             project_key = click.prompt("  Project key", default=default_key).upper()
             try:
@@ -840,7 +863,7 @@ def _run_quickstart_wizard():
     console.print(f"  [bold blue]Step {step}/{total_steps}: Create Your First Issue[/bold blue]")
     console.print()
 
-    title = click.prompt("  Issue title", default="Set up project")
+    title = sanitized_prompt("  Issue title", default="Set up project")
     result = client.create_issue(project_id, title)
     identifier = result.get("identifier", f"{project_key}-{result.get('number', '?')}")
     console.print(f"  [green]✓ Created: {identifier} - {title}[/green]")
