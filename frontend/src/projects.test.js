@@ -28,6 +28,7 @@ import {
   setCurrentSettingsProjectId,
 } from './projects.js';
 import { api } from './api.js';
+import { showToast } from './ui.js';
 
 // Mock the api module
 vi.mock('./api.js', () => ({
@@ -207,6 +208,52 @@ describe('loadProjects', () => {
     expect(api.getProjects).toHaveBeenCalledWith('team-1');
     const filter = document.getElementById('project-filter');
     expect(filter.innerHTML).toContain('Test Project');
+  });
+});
+
+describe('handleCreateProject (CHT-1176: null-team guard)', () => {
+  const ev = () => ({ preventDefault: vi.fn() });
+
+  function setupForm() {
+    document.body.innerHTML = `
+      <input id="project-name" value="My Project" />
+      <input id="project-key" value="mp" />
+      <input id="project-description" value="" />
+      <input id="project-color" value="#6366f1" />
+      <select id="project-estimate-scale"><option value="fibonacci" selected>fib</option></select>
+      <input id="project-human-rituals-required" type="checkbox" />
+      <select id="project-filter"></select>
+    `;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+    document.body.innerHTML = '';
+  });
+
+  it('does not crash and warns when there is no current team', async () => {
+    setCurrentTeam(null);
+    // No DOM form on purpose: the guard must return before any field read.
+    await handleCreateProject(ev());
+    expect(api.createProject).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(
+      'Create a team first before creating a project.',
+      'error',
+    );
+  });
+
+  it('creates the project with the team id when a team is selected', async () => {
+    setCurrentTeam({ id: 'team-1' });
+    setupForm();
+    api.createProject.mockResolvedValue({ id: 'proj-1' });
+    api.getProjects.mockResolvedValue([]);
+    await handleCreateProject(ev());
+    expect(api.createProject).toHaveBeenCalledTimes(1);
+    expect(api.createProject.mock.calls[0][0]).toBe('team-1');
   });
 });
 

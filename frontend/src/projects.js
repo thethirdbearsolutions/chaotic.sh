@@ -360,6 +360,15 @@ export function showCreateProjectModal() {
  */
 export async function handleCreateProject(event) {
   event.preventDefault();
+  // CHT-1176: after signup a user can reach this with no current team
+  // (0 teams but onboarding marked complete). getCurrentTeam() is then
+  // null and getCurrentTeam().id below would throw "Cannot read
+  // properties of null". Guard with a helpful message instead of crashing.
+  const team = getCurrentTeam();
+  if (!team) {
+    showToast('Create a team first before creating a project.', 'error');
+    return;
+  }
   const data = {
     name: document.getElementById('project-name').value,
     key: document.getElementById('project-key').value.toUpperCase(),
@@ -372,7 +381,7 @@ export async function handleCreateProject(event) {
   };
 
   try {
-    await api.createProject(getCurrentTeam().id, data);
+    await api.createProject(team.id, data);
     await loadProjects();
     renderProjects();
     closeModal();
