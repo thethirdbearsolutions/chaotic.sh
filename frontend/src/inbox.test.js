@@ -10,6 +10,7 @@ vi.mock('./api.js', () => ({
         markInboxRead: vi.fn(() => Promise.resolve({})),
         archiveInbox: vi.fn(() => Promise.resolve({})),
         markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
+        updateIssue: vi.fn(() => Promise.resolve({})),
     },
 }));
 
@@ -61,7 +62,24 @@ import {
     loadInbox, renderInbox, renderInboxBadge, refreshInboxUnreadCount,
     markAllInboxRead, toggleInboxUnreadFilter, openInboxEntryElement,
     archiveInboxEntry, focusFirstInboxRow,
+    toggleInboxEntryExpand, collapseInboxExpand, reassignInboxEntry,
 } from './inbox.js';
+
+// Reassignable entry: an assignment carrying both a source user and an issue.
+const ASSIGN = {
+    id: 'assign-1',
+    kind: 'assignment',
+    title: 'ethan assigned you PRJ-9',
+    body: 'Please pick this up',
+    issue_id: 'issue-9',
+    issue_identifier: 'PRJ-9',
+    document_id: null,
+    document_title: null,
+    source_user_id: 'user-ethan',
+    source_user_name: 'ethan',
+    created_at: '2026-07-06T12:00:00Z',
+    read_at: null,
+};
 
 const ENTRY = {
     id: 'entry-1',
@@ -85,6 +103,7 @@ beforeEach(() => {
     getCurrentTeam.mockReturnValue({ id: 'team-1' });
     getInboxEntries.mockReturnValue([]);
     getInboxUnreadCount.mockReturnValue(0);
+    collapseInboxExpand(); // reset module-level expand state between tests (CHT-1320)
 });
 
 describe('loadInbox', () => {
@@ -349,5 +368,92 @@ describe('renderInboxRow archive button (CHT-1250 UX)', () => {
         expect(btn).not.toBeNull();
         expect(btn.getAttribute('data-action')).toBe('archive-inbox-entry');
         expect(btn.getAttribute('data-entry-id')).toBe('entry-1');
+    });
+
+    it('makes the whole row toggle-expand (no longer navigate-away)', () => {
+        getInboxEntries.mockReturnValue([ENTRY]);
+        renderInbox();
+        const row = document.querySelector('.inbox-row');
+        expect(row.getAttribute('data-action')).toBe('toggle-inbox-expand');
+        expect(row.getAttribute('aria-expanded')).toBe('false');
+    });
+});
+
+describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () => {
+    it('expands the row inline with an action bar and marks it read', () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        const row = document.querySelector('.inbox-row');
+        expect(row.classList.contains('inbox-row-expanded')).toBe(true);
+        expect(row.getAttribute('aria-expanded')).toBe('true');
+        expect(document.querySelector('.inbox-action-bar')).not.toBeNull();
+        // Expanding = you've seen it -> marked read.
+        expect(api.markInboxRead).toHaveBeenCalledWith('assign-1');
+    });
+
+    it('shows a Reassign-back button for an assignment with a source user + issue', () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        const btn = document.querySelector('[data-action="reassign-inbox-entry"]');
+        expect(btn).not.toBeNull();
+        expect(btn.textContent).toContain('ethan');
+        // Open-full button too (there's a linked issue).
+        expect(document.querySelector('[data-action="open-inbox-full"]')).not.toBeNull();
+    });
+
+    it('does NOT show Reassign for a gate_pending entry (no source user)', () => {
+        getInboxEntries.mockReturnValue([ENTRY]);
+        renderInbox();
+        toggleInboxEntryExpand('entry-1');
+        expect(document.querySelector('[data-action="reassign-inbox-entry"]')).toBeNull();
+    });
+
+    it('collapses on a second toggle', () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        toggleInboxEntryExpand('assign-1');
+        expect(document.querySelector('.inbox-row-expanded')).toBeNull();
+    });
+});
+
+describe('collapseInboxExpand (CHT-1320)', () => {
+    it('returns false when nothing is expanded', () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        renderInbox();
+        expect(collapseInboxExpand()).toBe(false);
+    });
+
+    it('returns true and collapses when a row is open', () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        renderInbox();
+        toggleInboxEntryExpand('assign-1');
+        expect(collapseInboxExpand()).toBe(true);
+        expect(document.querySelector('.inbox-row-expanded')).toBeNull();
+    });
+});
+
+describe('reassignInboxEntry (CHT-1320)', () => {
+    it('reassigns the issue back to the source user and archives the entry', async () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxUnreadCount.mockReturnValue(1);
+        await reassignInboxEntry('assign-1');
+        expect(api.updateIssue).toHaveBeenCalledWith('issue-9', { assignee_id: 'user-ethan' });
+        expect(api.archiveInbox).toHaveBeenCalledWith('assign-1'); // cleared after reassign
+    });
+
+    it('no-ops when the entry lacks an issue or source user', async () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN, source_user_id: null }]);
+        await reassignInboxEntry('assign-1');
+        expect(api.updateIssue).not.toHaveBeenCalled();
+    });
+
+    it('surfaces an API error if the reassign PATCH fails', async () => {
+        getInboxEntries.mockReturnValue([ASSIGN]);
+        api.updateIssue.mockRejectedValueOnce(new Error('nope'));
+        await reassignInboxEntry('assign-1');
+        expect(showApiError).toHaveBeenCalledWith(expect.stringContaining('reassign'), expect.any(Error));
     });
 });

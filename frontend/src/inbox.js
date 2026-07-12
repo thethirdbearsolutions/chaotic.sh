@@ -32,6 +32,9 @@ const KIND_LABELS = {
 // loadGateApprovalsRequestId / teams.js's loaders).
 let loadInboxRequestId = 0;
 let showUnreadOnly = false;
+// The single currently-expanded entry id (Gmail-style one-open-at-a-time,
+// CHT-1320). null = all collapsed. Expanding a second row collapses the first.
+let expandedEntryId = null;
 
 /**
  * Refresh the sidebar unread-count badge. Safe to call from any view.
@@ -154,6 +157,7 @@ export async function archiveInboxEntry(entryId) {
     const entry = entries[idx];
     const wasUnread = !entry.read_at;
 
+    if (expandedEntryId === entryId) expandedEntryId = null; // it's leaving the list
     setInboxEntries(entries.filter(e => e.id !== entryId));
     if (wasUnread) setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
     renderInbox();
@@ -171,6 +175,60 @@ export async function archiveInboxEntry(entryId) {
 }
 
 /**
+ * Toggle the inline expansion of an entry (CHT-1320). Expanding reveals the
+ * triggering content + an action bar without navigating away; only one row is
+ * open at a time. Expanding also marks the entry read (you've now seen it).
+ */
+export function toggleInboxEntryExpand(entryId) {
+    const entries = getInboxEntries();
+    const idx = entries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    expandedEntryId = (expandedEntryId === entryId) ? null : entryId;
+    if (expandedEntryId === entryId) markEntryRead(entryId);
+    renderInbox();
+    selectInboxRow(idx); // keep the cursor on this row across the re-render
+}
+
+/**
+ * Collapse any expanded row (j/k cursor moves and Escape use this). Returns
+ * true if something was actually collapsed, so callers can decide whether a
+ * key press was "consumed" by the collapse.
+ */
+export function collapseInboxExpand() {
+    if (expandedEntryId === null) return false;
+    expandedEntryId = null;
+    const idx = getSelectedInboxIndexSafe();
+    renderInbox();
+    if (idx >= 0) selectInboxRow(idx);
+    return true;
+}
+
+function getSelectedInboxIndexSafe() {
+    const rows = document.querySelectorAll('#inbox-list .inbox-row.keyboard-selected');
+    if (!rows.length) return -1;
+    return [...document.querySelectorAll('#inbox-list .inbox-row')].indexOf(rows[0]);
+}
+
+/**
+ * Reassign the entry's source issue back to whoever triggered it (the
+ * assigner / requester), then archive the entry (CHT-1320). Only meaningful
+ * for assignment / review_requested entries that carry both a source user and
+ * an issue. Optimistic: the entry clears immediately; the issue PATCH follows.
+ */
+export async function reassignInboxEntry(entryId) {
+    const entry = getInboxEntries().find(e => e.id === entryId);
+    if (!entry || !entry.issue_id || !entry.source_user_id) return;
+    const back = entry.source_user_name || 'sender';
+    // Archive first (optimistic UI); the reassign PATCH is the side effect.
+    archiveInboxEntry(entryId);
+    try {
+        await api.updateIssue(entry.issue_id, { assignee_id: entry.source_user_id });
+    } catch (e) {
+        showApiError(`reassign ${entry.issue_identifier || 'issue'} back to ${back}`, e);
+    }
+}
+
+/**
  * Toggle the unread-only filter and reload.
  */
 export function toggleInboxUnreadFilter() {
@@ -182,6 +240,7 @@ export function toggleInboxUnreadFilter() {
 
 function renderInboxRow(entry) {
     const isUnread = !entry.read_at;
+    const isExpanded = entry.id === expandedEntryId;
     const kindLabel = KIND_LABELS[entry.kind] || entry.kind;
     const sourceRef = entry.issue_identifier || entry.document_title || '';
     const dataAttrs = [
@@ -190,9 +249,16 @@ function renderInboxRow(entry) {
         entry.document_id ? `data-document-id="${escapeAttr(entry.document_id)}"` : '',
     ].filter(Boolean).join(' ');
 
+    // The expanded panel (CHT-1320): full triggering content + action bar,
+    // shown in place of the truncated one-line body preview.
+    const bodyMarkup = isExpanded
+        ? renderExpandedPanel(entry, sourceRef)
+        : (entry.body ? `<div class="inbox-row-body">${escapeHtml(entry.body)}</div>` : '');
+
     return `
-        <div class="inbox-row list-item${isUnread ? ' inbox-row-unread' : ''}"
-             data-action="open-inbox-entry" ${dataAttrs} role="button" tabindex="0">
+        <div class="inbox-row list-item${isUnread ? ' inbox-row-unread' : ''}${isExpanded ? ' inbox-row-expanded' : ''}"
+             data-action="toggle-inbox-expand" ${dataAttrs} role="button" tabindex="0"
+             aria-expanded="${isExpanded ? 'true' : 'false'}">
             <div class="inbox-row-main">
                 <div class="inbox-row-header">
                     <span class="badge badge-inbox-${escapeAttr(entry.kind)}">${escapeHtml(kindLabel)}</span>
@@ -200,13 +266,49 @@ function renderInboxRow(entry) {
                     ${isUnread ? '<span class="inbox-row-unread-dot" title="Unread"></span>' : ''}
                 </div>
                 <div class="inbox-row-title">${escapeHtml(entry.title)}</div>
-                ${entry.body ? `<div class="inbox-row-body">${escapeHtml(entry.body)}</div>` : ''}
+                ${bodyMarkup}
             </div>
             <div class="inbox-row-meta">
                 <span class="inbox-row-time">${escapeHtml(formatRelativeTime(entry.created_at))}</span>
                 <button type="button" class="inbox-row-archive" data-action="archive-inbox-entry"
                         data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">&times;</button>
             </div>
+        </div>
+    `;
+}
+
+/**
+ * The inline expanded panel for a row (CHT-1320): the full triggering body,
+ * who it came from, and the action bar. Buttons carry their own data-action so
+ * event-delegation resolves clicks to them, not the row's toggle-expand.
+ */
+function renderExpandedPanel(entry, sourceRef) {
+    const canReassign = (entry.kind === 'assignment' || entry.kind === 'review_requested')
+        && entry.source_user_id && entry.issue_id;
+    const canOpen = entry.issue_id || entry.document_id;
+    const from = entry.source_user_name;
+
+    const openLabel = sourceRef ? `Open ${escapeHtml(sourceRef)}` : 'Open';
+    const actions = [
+        canReassign
+            ? `<button type="button" class="inbox-action-btn" data-action="reassign-inbox-entry"
+                    data-entry-id="${escapeAttr(entry.id)}">Reassign back${from ? ` to ${escapeHtml(from)}` : ''}</button>`
+            : '',
+        canOpen
+            ? `<button type="button" class="inbox-action-btn" data-action="open-inbox-full"
+                    data-entry-id="${escapeAttr(entry.id)}"
+                    ${entry.issue_id ? `data-issue-id="${escapeAttr(entry.issue_id)}"` : ''}
+                    ${entry.document_id ? `data-document-id="${escapeAttr(entry.document_id)}"` : ''}>${openLabel}</button>`
+            : '',
+        `<button type="button" class="inbox-action-btn" data-action="archive-inbox-entry"
+                data-entry-id="${escapeAttr(entry.id)}">Archive</button>`,
+    ].filter(Boolean).join('');
+
+    return `
+        <div class="inbox-row-expanded-panel">
+            ${from ? `<div class="inbox-expanded-source">from ${escapeHtml(from)}</div>` : ''}
+            ${entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : ''}
+            <div class="inbox-action-bar">${actions}</div>
         </div>
     `;
 }
@@ -307,15 +409,32 @@ export function archiveInboxEntryElement(rowEl) {
     if (rowEl?.dataset?.entryId) archiveInboxEntry(rowEl.dataset.entryId);
 }
 
+/**
+ * Toggle-expand an entry given its rendered DOM row (keyboard Enter path,
+ * CHT-1320 -- Enter now expands in place rather than navigating away).
+ */
+export function toggleInboxEntryElementExpand(rowEl) {
+    if (rowEl?.dataset?.entryId) toggleInboxEntryExpand(rowEl.dataset.entryId);
+}
+
 registerActions({
-    'open-inbox-entry': (event, data) => {
+    'toggle-inbox-expand': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) toggleInboxEntryExpand(data.entryId);
+    },
+    'open-inbox-full': (event, data) => {
+        // The expanded action-bar "Open" button -- the old navigate-away path.
         event.preventDefault();
         openInboxEntry(data);
+    },
+    'reassign-inbox-entry': (event, data) => {
+        event.preventDefault();
+        if (data.entryId) reassignInboxEntry(data.entryId);
     },
     'archive-inbox-entry': (event, data) => {
         // event-delegation dispatches to the nearest [data-action]
         // ancestor, so a click on this button resolves to the button --
-        // never the row's open-inbox-entry -- on its own. preventDefault
+        // never the row's toggle-inbox-expand -- on its own. preventDefault
         // stops the button's native activation side effects; that's all
         // that's needed here.
         event.preventDefault();
