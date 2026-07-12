@@ -919,3 +919,13 @@ class TestInboxArchive:
             "/api/inbox/00000000-0000-0000-0000-000000000000/archive", headers=auth_headers,
         )
         assert resp.status_code == 404
+
+    async def test_archive_endpoint_404_after_team_removal(self, client, db, test_team, test_user, auth_headers):
+        # Parity with the /read endpoint's team-removal guard: a revoked
+        # member can't even confirm the entry exists (404, not 403).
+        entry = await self._entry(test_user, test_team.id, "scoped")
+        await OxydeTeamMember.objects.filter(
+            team_id=test_team.id, user_id=test_user.id,
+        ).delete()
+        resp = await client.post(f"/api/inbox/{entry.id}/archive", headers=auth_headers)
+        assert resp.status_code == 404

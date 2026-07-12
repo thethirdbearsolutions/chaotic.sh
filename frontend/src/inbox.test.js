@@ -283,7 +283,17 @@ describe('archiveInboxEntry (CHT-1250 UX: clear from inbox in place)', () => {
         getInboxEntries.mockReturnValue([A]);
         await archiveInboxEntry('nope');
         expect(setInboxEntries).not.toHaveBeenCalled();
-        expect(api.markInboxRead).not.toHaveBeenCalled();
+        expect(api.archiveInbox).not.toHaveBeenCalled();
+    });
+
+    it('still removes the row optimistically and swallows a failed archive POST', async () => {
+        getInboxEntries.mockReturnValue([A, B]);
+        getInboxUnreadCount.mockReturnValue(2);
+        api.archiveInbox.mockRejectedValueOnce(new Error('network'));
+        // Must not throw; the row is already gone locally (self-heals on refetch).
+        await expect(archiveInboxEntry('a')).resolves.toBeUndefined();
+        expect(setInboxEntries.mock.calls.at(-1)[0].map(e => e.id)).toEqual(['b']);
+        expect(api.archiveInbox).toHaveBeenCalledWith('a');
     });
 });
 
