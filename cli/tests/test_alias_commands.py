@@ -1,4 +1,4 @@
-"""Tests for alias/callback delegation commands (CHT-723).
+"""Tests for alias/callback delegation commands (CHT-723, CHT-299).
 
 Tests that alias commands correctly delegate to their targets:
 - budget -> sprint budget
@@ -7,6 +7,8 @@ Tests that alias commands correctly delegate to their targets:
 - issue complete -> issue close
 - issue cancel -> issue wontfix
 - issue start -> issue claim
+- doc get -> doc show
+- doc read -> doc show
 """
 from unittest.mock import patch, MagicMock, call
 import pytest
@@ -30,6 +32,22 @@ def mock_issue():
         "issue_type": "task",
         "estimate": 2,
         "sprint_id": None,
+    }
+
+
+@pytest.fixture
+def mock_document():
+    """Standard mock document returned by get_document."""
+    return {
+        "id": "doc-uuid-123",
+        "title": "Sprint Report",
+        "content": "## Summary\nGood sprint.",
+        "icon": "📊",
+        "project_id": "test-project-123",
+        "sprint_id": None,
+        "author_name": "Alice",
+        "updated_at": "2026-02-15T12:00:00",
+        "created_at": "2026-02-14T10:00:00",
     }
 
 
@@ -204,3 +222,55 @@ class TestIssueStartAlias:
             mock_issue["id"], assignee_id=user["id"], status="in_progress"
         )
         assert 'claimed' in result.output
+
+
+class TestDocGetAlias:
+    """Tests for doc get -> doc show delegation (CHT-299)."""
+
+    def test_doc_get_delegates_to_show(self, cli_runner, mock_document):
+        """'chaotic doc get <id>' delegates to doc show."""
+        from cli.main import cli, client
+
+        client.get_document = MagicMock(return_value=mock_document)
+        client.get_document_issues = MagicMock(return_value=[])
+        client.get_document_comments = MagicMock(return_value=[])
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'get', 'doc-uuid-123'])
+
+        assert result.exit_code == 0
+        assert 'Sprint Report' in result.output
+        client.get_document.assert_called_with('doc-uuid-123')
+
+    def test_doc_get_no_comments(self, cli_runner, mock_document):
+        """'chaotic doc get <id> --no-comments' hides comments like doc show."""
+        from cli.main import cli, client
+
+        client.get_document = MagicMock(return_value=mock_document)
+        client.get_document_issues = MagicMock(return_value=[])
+        client.get_document_comments = MagicMock()
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'get', 'doc-uuid-123', '--no-comments'])
+
+        assert result.exit_code == 0
+        client.get_document_comments.assert_not_called()
+
+
+class TestDocReadAlias:
+    """Tests for doc read -> doc show delegation (CHT-299)."""
+
+    def test_doc_read_delegates_to_show(self, cli_runner, mock_document):
+        """'chaotic doc read <id>' delegates to doc show."""
+        from cli.main import cli, client
+
+        client.get_document = MagicMock(return_value=mock_document)
+        client.get_document_issues = MagicMock(return_value=[])
+        client.get_document_comments = MagicMock(return_value=[])
+
+        with patch('cli.main.resolve_document_id', return_value='doc-uuid-123'):
+            result = cli_runner.invoke(cli, ['doc', 'read', 'doc-uuid-123'])
+
+        assert result.exit_code == 0
+        assert 'Sprint Report' in result.output
+        client.get_document.assert_called_with('doc-uuid-123')

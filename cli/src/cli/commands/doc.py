@@ -192,6 +192,26 @@ def register(cli):
             else:
                 console.print("\n[dim]No comments[/dim]")
 
+    @doc.command("get")
+    @click.argument("document_id")
+    @click.option("--no-comments", is_flag=True, help="Hide document comments")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def doc_get(document_id, no_comments):
+        """Show document content (alias for 'show')."""
+        doc_show.callback(document_id, no_comments)
+
+    @doc.command("read")
+    @click.argument("document_id")
+    @click.option("--no-comments", is_flag=True, help="Hide document comments")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def doc_read(document_id, no_comments):
+        """Show document content (alias for 'show')."""
+        doc_show.callback(document_id, no_comments)
+
     @doc.command("history")
     @click.argument("document_id")
     @click.option("--version", "-v", type=int, help="Show the full snapshot for one version")
