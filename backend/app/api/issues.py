@@ -42,8 +42,9 @@ from app.services.team_service import TeamService
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.issue import OxydeIssueRelation
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.enums import DocumentActivityType
+from app.enums import DocumentActivityType, IssueRelationType
 
 
 def _activity_type_value(raw, enum_cls):
@@ -152,6 +153,27 @@ async def _validate_parent(parent_id: str | None, project_id: str, issue_id: str
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Parent issue does not belong to this project",
         )
+    # CHT-297: reject cycles. The direct self-parent case is caught above;
+    # here we walk the proposed parent's ancestor chain, and if this issue
+    # appears in it, linking would close a loop (A→B→A). Bounded so a
+    # pre-existing corrupt chain can't loop forever.
+    if issue_id:
+        ancestor_id = parent.parent_id
+        depth = 0
+        while ancestor_id is not None:
+            if ancestor_id == issue_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot set parent: would create a cycle in the issue hierarchy",
+                )
+            if depth >= 1000:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Parent chain too deep (possible pre-existing cycle)",
+                )
+            ancestor = await issue_service.get_by_id(ancestor_id)
+            ancestor_id = ancestor.parent_id if ancestor else None
+            depth += 1
 
 
 def issue_to_response(issue: Issue) -> IssueResponse:
@@ -1556,6 +1578,50 @@ async def create_relation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot create relations between issues in different teams",
         )
+
+    # CHT-298: no self-relations (an issue can't block/duplicate/relate to itself).
+    if issue_id == relation_in.related_issue_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An issue cannot have a relation to itself",
+        )
+
+    # CHT-298: reject blocking cycles. A new "X blocks Y" edge closes a
+    # cycle iff Y already (transitively) blocks X — and any BLOCKS cycle
+    # is a permanent deadlock, because list_ready_issues treats an issue
+    # with a non-DONE incoming BLOCKS as never-ready, so no issue in the
+    # cycle can ever start. Walk the existing BLOCKS graph FORWARD from Y;
+    # if it reaches X, reject. Only BLOCKS affects readiness, so only
+    # BLOCKS is cycle-checked (self-relation above already covers every
+    # type). Visited-guarded + bounded so pre-existing corruption can't
+    # loop forever. relation_type is stored as the enum NAME, so compare
+    # via the name (IssueRelationType is a str-Enum, hence the explicit
+    # isinstance-against-the-enum branch, not `str`).
+    def _is_blocks(rt) -> bool:
+        name = rt.name if isinstance(rt, IssueRelationType) else str(rt)
+        return name.upper() == IssueRelationType.BLOCKS.name
+
+    if _is_blocks(relation_in.relation_type):
+        frontier = [relation_in.related_issue_id]
+        visited: set[str] = set()
+        while frontier:
+            if len(visited) > 5000:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Blocks graph too large to validate (possible pre-existing cycle)",
+                )
+            node = frontier.pop()
+            if node == issue_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot create relation: would close a blocking cycle",
+                )
+            if node in visited:
+                continue
+            visited.add(node)
+            for edge in await OxydeIssueRelation.objects.filter(issue_id=node).all():
+                if _is_blocks(edge.relation_type):
+                    frontier.append(edge.related_issue_id)
 
     relation = await issue_service.create_relation(issue_id, relation_in)
     await broadcast_relation_event(
