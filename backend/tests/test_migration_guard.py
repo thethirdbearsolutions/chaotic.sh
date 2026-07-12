@@ -45,3 +45,12 @@ async def test_skips_when_no_migrations_table():
     # A DB not built via migrations (test static schema / fresh) -> skip, don't fail.
     with patch("oxyde.execute_raw", AsyncMock(side_effect=Exception("no such table: oxyde_migrations"))):
         await verify_migrations_current()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_reraises_a_real_db_error():
+    # A genuine DB failure (not a missing oxyde_migrations table) must NOT be
+    # silently swallowed -- it should surface loudly at startup (PR #254 review).
+    with patch("oxyde.execute_raw", AsyncMock(side_effect=Exception("database disk image is malformed"))):
+        with pytest.raises(Exception, match="malformed"):
+            await verify_migrations_current()

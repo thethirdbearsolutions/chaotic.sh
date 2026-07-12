@@ -236,10 +236,16 @@ async def verify_migrations_current() -> None:
 
     try:
         rows = await execute_raw("SELECT name FROM oxyde_migrations")
-    except Exception:
-        # No oxyde_migrations table -> not a migration-managed DB. Nothing
-        # to verify (tests build the schema from a static SQL string).
-        return
+    except Exception as e:
+        # A MISSING oxyde_migrations table means this DB wasn't built via
+        # migrations (test static schema / hand-built) -> nothing to verify,
+        # skip. But any OTHER error (a real DB problem, a corrupted/dropped
+        # table) must surface loudly at startup, not be silently swallowed
+        # (PR #254 review).
+        msg = str(e).lower()
+        if "no such table" in msg or "oxyde_migrations" in msg:
+            return
+        raise
 
     applied = {r["name"] for r in rows}
     mig_dir = os.path.join(os.path.dirname(__file__), os.pardir, "migrations")
