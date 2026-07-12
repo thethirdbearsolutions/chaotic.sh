@@ -64,6 +64,10 @@ through account/team/project setup interactively.)
 
 Open http://localhost:24267 for the web UI.
 
+By default the server binds to `127.0.0.1` (localhost only). If you're
+running this on a box you plan to reach over a network, read
+[docs/self-hosting-security.md](docs/self-hosting-security.md) first.
+
 ### Talking to your tracker from an agent
 
 `chaotic mcp` gives any local MCP-speaking harness (Claude Code, etc.)
