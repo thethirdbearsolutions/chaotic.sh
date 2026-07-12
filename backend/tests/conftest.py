@@ -356,7 +356,8 @@ CREATE TABLE IF NOT EXISTS inbox_entries (
     title VARCHAR(500) NOT NULL,
     body TEXT,
     created_at DATETIME NOT NULL,
-    read_at DATETIME
+    read_at DATETIME,
+    archived_at DATETIME
 );
 CREATE INDEX IF NOT EXISTS inbox_entries_recipient_user_id_idx ON inbox_entries (recipient_user_id);
 CREATE INDEX IF NOT EXISTS inbox_entries_team_id_idx ON inbox_entries (team_id);

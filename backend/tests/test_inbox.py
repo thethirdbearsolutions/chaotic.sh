@@ -865,3 +865,57 @@ class TestStripCodeSpans:
         # The deliberate mirror-wart: a mention immediately followed by a period
         # is captured with the period (unchanged by this fix).
         assert self._mentions("@bob.") == ["bob."]
+
+
+class TestInboxArchive:
+    """CHT-1316: a real archive (archived_at) removes an entry from the
+    inbox list + unread count, instead of piggybacking on read-state."""
+
+    async def _entry(self, test_user, team_id, title="x"):
+        return await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+            team_id=team_id, title=title,
+        )
+
+    async def test_archive_removes_from_list_and_count(self, db, test_project, test_user):
+        service = InboxService()
+        keep = await self._entry(test_user, test_project.team_id, "keep")
+        drop = await self._entry(test_user, test_project.team_id, "drop")
+        assert await service.unread_count(test_user.id) == 2
+        await service.archive(drop)
+        assert [e.id for e in await service.list_for_user(test_user.id)] == [keep.id]
+        assert await service.unread_count(test_user.id) == 1
+
+    async def test_archive_marks_read_too(self, db, test_project, test_user):
+        service = InboxService()
+        e = await self._entry(test_user, test_project.team_id)
+        assert e.read_at is None
+        archived = await service.archive(e)
+        assert archived.archived_at is not None
+        assert archived.read_at is not None  # archiving implies handled
+
+    async def test_archive_is_idempotent(self, db, test_project, test_user):
+        service = InboxService()
+        e = await self._entry(test_user, test_project.team_id)
+        first = (await service.archive(e)).archived_at
+        assert (await service.archive(e)).archived_at == first
+
+    async def test_archive_endpoint_removes_entry(self, client, db, test_team, test_user, auth_headers):
+        e = await self._entry(test_user, test_team.id, "bye")
+        resp = await client.post(f"/api/inbox/{e.id}/archive", headers=auth_headers)
+        assert resp.status_code == 200
+        listed = await client.get("/api/inbox", headers=auth_headers)
+        assert e.id not in [x["id"] for x in listed.json()]
+        count = await client.get("/api/inbox/unread-count", headers=auth_headers)
+        assert count.json()["unread_count"] == 0
+
+    async def test_archive_endpoint_not_owner_403(self, client, db, test_team, test_user2, auth_headers):
+        e = await self._entry(test_user2, test_team.id, "not mine")
+        resp = await client.post(f"/api/inbox/{e.id}/archive", headers=auth_headers)
+        assert resp.status_code == 403
+
+    async def test_archive_endpoint_nonexistent_404(self, client, db, auth_headers):
+        resp = await client.post(
+            "/api/inbox/00000000-0000-0000-0000-000000000000/archive", headers=auth_headers,
+        )
+        assert resp.status_code == 404

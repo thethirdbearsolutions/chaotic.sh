@@ -160,12 +160,13 @@ export async function archiveInboxEntry(entryId) {
     renderInboxBadge();
     selectInboxRow(idx); // idx now points at the next entry (clamped when last)
 
-    if (wasUnread) {
-        try {
-            await api.markInboxRead(entryId);
-        } catch (e) {
-            console.error('Failed to archive inbox entry:', e);
-        }
+    // CHT-1316: a real archive that persists (drops out of the list + count
+    // server-side), instead of the phase-1 mark-read hack that a refetch
+    // would un-hide.
+    try {
+        await api.archiveInbox(entryId);
+    } catch (e) {
+        console.error('Failed to archive inbox entry:', e);
     }
 }
 

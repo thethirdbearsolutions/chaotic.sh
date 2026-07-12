@@ -99,6 +99,33 @@ async def mark_inbox_read(entry_id: str, current_user: CurrentUser):
     return await _build_response(entry)
 
 
+@router.post("/{entry_id}/archive", response_model=InboxEntryResponse)
+async def archive_inbox_entry(entry_id: str, current_user: CurrentUser):
+    """Archive a single inbox entry (CHT-1316): it leaves the list + badge.
+
+    Same ownership + team-membership guards as the read endpoint (a removed
+    member can't touch entries from a team they've left, CHT-1274); 404 (not
+    403) keeps a foreign/nonexistent entry indistinguishable.
+    """
+    inbox_service = InboxService()
+    entry = await inbox_service.get_by_id(entry_id)
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
+    if entry.recipient_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your inbox entry")
+    if not await inbox_service.is_member_of_entry_team(current_user.id, entry):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbox entry not found")
+
+    entry = await inbox_service.archive(entry)
+    try:
+        await broadcast_inbox_event(entry.team_id, "archived", {
+            "id": entry.id, "recipient_user_id": entry.recipient_user_id,
+        })
+    except Exception:
+        pass
+    return await _build_response(entry)
+
+
 @router.post("/mark-all-read", response_model=MarkAllReadResponse)
 async def mark_all_inbox_read(current_user: CurrentUser, team_id: str | None = None):
     """Mark every unread inbox entry for the current user as read."""

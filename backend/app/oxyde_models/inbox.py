@@ -31,6 +31,9 @@ class OxydeInboxEntry(Model):
     body: str | None = Field(default=None)
     created_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     read_at: DateTimeUTC | None = Field(default=None)
+    # A real archive (CHT-1316): archived entries drop out of the inbox list
+    # + unread count entirely, instead of piggybacking on read-state.
+    archived_at: DateTimeUTC | None = Field(default=None)
 
     class Meta:
         is_table = True
