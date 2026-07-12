@@ -7,13 +7,14 @@
  * documents.js/issue-list.js's deep-link actions.
  */
 import { api } from './api.js';
-import { showApiError } from './ui.js';
+import { showApiError, isModalOpen } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { registerActions } from './event-delegation.js';
 import {
     getCurrentTeam, getInboxEntries, setInboxEntries,
     getInboxUnreadCount, setInboxUnreadCount,
+    setSelectedInboxIndex,
 } from './state.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
@@ -61,7 +62,7 @@ export function renderInboxBadge() {
 /**
  * Load and render the inbox list view.
  */
-export async function loadInbox() {
+export async function loadInbox({ focusFirst = false } = {}) {
     const team = getCurrentTeam();
     if (!team) return;
 
@@ -88,6 +89,19 @@ export async function loadInbox() {
 
         setInboxEntries(entries || []);
         renderInbox();
+        // CHT-1250 UX: keyboard nav "didn't kick in right away" because
+        // opening the inbox from the sidebar left focus on the nav link, and
+        // the list handler yields while a .sidebar-nav link is focused. Move
+        // focus into the list and pre-select the first row so j/k/Enter work
+        // on the very first keypress -- Gmail-style.
+        //
+        // ONLY on an intentional view-entry (focusFirst), and never while a
+        // modal is open: loadInbox also fires from background ws events /
+        // reconnects while the inbox view is active-but-covered (e.g. a
+        // Create-Issue modal open over it), and stealing focus onto a
+        // background row there would hijack the user's keystrokes (PR #252
+        // review finding 1).
+        if (focusFirst && !isModalOpen()) focusFirstInboxRow();
     } catch (e) {
         if (requestId !== loadInboxRequestId) return;
         container.innerHTML = renderEmptyState({
@@ -104,13 +118,65 @@ export async function loadInbox() {
 }
 
 /**
+ * Move focus into the inbox list and select its first row, so keyboard
+ * navigation engages immediately (the list handler disengages while a
+ * sidebar nav link holds focus). No-op when the list is empty.
+ */
+export function selectInboxRow(index) {
+    const rows = document.querySelectorAll('#inbox-list .inbox-row');
+    rows.forEach(r => r.classList.remove('keyboard-selected'));
+    if (rows.length === 0) {
+        setSelectedInboxIndex(-1);
+        return;
+    }
+    const clamped = Math.max(0, Math.min(index, rows.length - 1));
+    rows[clamped].classList.add('keyboard-selected');
+    setSelectedInboxIndex(clamped);
+    // focus() (not just the class) is what actually pulls focus off the
+    // sidebar link so the list keydown handler stops yielding to it.
+    rows[clamped].focus({ preventScroll: true });
+}
+
+export function focusFirstInboxRow() {
+    selectInboxRow(0);
+}
+
+/**
+ * Archive (clear) an entry from the inbox without navigating away: mark it
+ * read, drop it from the working list, and advance the cursor to the item
+ * that slid into its place -- Gmail's `e`. Optimistic; the server mark-read
+ * is fired after the UI updates.
+ */
+export async function archiveInboxEntry(entryId) {
+    const entries = getInboxEntries();
+    const idx = entries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    const entry = entries[idx];
+    const wasUnread = !entry.read_at;
+
+    setInboxEntries(entries.filter(e => e.id !== entryId));
+    if (wasUnread) setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
+    renderInbox();
+    renderInboxBadge();
+    selectInboxRow(idx); // idx now points at the next entry (clamped when last)
+
+    if (wasUnread) {
+        try {
+            await api.markInboxRead(entryId);
+        } catch (e) {
+            console.error('Failed to archive inbox entry:', e);
+        }
+    }
+}
+
+/**
  * Toggle the unread-only filter and reload.
  */
 export function toggleInboxUnreadFilter() {
     showUnreadOnly = !showUnreadOnly;
     const btn = document.getElementById('inbox-unread-toggle');
     if (btn) btn.classList.toggle('active', showUnreadOnly);
-    loadInbox();
+    loadInbox({ focusFirst: true });
 }
 
 function renderInboxRow(entry) {
@@ -135,7 +201,11 @@ function renderInboxRow(entry) {
                 <div class="inbox-row-title">${escapeHtml(entry.title)}</div>
                 ${entry.body ? `<div class="inbox-row-body">${escapeHtml(entry.body)}</div>` : ''}
             </div>
-            <div class="inbox-row-meta">${escapeHtml(formatRelativeTime(entry.created_at))}</div>
+            <div class="inbox-row-meta">
+                <span class="inbox-row-time">${escapeHtml(formatRelativeTime(entry.created_at))}</span>
+                <button type="button" class="inbox-row-archive" data-action="archive-inbox-entry"
+                        data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">&times;</button>
+            </div>
         </div>
     `;
 }
@@ -229,12 +299,28 @@ export function openInboxEntryElement(rowEl) {
     openInboxEntry({ entryId, issueId, documentId });
 }
 
+/**
+ * Archive an entry given its rendered DOM row (keyboard `e` path).
+ */
+export function archiveInboxEntryElement(rowEl) {
+    if (rowEl?.dataset?.entryId) archiveInboxEntry(rowEl.dataset.entryId);
+}
+
 registerActions({
     'open-inbox-entry': (event, data) => {
         event.preventDefault();
         openInboxEntry(data);
     },
+    'archive-inbox-entry': (event, data) => {
+        // event-delegation dispatches to the nearest [data-action]
+        // ancestor, so a click on this button resolves to the button --
+        // never the row's open-inbox-entry -- on its own. preventDefault
+        // stops the button's native activation side effects; that's all
+        // that's needed here.
+        event.preventDefault();
+        if (data.entryId) archiveInboxEntry(data.entryId);
+    },
     'toggle-inbox-unread-filter': () => toggleInboxUnreadFilter(),
     'mark-all-inbox-read': () => markAllInboxRead(),
-    'retry-load-inbox': () => loadInbox(),
+    'retry-load-inbox': () => loadInbox({ focusFirst: true }),
 });

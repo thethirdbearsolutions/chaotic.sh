@@ -7133,6 +7133,32 @@ input[type="checkbox"] {
     color: var(--text-muted);
     flex-shrink: 0;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Archive (clear) button — subtle, surfaces on row hover/selection (CHT-1250 UX) */
+.inbox-row-archive {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.1s, background 0.1s, color 0.1s;
+}
+.inbox-row:hover .inbox-row-archive,
+.inbox-row.keyboard-selected .inbox-row-archive,
+.inbox-row-archive:focus {
+    opacity: 1;
+}
+.inbox-row-archive:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.08));
+    color: var(--text-primary);
 }
 
 .badge-inbox-gate_pending {

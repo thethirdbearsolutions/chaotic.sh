@@ -36,7 +36,7 @@ import {
     showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadInbox, openInboxEntryElement } from './inbox.js';
+import { loadInbox, openInboxEntryElement, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
@@ -193,7 +193,7 @@ registerViews({
         loadGateApprovals();
     },
     'inbox': () => {
-        loadInbox();
+        loadInbox({ focusFirst: true });
     },
     'issues': () => {
         // Clear stale rows synchronously, before the async label/sprint
@@ -663,6 +663,7 @@ document.addEventListener('keydown', createInboxNavigationHandler({
     getSelectedIndex: getSelectedInboxIndex,
     setSelectedIndex: setSelectedInboxIndex,
     openInboxEntry: openInboxEntryElement,
+    archiveInboxEntry: archiveInboxEntryElement,
     isModalOpen,
     isCommandPaletteOpen,
 }));

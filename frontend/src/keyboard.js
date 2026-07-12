@@ -449,6 +449,14 @@ export function createInboxNavigationHandler(actions) {
                     actions.openInboxEntry(items[selectedIndex]);
                 }
                 break;
+            case 'e':
+                // Archive/clear the selected entry in place (Gmail's `e`),
+                // keeping focus in the inbox on the next item.
+                if (selectedIndex >= 0 && items[selectedIndex] && actions.archiveInboxEntry) {
+                    e.preventDefault();
+                    actions.archiveInboxEntry(items[selectedIndex]);
+                }
+                break;
             case 'Escape':
                 if (selectedIndex >= 0) {
                     e.preventDefault();
