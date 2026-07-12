@@ -252,3 +252,75 @@ class TestCrossReferencesViaApi:
         relations = rel_response.json()
         assert len(relations) == 1
         assert relations[0]["related_issue_identifier"] == second_issue.identifier
+
+
+class TestCrossReferenceCodeSpans:
+    """CHT-801: identifiers inside code spans must NOT be auto-linked."""
+
+    async def test_skips_reference_in_fenced_code(self, issue_service, test_issue, second_issue):
+        text = f"example:\n```\n{second_issue.identifier}\n```"
+        relations = await issue_service.create_cross_references(test_issue.id, text)
+        assert relations == []
+
+    async def test_skips_reference_in_inline_code(self, issue_service, test_issue, second_issue):
+        text = f"run `{second_issue.identifier}` to see it"
+        relations = await issue_service.create_cross_references(test_issue.id, text)
+        assert relations == []
+
+    async def test_links_only_references_outside_code(
+        self, issue_service, test_issue, second_issue, third_issue
+    ):
+        # second_issue in prose -> linked; third_issue in inline code -> skipped
+        text = f"related to {second_issue.identifier} but not `{third_issue.identifier}`"
+        relations = await issue_service.create_cross_references(test_issue.id, text)
+        linked = {r.related_issue_id for r in relations}
+        assert second_issue.id in linked
+        assert third_issue.id not in linked
+
+
+@pytest.mark.asyncio
+class TestCommentUpdateCrossReferences:
+    """CHT-803: editing a comment re-runs cross-referencing (consistent with
+    comment creation and description updates)."""
+
+    async def _relation_exists(self, src_id, dst_id):
+        from app.oxyde_models.issue import OxydeIssueRelation
+        return await OxydeIssueRelation.objects.filter(
+            issue_id=src_id, related_issue_id=dst_id,
+        ).first() is not None
+
+    async def test_editing_comment_creates_cross_reference(
+        self, client, auth_headers, test_issue, second_issue
+    ):
+        # Comment with no reference -> no relation yet.
+        r = await client.post(
+            f"/api/issues/{test_issue.id}/comments",
+            headers=auth_headers, json={"content": "no reference yet"},
+        )
+        assert r.status_code in (200, 201), r.text
+        cid = r.json()["id"]
+        assert not await self._relation_exists(test_issue.id, second_issue.id)
+
+        # Edit it to add a reference -> relation should now exist.
+        r2 = await client.patch(
+            f"/api/issues/{test_issue.id}/comments/{cid}",
+            headers=auth_headers, json={"content": f"actually see {second_issue.identifier}"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert await self._relation_exists(test_issue.id, second_issue.id)
+
+    async def test_editing_comment_skips_code_span_reference(
+        self, client, auth_headers, test_issue, second_issue
+    ):
+        # CHT-801 through the edit path: a reference inside inline code isn't linked.
+        r = await client.post(
+            f"/api/issues/{test_issue.id}/comments",
+            headers=auth_headers, json={"content": "start"},
+        )
+        cid = r.json()["id"]
+        r2 = await client.patch(
+            f"/api/issues/{test_issue.id}/comments/{cid}",
+            headers=auth_headers, json={"content": f"code: `{second_issue.identifier}`"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert not await self._relation_exists(test_issue.id, second_issue.id)

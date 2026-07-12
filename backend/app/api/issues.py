@@ -1461,6 +1461,11 @@ async def update_comment(
         )
 
     comment = await issue_service.update_comment(comment, comment_in)
+    # CHT-803: re-run cross-referencing on edit, consistent with comment
+    # creation and description updates -- editing a comment to add a
+    # "CHT-123" reference should auto-link it too. Idempotent: existing
+    # relations are a no-op (see create_cross_references).
+    await issue_service.create_cross_references(issue_id, comment.content)
     response = IssueCommentResponse(
         id=comment.id,
         issue_id=comment.issue_id,
