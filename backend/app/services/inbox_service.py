@@ -25,6 +25,7 @@ from app.enums import ActivityType, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.team_service import TeamService
+from app.utils.markdown import strip_code_spans
 
 logger = logging.getLogger(__name__)
 
@@ -43,20 +44,9 @@ _MENTION_RE = re.compile(r"(?:^|(?<=\s))@([a-zA-Z0-9._-]+)")
 # backend never renders to DOM. Fences are stripped first (DOTALL, so a
 # fence spanning multiple lines is removed as one block), then any
 # remaining inline spans.
-# Fenced blocks: N (>=3) backticks open, and close on a run of the SAME length
-# (backreference) OR end-of-text (CommonMark: an unclosed fence extends to EOF).
-# The \1 backref also makes a 4+-backtick fence correctly swallow an inner ``` run
-# (GFM fence-quoting). (CHT-1272 review: unclosed + nested/variable-length fences.)
-_CODE_FENCE_RE = re.compile(r"(`{3,}).*?(?:\1|\Z)", re.DOTALL)
-# Inline spans: 1-2 backticks, closed by the same count; DOTALL so a span may
-# cross a soft line break. An UNCLOSED run is left as-is (CommonMark treats it as
-# literal text, so a mention after it should still fire — matches the frontend).
-# (CHT-1272 review: multi-line and double-backtick inline spans.)
-_INLINE_CODE_RE = re.compile(r"(`{1,2}).*?\1", re.DOTALL)
-
-
-def _strip_code_spans(text: str) -> str:
-    return _INLINE_CODE_RE.sub("", _CODE_FENCE_RE.sub("", text))
+# The hardened fence/inline regexes now live in app.utils.markdown, shared
+# with the cross-reference path (CHT-801) so there's one copy to keep correct.
+_strip_code_spans = strip_code_spans
 
 
 def _member_handle(name: str | None, email: str | None) -> str:

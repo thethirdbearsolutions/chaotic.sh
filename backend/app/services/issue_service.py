@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 from app.config import get_settings
+from app.utils.markdown import strip_code_spans
 from app.oxyde_models.issue import (
     OxydeIssue,
     OxydeIssueComment,
@@ -1966,7 +1967,11 @@ class IssueService:
         if not text:
             return []
 
-        identifiers = set(self._IDENTIFIER_RE.findall(text.upper()))
+        # CHT-801: don't auto-link identifiers that appear inside code spans
+        # (```fences``` or `inline`) -- e.g. "run `CHT-123`" in a snippet is
+        # illustrative, not a real reference. Strip code first, mirroring the
+        # mention path (inbox_service), via the shared helper.
+        identifiers = set(self._IDENTIFIER_RE.findall(strip_code_spans(text).upper()))
         if not identifiers:
             return []
 
