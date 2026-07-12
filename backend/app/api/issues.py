@@ -44,7 +44,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeIssueRelation
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
-from app.enums import DocumentActivityType
+from app.enums import DocumentActivityType, IssueRelationType
 
 
 def _activity_type_value(raw, enum_cls):
@@ -1585,24 +1585,43 @@ async def create_relation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An issue cannot have a relation to itself",
         )
-    # CHT-298: no circular relations — reject the inverse of an existing
-    # relation of the same type (e.g. creating "A blocks B" when "B blocks
-    # A" already exists, which would deadlock the ready/unblock logic).
-    # The (issue_id, related_issue_id) pair is UNIQUE, so there is at most
-    # one inverse row; fetch it and compare types in Python (relation_type
-    # is stored as the enum NAME, so a direct enum-valued filter misses).
-    def _norm(rt) -> str:
-        return (rt if isinstance(rt, str) else rt.name).upper()
 
-    inverse = await OxydeIssueRelation.objects.filter(
-        issue_id=relation_in.related_issue_id,
-        related_issue_id=issue_id,
-    ).first()
-    if inverse is not None and _norm(inverse.relation_type) == _norm(relation_in.relation_type):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A relation of this type already exists in the opposite direction",
-        )
+    # CHT-298: reject blocking cycles. A new "X blocks Y" edge closes a
+    # cycle iff Y already (transitively) blocks X — and any BLOCKS cycle
+    # is a permanent deadlock, because list_ready_issues treats an issue
+    # with a non-DONE incoming BLOCKS as never-ready, so no issue in the
+    # cycle can ever start. Walk the existing BLOCKS graph FORWARD from Y;
+    # if it reaches X, reject. Only BLOCKS affects readiness, so only
+    # BLOCKS is cycle-checked (self-relation above already covers every
+    # type). Visited-guarded + bounded so pre-existing corruption can't
+    # loop forever. relation_type is stored as the enum NAME, so compare
+    # via the name (IssueRelationType is a str-Enum, hence the explicit
+    # isinstance-against-the-enum branch, not `str`).
+    def _is_blocks(rt) -> bool:
+        name = rt.name if isinstance(rt, IssueRelationType) else str(rt)
+        return name.upper() == IssueRelationType.BLOCKS.name
+
+    if _is_blocks(relation_in.relation_type):
+        frontier = [relation_in.related_issue_id]
+        visited: set[str] = set()
+        while frontier:
+            if len(visited) > 5000:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Blocks graph too large to validate (possible pre-existing cycle)",
+                )
+            node = frontier.pop()
+            if node == issue_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot create relation: would close a blocking cycle",
+                )
+            if node in visited:
+                continue
+            visited.add(node)
+            for edge in await OxydeIssueRelation.objects.filter(issue_id=node).all():
+                if _is_blocks(edge.relation_type):
+                    frontier.append(edge.related_issue_id)
 
     relation = await issue_service.create_relation(issue_id, relation_in)
     await broadcast_relation_event(

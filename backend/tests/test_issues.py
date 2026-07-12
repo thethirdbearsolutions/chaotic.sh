@@ -4190,14 +4190,42 @@ class TestParentAndRelationCycles:
         assert r.status_code == 400
         assert "itself" in r.json()["detail"].lower()
 
-    async def test_inverse_same_type_rejected(self, client, auth_headers, test_project, db):
+    async def test_inverse_blocks_cycle_rejected(self, client, auth_headers, test_project, db):
         a = await self._mk(client, auth_headers, test_project, "A")
         b = await self._mk(client, auth_headers, test_project, "B")
         assert (await self._relate(client, auth_headers, a, b, "blocks")).status_code == 201
-        # B blocks A is the inverse of A blocks B -> circular deadlock -> reject
+        # B blocks A closes the 2-node cycle A<->B -> deadlock -> reject
         r = await self._relate(client, auth_headers, b, a, "blocks")
         assert r.status_code == 400
-        assert "opposite direction" in r.json()["detail"].lower()
+        assert "blocking cycle" in r.json()["detail"].lower()
+
+    async def test_three_node_blocks_cycle_rejected(self, client, auth_headers, test_project, db):
+        # The N-node case: A blocks B, B blocks C; C blocks A closes a
+        # 3-cycle and would deadlock all three in the ready logic.
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        c = await self._mk(client, auth_headers, test_project, "C")
+        assert (await self._relate(client, auth_headers, a, b, "blocks")).status_code == 201
+        assert (await self._relate(client, auth_headers, b, c, "blocks")).status_code == 201
+        r = await self._relate(client, auth_headers, c, a, "blocks")
+        assert r.status_code == 400
+        assert "blocking cycle" in r.json()["detail"].lower()
+
+    async def test_linear_blocks_chain_allowed(self, client, auth_headers, test_project, db):
+        # A linear blocks chain (no cycle) is fine, however long.
+        ids = [await self._mk(client, auth_headers, test_project, f"N{i}") for i in range(4)]
+        for src, dst in zip(ids, ids[1:]):
+            assert (await self._relate(client, auth_headers, src, dst, "blocks")).status_code == 201
+
+    async def test_duplicates_inverse_allowed(self, client, auth_headers, test_project, db):
+        # Only BLOCKS deadlocks readiness, so a non-blocks inverse pair
+        # (A duplicates B, B duplicates A) is allowed — documents the
+        # blocks-only cycle policy.
+        a = await self._mk(client, auth_headers, test_project, "A")
+        b = await self._mk(client, auth_headers, test_project, "B")
+        assert (await self._relate(client, auth_headers, a, b, "duplicates")).status_code == 201
+        r = await self._relate(client, auth_headers, b, a, "duplicates")
+        assert r.status_code == 201
 
     async def test_inverse_different_type_allowed(self, client, auth_headers, test_project, db):
         a = await self._mk(client, auth_headers, test_project, "A")
