@@ -39,3 +39,24 @@ class TestSanitizeTextInput:
     def test_empty_string(self):
         assert self._fn()("") == ""
         assert self._fn()("   ") == ""
+
+
+class TestSanitizedPromptWrapper:
+    """The click.prompt wrapper (CHT-759): sanitizes the result and must
+    not leak `max_len` into the click.prompt call."""
+
+    def test_wrapper_sanitizes_and_does_not_forward_max_len(self):
+        from unittest.mock import patch
+        with patch("cli.main.click.prompt", return_value="  ab\x00c \t ") as mp:
+            from cli.main import sanitized_prompt
+            out = sanitized_prompt("Name", default="X")
+        assert out == "abc"
+        _, kwargs = mp.call_args
+        assert "max_len" not in kwargs, "max_len must not reach click.prompt"
+        assert kwargs.get("default") == "X", "default must pass through"
+
+    def test_wrapper_respects_custom_max_len(self):
+        from unittest.mock import patch
+        with patch("cli.main.click.prompt", return_value="x" * 300):
+            from cli.main import sanitized_prompt
+            assert len(sanitized_prompt("N", max_len=10)) == 10
