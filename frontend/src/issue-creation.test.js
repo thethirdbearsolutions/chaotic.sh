@@ -861,7 +861,7 @@ describe('issue-creation', () => {
 
             const dropdown = document.querySelector('.inline-dropdown');
             expect(dropdown.innerHTML).toContain('Type');
-            expect(dropdown.querySelectorAll('[data-field="type"]').length).toBe(7);
+            expect(dropdown.querySelectorAll('[data-field="type"]').length).toBe(8);
         });
 
         it('creates assignee dropdown with unassigned option', async () => {

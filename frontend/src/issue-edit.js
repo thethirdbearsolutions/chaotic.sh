@@ -67,6 +67,7 @@ export async function showEditIssueModal(issueId) {
                         <option value="chore" ${issue.issue_type === 'chore' ? 'selected' : ''}>Chore</option>
                         <option value="docs" ${issue.issue_type === 'docs' ? 'selected' : ''}>Docs</option>
                         <option value="tech_debt" ${issue.issue_type === 'tech_debt' ? 'selected' : ''}>Tech Debt</option>
+                        <option value="refactor" ${issue.issue_type === 'refactor' ? 'selected' : ''}>Refactor</option>
                         <option value="epic" ${issue.issue_type === 'epic' ? 'selected' : ''}>Epic</option>
                     </select>
                 </div>

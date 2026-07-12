@@ -230,7 +230,7 @@
           },
           "issue_type": {
             "default": "task",
-            "description": "Issue type. One of: task, bug, feature, chore, docs, tech_debt, epic (aliases accepted, e.g. 'feat').",
+            "description": "Issue type. One of: task, bug, feature, chore, docs, tech_debt, refactor, epic (aliases accepted, e.g. 'feat').",
             "title": "Issue Type",
             "type": "string"
           },

@@ -17,7 +17,7 @@ import { STATUS_ORDER, PRIORITY_ORDER } from './constants.js';
 
 // Re-export for backward compatibility
 export { STATUS_ORDER, PRIORITY_ORDER };
-export const ISSUE_TYPE_ORDER = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
+export const ISSUE_TYPE_ORDER = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'];
 
 /**
  * Sum estimates for a list of issues. Null estimates count as 0.

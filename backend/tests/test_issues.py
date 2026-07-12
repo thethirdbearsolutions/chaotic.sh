@@ -4243,3 +4243,21 @@ class TestParentAndRelationCycles:
         # new inverse rejection.
         r = await self._relate(client, auth_headers, a, b, "blocks")
         assert r.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_create_issue_with_refactor_type(client, auth_headers, test_project, db):
+    """CHT-976: 'refactor' is a valid issue type end to end (enum + API + persistence)."""
+    from app.enums import IssueType
+    assert IssueType.REFACTOR.value == "refactor"
+    r = await client.post(
+        f"/api/projects/{test_project.id}/issues",
+        headers=auth_headers,
+        json={"title": "Refactor the widget", "issue_type": "refactor"},
+    )
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["issue_type"] == "refactor"
+    iid = r.json()["id"]
+    r2 = await client.get(f"/api/issues/{iid}", headers=auth_headers)
+    assert r2.status_code == 200
+    assert r2.json()["issue_type"] == "refactor"

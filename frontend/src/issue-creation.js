@@ -340,7 +340,7 @@ export async function toggleCreateIssueDropdown(type, event, anchorEl) {
         const currentType = document.getElementById('create-issue-type').value;
         dropdown.innerHTML = `
             <div class="dropdown-header">Type</div>
-            ${['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'].map(issueType => `
+            ${['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'].map(issueType => `
                 <button class="dropdown-option ${issueType === currentType ? 'selected' : ''}" data-action="set-create-field" data-field="type" data-value="${issueType}" data-label="${escapeAttr(formatIssueType(issueType))}">
                     <span class="issue-type-badge type-${issueType}">${formatIssueType(issueType)}</span>
                 </button>

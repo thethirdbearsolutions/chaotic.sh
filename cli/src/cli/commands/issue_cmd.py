@@ -18,7 +18,7 @@ def _main():
 PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 
 # Canonical issue types and aliases
-ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"]
+ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "refactor", "epic"]
 ISSUE_TYPE_ALIASES = {
     "feat": "feature",
     "improvement": "feature",

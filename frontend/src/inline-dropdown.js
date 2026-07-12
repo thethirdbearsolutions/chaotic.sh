@@ -19,7 +19,7 @@ import { STATUS_ORDER, PRIORITY_OPTIONS } from './constants.js';
 // Dropdown options — re-export from constants for backward compatibility
 export const STATUS_OPTIONS = STATUS_ORDER;
 export { PRIORITY_OPTIONS };
-export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
+export const ISSUE_TYPE_OPTIONS = ['task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'];
 
 // Module state
 let createIssueLabelIds = [];

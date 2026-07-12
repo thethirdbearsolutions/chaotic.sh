@@ -148,7 +148,7 @@ describe('inline-dropdown', () => {
 
         it('ISSUE_TYPE_OPTIONS contains expected types', () => {
             expect(ISSUE_TYPE_OPTIONS).toEqual([
-                'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'
+                'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'
             ]);
         });
     });
@@ -223,7 +223,7 @@ describe('inline-dropdown', () => {
 
             const dropdown = document.querySelector('.inline-dropdown');
             expect(dropdown.innerHTML).toContain('Change type');
-            expect(dropdown.querySelectorAll('.dropdown-option')).toHaveLength(7);
+            expect(dropdown.querySelectorAll('.dropdown-option')).toHaveLength(8);
         });
 
         it('renders assignee options including unassigned', async () => {
