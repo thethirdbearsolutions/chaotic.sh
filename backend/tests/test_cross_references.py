@@ -277,6 +277,17 @@ class TestCrossReferenceCodeSpans:
         assert second_issue.id in linked
         assert third_issue.id not in linked
 
+    async def test_stripping_does_not_weld_digits_into_a_wrong_identifier(
+        self, issue_service, test_issue, second_issue
+    ):
+        # CHT-801 review: a stripped span between digits must not weld them.
+        # "CHT-`x`2" must NOT collapse to second_issue's identifier and link
+        # it. Spans are replaced with a space, so the fragments stay apart.
+        key, num = second_issue.identifier.rsplit("-", 1)
+        welded = f"{key}-`x`{num}"  # delete-stripping would have made second_issue.identifier
+        relations = await issue_service.create_cross_references(test_issue.id, welded)
+        assert second_issue.id not in {r.related_issue_id for r in relations}
+
 
 @pytest.mark.asyncio
 class TestCommentUpdateCrossReferences:

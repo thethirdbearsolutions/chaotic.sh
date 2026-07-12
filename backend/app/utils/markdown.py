@@ -21,5 +21,11 @@ _INLINE_CODE_RE = re.compile(r"(`{1,2}).*?\1", re.DOTALL)
 
 
 def strip_code_spans(text: str) -> str:
-    """Return `text` with fenced and inline code spans removed."""
-    return _INLINE_CODE_RE.sub("", _CODE_FENCE_RE.sub("", text))
+    """Return `text` with fenced and inline code spans replaced by a space.
+
+    A *space* (not empty) so tokens on either side of a stripped span can't
+    weld into a spurious one: e.g. ``CHT-12`x`3`` must not collapse to the
+    unrelated identifier ``CHT-123``. The word boundary / whitespace then
+    keeps each side's tokens intact for downstream regexes (CHT-801 review).
+    """
+    return _INLINE_CODE_RE.sub(" ", _CODE_FENCE_RE.sub(" ", text))
