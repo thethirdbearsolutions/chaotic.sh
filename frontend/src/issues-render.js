@@ -325,6 +325,7 @@ function renderTypeOptions(container) {
         { value: 'chore', label: 'Chore' },
         { value: 'docs', label: 'Docs' },
         { value: 'tech_debt', label: 'Tech Debt' },
+        { value: 'refactor', label: 'Refactor' },
         { value: 'epic', label: 'Epic' },
     ];
 

@@ -67,7 +67,7 @@ from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
 # ISSUE_TYPE_ALIASES -- see this module's docstring.
-ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "epic"]
+ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "refactor", "epic"]
 ISSUE_TYPE_ALIASES = {
     "feat": "feature",
     "improvement": "feature",

@@ -35,6 +35,7 @@ class IssueType(str, Enum):
     CHORE = "chore"
     DOCS = "docs"
     TECH_DEBT = "tech_debt"
+    REFACTOR = "refactor"
     EPIC = "epic"
 
 

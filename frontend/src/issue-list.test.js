@@ -131,7 +131,7 @@ describe('issue-list', () => {
 
         it('ISSUE_TYPE_ORDER contains expected types', () => {
             expect(ISSUE_TYPE_ORDER).toEqual([
-                'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'
+                'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'
             ]);
         });
     });

@@ -239,6 +239,7 @@ export function formatIssueType(issueType) {
         chore: 'Chore',
         docs: 'Docs',
         tech_debt: 'Tech Debt',
+        refactor: 'Refactor',
         epic: 'Epic',
     };
     return labels[issueType] || 'Task';
