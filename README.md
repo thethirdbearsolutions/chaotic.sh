@@ -90,6 +90,9 @@ For the full design philosophy, see [chaotic.sh/philosophy](https://www.chaotic.
 For the agent-operating guide (the actual loop to shell out: `issue
 ready` → `issue start` → work → `issue complete`, plus claim leases),
 see [docs/agents.md](docs/agents.md).
+For how sprints actually get created and advanced (auto-provisioned,
+`close`-to-rotate, no manual start/complete step), see
+[docs/sprint-lifecycle.md](docs/sprint-lifecycle.md).
 
 ## Templates & Starter Packs
 
