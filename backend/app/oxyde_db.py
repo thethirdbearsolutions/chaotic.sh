@@ -1,4 +1,5 @@
 """Oxyde ORM database configuration."""
+import glob
 import os
 import typing
 import uuid
@@ -215,6 +216,60 @@ async def init_oxyde() -> AsyncDatabase:
     import app.oxyde_models  # noqa: F401
 
     return _db
+
+
+async def verify_migrations_current() -> None:
+    """Fail loud at startup if the DB is BEHIND (or AHEAD of) the code's
+    migrations (CHT-1318).
+
+    The lifespan connects but does NOT apply migrations, so without this a
+    restart happily serves new code against an old schema -- exactly the
+    CHT-1317 incident (new code queried a column a not-yet-migrated DB
+    lacked, 500ing the inbox until caught by hand). Refusing to start turns
+    those silent runtime 500s into one loud boot failure with the fix.
+
+    Skips a DB that wasn't built via migrations (no oxyde_migrations table,
+    e.g. the test harness's static conftest schema) -- there's nothing to
+    compare against there.
+    """
+    from oxyde import execute_raw
+
+    try:
+        rows = await execute_raw("SELECT name FROM oxyde_migrations")
+    except Exception as e:
+        # A MISSING oxyde_migrations table means this DB wasn't built via
+        # migrations (test static schema / hand-built) -> nothing to verify,
+        # skip. But any OTHER error (a real DB problem, a corrupted/dropped
+        # table) must surface loudly at startup, not be silently swallowed
+        # (PR #254 review).
+        msg = str(e).lower()
+        if "no such table" in msg or "oxyde_migrations" in msg:
+            return
+        raise
+
+    applied = {r["name"] for r in rows}
+    mig_dir = os.path.join(os.path.dirname(__file__), os.pardir, "migrations")
+    code = {
+        os.path.splitext(os.path.basename(f))[0]
+        for f in glob.glob(os.path.join(mig_dir, "[0-9]*.py"))
+    }
+    pending = sorted(code - applied)
+    ahead = sorted(applied - code)
+    if pending:
+        raise RuntimeError(
+            f"DB schema is BEHIND the code -- {len(pending)} unapplied "
+            f"migration(s): {pending}. Apply them BEFORE starting the service "
+            "(`oxyde migrate`; droplet: "
+            "`cd backend && DATABASE_URL=sqlite:////root/.chaotic/data/chaotic.db "
+            ".venv/bin/oxyde migrate`). Refusing to serve new code against an "
+            "old schema (CHT-1318)."
+        )
+    if ahead:
+        raise RuntimeError(
+            f"DB schema is AHEAD of the code -- {ahead} applied but absent "
+            "from this code's migrations (bad rollback / wrong deploy?). "
+            "Refusing to start (CHT-1318)."
+        )
 
 
 async def close_oxyde() -> None:
