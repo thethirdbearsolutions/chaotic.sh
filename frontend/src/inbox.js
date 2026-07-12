@@ -72,6 +72,11 @@ export async function loadInbox({ focusFirst = false } = {}) {
     const container = document.getElementById('inbox-list');
     if (!container) return;
 
+    // A fresh load (view entry, team switch, unread-filter toggle) starts
+    // collapsed -- otherwise a stale expandedEntryId could spontaneously
+    // re-expand a matching row with no user action (PR #260 review).
+    expandedEntryId = null;
+
     const requestId = ++loadInboxRequestId;
 
     container.innerHTML = Array(3).fill(0).map(() => `
@@ -125,7 +130,7 @@ export async function loadInbox({ focusFirst = false } = {}) {
  * navigation engages immediately (the list handler disengages while a
  * sidebar nav link holds focus). No-op when the list is empty.
  */
-export function selectInboxRow(index) {
+export function selectInboxRow(index, { focus = true } = {}) {
     const rows = document.querySelectorAll('#inbox-list .inbox-row');
     rows.forEach(r => r.classList.remove('keyboard-selected'));
     if (rows.length === 0) {
@@ -136,8 +141,11 @@ export function selectInboxRow(index) {
     rows[clamped].classList.add('keyboard-selected');
     setSelectedInboxIndex(clamped);
     // focus() (not just the class) is what actually pulls focus off the
-    // sidebar link so the list keydown handler stops yielding to it.
-    rows[clamped].focus({ preventScroll: true });
+    // sidebar link so the list keydown handler stops yielding to it. Skipped
+    // on a collapse-then-move (j/k), where focusing the row we're leaving
+    // would strand a native focus ring one row behind the highlight while the
+    // subsequent move only shifts the class (PR #260 review).
+    if (focus) rows[clamped].focus({ preventScroll: true });
 }
 
 export function focusFirstInboxRow() {
@@ -184,9 +192,31 @@ export function toggleInboxEntryExpand(entryId) {
     const idx = entries.findIndex(e => e.id === entryId);
     if (idx === -1) return;
     expandedEntryId = (expandedEntryId === entryId) ? null : entryId;
-    if (expandedEntryId === entryId) markEntryRead(entryId);
+    // Mark read optimistically BEFORE the re-render (PR #260 review): the old
+    // markEntryRead only stripped the row's unread class in its async tail and
+    // relied on the caller navigating away, so on the now-stay-put expand path
+    // the unread dot lingered until the next full render. Setting read_at in
+    // state up front means renderInbox() below simply omits the dot.
+    if (expandedEntryId === entryId) markEntryReadOptimistic(entryId);
     renderInbox();
     selectInboxRow(idx); // keep the cursor on this row across the re-render
+}
+
+/**
+ * Optimistically mark an entry read: update local state + the badge now, fire
+ * the server mark-read after (CHT-1320). Unlike markEntryRead this leaves the
+ * DOM to a following renderInbox(), so a row that stays on screen reflects the
+ * read state (dot gone) immediately.
+ */
+function markEntryReadOptimistic(entryId) {
+    const entries = getInboxEntries();
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry || entry.read_at) return;
+    entry.read_at = new Date().toISOString();
+    setInboxEntries([...entries]);
+    setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
+    renderInboxBadge();
+    api.markInboxRead(entryId).catch(e => console.error('Failed to mark inbox entry read:', e));
 }
 
 /**
@@ -199,7 +229,12 @@ export function collapseInboxExpand() {
     expandedEntryId = null;
     const idx = getSelectedInboxIndexSafe();
     renderInbox();
-    if (idx >= 0) selectInboxRow(idx);
+    // Re-apply the cursor highlight WITHOUT stealing focus: on the j/k path a
+    // move follows immediately and re-highlights idx±1, so focusing idx here
+    // would leave a stray focus ring a row behind (PR #260 review). The class
+    // is the visible cursor; the document-level keydown handler doesn't need
+    // row focus to work.
+    if (idx >= 0) selectInboxRow(idx, { focus: false });
     return true;
 }
 
@@ -219,13 +254,18 @@ export async function reassignInboxEntry(entryId) {
     const entry = getInboxEntries().find(e => e.id === entryId);
     if (!entry || !entry.issue_id || !entry.source_user_id) return;
     const back = entry.source_user_name || 'sender';
-    // Archive first (optimistic UI); the reassign PATCH is the side effect.
-    archiveInboxEntry(entryId);
+    // PATCH first, archive only on success (PR #260 review): archive now
+    // PERSISTS server-side (CHT-1316), so an optimistic archive-then-PATCH
+    // would silently orphan the entry if the reassign failed -- the issue
+    // stays assigned to you but the "handle me" item is gone for good. Leave
+    // the entry in place on failure so it can be retried.
     try {
         await api.updateIssue(entry.issue_id, { assignee_id: entry.source_user_id });
     } catch (e) {
         showApiError(`reassign ${entry.issue_identifier || 'issue'} back to ${back}`, e);
+        return;
     }
+    archiveInboxEntry(entryId);
 }
 
 /**

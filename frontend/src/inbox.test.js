@@ -381,7 +381,7 @@ describe('renderInboxRow archive button (CHT-1250 UX)', () => {
 
 describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () => {
     it('expands the row inline with an action bar and marks it read', () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         renderInbox();
         toggleInboxEntryExpand('assign-1');
         const row = document.querySelector('.inbox-row');
@@ -392,8 +392,18 @@ describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () =>
         expect(api.markInboxRead).toHaveBeenCalledWith('assign-1');
     });
 
+    it('clears the unread dot immediately on expand (PR #260 review)', () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN, read_at: null }]);
+        renderInbox();
+        expect(document.querySelector('.inbox-row-unread-dot')).not.toBeNull();
+        toggleInboxEntryExpand('assign-1');
+        // Optimistic read is applied before the re-render, so the dot is gone
+        // without waiting for the mark-read API to resolve.
+        expect(document.querySelector('.inbox-row-unread-dot')).toBeNull();
+    });
+
     it('shows a Reassign-back button for an assignment with a source user + issue', () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         renderInbox();
         toggleInboxEntryExpand('assign-1');
         const btn = document.querySelector('[data-action="reassign-inbox-entry"]');
@@ -404,14 +414,14 @@ describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () =>
     });
 
     it('does NOT show Reassign for a gate_pending entry (no source user)', () => {
-        getInboxEntries.mockReturnValue([ENTRY]);
+        getInboxEntries.mockReturnValue([{ ...ENTRY }]);
         renderInbox();
         toggleInboxEntryExpand('entry-1');
         expect(document.querySelector('[data-action="reassign-inbox-entry"]')).toBeNull();
     });
 
     it('collapses on a second toggle', () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         renderInbox();
         toggleInboxEntryExpand('assign-1');
         toggleInboxEntryExpand('assign-1');
@@ -421,13 +431,13 @@ describe('toggleInboxEntryExpand (CHT-1320: Gmail-style expand in place)', () =>
 
 describe('collapseInboxExpand (CHT-1320)', () => {
     it('returns false when nothing is expanded', () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         renderInbox();
         expect(collapseInboxExpand()).toBe(false);
     });
 
     it('returns true and collapses when a row is open', () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         renderInbox();
         toggleInboxEntryExpand('assign-1');
         expect(collapseInboxExpand()).toBe(true);
@@ -435,13 +445,13 @@ describe('collapseInboxExpand (CHT-1320)', () => {
     });
 });
 
-describe('reassignInboxEntry (CHT-1320)', () => {
+describe('reassignInboxEntry (CHT-1320: PATCH-first, archive on success)', () => {
     it('reassigns the issue back to the source user and archives the entry', async () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         getInboxUnreadCount.mockReturnValue(1);
         await reassignInboxEntry('assign-1');
         expect(api.updateIssue).toHaveBeenCalledWith('issue-9', { assignee_id: 'user-ethan' });
-        expect(api.archiveInbox).toHaveBeenCalledWith('assign-1'); // cleared after reassign
+        expect(api.archiveInbox).toHaveBeenCalledWith('assign-1'); // cleared only after reassign lands
     });
 
     it('no-ops when the entry lacks an issue or source user', async () => {
@@ -450,10 +460,13 @@ describe('reassignInboxEntry (CHT-1320)', () => {
         expect(api.updateIssue).not.toHaveBeenCalled();
     });
 
-    it('surfaces an API error if the reassign PATCH fails', async () => {
-        getInboxEntries.mockReturnValue([ASSIGN]);
+    it('leaves the entry in the inbox (does NOT archive) when the PATCH fails', async () => {
+        getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
         api.updateIssue.mockRejectedValueOnce(new Error('nope'));
         await reassignInboxEntry('assign-1');
         expect(showApiError).toHaveBeenCalledWith(expect.stringContaining('reassign'), expect.any(Error));
+        // The whole point of PATCH-first: a failed reassign must not orphan the
+        // entry by archiving it (archive persists server-side, CHT-1316).
+        expect(api.archiveInbox).not.toHaveBeenCalled();
     });
 });
