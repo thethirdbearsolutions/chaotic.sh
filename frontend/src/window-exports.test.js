@@ -129,7 +129,7 @@ describe('Window Exports', () => {
     const optionValues = Array.from(selectMatch[1].matchAll(/<option value="([^"]*)">/g)).map(m => m[1]);
 
     // Must match backend/app/enums.py IssueType and issues-render.js's renderTypeOptions list
-    const expectedTypes = ['', 'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'epic'];
+    const expectedTypes = ['', 'task', 'bug', 'feature', 'chore', 'docs', 'tech_debt', 'refactor', 'epic'];
     expect(optionValues).toEqual(expectedTypes);
   });
 });

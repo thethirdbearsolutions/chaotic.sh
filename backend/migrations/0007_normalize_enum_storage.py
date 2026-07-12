@@ -81,6 +81,7 @@ ENUM_COLUMNS = {
             "chore": "CHORE",
             "docs": "DOCS",
             "tech_debt": "TECH_DEBT",
+            "refactor": "REFACTOR",
             "epic": "EPIC",
         },
     },
