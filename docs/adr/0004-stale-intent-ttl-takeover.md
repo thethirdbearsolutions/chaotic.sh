@@ -41,16 +41,30 @@ Three complementary changes, none of which weakens the gate itself
 1. **Stale-intent TTL with takeover** (server,
    `intent_ttl_minutes`, default 15). When a claim/close finds an open
    intent owned by a *different* principal, the intent is now checked
-   for staleness: older than the TTL **and** no unresolved GATE
-   blockers. A stale intent is canceled in the same transaction
-   (blockers resolved, `cleared_at`/`cleared_by_id` stamped by the
-   taker-over, `INTENT_CANCELED` activity + broadcast — same scrub
-   semantics as admin force-clear), and a fresh intent is opened for
-   the new principal, who receives the actionable
-   `ticket_rituals_pending` error instead of the dead-end
-   `intent_in_flight`. GATE-blocked intents never expire: they are
-   actionable by a human in the admin inbox and may legitimately wait
-   days. `intent_ttl_minutes = 0` disables expiry.
+   for staleness. Stale means ALL of:
+
+   * older than the TTL, measured from its freshness stamp
+     (`requested_at`) — and the stamp is **renewable**: a
+     same-principal re-attempt or any blocker progress (an attest
+     resolving one of several blockers) bumps it, so an actively
+     working initiator can never be expired mid-flight (PR #261
+     review);
+   * no unresolved GATE blockers — those are actionable by a human in
+     the admin inbox and may legitimately wait days;
+   * no unresolved blockers whose ritual is already attested and
+     awaiting REVIEW approval — the initiator DID come back and
+     attest; the remaining wait is the admin's, not theirs (PR #261
+     review).
+
+   A stale intent is canceled in the same transaction: blockers
+   scrubbed (`resolved_at` stamped, `resolved_by_id` left NULL — the
+   taker never satisfied those rituals; the parent's `cleared_by_id`
+   identifies the taker), `INTENT_CANCELED` activity recorded with the
+   displaced initiator in `old_value`, and a post-commit broadcast
+   carrying `intent_initiator_id` (parity with admin force-clear). A
+   fresh intent is then opened for the new principal, who receives the
+   actionable `ticket_rituals_pending` error instead of the dead-end
+   `intent_in_flight`. `intent_ttl_minutes = 0` disables expiry.
 
 2. **Same-principal resume** (pre-existing behavior, now a tested
    contract). The initiator retrying is never blocked by their own
@@ -79,12 +93,19 @@ Three complementary changes, none of which weakens the gate itself
 * `INTENT_CANCELED` is now emitted by a non-admin path. Consumers of
   the activity feed / `chaotic await` see takeovers explicitly, with
   `user_id` = the taker-over.
-* The exclusive lock is now a *lease* in effect: holders who abandon a
-  failed attempt lose exclusivity after `intent_ttl_minutes`. Agents
-  that intend to come back and attest later than that should either
-  attest promptly or expect to re-express intent (their attestations
-  still stand — attest is decoupled from the gate per ADR-0001, so a
-  later re-close finds them satisfied).
+* The exclusive lock is now a *renewable lease*: holders who abandon a
+  failed attempt lose exclusivity after `intent_ttl_minutes`, but any
+  re-attempt or attest renews it. Only a holder with zero activity for
+  the full TTL — the stranded-automation case — can be displaced.
+  Displaced holders' attestations still stand (attest is decoupled
+  from the gate per ADR-0001), so a later re-close finds them
+  satisfied.
+* Open question (follow-up ticket): whether agent principals should be
+  able to take over a *human's* stale intent, or whether takeover of
+  human intents should require a human/admin requester. Current
+  behavior: any team member, agent included, can take over once the
+  intent is genuinely stale; the renewable lease + GATE/REVIEW-pending
+  exemptions bound the damage.
 * A same-moment race between two principals on a stale intent is
   serialized by the existing `atomic()` + partial-UNIQUE machinery;
   the loser still gets `IntentInFlightError` against the *fresh*

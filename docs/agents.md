@@ -344,10 +344,13 @@ accept the same `--attest` flag (claims can be ritual-gated too).
 
 If an attempt does get blocked anyway, the open intent is durable for
 its initiator (retrying resumes it; attesting later auto-fires the
-transition) but expires for everyone else after `intent_ttl_minutes`
-(default 15) — the next principal's attempt cancels the stale intent
-(`INTENT_CANCELED`) and proceeds. Intents blocked on GATE rituals never
-expire; those wait for a human in the admin inbox.
+transition) and its exclusivity is a *renewable lease*: retries and
+attest progress keep it fresh, but after `intent_ttl_minutes` (default
+15) with no initiator activity the next principal's attempt cancels the
+stale intent (`INTENT_CANCELED`, with the displaced initiator in the
+event payload) and proceeds. Intents blocked on GATE rituals — or on
+REVIEW rituals already attested and awaiting approval — never expire;
+those wait on a human, not the initiator.
 
 A typical `pr-review` ritual demands you worked on a branch, opened a
 PR, and had a **separate** oppositional-reviewer agent comment on it —

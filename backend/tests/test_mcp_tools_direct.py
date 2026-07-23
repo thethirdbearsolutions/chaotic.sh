@@ -111,6 +111,80 @@ class TestIssueUpdateBranches:
         assert "No fields" in result["error"]
 
 
+class TestIssueUpdateAttest:
+    """HTTP-transport attest path (CHT-1326, PR #261 review finding 6):
+    the stdio mirror is tested in cli/tests/test_mcp_server.py; these
+    pin the hand-mirrored backend implementation to the same behavior.
+    """
+
+    async def test_attest_then_close_succeeds(self, test_issue, make_ritual):
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        # Bare close is blocked (the CHT-1326 repro).
+        blocked = await tools.issue_update(test_issue.identifier, status="done")
+        assert "error" in blocked
+
+        # Attest inline -> close succeeds.
+        result = await tools.issue_update(
+            test_issue.identifier, status="done",
+            attest={"close-gate": "did the thing, verified"},
+        )
+        assert "error" not in result, result
+        assert result["status"] == "done"
+
+    async def test_attest_unknown_ritual_is_error(self, test_issue, make_ritual):
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        result = await tools.issue_update(
+            test_issue.identifier, status="done", attest={"bogus": "note"},
+        )
+        assert "error" in result
+        assert "not a pending ticket ritual" in result["error"]
+
+    async def test_attest_only_call_is_allowed(self, test_issue, make_ritual):
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        result = await tools.issue_update(
+            test_issue.identifier, attest={"close-gate": "standalone attest"},
+        )
+        assert "error" not in result, result
+        # Standalone attest (no prior intent) must NOT auto-transition.
+        assert result["status"] != "done"
+
+    async def test_attest_empty_note_is_error(self, test_issue, make_ritual):
+        from app.enums import ApprovalMode, RitualTrigger
+
+        await make_ritual(
+            name="close-gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        result = await tools.issue_update(
+            test_issue.identifier, status="done", attest={"close-gate": "  "},
+        )
+        assert "error" in result
+        assert "non-empty" in result["error"]
+
+
 class TestIssueCommentAssignTo:
     async def test_comment_with_assign_to(self, test_issue, test_user):
         result = await tools.issue_comment(test_issue.identifier, content="hi", assign_to="me")

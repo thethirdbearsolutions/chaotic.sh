@@ -166,6 +166,169 @@ class TestStaleIntentTakeover:
         assert canceled[0].user_id == test_user2.id
 
     @pytest.mark.asyncio
+    async def test_ttl_zero_disables_expiry(
+        self, db, test_issue, test_user, test_user2, make_ritual, monkeypatch,
+    ):
+        """intent_ttl_minutes = 0 restores pre-CHT-1326 permanence
+        (PR #261 review finding 9)."""
+        from app.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "intent_ttl_minutes", 0)
+
+        await make_ritual(
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        await _backdate_intent(stale, minutes=60 * 24 * 365)
+
+        with pytest.raises(IntentInFlightError):
+            await _attempt_close(test_issue, test_user2.id)
+        still_open = await OxydeTicketLimbo.objects.get(id=stale.id)
+        assert still_open.cleared_at is None
+
+    @pytest.mark.asyncio
+    async def test_review_attested_pending_approval_is_not_taken_over(
+        self, db, test_issue, test_user, test_user2, make_ritual,
+    ):
+        """An initiator who attested a REVIEW ritual and is waiting on
+        an admin has NOT abandoned their intent — attested-but-
+        unapproved blockers pin the intent exactly like GATE (PR #261
+        review finding 1)."""
+        ritual = await make_ritual(
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        # Attested but not approved — the wait is the admin's now.
+        await RitualService().attest_for_issue(
+            ritual, test_issue.id, test_user.id, note="awaiting approval",
+        )
+        await _backdate_intent(stale, minutes=60 * 24)
+
+        with pytest.raises(IntentInFlightError):
+            await _attempt_close(test_issue, test_user2.id)
+        still_open = await OxydeTicketLimbo.objects.get(id=stale.id)
+        assert still_open.cleared_at is None
+
+    @pytest.mark.asyncio
+    async def test_review_unattested_stale_intent_is_taken_over(
+        self, db, test_issue, test_user, test_user2, make_ritual,
+    ):
+        """A REVIEW blocker the initiator never even attested pins
+        nothing — that intent is genuinely abandoned and stealable."""
+        await make_ritual(
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.REVIEW,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        await _backdate_intent(stale, minutes=16)
+
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user2.id)
+        old = await OxydeTicketLimbo.objects.get(id=stale.id)
+        assert old.cleared_at is not None
+        fresh = await _open_close_intent(test_issue)
+        assert fresh is not None
+        assert fresh.requested_by_id == test_user2.id
+
+    @pytest.mark.asyncio
+    async def test_mixed_gate_and_auto_blockers_pin_the_intent(
+        self, db, test_issue, test_user, test_user2, make_ritual,
+    ):
+        """One unresolved GATE blocker among AUTO ones is enough to
+        exempt the whole intent from expiry."""
+        await make_ritual(
+            name="auto_close_gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        await make_ritual(
+            name="human_gate",
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.GATE,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        await _backdate_intent(stale, minutes=60 * 24)
+
+        with pytest.raises(IntentInFlightError):
+            await _attempt_close(test_issue, test_user2.id)
+
+    @pytest.mark.asyncio
+    async def test_same_principal_retry_renews_the_lease(
+        self, db, test_issue, test_user, test_user2, make_ritual,
+    ):
+        """The lock is a renewable lease (PR #261 review finding 2): an
+        initiator actively re-attempting bumps requested_at, so another
+        principal cannot steal the intent out from under them."""
+        await make_ritual(
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        await _backdate_intent(stale, minutes=16)
+
+        # Initiator retries — this renews the lease...
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+
+        # ...so the other principal is blocked again.
+        with pytest.raises(IntentInFlightError):
+            await _attempt_close(test_issue, test_user2.id)
+        still_open = await OxydeTicketLimbo.objects.get(id=stale.id)
+        assert still_open.cleared_at is None
+
+    @pytest.mark.asyncio
+    async def test_takeover_broadcasts_intent_canceled_with_initiator(
+        self, db, test_issue, test_user, test_user2, make_ritual,
+        captured_broadcasts,
+    ):
+        """The takeover INTENT_CANCELED broadcast carries the displaced
+        initiator (parity with admin force-clear — PR #261 review
+        finding 3)."""
+        await make_ritual(
+            trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO,
+            note_required=True,
+        )
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user.id)
+        stale = await _open_close_intent(test_issue)
+        await _backdate_intent(stale, minutes=16)
+
+        with pytest.raises(TicketRitualsError):
+            await _attempt_close(test_issue, test_user2.id)
+
+        # Nesting shape is the broadcast helper's concern; assert on
+        # content — an intent_canceled event naming the displaced
+        # initiator must have gone out.
+        found = any(
+            "intent_canceled" in str(msg) and test_user.id in str(msg)
+            for _, msg in captured_broadcasts
+        )
+        assert found, (
+            f"No intent_canceled broadcast carrying the displaced "
+            f"initiator; got: {captured_broadcasts}"
+        )
+
+    @pytest.mark.asyncio
     async def test_stale_gate_intent_is_not_taken_over(
         self, db, test_issue, test_user, test_user2, make_ritual
     ):

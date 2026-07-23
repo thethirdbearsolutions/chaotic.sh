@@ -481,6 +481,71 @@ class TestIssueCloseAttest:
         client.update_issue.assert_called_once_with(
             'issue-uuid-123', assignee_id='user-1', status='in_progress')
 
+    def test_complete_alias_delegates_attest(self, cli_runner, mock_issue):
+        """issue complete passes --attest through to close's callback
+        (keyword call — CHT-1222-style delegation drift guard)."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+        client.get_pending_issue_rituals = MagicMock(return_value=self._pending(
+            {"id": "rit-1", "name": "close-gate", "approval_mode": "auto"},
+        ))
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "x"})
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'complete', 'CHT-100', '--attest', 'close-gate:done',
+        ])
+
+        assert result.exit_code == 0, result.output
+        client.attest_ritual_for_issue.assert_called_once_with(
+            'rit-1', 'issue-uuid-123', 'done')
+        client.update_issue.assert_called_once_with('issue-uuid-123', status='done')
+
+    def test_start_alias_delegates_attest(self, cli_runner, mock_issue):
+        """issue start passes --attest through to claim's callback."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.update_issue = MagicMock()
+        client.get_pending_issue_rituals = MagicMock(return_value=self._pending(
+            {"id": "rit-c", "name": "claim-gate", "approval_mode": "auto"},
+        ))
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "x"})
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'start', 'CHT-100', '--attest', 'claim-gate:branch cut',
+        ])
+
+        assert result.exit_code == 0, result.output
+        client.attest_ritual_for_issue.assert_called_once_with(
+            'rit-c', 'issue-uuid-123', 'branch cut')
+        client.update_issue.assert_called_once_with(
+            'issue-uuid-123', assignee_id='user-1', status='in_progress')
+
+    def test_update_attest_only_json_emits_issue(self, cli_runner, mock_issue):
+        """Attestation-only `issue update --attest --json` emits the
+        refetched issue exactly once and calls no field update."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock()
+        client.get_pending_issue_rituals = MagicMock(return_value=self._pending(
+            {"id": "rit-1", "name": "close-gate", "approval_mode": "auto"},
+        ))
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "x"})
+
+        result = cli_runner.invoke(cli, [
+            'issue', 'update', 'CHT-100',
+            '--attest', 'close-gate:notes here', '--json',
+        ])
+
+        assert result.exit_code == 0, result.output
+        client.update_issue.assert_not_called()
+        payload = json.loads(result.stdout)
+        assert payload["identifier"] == "CHT-100"
+
 
 class TestIssueWontfix:
     """Tests for issue wontfix command."""

@@ -227,16 +227,24 @@ class IssueService:
 
         Every open intent's initiating request failed by construction —
         `_open_intent_with_limbo` only creates the row when the
-        transition is blocked, then raises. If the initiator never came
-        back to attest, the intent is abandoned and must not exclude
-        other principals forever. Exceptions:
+        transition is blocked, then raises. If the initiator then walked
+        away, the intent is abandoned and must not exclude other
+        principals forever. `requested_at` doubles as the freshness
+        stamp: same-principal re-attempts and blocker progress both bump
+        it (the lock is a renewable lease — PR #261 review finding 2),
+        so the TTL only expires intents with no initiator activity at
+        all. Exceptions:
 
         * TTL disabled (`intent_ttl_minutes <= 0`) — never stale.
         * Unresolved GATE blockers — the intent is actionable by a
           human in the admin inbox and may legitimately wait days for
           approval; it stays exclusive until force-cleared or approved.
+        * Unresolved blockers whose ritual is already attested and
+          awaiting REVIEW approval — the initiator DID come back and
+          attest; the wait is the admin's, not theirs (PR #261 review
+          finding 1). Same human-loop reasoning as GATE.
         """
-        from app.oxyde_models.ritual import OxydeRitual
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
 
         ttl_minutes = get_settings().intent_ttl_minutes
         if ttl_minutes <= 0:
@@ -244,6 +252,10 @@ class IssueService:
 
         requested_at = intent.requested_at
         if requested_at is None:
+            # Not creatable via the ORM today (requested_at has a default),
+            # but reachable via manual inserts or a future migration bug.
+            # Fail closed: an undatable intent keeps its exclusivity rather
+            # than being stealable forever (PR #261 review finding 2).
             return False
         if requested_at.tzinfo is None:
             requested_at = requested_at.replace(tzinfo=timezone.utc)
@@ -259,15 +271,43 @@ class IssueService:
             rituals = await OxydeRitual.objects.filter(id__in=ritual_ids).all()
             if any(r.approval_mode == ApprovalMode.GATE for r in rituals):
                 return False
+            # Attested-but-unapproved (REVIEW pending) pins the intent
+            # too: that blocker is waiting on an admin, not the
+            # initiator.
+            attestations = await OxydeRitualAttestation.objects.filter(
+                ritual_id__in=ritual_ids, issue_id=intent.issue_id,
+            ).all()
+            if any(a.approved_at is None for a in attestations):
+                return False
         return True
+
+    async def _touch_intent(self, intent: "OxydeTicketLimbo") -> None:
+        """Renew an open intent's freshness stamp (PR #261 review
+        finding 2). Called on same-principal re-attempts so an actively
+        working initiator never loses their intent to the TTL. Runs in
+        the caller's transaction."""
+        intent.requested_at = datetime.now(timezone.utc)
+        await intent.save(update_fields={"requested_at"})
 
     async def _cancel_intent(
         self, intent: "OxydeTicketLimbo", canceled_by_id: str,
     ) -> None:
-        """Cancel an open intent: resolve its outstanding blockers,
+        """Cancel an open intent: scrub its outstanding blockers,
         stamp the parent cleared, and record INTENT_CANCELED activity.
-        Same scrub semantics as the admin force-clear endpoint. Runs
-        inside the caller's `atomic()` — the matching WebSocket
+        Same scrub *state* semantics as the admin force-clear endpoint
+        (blockers resolved + intent cleared, all-or-nothing in the
+        caller's transaction); two deliberate differences (PR #261
+        review findings 3 and 4):
+
+        * the activity write is guarded so a failed audit row can never
+          fail the takeover itself (state transactional, observability
+          best-effort);
+        * scrubbed blockers keep `resolved_by_id` NULL — the taker
+          never satisfied those rituals, and force-clear's convention
+          of stamping the actor is reserved for admins. The parent's
+          `cleared_by_id` identifies the taker.
+
+        Runs inside the caller's `atomic()` — the matching WebSocket
         broadcast must be emitted by the caller AFTER commit.
         """
         now = datetime.now(timezone.utc)
@@ -276,7 +316,7 @@ class IssueService:
         ).all()
         for blocker in blockers:
             blocker.resolved_at = now
-            blocker.resolved_by_id = canceled_by_id
+            blocker.resolved_by_id = None
             await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
         intent.cleared_at = now
         intent.cleared_by_id = canceled_by_id
@@ -290,6 +330,10 @@ class IssueService:
                 issue_id=intent.issue_id,
                 user_id=canceled_by_id,
                 activity_type=ActivityType.INTENT_CANCELED,
+                # old_value carries the displaced initiator so a
+                # `chaotic await` consumer (or the feed) can tell WHOSE
+                # intent was canceled (PR #261 review finding 3).
+                old_value=intent.requested_by_id,
                 new_value=limbo_type_value,
             )
         except Exception:
@@ -300,6 +344,7 @@ class IssueService:
 
     async def _enforce_exclusive_intent_lock(
         self, issue_id: str, limbo_type: "LimboType", requesting_user_id: str,
+        allow_takeover: bool = True,
     ) -> "tuple[OxydeTicketLimbo | None, OxydeTicketLimbo | None]":
         """Check whether an open intent of this type exists on the
         ticket. Returns `(owned_lock, canceled_stale_intent)`:
@@ -311,6 +356,12 @@ class IssueService:
           (see `_intent_is_stale`) and has been canceled in-transaction
           (CHT-1326); the caller may open a fresh intent and must
           broadcast INTENT_CANCELED after commit.
+
+        `allow_takeover=False` makes the check side-effect-free (no
+        cancel can occur) — used by the IntegrityError re-check, where
+        a takeover is unreachable anyway (the racing intent is seconds
+        old) and any cancel would be silently rolled back unbroadcast
+        (PR #261 review finding 5).
 
         Raises IntentInFlightError if a different principal owns a
         still-live intent.
@@ -332,7 +383,7 @@ class IssueService:
         # exclusive lock; a stale one (abandoned after its initiating
         # request failed — the CHT-1326 stranding trap) is canceled so
         # the new principal can proceed.
-        if not await self._intent_is_stale(intent):
+        if not allow_takeover or not await self._intent_is_stale(intent):
             raise IntentInFlightError(
                 issue_id=issue_id,
                 intent_type=limbo_type.name,
@@ -403,9 +454,13 @@ class IssueService:
                     # raise IntentInFlightError if it's a different
                     # principal — the canonical "second claimant"
                     # outcome. If it's us (idempotent re-issue), fall
-                    # through to the normal blocked path.
+                    # through to the normal blocked path. Takeover is
+                    # disabled for this re-check: the racer's intent was
+                    # created moments ago (never past the TTL), and a
+                    # cancel here would roll back unbroadcast with the
+                    # error raised below (PR #261 review findings 4/5).
                     intent, _ = await self._enforce_exclusive_intent_lock(
-                        issue.id, limbo_type, user_id,
+                        issue.id, limbo_type, user_id, allow_takeover=False,
                     )
                     if intent is None:
                         # Race resolved by the other writer clearing
@@ -436,6 +491,10 @@ class IssueService:
                 # would fire past them. INSERT OR IGNORE is idempotent
                 # against the UNIQUE(limbo_id, ritual_id).
                 intent = existing_lock
+                # Renew the lease: an initiator actively re-attempting
+                # must never lose their intent to the stale-intent TTL
+                # (PR #261 review finding 2).
+                await self._touch_intent(intent)
                 existing_blocker_rituals = {
                     b.ritual_id for b in await OxydeTicketLimboBlocker.objects.filter(
                         limbo_id=intent.id,
@@ -460,6 +519,9 @@ class IssueService:
         if canceled_stale_intent is not None:
             await self._broadcast_intent_event(
                 issue, user_id, limbo_type, ActivityType.INTENT_CANCELED,
+                extra={
+                    "intent_initiator_id": canceled_stale_intent.requested_by_id,
+                },
             )
         if broadcast_intent_opened:
             await self._broadcast_intent_event(
@@ -530,27 +592,34 @@ class IssueService:
 
     async def _broadcast_intent_event(
         self, issue, user_id: str, limbo_type: "LimboType",
-        activity_type: "ActivityType",
+        activity_type: "ActivityType", extra: dict | None = None,
     ) -> None:
         """Fire the WebSocket broadcast for an intent event. This is
         the non-transactional half — must run AFTER any surrounding
         `atomic()` block commits, otherwise subscribers receive
         events for state that hasn't been persisted (and may never be
         persisted if the transaction rolls back).
+
+        `extra` merges additional payload keys (e.g. the displaced
+        `intent_initiator_id` on a takeover INTENT_CANCELED, for parity
+        with the admin force-clear broadcast — PR #261 review finding 3).
         """
         try:
             from app.websocket import broadcast_activity_event
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project is not None:
+                payload = {
+                    "issue_id": issue.id,
+                    "issue_identifier": issue.identifier,
+                    "limbo_type": limbo_type.value,
+                    "user_id": user_id,
+                }
+                if extra:
+                    payload.update(extra)
                 await broadcast_activity_event(
                     project.team_id,
                     activity_type.value,
-                    {
-                        "issue_id": issue.id,
-                        "issue_identifier": issue.identifier,
-                        "limbo_type": limbo_type.value,
-                        "user_id": user_id,
-                    },
+                    payload,
                 )
         except Exception:
             logger.exception(
