@@ -321,14 +321,57 @@ def issue_update(
     ] = None,
     title: Annotated[str | None, Field(description="New title.")] = None,
     description: Annotated[str | None, Field(description="New description (markdown).")] = None,
+    attest: Annotated[
+        dict[str, str] | None,
+        Field(description=(
+            "Ritual attestation notes to record BEFORE applying the update, "
+            "as a map of ritual name -> note, e.g. "
+            '{"close-gate": "ADR written", "doc-refresh": "README updated"}. '
+            "Use when closing (status=done) or claiming (status=in_progress) "
+            "a ticket whose rituals require notes — without them the status "
+            "change is blocked by pending rituals (CHT-1326)."
+        )),
+    ] = None,
 ) -> dict:
     """Update an issue's status, priority, estimate, assignee, title, and/or description.
 
     Only fields explicitly passed are changed. Returns the updated issue.
+    Pass `attest` to satisfy pending close/claim rituals in the same call.
     """
     _require_auth()
     m = _main()
     iss = _client().get_issue_by_identifier(identifier)
+
+    # Per-ritual attestations first (CHT-1326), so a gated status change
+    # finds its rituals satisfied instead of opening a blocked intent
+    # this non-interactive caller could never attest. Attesting the last
+    # pending ritual may fire the one-step auto-transition server-side;
+    # the update below is then a no-op for the status field.
+    if attest:
+        ritual_status = _client().get_pending_issue_rituals(iss["id"])
+        pending = {r["name"]: r for r in ritual_status.get("pending_rituals", [])}
+        completed = {r["name"] for r in ritual_status.get("completed_rituals", [])}
+        for name, note in attest.items():
+            if not (note and note.strip()):
+                raise ToolInputError(
+                    f"Attestation note for ritual '{name}' must be non-empty."
+                )
+            rit = pending.get(name)
+            if rit is None:
+                if name in completed:
+                    continue  # already attested — idempotent
+                known = ", ".join(sorted(pending)) or "none"
+                raise ToolInputError(
+                    f"Ritual '{name}' is not a pending ticket ritual for "
+                    f"{identifier}. Pending: {known}."
+                )
+            if rit.get("attestation"):
+                continue  # attested, awaiting approval — nothing to add
+            if rit.get("approval_mode") == "gate":
+                # Gate completion is human-only; the server enforces it.
+                _client().complete_gate_ritual_for_issue(rit["id"], iss["id"], note)
+            else:
+                _client().attest_ritual_for_issue(rit["id"], iss["id"], note)
 
     data = {}
     if title is not None:
@@ -344,10 +387,11 @@ def issue_update(
     if assignee is not None:
         data["assignee_id"] = None if assignee.lower() == "unassigned" else m.resolve_assignee_id(assignee)
 
-    if not data:
+    if not data and not attest:
         raise ToolInputError("No fields provided to update.")
 
-    _client().update_issue(iss["id"], **data)
+    if data:
+        _client().update_issue(iss["id"], **data)
     return _client().get_issue_by_identifier(identifier)
 
 

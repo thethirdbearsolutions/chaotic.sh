@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     # self-claim lease, overridable per-call via `--lease`/`lease_seconds`.
     default_lease_minutes: int = 120  # 2 hours
 
+    # Stale-intent TTL (CHT-1326): an open claim/close intent whose
+    # initiating request failed (which is every open intent -- intents are
+    # only created when the transition is blocked) stops excluding OTHER
+    # principals after this many minutes, provided it has no unresolved
+    # GATE blockers (those are actionable in the admin inbox and may
+    # legitimately wait days for a human). A later claim/close by a
+    # different user then cancels the stale intent (INTENT_CANCELED) and
+    # opens a fresh one. 0 disables expiry (pre-CHT-1326 behavior).
+    intent_ttl_minutes: int = 15
+
     # CORS
     cors_origins: str = "*"
 

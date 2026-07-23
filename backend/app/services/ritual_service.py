@@ -1374,6 +1374,14 @@ class RitualService:
                 limbo_id=limbo_id, resolved_at=None,
             ).all()
             if remaining:
+                # Blocker progress renews the intent's freshness stamp:
+                # an initiator attesting a multi-ritual gate one call
+                # at a time must not lose the intent to the
+                # stale-intent TTL between attests (CHT-1326, PR #261
+                # review finding 2).
+                intent = intents_by_id[limbo_id]
+                intent.requested_at = now
+                await intent.save(update_fields={"requested_at"})
                 continue
             intent = intents_by_id[limbo_id]
             intent.cleared_at = now

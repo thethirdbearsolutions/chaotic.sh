@@ -324,6 +324,34 @@ configured with `{"estimate__gte": 3}` only fires on tickets estimated
 ≥3 points; smaller tickets close without it). If a ritual's conditions
 don't match the issue, it's skipped ("conditions do not match").
 
+**Supply attestation notes inline when closing non-interactively**
+(CHT-1326 / ADR-0004). A bare `issue_update {status: "done"}` on a
+ticket with note-required close rituals is *blocked* with
+`ticket_rituals_pending` — and before CHT-1326 it also stranded a CLOSE
+intent that locked everyone else out. The right call answers the
+rituals in the same step, one note per ritual:
+
+```
+chaotic issue close CHT-123 \
+  --attest 'close-gate:ADR written; oppo-reviewed; merged via PR #12' \
+  --attest 'doc-refresh:README data-model table updated'
+```
+
+MCP equivalent: `issue_update` takes an `attest` map —
+`{"close-gate": "…", "doc-refresh": "…"}` — applied before the status
+change. `issue update --status …`, `issue claim`, and `issue start`
+accept the same `--attest` flag (claims can be ritual-gated too).
+
+If an attempt does get blocked anyway, the open intent is durable for
+its initiator (retrying resumes it; attesting later auto-fires the
+transition) and its exclusivity is a *renewable lease*: retries and
+attest progress keep it fresh, but after `intent_ttl_minutes` (default
+15) with no initiator activity the next principal's attempt cancels the
+stale intent (`INTENT_CANCELED`, with the displaced initiator in the
+event payload) and proceeds. Intents blocked on GATE rituals — or on
+REVIEW rituals already attested and awaiting approval — never expire;
+those wait on a human, not the initiator.
+
 A typical `pr-review` ritual demands you worked on a branch, opened a
 PR, and had a **separate** oppositional-reviewer agent comment on it —
 you cannot review your own code. That's the right bar for code changes.

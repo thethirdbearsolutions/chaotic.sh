@@ -490,7 +490,7 @@
       }
     },
     "issue_update": {
-      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    ",
+      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    Pass `attest` to satisfy pending close/claim rituals in the same call.\n    ",
       "inputSchema": {
         "properties": {
           "assignee": {
@@ -505,6 +505,22 @@
             "default": null,
             "description": "New assignee: 'me', a user/agent id, a name/email, or 'unassigned' to clear it.",
             "title": "Assignee"
+          },
+          "attest": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Ritual attestation notes to record BEFORE applying the update, as a map of ritual name -> note, e.g. {\"close-gate\": \"ADR written\", \"doc-refresh\": \"README updated\"}. Use when closing (status=done) or claiming (status=in_progress) a ticket whose rituals require notes \u2014 without them the status change is blocked by pending rituals (CHT-1326).",
+            "title": "Attest"
           },
           "description": {
             "anyOf": [

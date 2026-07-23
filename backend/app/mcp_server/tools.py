@@ -353,13 +353,69 @@ async def issue_update(
     ] = None,
     title: Annotated[str | None, Field(description="New title.")] = None,
     description: Annotated[str | None, Field(description="New description (markdown).")] = None,
+    attest: Annotated[
+        dict[str, str] | None,
+        Field(description=(
+            "Ritual attestation notes to record BEFORE applying the update, "
+            "as a map of ritual name -> note, e.g. "
+            '{"close-gate": "ADR written", "doc-refresh": "README updated"}. '
+            "Use when closing (status=done) or claiming (status=in_progress) "
+            "a ticket whose rituals require notes — without them the status "
+            "change is blocked by pending rituals (CHT-1326)."
+        )),
+    ] = None,
 ) -> dict:
     """Update an issue's status, priority, estimate, assignee, title, and/or description.
 
     Only fields explicitly passed are changed. Returns the updated issue.
+    Pass `attest` to satisfy pending close/claim rituals in the same call.
     """
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
+
+    # Per-ritual attestations first (CHT-1326), so a gated status change
+    # finds its rituals satisfied instead of opening a blocked intent
+    # this non-interactive caller could never attest. Attesting the last
+    # pending ritual may fire the one-step auto-transition server-side;
+    # the update below is then a no-op for the status field.
+    if attest:
+        from app.api import rituals as rituals_api
+        from app.enums import ApprovalMode
+        from app.schemas.ritual import RitualAttestationCreate
+
+        ritual_status = await rituals_api.get_pending_ticket_rituals(
+            issue_id=iss.id, current_user=user,
+        )
+        pending = {r.name: r for r in ritual_status.pending_rituals}
+        completed = {r.name for r in ritual_status.completed_rituals}
+        for name, note in attest.items():
+            if not (note and note.strip()):
+                raise ToolContextError(
+                    f"Attestation note for ritual '{name}' must be non-empty."
+                )
+            rit = pending.get(name)
+            if rit is None:
+                if name in completed:
+                    continue  # already attested — idempotent
+                known = ", ".join(sorted(pending)) or "none"
+                raise ToolContextError(
+                    f"Ritual '{name}' is not a pending ticket ritual for "
+                    f"{identifier}. Pending: {known}."
+                )
+            if rit.attestation is not None:
+                continue  # attested, awaiting approval — nothing to add
+            attestation_in = RitualAttestationCreate(note=note)
+            if rit.approval_mode == ApprovalMode.GATE:
+                # Gate completion is human-only; the endpoint enforces it.
+                await rituals_api.complete_gate_ritual_for_issue(
+                    ritual_id=rit.id, issue_id=iss.id,
+                    attestation_in=attestation_in, current_user=user,
+                )
+            else:
+                await rituals_api.attest_ritual_for_issue(
+                    ritual_id=rit.id, issue_id=iss.id,
+                    attestation_in=attestation_in, current_user=user,
+                )
 
     fields: dict = {}
     if title is not None:
@@ -379,8 +435,12 @@ async def issue_update(
             team_id = await _team_id_for_project(iss.project_id)
             fields["assignee_id"] = await resolve_assignee(user, team_id, assignee)
 
-    if not fields:
+    if not fields and not attest:
         raise ToolContextError("No fields provided to update.")
+
+    if not fields:
+        refreshed = await issues_api.get_issue_by_identifier(identifier, user)
+        return refreshed.model_dump(mode="json")
 
     updated = await issues_api.update_issue(issue_id=iss.id, issue_in=IssueUpdate(**fields), current_user=user)
     return updated.model_dump(mode="json")
