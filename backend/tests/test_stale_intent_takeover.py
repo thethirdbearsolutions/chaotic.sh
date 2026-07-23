@@ -47,7 +47,7 @@ from app.services.ritual_service import RitualService
 
 
 async def _attempt_close(issue, user_id):
-    """Non-interactive close attempt; returns the raised error class."""
+    """Non-interactive close attempt (raises when blocked)."""
     fresh = await OxydeIssue.objects.get(id=issue.id)
     await IssueService().update(
         fresh,
