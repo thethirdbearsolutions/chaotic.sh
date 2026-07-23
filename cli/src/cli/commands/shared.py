@@ -124,6 +124,78 @@ def _is_json_output() -> bool:
     return sys.modules['cli.main'].is_json_output()
 
 
+# ── Non-interactive ritual attestation (CHT-1326) ────────────────────────────
+
+
+def parse_attest_specs(attest_specs):
+    """Parse repeated ``--attest`` values of the form
+    ``ritual-name:note text`` into (name, note) pairs. Split on the
+    FIRST colon so notes may contain colons; both halves must be
+    non-empty (attesting without a note is what the note_required gate
+    exists to prevent)."""
+    parsed = []
+    for spec in attest_specs or ():
+        name, sep, note = spec.partition(":")
+        name, note = name.strip(), note.strip()
+        if not sep or not name or not note:
+            raise click.UsageError(
+                f"Invalid --attest value {spec!r}. "
+                "Use --attest 'ritual-name:note text' (the note is required)."
+            )
+        parsed.append((name, note))
+    return parsed
+
+
+def apply_ritual_attestations(issue, attest_specs):
+    """Attest the named pending ticket rituals with per-ritual notes
+    before a status-changing update (CHT-1326).
+
+    This is the non-interactive close/claim path: supply every
+    note-required ritual up front (``--attest close-gate:"…" --attest
+    doc-refresh:"…"``) so the transition never opens a blocked intent
+    it cannot attest.
+
+    * AUTO / REVIEW rituals go through the standard attest endpoint.
+    * GATE rituals go through the gate-completion endpoint (the server
+      enforces that only humans may complete gates).
+    * A ritual that is already attested is skipped with a notice.
+
+    Attesting the last pending ritual may fire the one-step intent
+    auto-transition server-side, in which case the subsequent status
+    update is a no-op — either way the ticket ends up where the caller
+    asked.
+    """
+    parsed = parse_attest_specs(attest_specs)
+    if not parsed:
+        return
+    ritual_status = _client().get_pending_issue_rituals(issue["id"])
+    pending = {r["name"]: r for r in ritual_status.get("pending_rituals", [])}
+    completed = {r["name"] for r in ritual_status.get("completed_rituals", [])}
+    for name, note in parsed:
+        rit = pending.get(name)
+        if rit is None:
+            if name in completed:
+                console.print(f"[dim]Ritual '{name}' already attested; skipping.[/dim]")
+                continue
+            known = ", ".join(sorted(pending)) or "none"
+            raise click.ClickException(
+                f"Ritual '{name}' is not a pending ticket ritual for "
+                f"{issue.get('identifier', issue['id'])}. Pending: {known}."
+            )
+        if rit.get("attestation"):
+            console.print(f"[dim]Ritual '{name}' already attested; skipping.[/dim]")
+            continue
+        if rit.get("approval_mode") == "gate":
+            _client().complete_gate_ritual_for_issue(rit["id"], issue["id"], note)
+            console.print(f"  [green]✓[/green] {name} [dim](gate completed)[/dim]")
+        else:
+            result = _client().attest_ritual_for_issue(rit["id"], issue["id"], note)
+            if result and result.get("approved_at"):
+                console.print(f"  [green]✓[/green] {name}")
+            else:
+                console.print(f"  [yellow]⏳[/yellow] {name} attested, pending approval")
+
+
 # ── Display helpers ──────────────────────────────────────────────────────────
 
 def format_ritual_line(r):

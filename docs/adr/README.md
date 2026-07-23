@@ -32,3 +32,5 @@ What we rejected and why. The most useful section for future readers.
 
 * [ADR-0001](0001-ritual-gates-intent-blockers.md): Ritual gates — intent + blockers state machine
 * [ADR-0002](0002-service-layer-enforcement.md): Service-layer enforcement as the security boundary
+* [ADR-0003](0003-chaotic-await-cli.md): `chaotic await` — agent-harness blocking primitive
+* [ADR-0004](0004-stale-intent-ttl-takeover.md): Stale-intent TTL + takeover, and inline attestation (CHT-1326)

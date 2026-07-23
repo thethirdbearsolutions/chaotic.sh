@@ -201,8 +201,18 @@ chaotic issue start CHT-123                # assign to self + move to in_progres
 chaotic issue start CHT-123 --lease 4h     # override the claim-lease duration (CHT-1246)
 chaotic issue claim CHT-123                # same thing (start is an alias for claim)
 chaotic issue close CHT-123                # mark done (alias: issue complete)
+chaotic issue close CHT-123 \
+  --attest 'close-gate:ADR written' \
+  --attest 'doc-refresh:README updated'    # answer note-required close rituals inline (CHT-1326)
 chaotic issue wontfix CHT-123              # cancel (alias: issue cancel)
 ```
+
+`--attest 'ritual-name:note'` (repeatable; also on `issue update`,
+`claim`, and `start`) attests each named pending ritual *before* the
+status change, so a non-interactive close of a ritual-gated ticket
+succeeds instead of being blocked on pending rituals (and, pre-fix,
+stranding a blocking CLOSE intent — CHT-1326/ADR-0004). GATE rituals
+are routed through gate completion (human-only).
 
 `start`/`claim` acquire a **claim lease** -- a server-side expiry
 (default ~2h, `--lease` overrides). Re-running `start`/`claim` while you

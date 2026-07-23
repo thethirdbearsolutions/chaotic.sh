@@ -221,14 +221,99 @@ class IssueService:
         if current_sprint.budget is not None and current_sprint.points_spent > current_sprint.budget:
             raise SprintInArrearsError(current_sprint.budget, current_sprint.points_spent)
 
+    async def _intent_is_stale(self, intent: "OxydeTicketLimbo") -> bool:
+        """Whether an open intent has outlived its TTL and can be taken
+        over by a different principal (CHT-1326).
+
+        Every open intent's initiating request failed by construction —
+        `_open_intent_with_limbo` only creates the row when the
+        transition is blocked, then raises. If the initiator never came
+        back to attest, the intent is abandoned and must not exclude
+        other principals forever. Exceptions:
+
+        * TTL disabled (`intent_ttl_minutes <= 0`) — never stale.
+        * Unresolved GATE blockers — the intent is actionable by a
+          human in the admin inbox and may legitimately wait days for
+          approval; it stays exclusive until force-cleared or approved.
+        """
+        from app.oxyde_models.ritual import OxydeRitual
+
+        ttl_minutes = get_settings().intent_ttl_minutes
+        if ttl_minutes <= 0:
+            return False
+
+        requested_at = intent.requested_at
+        if requested_at is None:
+            return False
+        if requested_at.tzinfo is None:
+            requested_at = requested_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - requested_at
+        if age < timedelta(minutes=ttl_minutes):
+            return False
+
+        unresolved = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=intent.id, resolved_at=None,
+        ).all()
+        if unresolved:
+            ritual_ids = list({b.ritual_id for b in unresolved})
+            rituals = await OxydeRitual.objects.filter(id__in=ritual_ids).all()
+            if any(r.approval_mode == ApprovalMode.GATE for r in rituals):
+                return False
+        return True
+
+    async def _cancel_intent(
+        self, intent: "OxydeTicketLimbo", canceled_by_id: str,
+    ) -> None:
+        """Cancel an open intent: resolve its outstanding blockers,
+        stamp the parent cleared, and record INTENT_CANCELED activity.
+        Same scrub semantics as the admin force-clear endpoint. Runs
+        inside the caller's `atomic()` — the matching WebSocket
+        broadcast must be emitted by the caller AFTER commit.
+        """
+        now = datetime.now(timezone.utc)
+        blockers = await OxydeTicketLimboBlocker.objects.filter(
+            limbo_id=intent.id, resolved_at=None,
+        ).all()
+        for blocker in blockers:
+            blocker.resolved_at = now
+            blocker.resolved_by_id = canceled_by_id
+            await blocker.save(update_fields={"resolved_at", "resolved_by_id"})
+        intent.cleared_at = now
+        intent.cleared_by_id = canceled_by_id
+        await intent.save(update_fields={"cleared_at", "cleared_by_id"})
+        try:
+            limbo_type_value = LimboType[intent.limbo_type].value
+        except KeyError:
+            limbo_type_value = intent.limbo_type
+        try:
+            await OxydeIssueActivity.objects.create(
+                issue_id=intent.issue_id,
+                user_id=canceled_by_id,
+                activity_type=ActivityType.INTENT_CANCELED,
+                new_value=limbo_type_value,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write INTENT_CANCELED activity for issue=%s",
+                intent.issue_id,
+            )
+
     async def _enforce_exclusive_intent_lock(
         self, issue_id: str, limbo_type: "LimboType", requesting_user_id: str,
-    ) -> "OxydeTicketLimbo | None":
+    ) -> "tuple[OxydeTicketLimbo | None, OxydeTicketLimbo | None]":
         """Check whether an open intent of this type exists on the
-        ticket. Returns the canonical 'lock-holder' row if the requester
-        owns the existing intent (so they can be told to attest, same
-        as before). Raises IntentInFlightError if a different principal
-        owns the intent.
+        ticket. Returns `(owned_lock, canceled_stale_intent)`:
+
+        * `(intent, None)` — the requester owns the existing intent (so
+          they can be told to attest, same as before).
+        * `(None, None)` — no open intent.
+        * `(None, intent)` — a DIFFERENT principal's intent was stale
+          (see `_intent_is_stale`) and has been canceled in-transaction
+          (CHT-1326); the caller may open a fresh intent and must
+          broadcast INTENT_CANCELED after commit.
+
+        Raises IntentInFlightError if a different principal owns a
+        still-live intent.
         """
         existing = await OxydeTicketLimbo.objects.filter(
             issue_id=issue_id,
@@ -236,17 +321,25 @@ class IssueService:
             cleared_at=None,
         ).all()
         if not existing:
-            return None
+            return None, None
         # All open rows of a given (issue, type) belong to one intent.
         # The requested_by_id of any row identifies the initiator.
-        initiator = existing[0].requested_by_id
-        if initiator != requesting_user_id:
+        intent = existing[0]
+        initiator = intent.requested_by_id
+        if initiator == requesting_user_id:
+            return intent, None
+        # Another principal owns the intent. A live intent stays an
+        # exclusive lock; a stale one (abandoned after its initiating
+        # request failed — the CHT-1326 stranding trap) is canceled so
+        # the new principal can proceed.
+        if not await self._intent_is_stale(intent):
             raise IntentInFlightError(
                 issue_id=issue_id,
                 intent_type=limbo_type.name,
                 initiator_user_id=initiator,
             )
-        return existing[0]
+        await self._cancel_intent(intent, requesting_user_id)
+        return None, intent
 
     async def _open_intent_with_limbo(
         self,
@@ -289,8 +382,12 @@ class IssueService:
         # it commits, same deferral reasoning as broadcast_intent_opened.
         newly_blocked_rituals: list = []
 
+        # A stale intent canceled during the takeover path (CHT-1326):
+        # its INTENT_CANCELED broadcast is deferred until after commit.
+        canceled_stale_intent = None
+
         async with atomic():
-            existing_lock = await self._enforce_exclusive_intent_lock(
+            existing_lock, canceled_stale_intent = await self._enforce_exclusive_intent_lock(
                 issue.id, limbo_type, user_id,
             )
 
@@ -307,7 +404,7 @@ class IssueService:
                     # principal — the canonical "second claimant"
                     # outcome. If it's us (idempotent re-issue), fall
                     # through to the normal blocked path.
-                    intent = await self._enforce_exclusive_intent_lock(
+                    intent, _ = await self._enforce_exclusive_intent_lock(
                         issue.id, limbo_type, user_id,
                     )
                     if intent is None:
@@ -360,6 +457,10 @@ class IssueService:
                 # event.
 
         # Atomic block exited successfully — safe to broadcast.
+        if canceled_stale_intent is not None:
+            await self._broadcast_intent_event(
+                issue, user_id, limbo_type, ActivityType.INTENT_CANCELED,
+            )
         if broadcast_intent_opened:
             await self._broadcast_intent_event(
                 issue, user_id, limbo_type, ActivityType.INTENT_OPENED,

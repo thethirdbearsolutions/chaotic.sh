@@ -6,7 +6,14 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, parse_duration, print_ritual_prompt, resolve_content_value
+from .shared import (
+    _client,
+    apply_ritual_attestations,
+    console,
+    parse_duration,
+    print_ritual_prompt,
+    resolve_content_value,
+)
 
 
 def _main():
@@ -726,10 +733,16 @@ def register(cli):
     @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
                   help="Auto-attest all pending ticket rituals (requires --note)")
     @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a specific pending ticket ritual with its own note "
+                       "before applying the update (repeatable), e.g. "
+                       "--attest 'close-gate:ADR written'. Unlike "
+                       "--unceremoniously-attest-all-rituals this is per-ritual "
+                       "and deliberate (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note):
+    def issue_update(identifier, title, description, status, priority, issue_type, estimate, sprint, clear_sprint, parent, clear_parent, add_labels, remove_labels, blocked_by, relates_to, unceremonious, note, attest_specs):
         """Update an issue."""
         m = _main()
         iss = _client().get_issue_by_identifier(identifier)
@@ -737,6 +750,11 @@ def register(cli):
         # Warn if --note used without --unceremoniously-attest-all-rituals
         if note and not unceremonious:
             console.print("[yellow]Note: --note has no effect without --unceremoniously-attest-all-rituals[/yellow]")
+
+        # Per-ritual attestations (CHT-1326) happen before any status
+        # change so a non-interactive `--status done` never opens an
+        # intent it cannot attest.
+        apply_ritual_attestations(iss, attest_specs)
 
         # Handle unceremonious ritual attestation
         if unceremonious:
@@ -848,6 +866,13 @@ def register(cli):
             relations_modified = True
 
         if not data and not labels_modified and not relations_modified:
+            if attest_specs:
+                # Attestation-only invocation (CHT-1326): the attests above
+                # already did the work (and may have fired the one-step
+                # auto-transition server-side).
+                if m.is_json_output():
+                    m.output_json(_client().get_issue_by_identifier(identifier))
+                return
             console.print("[yellow]No updates provided.[/yellow]")
             return
 
@@ -1187,25 +1212,35 @@ def register(cli):
 
     @issue.command("close")
     @click.argument("identifier")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending ticket ritual with a note before closing "
+                       "(repeatable), e.g. --attest 'close-gate:ADR written'. "
+                       "Lets non-interactive callers satisfy note-required close "
+                       "rituals instead of stranding a blocked intent (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_close(identifier):
+    def issue_close(identifier, attest_specs):
         """Close an issue (move to done).
 
-        Shortcut for 'issue move IDENTIFIER done'.
+        Shortcut for 'issue move IDENTIFIER done'. Pending close rituals
+        can be attested inline with repeated --attest 'name:note'.
         """
         iss = _client().get_issue_by_identifier(identifier)
+        apply_ritual_attestations(iss, attest_specs)
         _client().update_issue(iss["id"], status="done")
         console.print(f"[green]Issue {identifier} closed.[/green]")
 
     @issue.command("complete")
     @click.argument("identifier")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending ticket ritual with a note before closing "
+                       "(repeatable). See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_complete(identifier):
+    def issue_complete(identifier, attest_specs):
         """Mark an issue as done.
 
         Alias for 'issue close IDENTIFIER'.
@@ -1214,8 +1249,10 @@ def register(cli):
         # close's own full decorator stack (including its json_result),
         # which already sees --json via the shared ctx.obj this command's
         # own @json_option just set. Adding a second json_result here
-        # would double-emit the JSON payload (CHT-1222).
-        issue_close.callback(identifier)
+        # would double-emit the JSON payload (CHT-1222). Keyword call so
+        # close's json_result build lambda (identifier, **_) still sees
+        # a single positional-free signature (same shape as issue_start).
+        issue_close.callback(identifier=identifier, attest_specs=attest_specs)
 
     @issue.command("wontfix")
     @click.argument("identifier")
@@ -1255,11 +1292,15 @@ def register(cli):
     @click.option("--lease", "lease_spec", default=None,
                   help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
                        "Default: server-configured (CHT-1246).")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending claim ritual with a note before claiming "
+                       "(repeatable), e.g. --attest 'claim-gate:branch cut'. "
+                       "See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result(lambda identifier, **_: _client().get_issue_by_identifier(identifier))
-    def issue_claim(identifier, lease_spec):
+    def issue_claim(identifier, lease_spec, attest_specs):
         """Assign an issue to yourself and move to in_progress.
 
         Shortcut for 'issue assign IDENTIFIER me' + 'issue move IDENTIFIER in_progress'.
@@ -1267,9 +1308,12 @@ def register(cli):
         a claim lease -- see 'chaotic issue ready' and CHT-1246. A lease
         that expires while still IN_PROGRESS is auto-released back to
         todo/unassigned the next time anyone reads or lists the issue.
+        Pending claim rituals can be attested inline with repeated
+        --attest 'name:note'.
         """
         lease_seconds = parse_duration(lease_spec, flag_name="--lease")
         iss = _client().get_issue_by_identifier(identifier)
+        apply_ritual_attestations(iss, attest_specs)
         user = _client().get_me()
         kwargs = {"assignee_id": user["id"], "status": "in_progress"}
         if lease_seconds is not None:
@@ -1282,10 +1326,13 @@ def register(cli):
     @click.option("--lease", "lease_spec", default=None,
                   help="Claim lease duration override (e.g. 30m, 4h, 1h30m). "
                        "Default: server-configured (CHT-1246).")
+    @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
+                  help="Attest a pending claim ritual with a note before claiming "
+                       "(repeatable). See 'issue close --help' (CHT-1326).")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_start(identifier, lease_spec):
+    def issue_start(identifier, lease_spec, attest_specs):
         """Start working on an issue.
 
         Alias for 'issue claim IDENTIFIER [--lease ...]'.
@@ -1296,7 +1343,9 @@ def register(cli):
         # **kwargs, and Click's own normal invocation always calls by
         # keyword too, so this matches that shape instead of overloading
         # positional args onto a 2-arg callback.
-        issue_claim.callback(identifier=identifier, lease_spec=lease_spec)
+        issue_claim.callback(
+            identifier=identifier, lease_spec=lease_spec, attest_specs=attest_specs,
+        )
 
     @issue.command("rituals")
     @click.argument("identifier")

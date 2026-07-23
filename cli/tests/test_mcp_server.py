@@ -428,6 +428,93 @@ class TestIssueUpdate:
 
         assert result == updated
 
+    def test_update_attest_records_notes_before_close(self, mcp_mod, mock_issue):
+        """CHT-1326: the attest param satisfies note-required rituals in
+        the same call so a non-interactive close is never stranded."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=None)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "rit-1", "name": "close-gate", "approval_mode": "auto"},
+                {"id": "rit-2", "name": "doc-refresh", "approval_mode": "auto"},
+            ],
+            "completed_rituals": [],
+        })
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "x"})
+
+        result = mcp_mod.issue_update(
+            identifier="CHT-100", status="done",
+            attest={"close-gate": "ADR written", "doc-refresh": "README updated"},
+        )
+
+        assert "error" not in result
+        client.attest_ritual_for_issue.assert_any_call("rit-1", "issue-uuid-1", "ADR written")
+        client.attest_ritual_for_issue.assert_any_call("rit-2", "issue-uuid-1", "README updated")
+        client.update_issue.assert_called_once_with("issue-uuid-1", status="done")
+
+    def test_update_attest_unknown_ritual_is_an_error(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=None)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "rit-1", "name": "close-gate", "approval_mode": "auto"},
+            ],
+            "completed_rituals": [],
+        })
+
+        result = mcp_mod.issue_update(
+            identifier="CHT-100", status="done", attest={"bogus": "note"},
+        )
+
+        assert "not a pending ticket ritual" in result["error"]
+        client.update_issue.assert_not_called()
+
+    def test_update_attest_only_is_allowed(self, mcp_mod, mock_issue):
+        """attest with no field updates is a valid call — attesting the
+        last ritual may auto-transition server-side."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=None)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "rit-1", "name": "close-gate", "approval_mode": "auto"},
+            ],
+            "completed_rituals": [],
+        })
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "x"})
+
+        result = mcp_mod.issue_update(
+            identifier="CHT-100", attest={"close-gate": "note"},
+        )
+
+        assert "error" not in result
+        client.attest_ritual_for_issue.assert_called_once_with("rit-1", "issue-uuid-1", "note")
+        client.update_issue.assert_not_called()
+
+    def test_update_attest_gate_routes_to_gate_completion(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        client.update_issue = MagicMock(return_value=None)
+        client.get_pending_issue_rituals = MagicMock(return_value={
+            "pending_rituals": [
+                {"id": "rit-g", "name": "gate-check", "approval_mode": "gate"},
+            ],
+            "completed_rituals": [],
+        })
+        client.complete_gate_ritual_for_issue = MagicMock(return_value={})
+        client.attest_ritual_for_issue = MagicMock()
+
+        result = mcp_mod.issue_update(
+            identifier="CHT-100", status="done", attest={"gate-check": "verified"},
+        )
+
+        assert "error" not in result
+        client.complete_gate_ritual_for_issue.assert_called_once_with(
+            "rit-g", "issue-uuid-1", "verified")
+        client.attest_ritual_for_issue.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # issue_comment
