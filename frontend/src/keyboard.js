@@ -436,17 +436,22 @@ export function createInboxNavigationHandler(actions) {
             case 'j':
             case 'ArrowDown':
                 e.preventDefault();
+                actions.collapseInboxExpand?.(); // moving the cursor closes any open row (CHT-1320)
                 updateKeyboardSelection(selectedIndex + 1, actions.setSelectedIndex, selector);
                 break;
             case 'k':
             case 'ArrowUp':
                 e.preventDefault();
+                actions.collapseInboxExpand?.();
                 updateKeyboardSelection(selectedIndex - 1, actions.setSelectedIndex, selector);
                 break;
             case 'Enter':
+                // CHT-1320: Enter now expands the row in place (triggering
+                // content + action bar) rather than navigating away. "Open"
+                // in the action bar is the deliberate navigate path.
                 if (selectedIndex >= 0 && items[selectedIndex]) {
                     e.preventDefault();
-                    actions.openInboxEntry(items[selectedIndex]);
+                    actions.toggleInboxExpand(items[selectedIndex]);
                 }
                 break;
             case 'e':
@@ -458,6 +463,12 @@ export function createInboxNavigationHandler(actions) {
                 }
                 break;
             case 'Escape':
+                // Escape closes an open row first (keeping the cursor there);
+                // only a second Escape clears the selection (CHT-1320).
+                if (actions.collapseInboxExpand?.()) {
+                    e.preventDefault();
+                    break;
+                }
                 if (selectedIndex >= 0) {
                     e.preventDefault();
                     items.forEach(item => item.classList.remove('keyboard-selected'));
