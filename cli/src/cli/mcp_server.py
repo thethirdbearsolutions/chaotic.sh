@@ -1065,13 +1065,14 @@ _TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
 
 
 def _trigger_of(rit: dict) -> str:
-    """A ritual's trigger, normalised to the enum's lowercase value.
+    """A ritual's trigger, case-folded before dispatch.
 
-    Case-folded rather than compared directly: the trigger can come back
-    as the stored enum NAME ("TICKET_CLOSE") rather than its value,
-    depending on how the response was serialised, and dispatching
-    case-sensitively would silently route every ticket ritual down the
-    sprint path.
+    This transport reads over HTTP, so the trigger arrives already
+    serialised as the enum's lowercase value. Folded anyway to stay
+    identical to the backend transport's dispatch, and because the
+    failure mode is silent: a trigger that arrives as the enum NAME
+    ("TICKET_CLOSE") misses a case-sensitive comparison and routes
+    every ticket ritual down the sprint path.
     """
     return (rit.get("trigger") or "").lower()
 

@@ -67,10 +67,11 @@ from app.mcp_server.scope import (
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
-    IssueUpdate,
+    IssueUpdate, LabelResponse,
 )
 from app.schemas.project import ProjectResponse
-from app.schemas.ritual import RitualAttestationCreate
+from app.schemas.sprint import SprintResponse
+from app.schemas.ritual import RitualAttestationCreate, RitualResponse
 from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
@@ -748,7 +749,7 @@ async def label_list(
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
     labels = await labels_api.list_labels(team_id=team_id, current_user=user)
-    return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
+    return {"labels": [_dump(LabelResponse, l) for l in (labels or [])]}
 
 
 @_boundary
@@ -1051,7 +1052,7 @@ async def sprint_current(
     user = get_current_mcp_user()
     project_id, _ = await resolve_project(user, project, team)
     sprint = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
-    return _with_budget_state(sprint.model_dump(mode="json"))
+    return _with_budget_state(_dump(SprintResponse, sprint))
 
 
 @_boundary
@@ -1074,7 +1075,7 @@ async def sprint_list(
         current_user=user,
         sprint_status=SprintStatus(status) if status else None,
     )
-    return {"sprints": [_with_budget_state(s.model_dump(mode="json")) for s in (sprints or [])]}
+    return {"sprints": [_with_budget_state(_dump(SprintResponse, s)) for s in (sprints or [])]}
 
 
 @_boundary
@@ -1107,7 +1108,7 @@ async def sprint_close(
     project_id, _ = await resolve_project(user, project, team)
     sprint_id = await resolve_sprint(project_id, sprint or "current")
     closed = await sprints_api.close_sprint(sprint_id=sprint_id, current_user=user)
-    result = _with_budget_state(closed.model_dump(mode="json"))
+    result = _with_budget_state(_dump(SprintResponse, closed))
     result["entered_limbo"] = bool(result.get("limbo"))
     return result
 
@@ -1213,16 +1214,35 @@ _TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
 
 
 def _trigger_of(rit: dict) -> str:
-    """A ritual's trigger, normalised to the enum's lowercase value.
+    """A ritual's trigger, case-folded before dispatch.
 
-    Calling these API functions in-process skips FastAPI's
-    ``response_model`` coercion (same gotcha as the Query-sentinel note
-    on issue_list), so a trigger can arrive as the raw stored enum NAME
-    -- "TICKET_CLOSE" -- rather than the value "ticket_close" an HTTP
-    client would see. Dispatching case-sensitively on that silently
-    routes every ticket ritual down the sprint path.
+    ``_find_ritual`` now returns rituals dumped through
+    ``RitualResponse`` (see ``_dump``), so this should already be the
+    enum's lowercase value. Kept as a belt-and-braces fold because the
+    failure mode is silent and awful: an Oxyde row dumped directly
+    yields the enum NAME ("TICKET_CLOSE"), a case-sensitive comparison
+    then misses, and every ticket ritual gets routed down the sprint
+    path -- surfacing as "project is not in limbo", an error naming a
+    completely unrelated cause.
     """
     return (rit.get("trigger") or "").lower()
+
+
+def _dump(schema, obj) -> dict:
+    """Serialise an ORM row the way an HTTP client would see it.
+
+    These API functions are plain undecorated coroutines -- the
+    ``response_model`` that shapes their output lives on the routed
+    wrappers in api/nested.py, so calling them in-process returns raw
+    Oxyde rows. Dumping one of those directly is not the same thing:
+    Oxyde serialises an enum field by NAME ("ACTIVE", "TICKET_CLOSE")
+    while the response schema emits its VALUE ("active",
+    "ticket_close"). Round-tripping through the schema keeps this
+    transport's output identical to the stdio one, which reaches the
+    same data over HTTP. (The toolset sync test compares schemas, not
+    response values, so it cannot catch that divergence for us.)
+    """
+    return schema.model_validate(obj).model_dump(mode="json")
 
 
 def _as_dict(value):
@@ -1238,7 +1258,7 @@ async def _limbo(user, project_id: str) -> dict:
 async def _find_ritual(user, project_id: str, name: str) -> dict:
     """Resolve a ritual by name (case-insensitively), or by id."""
     rituals = [
-        r.model_dump(mode="json")
+        _dump(RitualResponse, r)
         for r in (await rituals_api.list_rituals(project_id=project_id, current_user=user) or [])
     ]
     if not rituals:
@@ -1344,7 +1364,7 @@ async def ritual_list(
     rituals = await rituals_api.list_rituals(
         project_id=project_id, current_user=user, include_inactive=include_inactive,
     )
-    return {"rituals": [r.model_dump(mode="json") for r in (rituals or [])]}
+    return {"rituals": [_dump(RitualResponse, r) for r in (rituals or [])]}
 
 
 @_boundary

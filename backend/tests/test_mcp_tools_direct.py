@@ -882,6 +882,63 @@ class TestIssueStartClaimParity:
 
 
 
+class TestEnumSerialisationParity:
+    """These API functions are undecorated coroutines; the response_model
+    that shapes their output lives on the routed wrappers in nested.py.
+    So an in-process caller gets raw Oxyde rows, and dumping one of those
+    emits enum NAMES ("ACTIVE") where every HTTP client sees VALUES
+    ("active"). The toolset sync test compares schemas, not response
+    values, so nothing else catches that divergence.
+    """
+
+    async def test_sprint_status_is_the_enum_value(self, test_project):
+        assert (await tools.sprint_current())["status"] == "active"
+
+    async def test_sprint_list_status_is_the_enum_value(self, test_project):
+        await tools.sprint_current()
+        statuses = {s["status"] for s in (await tools.sprint_list())["sprints"]}
+        assert statuses and all(s == s.lower() for s in statuses)
+
+    async def test_sprint_close_status_is_the_enum_value(self, test_project):
+        await tools.sprint_current()
+        closed = await tools.sprint_close()
+        assert closed["status"] == closed["status"].lower()
+
+    async def test_ritual_trigger_is_the_enum_value(self, test_project):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="close-gate", prompt="?",
+                         trigger=RitualTrigger.TICKET_CLOSE),
+            test_project.id,
+        )
+        rituals = (await tools.ritual_list())["rituals"]
+        assert rituals[0]["trigger"] == "ticket_close"
+        assert rituals[0]["approval_mode"] == "auto"
+
+    async def test_matches_what_an_http_client_sees(self, test_project, test_user,
+                                                    client, auth_headers):
+        """The actual contract: same field, same value, both transports."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="parity", prompt="?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+
+        via_tool = (await tools.ritual_list())["rituals"][0]["trigger"]
+        resp = await client.get(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+        )
+        via_http = resp.json()[0]["trigger"]
+
+        assert via_tool == via_http == "ticket_claim"
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")
