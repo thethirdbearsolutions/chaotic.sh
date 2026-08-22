@@ -34,12 +34,15 @@ _IDENTICAL_TOOLS = {
     # Relation tools resolve issues by identifier, which is already
     # team-unambiguous, so they need no `team` parameter either.
     "issue_relations", "issue_block", "issue_unblock",
+    # issue_label resolves its team from the issue itself.
+    "issue_label",
 }
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
 _ADDITIVE_TEAM_TOOLS = {
     "issue_list", "issue_create", "issue_ready", "doc_list", "doc_create",
     "activity_recent", "project_list",
+    "label_list",
 }
 
 

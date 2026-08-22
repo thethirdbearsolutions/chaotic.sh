@@ -88,10 +88,11 @@ class TestServerAssembly:
         """
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
-            "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start", "issue_ready", "issue_relations",
-            "issue_block", "issue_unblock", "doc_list", "doc_view",
-            "doc_create", "doc_update", "activity_recent", "project_list",
+            "activity_recent", "doc_create", "doc_list", "doc_update",
+            "doc_view", "issue_block", "issue_comment", "issue_create",
+            "issue_label", "issue_list", "issue_ready", "issue_relations",
+            "issue_start", "issue_unblock", "issue_update", "issue_view",
+            "label_list", "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -669,6 +670,99 @@ class TestIssueRelations:
 
     def test_issue_unblock_requires_one_of_the_two_selectors(self, mcp_mod):
         result = mcp_mod.issue_unblock(identifier="CHT-1")
+        assert "error" in result
+
+
+
+class TestLabelTools:
+    def test_label_list(self, mcp_mod):
+        from cli.main import client
+        labels = [{"id": "lab-1", "name": "bug", "color": "#f00"}]
+        client.get_labels = MagicMock(return_value=labels)
+        assert mcp_mod.label_list() == {"labels": labels}
+        client.get_labels.assert_called_once_with("test-team-123")
+
+    def test_label_list_empty(self, mcp_mod):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=None)
+        assert mcp_mod.label_list() == {"labels": []}
+
+    def test_issue_label_add_resolves_name_to_id(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"])
+
+        client.add_label_to_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        assert result["labels_added"] == ["bug"]
+
+    def test_issue_label_add_is_idempotent(self, mcp_mod, mock_issue):
+        """Already-present label: no call, no error."""
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-1", "name": "bug"}]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"])
+
+        client.add_label_to_issue.assert_not_called()
+        assert result["labels_added"] == []
+
+    def test_issue_label_remove(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-1", "name": "bug"}]))
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", remove=["bug"])
+
+        client.remove_label_from_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        assert result["labels_removed"] == ["bug"]
+
+    def test_issue_label_remove_absent_is_a_noop(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", remove=["bug"])
+
+        client.remove_label_from_issue.assert_not_called()
+        assert result["labels_removed"] == []
+
+    def test_issue_label_add_and_remove_in_one_call(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[
+            {"id": "lab-1", "name": "bug"}, {"id": "lab-2", "name": "triage"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-2", "name": "triage"}]))
+        client.add_label_to_issue = MagicMock(return_value={})
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"], remove=["triage"])
+
+        client.add_label_to_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        client.remove_label_from_issue.assert_called_once_with("issue-uuid-1", "lab-2")
+        assert result["labels_added"] == ["bug"]
+        assert result["labels_removed"] == ["triage"]
+
+    def test_issue_label_unknown_label_is_an_error(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["nonexistent"])
+
+        assert "error" in result
+        client.add_label_to_issue.assert_not_called()
+
+    def test_issue_label_requires_add_or_remove(self, mcp_mod):
+        result = mcp_mod.issue_label(identifier="CHT-100")
         assert "error" in result
 
 

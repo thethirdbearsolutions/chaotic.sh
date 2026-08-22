@@ -49,6 +49,7 @@ from pydantic import Field, ValidationError as PydanticValidationError
 from mcp.server.fastmcp import FastMCP
 
 from app.api import documents as documents_api
+from app.api import labels as labels_api
 from app.api import issues as issues_api
 from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType
 from app.mcp_server.context import get_current_mcp_user
@@ -61,7 +62,8 @@ from app.mcp_server.scope import (
 )
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
-    IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
+    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
+    IssueUpdate,
 )
 from app.schemas.project import ProjectResponse
 from app.services.project_service import ProjectService
@@ -657,6 +659,114 @@ async def issue_unblock(
 
 
 # ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+async def _resolve_label_id(team_id: str, value: str) -> str:
+    """Resolve a label name or id to a label id -- mirrors the CLI's
+    ``resolve_label_id`` (cli/src/cli/commands/shared.py) closely enough
+    for tool parity: exact id, then case-insensitive name, then id
+    prefix (see module docstring on why this isn't a shared import).
+    """
+    labels = await labels_api.list_labels(team_id=team_id, current_user=get_current_mcp_user())
+    if not labels:
+        raise ToolContextError("No labels exist in this team yet.")
+
+    for label in labels:
+        if label.id == value:
+            return label.id
+
+    lowered = value.lower()
+    by_name = [l for l in labels if (l.name or "").lower() == lowered]
+    if len(by_name) == 1:
+        return by_name[0].id
+    if len(by_name) > 1:
+        listed = ", ".join(f"{l.name} (id={l.id})" for l in by_name)
+        raise ToolContextError(f"Ambiguous label name '{value}'. Matches: {listed}.")
+
+    by_prefix = [l for l in labels if l.id.startswith(value)]
+    if len(by_prefix) == 1:
+        return by_prefix[0].id
+    if len(by_prefix) > 1:
+        raise ToolContextError(f"Ambiguous label id prefix '{value}'.")
+
+    known = ", ".join(sorted(l.name for l in labels))
+    raise ToolContextError(f"No label matching '{value}'. Team labels: {known}.")
+
+
+@_boundary
+async def label_list(
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """List the team's labels: id, name, and color.
+
+    The lookup that makes issue_list's `label` filter usable -- without
+    it a caller has to already know the taxonomy to filter by it, or
+    guess. Also the source of the names issue_label accepts.
+    """
+    user = get_current_mcp_user()
+    team_id = await resolve_team(user, team)
+    labels = await labels_api.list_labels(team_id=team_id, current_user=user)
+    return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
+
+
+@_boundary
+async def issue_label(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    add: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to add. Names are matched case-insensitively.")
+    ] = None,
+    remove: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to remove.")
+    ] = None,
+) -> dict:
+    """Add and/or remove labels on an issue.
+
+    Additive and subtractive rather than replacing the whole set, so
+    labelling an issue never silently drops someone else's label. Labels
+    must already exist (see label_list) -- this does not create them.
+
+    Adding a label the issue already has, or removing one it doesn't
+    have, is a no-op rather than an error, so the same call is safe to
+    repeat.
+    """
+    if not add and not remove:
+        raise ToolContextError("Pass `add` and/or `remove` with at least one label.")
+
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    team_id = await _team_id_for_project(iss.project_id)
+
+    existing = {l.id for l in (iss.labels or [])}
+
+    added, removed = [], []
+    for value in add or []:
+        label_id = await _resolve_label_id(team_id, value)
+        if label_id not in existing:
+            await issues_api.add_label_to_issue(
+                issue_id=iss.id, body=AddLabelRequest(label_id=label_id), current_user=user,
+            )
+            existing.add(label_id)
+            added.append(value)
+    for value in remove or []:
+        label_id = await _resolve_label_id(team_id, value)
+        if label_id in existing:
+            await issues_api.remove_label_from_issue(
+                issue_id=iss.id, label_id=label_id, current_user=user,
+            )
+            existing.discard(label_id)
+            removed.append(value)
+
+    updated = await issues_api.get_issue_by_identifier(identifier, user)
+    result = updated.model_dump(mode="json")
+    result["labels_added"] = added
+    result["labels_removed"] = removed
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
 
@@ -859,6 +969,7 @@ async def activity_recent(
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
+    label_list, issue_label,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

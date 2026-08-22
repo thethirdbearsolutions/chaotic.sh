@@ -58,8 +58,9 @@ def test_stdio_toolset_matches_snapshot_exactly():
 def test_snapshot_covers_the_full_toolset():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
     assert set(snapshot.keys()) == {
-        "issue_list", "issue_view", "issue_create", "issue_update",
-        "issue_comment", "issue_start", "issue_ready", "issue_relations",
-        "issue_block", "issue_unblock", "doc_list", "doc_view",
-        "doc_create", "doc_update", "activity_recent", "project_list",
+        "activity_recent", "doc_create", "doc_list", "doc_update",
+        "doc_view", "issue_block", "issue_comment", "issue_create",
+        "issue_label", "issue_list", "issue_ready", "issue_relations",
+        "issue_start", "issue_unblock", "issue_update", "issue_view",
+        "label_list", "project_list",
     }

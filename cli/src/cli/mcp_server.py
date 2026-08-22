@@ -50,7 +50,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .client import APIError
 from .commands.issue_cmd import ISSUE_TYPE_ALIASES, ISSUE_TYPES
-from .commands.shared import _client
+from .commands.shared import _client, resolve_label_id
 
 
 def _main():
@@ -585,6 +585,72 @@ def issue_unblock(
 
 
 # ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+@_boundary
+def label_list() -> dict:
+    """List the team's labels: id, name, and color.
+
+    The lookup that makes issue_list's `label` filter usable -- without
+    it a caller has to already know the taxonomy to filter by it, or
+    guess. Also the source of the names issue_label accepts.
+    """
+    team_id = _require_team()
+    return {"labels": _client().get_labels(team_id) or []}
+
+
+@_boundary
+def issue_label(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    add: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to add. Names are matched case-insensitively.")
+    ] = None,
+    remove: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to remove.")
+    ] = None,
+) -> dict:
+    """Add and/or remove labels on an issue.
+
+    Additive and subtractive rather than replacing the whole set, so
+    labelling an issue never silently drops someone else's label. Labels
+    must already exist (see label_list) -- this does not create them.
+
+    Adding a label the issue already has, or removing one it doesn't
+    have, is a no-op rather than an error, so the same call is safe to
+    repeat.
+    """
+    if not add and not remove:
+        raise ToolInputError("Pass `add` and/or `remove` with at least one label.")
+
+    team_id = _require_team()
+    iss = _client().get_issue_by_identifier(identifier)
+
+    existing = {l["id"] for l in (iss.get("labels") or []) if isinstance(l, dict)}
+
+    added, removed = [], []
+    for value in add or []:
+        label_id = resolve_label_id(value, team_id)
+        if label_id not in existing:
+            _client().add_label_to_issue(iss["id"], label_id)
+            existing.add(label_id)
+            added.append(value)
+    for value in remove or []:
+        label_id = resolve_label_id(value, team_id)
+        if label_id in existing:
+            _client().remove_label_from_issue(iss["id"], label_id)
+            existing.discard(label_id)
+            removed.append(value)
+
+    result = _client().get_issue_by_identifier(identifier)
+    result["labels_added"] = added
+    result["labels_removed"] = removed
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
 
@@ -757,6 +823,7 @@ def activity_recent(
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
+    label_list, issue_label,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

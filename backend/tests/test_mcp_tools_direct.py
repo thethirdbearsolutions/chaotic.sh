@@ -338,6 +338,85 @@ class TestIssueRelationTools:
 
 
 
+class TestLabelTools:
+    async def _make_label(self, team_id, name):
+        from app.schemas.issue import LabelCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create_label(LabelCreate(name=name), team_id)
+
+    async def test_label_list(self, test_team):
+        await self._make_label(test_team.id, "triage")
+        result = await tools.label_list()
+        assert "triage" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_add_by_name(self, test_project, test_team):
+        await self._make_label(test_team.id, "urgent-ish")
+        iss = await tools.issue_create(title="Needs a label")
+
+        result = await tools.issue_label(identifier=iss["identifier"], add=["urgent-ish"])
+
+        assert result["labels_added"] == ["urgent-ish"]
+        assert "urgent-ish" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_name_match_is_case_insensitive(self, test_project, test_team):
+        await self._make_label(test_team.id, "Backend")
+        iss = await tools.issue_create(title="Case test")
+        result = await tools.issue_label(identifier=iss["identifier"], add=["backend"])
+        assert "Backend" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_is_additive_not_replacing(self, test_project, test_team):
+        """Labelling must never silently drop a label someone else set."""
+        await self._make_label(test_team.id, "first")
+        await self._make_label(test_team.id, "second")
+        iss = await tools.issue_create(title="Two labels")
+
+        await tools.issue_label(identifier=iss["identifier"], add=["first"])
+        result = await tools.issue_label(identifier=iss["identifier"], add=["second"])
+
+        assert {l["name"] for l in result["labels"]} == {"first", "second"}
+
+    async def test_issue_label_remove(self, test_project, test_team):
+        await self._make_label(test_team.id, "removable")
+        iss = await tools.issue_create(title="Will lose a label")
+        await tools.issue_label(identifier=iss["identifier"], add=["removable"])
+
+        result = await tools.issue_label(identifier=iss["identifier"], remove=["removable"])
+
+        assert result["labels_removed"] == ["removable"]
+        assert result["labels"] == []
+
+    async def test_issue_label_add_twice_is_idempotent(self, test_project, test_team):
+        await self._make_label(test_team.id, "dupe-label")
+        iss = await tools.issue_create(title="Idempotent")
+        await tools.issue_label(identifier=iss["identifier"], add=["dupe-label"])
+        result = await tools.issue_label(identifier=iss["identifier"], add=["dupe-label"])
+
+        assert result["labels_added"] == []
+        assert len(result["labels"]) == 1
+
+    async def test_labelled_issue_is_findable_by_the_issue_list_filter(
+        self, test_project, test_team
+    ):
+        """Closes the loop the ticket was about: filterable AND writable."""
+        await self._make_label(test_team.id, "findme")
+        iss = await tools.issue_create(title="Findable")
+        await tools.issue_label(identifier=iss["identifier"], add=["findme"])
+
+        found = await tools.issue_list(label="findme")
+        assert any(i["identifier"] == iss["identifier"] for i in found["issues"])
+
+    async def test_issue_label_unknown_label_is_an_error(self, test_project, test_team):
+        await self._make_label(test_team.id, "known")
+        iss = await tools.issue_create(title="Bad label")
+        result = await tools.issue_label(identifier=iss["identifier"], add=["no-such-label"])
+        assert "error" in result
+
+    async def test_issue_label_requires_add_or_remove(self, test_project):
+        iss = await tools.issue_create(title="Nothing to do")
+        assert "error" in await tools.issue_label(identifier=iss["identifier"])
+
+
+
 class TestDocListDocCreateExplicitProject:
     async def test_doc_list_explicit_project(self, test_project):
         created = await tools.doc_create(title="Scoped doc", project=test_project.key)
