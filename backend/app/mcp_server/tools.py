@@ -35,9 +35,8 @@ isn't a shared import between the cli/ and backend/ packages:
   same reason -- there's no cross-package import to enforce it, the sync
   test is what does.
 
-Deliberately NOT included in v1 (mirrors the stdio server exactly, see
-its module docstring for the full rationale): no delete tool, no
-``issue_ready``.
+Deliberately NOT included (mirrors the stdio server exactly, see its
+module docstring for the full rationale): no delete tool.
 """
 from __future__ import annotations
 
@@ -488,6 +487,62 @@ async def issue_start(
     return updated.model_dump(mode="json")
 
 
+@_boundary
+async def issue_ready(
+    mine: Annotated[
+        bool,
+        Field(description="Restrict to issues already assigned to you instead of unassigned ones.")
+    ] = False,
+    include_assigned: Annotated[
+        bool,
+        Field(description="Widen beyond unassigned-only to include already-assigned (but not-started) issues.")
+    ] = False,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name to scope to. Defaults to the current project.")
+    ] = None,
+    all_projects: Annotated[
+        bool,
+        Field(description="Query across every project in the team instead of just the current/given one.")
+    ] = False,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+    limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 20,
+) -> dict:
+    """List issues that are open, unblocked, and unclaimed -- what you can start right now.
+
+    Open + not-started (backlog/todo) only; excludes anything already
+    in_progress/in_review/done/canceled, and excludes issues with an
+    unresolved blocking relation. Priority-sorted (urgent first), then
+    oldest first. Unassigned by default -- `mine` restricts to your own
+    assigned-but-not-started work, `include_assigned` widens to every
+    not-started issue regardless of assignee.
+
+    Prefer this over issue_list when the question is "what should I pick
+    up"; issue_list can filter by status and assignee but cannot express
+    "has no unresolved blocker".
+    """
+    if mine and include_assigned:
+        raise ToolContextError("Pass either `mine` or `include_assigned`, not both.")
+
+    user = get_current_mcp_user()
+
+    project_id = None
+    if all_projects and not project:
+        team_id = await resolve_team(user, team)
+    else:
+        project_id, team_id = await resolve_project(user, project, team)
+
+    issues = await issues_api.list_ready_issues(
+        current_user=user,
+        project_id=project_id,
+        team_id=team_id if not project_id else None,
+        mine=mine,
+        include_assigned=include_assigned,
+        limit=limit,
+    )
+    return {"issues": [i.model_dump(mode="json") for i in (issues or [])]}
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
@@ -690,6 +745,7 @@ async def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
+    issue_ready,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

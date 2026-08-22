@@ -547,6 +547,54 @@
         "type": "object"
       }
     },
+    "issue_ready": {
+      "description": "List issues that are open, unblocked, and unclaimed -- what you can start right now.\n\n    Open + not-started (backlog/todo) only; excludes anything already\n    in_progress/in_review/done/canceled, and excludes issues with an\n    unresolved blocking relation. Priority-sorted (urgent first), then\n    oldest first. Unassigned by default -- `mine` restricts to your own\n    assigned-but-not-started work, `include_assigned` widens to every\n    not-started issue regardless of assignee.\n\n    Prefer this over issue_list when the question is \"what should I pick\n    up\"; issue_list can filter by status and assignee but cannot express\n    \"has no unresolved blocker\".\n    ",
+      "inputSchema": {
+        "properties": {
+          "all_projects": {
+            "default": false,
+            "description": "Query across every project in the team instead of just the current/given one.",
+            "title": "All Projects",
+            "type": "boolean"
+          },
+          "include_assigned": {
+            "default": false,
+            "description": "Widen beyond unassigned-only to include already-assigned (but not-started) issues.",
+            "title": "Include Assigned",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of issues to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "mine": {
+            "default": false,
+            "description": "Restrict to issues already assigned to you instead of unassigned ones.",
+            "title": "Mine",
+            "type": "boolean"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name to scope to. Defaults to the current project.",
+            "title": "Project"
+          }
+        },
+        "title": "issue_readyArguments",
+        "type": "object"
+      }
+    },
     "issue_start": {
       "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\n    Equivalent to `chaotic issue start`.\n    ",
       "inputSchema": {

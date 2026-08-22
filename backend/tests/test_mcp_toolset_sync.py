@@ -34,7 +34,10 @@ _IDENTICAL_TOOLS = {
 }
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
-_ADDITIVE_TEAM_TOOLS = {"issue_list", "issue_create", "doc_list", "doc_create", "activity_recent", "project_list"}
+_ADDITIVE_TEAM_TOOLS = {
+    "issue_list", "issue_create", "issue_ready", "doc_list", "doc_create",
+    "activity_recent", "project_list",
+}
 
 
 async def _live_toolset() -> dict:
@@ -55,7 +58,7 @@ def test_all_tools_registered():
     assert {fn.__name__ for fn in ALL_TOOLS} == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 
 
-async def test_backend_covers_all_twelve_tools(snapshot):
+async def test_backend_covers_all_thirteen_tools(snapshot):
     live = await _live_toolset()
     assert set(live.keys()) == set(snapshot.keys()) == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 

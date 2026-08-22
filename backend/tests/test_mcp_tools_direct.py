@@ -193,6 +193,65 @@ class TestIssueCommentAssignTo:
         assert updated["assignee_id"] == test_user.id
 
 
+class TestIssueReady:
+    """issue_ready (CHT-1334) exists because issue_list cannot express
+    "has no unresolved blocker" -- so these tests pin the blocker
+    filtering specifically, not just that the call returns issues.
+    """
+
+    async def test_issue_ready_lists_unassigned_not_started(self, test_project):
+        created = await tools.issue_create(title="Pick me up", status="todo")
+        result = await tools.issue_ready()
+        assert any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_excludes_in_progress(self, test_project):
+        created = await tools.issue_create(title="Already going", status="todo")
+        await tools.issue_start(created["identifier"])
+        result = await tools.issue_ready()
+        assert not any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_excludes_blocked(self, test_project):
+        """The whole reason this tool exists rather than an issue_list filter."""
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        blocker = await tools.issue_create(title="Do this first", status="todo")
+        blocked = await tools.issue_create(title="Waits on the other", status="todo")
+
+        svc = IssueService()
+        blocked_row = await svc.get_by_identifier(blocked["identifier"])
+        blocker_row = await svc.get_by_identifier(blocker["identifier"])
+        # Direction matters: a BLOCKS relation runs blocker -> blocked,
+        # and list_ready_issues filters on the *incoming* edge.
+        await svc.create_relation(
+            blocker_row.id,
+            IssueRelationCreate(
+                issue_id=blocker_row.id,
+                related_issue_id=blocked_row.id,
+                relation_type="blocks",
+            ),
+        )
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocker["identifier"] in idents
+        assert blocked["identifier"] not in idents
+
+    async def test_issue_ready_mine_excludes_unassigned(self, test_project):
+        unassigned = await tools.issue_create(title="Nobody's", status="todo")
+        result = await tools.issue_ready(mine=True)
+        assert not any(i["identifier"] == unassigned["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_rejects_mine_with_include_assigned(self, test_project):
+        result = await tools.issue_ready(mine=True, include_assigned=True)
+        assert "error" in result
+
+    async def test_issue_ready_all_projects(self, test_project, test_team):
+        created = await tools.issue_create(title="Team-wide ready", status="todo")
+        result = await tools.issue_ready(all_projects=True)
+        assert any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+
+
 class TestDocListDocCreateExplicitProject:
     async def test_doc_list_explicit_project(self, test_project):
         created = await tools.doc_create(title="Scoped doc", project=test_project.key)

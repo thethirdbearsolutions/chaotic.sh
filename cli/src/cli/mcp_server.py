@@ -9,19 +9,15 @@ CHAOTIC_PROFILE / CHAOTIC_HOME / config.json resolution the CLI itself
 uses (see ``cli.config``); whatever ``chaotic status`` reports is what
 this server sees. There is no MCP-specific auth or session state.
 
-Toolset (12, curated for quality over coverage — see CHT-1247):
+Toolset (13, curated for quality over coverage — see CHT-1247):
     issue_list, issue_view, issue_create, issue_update, issue_comment,
-    issue_start, doc_list, doc_view, doc_create, doc_update,
-    activity_recent, project_list.
+    issue_start, issue_ready, doc_list, doc_view, doc_create,
+    doc_update, activity_recent, project_list.
 
-Deliberately NOT included in v1:
+Deliberately NOT included:
   * Any delete tool (issue/doc/comment). Destructive operations need a
     human in the loop; a future ticket can add them behind an opt-in
     flag if that's ever warranted.
-  * `issue_ready` (open/unblocked/unclaimed work query) — tracked by
-    CHT-1245, which was still in flight on a parallel branch as this
-    was written. This module does not depend on it; add the tool once
-    that ticket lands.
 
 Two deliberate deviations from the CLI's own defaults, both aimed at
 an LLM caller rather than a human at a terminal:
@@ -429,6 +425,61 @@ def issue_start(
     return _client().get_issue_by_identifier(identifier)
 
 
+@_boundary
+def issue_ready(
+    mine: Annotated[
+        bool,
+        Field(description="Restrict to issues already assigned to you instead of unassigned ones.")
+    ] = False,
+    include_assigned: Annotated[
+        bool,
+        Field(description="Widen beyond unassigned-only to include already-assigned (but not-started) issues.")
+    ] = False,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name to scope to. Defaults to the current project.")
+    ] = None,
+    all_projects: Annotated[
+        bool,
+        Field(description="Query across every project in the team instead of just the current/given one.")
+    ] = False,
+    limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 20,
+) -> dict:
+    """List issues that are open, unblocked, and unclaimed -- what you can start right now.
+
+    Open + not-started (backlog/todo) only; excludes anything already
+    in_progress/in_review/done/canceled, and excludes issues with an
+    unresolved blocking relation. Priority-sorted (urgent first), then
+    oldest first. Unassigned by default -- `mine` restricts to your own
+    assigned-but-not-started work, `include_assigned` widens to every
+    not-started issue regardless of assignee.
+
+    Prefer this over issue_list when the question is "what should I pick
+    up"; issue_list can filter by status and assignee but cannot express
+    "has no unresolved blocker".
+    """
+    if mine and include_assigned:
+        raise ToolInputError("Pass either `mine` or `include_assigned`, not both.")
+
+    team_id = _require_team()
+    m = _main()
+
+    project_id = None
+    if project:
+        project_id = m.resolve_project_id(project)
+    elif not all_projects:
+        project_id = m.get_current_project()
+
+    issues = _client().get_ready_issues(
+        project_id=project_id,
+        team_id=None if project_id else team_id,
+        mine=mine,
+        include_assigned=include_assigned,
+        limit=limit,
+    )
+    return {"issues": issues or []}
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
@@ -601,6 +652,7 @@ def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
+    issue_ready,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

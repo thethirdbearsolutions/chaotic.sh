@@ -80,18 +80,26 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """Exactly the 12 tools (the 10 from CHT-1247 plus project_list,
-        CHT-1284, and doc_update, CHT-1330), no more, no less."""
+        """Exactly the 13 tools (the 10 from CHT-1247 plus project_list,
+        CHT-1284; doc_update, CHT-1330; issue_ready, CHT-1334), no more,
+        no less."""
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
             "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start", "doc_list", "doc_view",
-            "doc_create", "doc_update", "activity_recent", "project_list",
+            "issue_comment", "issue_start", "issue_ready", "doc_list",
+            "doc_view", "doc_create", "doc_update", "activity_recent",
+            "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
+        """Destructive operations stay off this surface deliberately.
+
+        This used to also assert no `ready` tool, pinning the v1
+        exclusion that deferred it to CHT-1245. That ticket landed, so
+        issue_ready is now intentionally present (CHT-1334) and only the
+        delete guard is still a live invariant.
+        """
         assert not any("delete" in t.__name__ for t in mcp_mod.ALL_TOOLS)
-        assert not any("ready" in t.__name__ for t in mcp_mod.ALL_TOOLS)
 
     def test_build_server_registers_all_tools(self, mcp_mod):
         server = mcp_mod.build_server()
@@ -628,6 +636,57 @@ class TestDocs:
             "test-team-123", "Sprint Report",
             content="## Summary", icon=None, project_id="test-project-123",
         )
+
+    def test_issue_ready_defaults_to_current_project(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        result = mcp_mod.issue_ready()
+
+        assert result == {"issues": [mock_issue]}
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["project_id"] == "test-project-123"
+        assert kwargs["team_id"] is None
+        assert kwargs["mine"] is False
+        assert kwargs["include_assigned"] is False
+
+    def test_issue_ready_all_projects_scopes_to_team(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_ready(all_projects=True)
+
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["project_id"] is None
+        assert kwargs["team_id"] == "test-team-123"
+
+    def test_issue_ready_mine(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_ready(mine=True)
+
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["mine"] is True
+
+    def test_issue_ready_rejects_mine_with_include_assigned(self, mcp_mod):
+        """Mirrors the CLI's own UsageError -- the two flags mean opposite
+        things about assignment, so silently letting one win would answer
+        a question the caller didn't ask.
+        """
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[])
+
+        result = mcp_mod.issue_ready(mine=True, include_assigned=True)
+
+        assert "error" in result
+        client.get_ready_issues.assert_not_called()
+
+    def test_issue_ready_empty_returns_empty_list(self, mcp_mod):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=None)
+        assert mcp_mod.issue_ready() == {"issues": []}
+
 
     def test_doc_create_global(self, mcp_mod, mock_document):
         from cli.main import client
