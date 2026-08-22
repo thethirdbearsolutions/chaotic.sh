@@ -959,6 +959,204 @@
         "title": "project_listArguments",
         "type": "object"
       }
+    },
+    "sprint_add": {
+      "description": "Add issues to a sprint.\n\n    Sprint membership does not by itself charge budget -- only closing a\n    ticket does, and it charges whichever sprint is active at that\n    moment.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifiers": {
+            "description": "Issue identifiers to add, e.g. ['CHT-12', 'CHT-13'].",
+            "items": {
+              "type": "string"
+            },
+            "title": "Identifiers",
+            "type": "array"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "sprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Sprint name, id, or 'current'. Defaults to the active sprint.",
+            "title": "Sprint"
+          }
+        },
+        "required": [
+          "identifiers"
+        ],
+        "title": "sprint_addArguments",
+        "type": "object"
+      }
+    },
+    "sprint_close": {
+      "description": "Close a sprint and rotate to the next planned one.\n\n    This is the remedy for `sprint_in_arrears`: budget is only released\n    by closing, not by editing tickets.\n\n    If the project has per-sprint rituals, closing enters LIMBO instead\n    of rotating -- the returned sprint has `limbo: true`, and the next\n    step is ritual_pending / ritual_complete. Check `limbo` on the\n    result rather than assuming the rotation happened.\n\n    Rotating sprints is a project-wide state change that affects\n    everyone's budget accounting, so prefer sprint_current first and\n    close deliberately.\n    ",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "sprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Sprint name, id, or 'current'. Defaults to the active sprint.",
+            "title": "Sprint"
+          }
+        },
+        "title": "sprint_closeArguments",
+        "type": "object"
+      }
+    },
+    "sprint_current": {
+      "description": "Show the active sprint: budget, points spent, limbo and arrears state.\n\n    Call this when a write is refused with `sprint_in_arrears` or\n    `sprint_in_limbo` -- it reports what's actually blocking, which\n    nothing else on this surface does.\n\n    Only closed tickets accrue budget: completing an issue charges the\n    project's currently-active sprint (estimate points, or 1 point if\n    unestimated), whichever sprint the ticket itself belonged to.\n    Going over budget blocks moving any ticket to in_progress/done/\n    canceled project-wide until the sprint is closed.\n    ",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          }
+        },
+        "title": "sprint_currentArguments",
+        "type": "object"
+      }
+    },
+    "sprint_list": {
+      "description": "List a project's sprints, with each one's budget state.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "planned",
+                  "active",
+                  "completed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by sprint status.",
+            "title": "Status"
+          }
+        },
+        "title": "sprint_listArguments",
+        "type": "object"
+      }
+    },
+    "sprint_remove": {
+      "description": "Remove issues from whatever sprint they're in (leaves them unscheduled).",
+      "inputSchema": {
+        "properties": {
+          "identifiers": {
+            "description": "Issue identifiers to remove from their sprint.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Identifiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identifiers"
+        ],
+        "title": "sprint_removeArguments",
+        "type": "object"
+      }
+    },
+    "sprint_transactions": {
+      "description": "Show a sprint's budget transactions -- the audit trail behind points_spent.\n\n    One row per ticket completion charged to this sprint. Use it to\n    reconcile a points_spent number that looks wrong before assuming a\n    bug: closing older work after a rotation charges the *new* active\n    sprint by design.\n    ",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "sprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Sprint name, id, or 'current'. Defaults to the active sprint.",
+            "title": "Sprint"
+          }
+        },
+        "title": "sprint_transactionsArguments",
+        "type": "object"
+      }
     }
   }
 }

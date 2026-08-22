@@ -38,6 +38,8 @@ _IDENTICAL_TOOLS = {
     "issue_label",
     # doc_link/doc_unlink resolve both ends by id/identifier.
     "doc_link", "doc_unlink",
+    # sprint_remove takes only issue identifiers.
+    "sprint_remove",
 }
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
@@ -45,6 +47,8 @@ _ADDITIVE_TEAM_TOOLS = {
     "issue_list", "issue_create", "issue_ready", "doc_list", "doc_create",
     "activity_recent", "project_list",
     "label_list",
+    "sprint_current", "sprint_list", "sprint_close",
+    "sprint_transactions", "sprint_add",
 }
 
 

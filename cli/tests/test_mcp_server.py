@@ -93,6 +93,8 @@ class TestServerAssembly:
             "issue_comment", "issue_create", "issue_label", "issue_list",
             "issue_ready", "issue_relations", "issue_start", "issue_unblock",
             "issue_update", "issue_view", "label_list", "project_list",
+            "sprint_add", "sprint_close", "sprint_current", "sprint_list",
+            "sprint_remove", "sprint_transactions",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -1001,6 +1003,111 @@ class TestDocLinkUnlink:
 
         assert "error" in result
         client.link_document_to_issue.assert_not_called()
+
+
+
+class TestSprintTools:
+    def test_sprint_current_annotates_budget_state(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "budget": 10, "points_spent": 4,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["arrears_by"] == 0
+        assert result["points_remaining"] == 6
+
+    def test_sprint_current_flags_arrears(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "budget": 13, "points_spent": 14,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is True
+        assert result["arrears_by"] == 1
+        assert result["points_remaining"] == -1
+
+    def test_sprint_current_unlimited_budget_is_never_in_arrears(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "budget": None, "points_spent": 99,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["points_remaining"] is None
+
+    def test_sprint_list(self, mcp_mod):
+        from cli.main import client
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "sp-1", "budget": 5, "points_spent": 1},
+        ])
+        result = mcp_mod.sprint_list()
+        assert result["sprints"][0]["points_remaining"] == 4
+
+    def test_sprint_close_reports_rotation(self, mcp_mod, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.close_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "limbo": False, "budget": 5, "points_spent": 5,
+        })
+        result = mcp_mod.sprint_close()
+        assert result["entered_limbo"] is False
+        client.close_sprint.assert_called_once_with("sp-1")
+
+    def test_sprint_close_reports_limbo(self, mcp_mod, monkeypatch):
+        """Closing a ritual-bearing project enters limbo instead of
+        rotating -- the caller has to be able to tell which happened."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.close_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "limbo": True, "budget": 5, "points_spent": 5,
+        })
+        result = mcp_mod.sprint_close()
+        assert result["entered_limbo"] is True
+
+    def test_sprint_transactions(self, mcp_mod, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_sprint_transactions = MagicMock(return_value=[{"id": "tx-1", "points": 3}])
+        assert mcp_mod.sprint_transactions() == {"transactions": [{"id": "tx-1", "points": 3}]}
+
+    def test_sprint_add(self, mcp_mod, mock_issue, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_add(identifiers=["CHT-100"])
+
+        assert result["updated"] == ["CHT-100"]
+        client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id="sp-1")
+
+    def test_sprint_remove_clears_sprint_id(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_remove(identifiers=["CHT-100"])
+
+        assert result["updated"] == ["CHT-100"]
+        client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id=None)
+
+    def test_sprint_add_continues_past_a_bad_identifier(self, mcp_mod, mock_issue, monkeypatch):
+        """Partial success is reported, not swallowed -- one typo in a
+        batch shouldn't silently drop the rest."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[mock_issue, APIError("Issue not found")])
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_add(identifiers=["CHT-100", "CHT-999"])
+
+        assert result["updated"] == ["CHT-100"]
+        assert result["failed"][0]["identifier"] == "CHT-999"
+
+    def test_sprint_add_requires_identifiers(self, mcp_mod):
+        assert "error" in mcp_mod.sprint_add(identifiers=[])
 
 
 # ---------------------------------------------------------------------------

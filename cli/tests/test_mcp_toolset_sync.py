@@ -63,4 +63,6 @@ def test_snapshot_covers_the_full_toolset():
         "issue_comment", "issue_create", "issue_label", "issue_list",
         "issue_ready", "issue_relations", "issue_start", "issue_unblock",
         "issue_update", "issue_view", "label_list", "project_list",
+        "sprint_add", "sprint_close", "sprint_current", "sprint_list",
+        "sprint_remove", "sprint_transactions",
     }

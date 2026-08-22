@@ -822,6 +822,193 @@ def doc_unlink(
 
 
 # ---------------------------------------------------------------------------
+# Sprints
+# ---------------------------------------------------------------------------
+
+SPRINT_STATUS_VALUES = Literal["planned", "active", "completed"]
+
+
+def _with_budget_state(sprint: dict) -> dict:
+    """Annotate a sprint with its derived budget state.
+
+    ``budget``/``points_spent`` are stored; "am I in arrears" is not --
+    it's the comparison between them, and it's the thing that decides
+    whether issue_update can move a ticket to in_progress/done/canceled
+    at all. An agent that has to derive that itself will usually not
+    think to, so spell it out.
+    """
+    budget = sprint.get("budget")
+    spent = sprint.get("points_spent") or 0
+    over = (spent - budget) if budget is not None else 0
+    sprint = dict(sprint)
+    sprint["in_arrears"] = over > 0
+    sprint["arrears_by"] = max(over, 0)
+    sprint["points_remaining"] = None if budget is None else budget - spent
+    return sprint
+
+
+@_boundary
+def sprint_current(
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Show the active sprint: budget, points spent, limbo and arrears state.
+
+    Call this when a write is refused with `sprint_in_arrears` or
+    `sprint_in_limbo` -- it reports what's actually blocking, which
+    nothing else on this surface does.
+
+    Only closed tickets accrue budget: completing an issue charges the
+    project's currently-active sprint (estimate points, or 1 point if
+    unestimated), whichever sprint the ticket itself belonged to.
+    Going over budget blocks moving any ticket to in_progress/done/
+    canceled project-wide until the sprint is closed.
+    """
+    project_id = _require_project(project)
+    return _with_budget_state(_client().get_current_sprint(project_id))
+
+
+@_boundary
+def sprint_list(
+    status: Annotated[
+        SPRINT_STATUS_VALUES | None,
+        Field(description="Filter by sprint status.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """List a project's sprints, with each one's budget state."""
+    project_id = _require_project(project)
+    sprints = _client().get_sprints(project_id, status=status)
+    return {"sprints": [_with_budget_state(s) for s in (sprints or [])]}
+
+
+@_boundary
+def sprint_close(
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Close a sprint and rotate to the next planned one.
+
+    This is the remedy for `sprint_in_arrears`: budget is only released
+    by closing, not by editing tickets.
+
+    If the project has per-sprint rituals, closing enters LIMBO instead
+    of rotating -- the returned sprint has `limbo: true`, and the next
+    step is ritual_pending / ritual_complete. Check `limbo` on the
+    result rather than assuming the rotation happened.
+
+    Rotating sprints is a project-wide state change that affects
+    everyone's budget accounting, so prefer sprint_current first and
+    close deliberately.
+    """
+    project_id = _require_project(project)
+    m = _main()
+    sprint_id = m.resolve_sprint_id(sprint or "current", project_id)
+    result = _client().close_sprint(sprint_id)
+    result = _with_budget_state(result)
+    result["entered_limbo"] = bool(result.get("limbo"))
+    return result
+
+
+@_boundary
+def sprint_transactions(
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Show a sprint's budget transactions -- the audit trail behind points_spent.
+
+    One row per ticket completion charged to this sprint. Use it to
+    reconcile a points_spent number that looks wrong before assuming a
+    bug: closing older work after a rotation charges the *new* active
+    sprint by design.
+    """
+    project_id = _require_project(project)
+    m = _main()
+    sprint_id = m.resolve_sprint_id(sprint or "current", project_id)
+    return {"transactions": _client().get_sprint_transactions(sprint_id) or []}
+
+
+@_boundary
+def sprint_add(
+    identifiers: Annotated[
+        list[str],
+        Field(description="Issue identifiers to add, e.g. ['CHT-12', 'CHT-13'].")
+    ],
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Add issues to a sprint.
+
+    Sprint membership does not by itself charge budget -- only closing a
+    ticket does, and it charges whichever sprint is active at that
+    moment.
+    """
+    if not identifiers:
+        raise ToolInputError("Pass at least one issue identifier.")
+
+    project_id = _require_project(project)
+    m = _main()
+    sprint_id = m.resolve_sprint_id(sprint or "current", project_id)
+    return _set_sprint_on_issues(identifiers, sprint_id)
+
+
+@_boundary
+def sprint_remove(
+    identifiers: Annotated[
+        list[str],
+        Field(description="Issue identifiers to remove from their sprint.")
+    ],
+) -> dict:
+    """Remove issues from whatever sprint they're in (leaves them unscheduled)."""
+    if not identifiers:
+        raise ToolInputError("Pass at least one issue identifier.")
+    _require_auth()
+    return _set_sprint_on_issues(identifiers, None)
+
+
+def _set_sprint_on_issues(identifiers: list[str], sprint_id: str | None) -> dict:
+    """Apply a sprint change per-issue, reporting partial success.
+
+    Mirrors the CLI's own loop: the backend's batch-update endpoint
+    deliberately excludes sprint_id (sprint moves need per-issue
+    validation), so one bad identifier in a list shouldn't silently
+    discard the rest -- collect failures and report both sides.
+    """
+    updated, failed = [], []
+    for identifier in identifiers:
+        try:
+            iss = _client().get_issue_by_identifier(identifier)
+            _client().update_issue(iss["id"], sprint_id=sprint_id)
+            updated.append(identifier)
+        except APIError as e:
+            failed.append({"identifier": identifier, "error": str(e)})
+    return {"updated": updated, "failed": failed, "sprint_id": sprint_id}
+
+
+# ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
 
@@ -871,6 +1058,8 @@ ALL_TOOLS = (
     issue_ready, issue_relations, issue_block, issue_unblock,
     label_list, issue_label,
     doc_link, doc_unlink,
+    sprint_current, sprint_list, sprint_close, sprint_transactions,
+    sprint_add, sprint_remove,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

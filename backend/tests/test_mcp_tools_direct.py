@@ -561,6 +561,148 @@ class TestDocLinkUnlink:
 
 
 
+class TestSprintTools:
+    """CHT-1332: an agent that hits sprint_in_arrears could previously
+    neither see why nor clear it. These tests reproduce that dead end and
+    prove the new tools break it.
+    """
+
+    async def _active(self, project_id=None):
+        """The active sprint, creating it if the project has none yet.
+
+        Deliberately goes through the tool rather than
+        SprintService.get_current_sprint: only the API-layer function
+        creates a sprint on demand (ensure_sprints_exist), and a project
+        fixture starts with none.
+        """
+        return await tools.sprint_current()
+
+    async def _set_budget(self, sprint_id, budget):
+        from app.schemas.sprint import SprintUpdate
+        from app.services.sprint_service import SprintService
+        svc = SprintService()
+        return await svc.update(await svc.get_by_id(sprint_id), SprintUpdate(budget=budget))
+
+    async def test_sprint_current_reports_budget_state(self, test_project):
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 10)
+
+        result = await tools.sprint_current()
+
+        assert result["budget"] == 10
+        assert result["points_spent"] == 0
+        assert result["in_arrears"] is False
+        assert result["arrears_by"] == 0
+        assert result["points_remaining"] == 10
+
+    async def test_sprint_current_surfaces_arrears(self, test_project):
+        """The state that blocks issue_update, made visible."""
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 1)
+
+        for title in ("First", "Second"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        result = await tools.sprint_current()
+
+        assert result["points_spent"] == 2
+        assert result["in_arrears"] is True
+        assert result["arrears_by"] == 1
+        assert result["points_remaining"] == -1
+
+    async def test_arrears_blocks_writes_and_close_clears_it(self, test_project):
+        """End to end: the dead end, then the way out."""
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 1)
+
+        for title in ("A", "B"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        blocked = await tools.issue_create(title="Cannot start")
+        refused = await tools.issue_update(
+            identifier=blocked["identifier"], status="in_progress",
+        )
+        assert "error" in refused
+
+        closed = await tools.sprint_close()
+        assert "error" not in closed
+
+        # A fresh active sprint, and the write now goes through.
+        after = await tools.issue_update(
+            identifier=blocked["identifier"], status="in_progress",
+        )
+        assert "error" not in after
+        assert after["status"] == "in_progress"
+
+    async def test_sprint_current_unlimited_budget(self, test_project):
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], None)
+        result = await tools.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["points_remaining"] is None
+
+    async def test_sprint_list(self, test_project):
+        await self._active()
+        result = await tools.sprint_list()
+        assert len(result["sprints"]) >= 1
+        assert "in_arrears" in result["sprints"][0]
+
+    async def test_sprint_close_reports_whether_it_rotated(self, test_project):
+        await self._active()
+        result = await tools.sprint_close()
+        assert "entered_limbo" in result
+        assert result["entered_limbo"] is False
+
+    async def test_sprint_transactions_audit_trail(self, test_project):
+        await self._active()
+        iss = await tools.issue_create(title="Charged", estimate=3)
+        await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        result = await tools.sprint_transactions()
+
+        assert len(result["transactions"]) == 1
+        assert result["transactions"][0]["points"] == 3
+
+    async def test_unestimated_ticket_charges_one_point(self, test_project):
+        """Documented rule (DEFAULT_ONE_POINT) -- pinned so the tool's
+        docstring stays honest."""
+        await self._active()
+        iss = await tools.issue_create(title="No estimate")
+        await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        assert (await tools.sprint_current())["points_spent"] == 1
+
+    async def test_sprint_add_and_remove(self, test_project):
+        await self._active()
+        a = await tools.issue_create(title="Sched A")
+        b = await tools.issue_create(title="Sched B")
+
+        added = await tools.sprint_add(identifiers=[a["identifier"], b["identifier"]])
+        assert added["updated"] == [a["identifier"], b["identifier"]]
+        assert added["failed"] == []
+        assert (await tools.issue_view(a["identifier"]))["sprint_id"] == added["sprint_id"]
+
+        removed = await tools.sprint_remove(identifiers=[a["identifier"]])
+        assert removed["updated"] == [a["identifier"]]
+        assert (await tools.issue_view(a["identifier"]))["sprint_id"] is None
+
+    async def test_sprint_add_reports_partial_failure(self, test_project):
+        """One bad identifier must not discard the rest of the batch."""
+        await self._active()
+        good = await tools.issue_create(title="Real one")
+
+        result = await tools.sprint_add(identifiers=[good["identifier"], "NOPE-999"])
+
+        assert result["updated"] == [good["identifier"]]
+        assert [f["identifier"] for f in result["failed"]] == ["NOPE-999"]
+
+    async def test_sprint_add_requires_identifiers(self, test_project):
+        assert "error" in await tools.sprint_add(identifiers=[])
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")
