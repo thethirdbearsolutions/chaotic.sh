@@ -174,6 +174,43 @@ def _boundary(fn):
     return wrapper
 
 
+
+def _apply_ticket_attestations(iss: dict, identifier: str, attest: dict[str, str]) -> None:
+    """Record per-ritual attestations on a ticket before a gated transition.
+
+    Shared by issue_update and issue_start (CHT-1326/CHT-1342): both are
+    non-interactive callers, and a gated transition attempted without
+    these opens an intent the caller can never satisfy. Attesting the
+    last pending ritual may fire the one-step auto-transition
+    server-side, which makes the caller's own status change a no-op
+    rather than a conflict.
+    """
+    ritual_status = _client().get_pending_issue_rituals(iss["id"])
+    pending = {r["name"]: r for r in ritual_status.get("pending_rituals", [])}
+    completed = {r["name"] for r in ritual_status.get("completed_rituals", [])}
+    for name, note in attest.items():
+        if not (note and note.strip()):
+            raise ToolInputError(
+                f"Attestation note for ritual '{name}' must be non-empty."
+            )
+        rit = pending.get(name)
+        if rit is None:
+            if name in completed:
+                continue  # already attested — idempotent
+            known = ", ".join(sorted(pending)) or "none"
+            raise ToolInputError(
+                f"Ritual '{name}' is not a pending ticket ritual for "
+                f"{identifier}. Pending: {known}."
+            )
+        if rit.get("attestation"):
+            continue  # attested, awaiting approval — nothing to add
+        if rit.get("approval_mode") == "gate":
+            # Gate completion is human-only; the server enforces it.
+            _client().complete_gate_ritual_for_issue(rit["id"], iss["id"], note)
+        else:
+            _client().attest_ritual_for_issue(rit["id"], iss["id"], note)
+
+
 # ---------------------------------------------------------------------------
 # Issues
 # ---------------------------------------------------------------------------
@@ -356,30 +393,7 @@ def issue_update(
     # pending ritual may fire the one-step auto-transition server-side;
     # the update below is then a no-op for the status field.
     if attest:
-        ritual_status = _client().get_pending_issue_rituals(iss["id"])
-        pending = {r["name"]: r for r in ritual_status.get("pending_rituals", [])}
-        completed = {r["name"] for r in ritual_status.get("completed_rituals", [])}
-        for name, note in attest.items():
-            if not (note and note.strip()):
-                raise ToolInputError(
-                    f"Attestation note for ritual '{name}' must be non-empty."
-                )
-            rit = pending.get(name)
-            if rit is None:
-                if name in completed:
-                    continue  # already attested — idempotent
-                known = ", ".join(sorted(pending)) or "none"
-                raise ToolInputError(
-                    f"Ritual '{name}' is not a pending ticket ritual for "
-                    f"{identifier}. Pending: {known}."
-                )
-            if rit.get("attestation"):
-                continue  # attested, awaiting approval — nothing to add
-            if rit.get("approval_mode") == "gate":
-                # Gate completion is human-only; the server enforces it.
-                _client().complete_gate_ritual_for_issue(rit["id"], iss["id"], note)
-            else:
-                _client().attest_ritual_for_issue(rit["id"], iss["id"], note)
+        _apply_ticket_attestations(iss, identifier, attest)
 
     data = {}
     if title is not None:
@@ -425,15 +439,38 @@ def issue_comment(
 @_boundary
 def issue_start(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    attest: Annotated[
+        dict[str, str] | None,
+        Field(description=(
+            "Ritual attestation notes to record BEFORE claiming, as a map of "
+            'ritual name -> note, e.g. {"claim-gate": "branch cut"}. Required '
+            "when the ticket has pending claim rituals -- without them the "
+            "claim is blocked (CHT-1326). Use ritual_pending to see which "
+            "rituals apply and what each one asks."
+        )),
+    ] = None,
+    lease_seconds: Annotated[
+        int | None,
+        Field(description="Claim lease duration in seconds. Defaults to the "
+                          "server-configured lease (CHT-1246).", ge=1)
+    ] = None,
 ) -> dict:
     """Claim an issue: assign it to yourself and move it to in_progress.
 
-    Equivalent to `chaotic issue start`.
+    Equivalent to `chaotic issue start` (itself an alias for `issue
+    claim`). Re-claiming a ticket you already hold extends the lease.
     """
     _require_auth()
     iss = _client().get_issue_by_identifier(identifier)
+
+    if attest:
+        _apply_ticket_attestations(iss, identifier, attest)
+
     me = _client().get_me()
-    _client().update_issue(iss["id"], assignee_id=me["id"], status="in_progress")
+    kwargs = {"assignee_id": me["id"], "status": "in_progress"}
+    if lease_seconds is not None:
+        kwargs["lease_seconds"] = int(lease_seconds)
+    _client().update_issue(iss["id"], **kwargs)
     return _client().get_issue_by_identifier(identifier)
 
 

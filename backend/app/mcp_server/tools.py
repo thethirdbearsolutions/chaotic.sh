@@ -183,6 +183,54 @@ def _boundary(fn):
     return wrapper
 
 
+
+async def _apply_ticket_attestations(user, iss, identifier: str, attest: dict[str, str]) -> None:
+    """Record per-ritual attestations on a ticket before a gated transition.
+
+    Shared by issue_update and issue_start (CHT-1326/CHT-1342): both are
+    non-interactive callers, and a gated transition attempted without
+    these opens an intent the caller can never satisfy. Attesting the
+    last pending ritual may fire the one-step auto-transition
+    server-side, which makes the caller's own status change a no-op
+    rather than a conflict.
+    """
+    from app.enums import ApprovalMode
+
+    ritual_status = await rituals_api.get_pending_ticket_rituals(
+        issue_id=iss.id, current_user=user,
+    )
+    pending = {r.name: r for r in ritual_status.pending_rituals}
+    completed = {r.name for r in ritual_status.completed_rituals}
+    for name, note in attest.items():
+        if not (note and note.strip()):
+            raise ToolContextError(
+                f"Attestation note for ritual '{name}' must be non-empty."
+            )
+        rit = pending.get(name)
+        if rit is None:
+            if name in completed:
+                continue  # already attested — idempotent
+            known = ", ".join(sorted(pending)) or "none"
+            raise ToolContextError(
+                f"Ritual '{name}' is not a pending ticket ritual for "
+                f"{identifier}. Pending: {known}."
+            )
+        if rit.attestation is not None:
+            continue  # attested, awaiting approval — nothing to add
+        attestation_in = RitualAttestationCreate(note=note)
+        if rit.approval_mode == ApprovalMode.GATE:
+            # Gate completion is human-only; the endpoint enforces it.
+            await rituals_api.complete_gate_ritual_for_issue(
+                ritual_id=rit.id, issue_id=iss.id,
+                attestation_in=attestation_in, current_user=user,
+            )
+        else:
+            await rituals_api.attest_ritual_for_issue(
+                ritual_id=rit.id, issue_id=iss.id,
+                attestation_in=attestation_in, current_user=user,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Issues
 # ---------------------------------------------------------------------------
@@ -387,43 +435,7 @@ async def issue_update(
     # pending ritual may fire the one-step auto-transition server-side;
     # the update below is then a no-op for the status field.
     if attest:
-        from app.api import rituals as rituals_api
-        from app.enums import ApprovalMode
-        from app.schemas.ritual import RitualAttestationCreate
-
-        ritual_status = await rituals_api.get_pending_ticket_rituals(
-            issue_id=iss.id, current_user=user,
-        )
-        pending = {r.name: r for r in ritual_status.pending_rituals}
-        completed = {r.name for r in ritual_status.completed_rituals}
-        for name, note in attest.items():
-            if not (note and note.strip()):
-                raise ToolContextError(
-                    f"Attestation note for ritual '{name}' must be non-empty."
-                )
-            rit = pending.get(name)
-            if rit is None:
-                if name in completed:
-                    continue  # already attested — idempotent
-                known = ", ".join(sorted(pending)) or "none"
-                raise ToolContextError(
-                    f"Ritual '{name}' is not a pending ticket ritual for "
-                    f"{identifier}. Pending: {known}."
-                )
-            if rit.attestation is not None:
-                continue  # attested, awaiting approval — nothing to add
-            attestation_in = RitualAttestationCreate(note=note)
-            if rit.approval_mode == ApprovalMode.GATE:
-                # Gate completion is human-only; the endpoint enforces it.
-                await rituals_api.complete_gate_ritual_for_issue(
-                    ritual_id=rit.id, issue_id=iss.id,
-                    attestation_in=attestation_in, current_user=user,
-                )
-            else:
-                await rituals_api.attest_ritual_for_issue(
-                    ritual_id=rit.id, issue_id=iss.id,
-                    attestation_in=attestation_in, current_user=user,
-                )
+        await _apply_ticket_attestations(user, iss, identifier, attest)
 
     fields: dict = {}
     if title is not None:
@@ -481,16 +493,40 @@ async def issue_comment(
 @_boundary
 async def issue_start(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    attest: Annotated[
+        dict[str, str] | None,
+        Field(description=(
+            "Ritual attestation notes to record BEFORE claiming, as a map of "
+            'ritual name -> note, e.g. {"claim-gate": "branch cut"}. Required '
+            "when the ticket has pending claim rituals -- without them the "
+            "claim is blocked (CHT-1326). Use ritual_pending to see which "
+            "rituals apply and what each one asks."
+        )),
+    ] = None,
+    lease_seconds: Annotated[
+        int | None,
+        Field(description="Claim lease duration in seconds. Defaults to the "
+                          "server-configured lease (CHT-1246).", ge=1)
+    ] = None,
 ) -> dict:
     """Claim an issue: assign it to yourself and move it to in_progress.
 
-    Equivalent to `chaotic issue start`.
+    Equivalent to `chaotic issue start` (itself an alias for `issue
+    claim`). Re-claiming a ticket you already hold extends the lease.
     """
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
+
+    if attest:
+        await _apply_ticket_attestations(user, iss, identifier, attest)
+
     updated = await issues_api.update_issue(
         issue_id=iss.id,
-        issue_in=IssueUpdate(assignee_id=user.id, status=IssueStatus.IN_PROGRESS),
+        issue_in=IssueUpdate(
+            assignee_id=user.id,
+            status=IssueStatus.IN_PROGRESS,
+            lease_seconds=lease_seconds,
+        ),
         current_user=user,
     )
     return updated.model_dump(mode="json")

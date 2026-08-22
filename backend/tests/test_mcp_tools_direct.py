@@ -813,6 +813,75 @@ class TestRitualTools:
 
 
 
+class TestIssueStartClaimParity:
+    async def test_claim_gated_ticket_cannot_start_without_attest(self, test_project):
+        """The bug: a claim ritual made issue_start unusable, with the
+        only workaround being to bypass it via issue_update."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch cut?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Gated claim")
+
+        refused = await tools.issue_start(identifier=iss["identifier"])
+        assert "error" in refused
+
+        started = await tools.issue_start(
+            identifier=iss["identifier"], attest={"claim-gate": "cut feature/x"},
+        )
+        assert "error" not in started
+        assert started["status"] == "in_progress"
+
+    async def test_lease_seconds_is_honoured(self, test_project):
+        iss = await tools.issue_create(title="Long job")
+        started = await tools.issue_start(identifier=iss["identifier"], lease_seconds=14400)
+        assert "error" not in started
+        assert started["lease_expires_at"] is not None
+
+    async def test_start_without_lease_still_works(self, test_project):
+        iss = await tools.issue_create(title="Default lease")
+        started = await tools.issue_start(identifier=iss["identifier"])
+        assert started["status"] == "in_progress"
+
+    async def test_start_rejects_empty_attestation_note(self, test_project):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Blank note")
+        result = await tools.issue_start(identifier=iss["identifier"], attest={"claim-gate": " "})
+        assert "error" in result
+
+    async def test_ritual_pending_supplies_the_name_issue_start_needs(self, test_project):
+        """CHT-1333 + CHT-1342 together: discover the ritual, then use it."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch cut?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Discoverable")
+
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        name = pending["unattested"][0]
+
+        started = await tools.issue_start(
+            identifier=iss["identifier"], attest={name: "cut it"},
+        )
+        assert started["status"] == "in_progress"
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")

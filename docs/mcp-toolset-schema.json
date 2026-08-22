@@ -742,13 +742,43 @@
       }
     },
     "issue_start": {
-      "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\n    Equivalent to `chaotic issue start`.\n    ",
+      "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\n    Equivalent to `chaotic issue start` (itself an alias for `issue\n    claim`). Re-claiming a ticket you already hold extends the lease.\n    ",
       "inputSchema": {
         "properties": {
+          "attest": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Ritual attestation notes to record BEFORE claiming, as a map of ritual name -> note, e.g. {\"claim-gate\": \"branch cut\"}. Required when the ticket has pending claim rituals -- without them the claim is blocked (CHT-1326). Use ritual_pending to see which rituals apply and what each one asks.",
+            "title": "Attest"
+          },
           "identifier": {
             "description": "Issue identifier, e.g. CHT-123.",
             "title": "Identifier",
             "type": "string"
+          },
+          "lease_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Claim lease duration in seconds. Defaults to the server-configured lease (CHT-1246).",
+            "title": "Lease Seconds"
           }
         },
         "required": [

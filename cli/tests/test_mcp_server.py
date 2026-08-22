@@ -578,6 +578,94 @@ class TestIssueStart:
 
 
 
+class TestIssueStartClaimParity:
+    """CHT-1342: issue_start is the CLI's `issue claim` alias, so it has
+    to carry claim's --attest and --lease. Without attest, a ticket with
+    a claim ritual simply could not be started through this tool.
+    """
+
+    RITUAL = {"id": "r-1", "name": "claim-gate", "approval_mode": "auto",
+              "attestation": None}
+
+    def test_start_attests_claim_ritual_before_claiming(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "branch cut"})
+
+        client.attest_ritual_for_issue.assert_called_once_with(
+            "r-1", "issue-uuid-1", "branch cut")
+        # Attestation happens before the claim, not after.
+        assert client.update_issue.called
+
+    def test_start_passes_lease_seconds(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100", lease_seconds=14400)
+
+        _, kwargs = client.update_issue.call_args
+        assert kwargs["lease_seconds"] == 14400
+
+    def test_start_omits_lease_when_not_given(self, mcp_mod, mock_issue):
+        """No lease means server default, not an explicit null."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100")
+
+        _, kwargs = client.update_issue.call_args
+        assert "lease_seconds" not in kwargs
+
+    def test_start_rejects_empty_attestation_note(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "  "})
+
+        assert "error" in result
+        client.update_issue.assert_not_called()
+
+    def test_start_attesting_an_already_done_ritual_is_idempotent(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [],
+                          "completed_rituals": [{"name": "claim-gate"}]})
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "done"})
+
+        assert "error" not in result
+        client.attest_ritual_for_issue.assert_not_called()
+
+    def test_start_unknown_ritual_names_the_pending_ones(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"wrong-name": "x"})
+
+        assert "claim-gate" in result["error"]
+        client.update_issue.assert_not_called()
+
+
 class TestIssueRelations:
     def test_issue_relations(self, mcp_mod, mock_issue):
         from cli.main import client
