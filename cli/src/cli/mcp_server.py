@@ -480,6 +480,110 @@ def issue_ready(
     return {"issues": issues or []}
 
 
+RELATION_TYPES = Literal["blocks", "relates_to", "duplicates"]
+
+
+@_boundary
+def issue_relations(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+) -> dict:
+    """Show an issue's relations: what it blocks, what blocks it, duplicates, and related work.
+
+    Each relation carries a `direction` ("outgoing"/"incoming") and its
+    own `id` -- pass that id to issue_unblock to remove it. Incoming
+    `blocks` edges are reported as `blocked_by`, so the relation_type
+    always reads from the perspective of the issue you asked about.
+
+    Worth calling before issue_start: issue_view does not report
+    blockers, so an issue can look startable there while being blocked.
+    """
+    _require_auth()
+    iss = _client().get_issue_by_identifier(identifier)
+    return {"relations": _client().get_relations(iss["id"]) or []}
+
+
+@_boundary
+def issue_block(
+    identifier: Annotated[str, Field(description="The blocking issue's identifier, e.g. CHT-123.")],
+    blocked: Annotated[
+        str,
+        Field(description="The identifier of the issue on the other end of the relation, e.g. CHT-456.")
+    ],
+    relation_type: Annotated[
+        RELATION_TYPES,
+        Field(description="Relation to create. 'blocks': `identifier` blocks `blocked`. "
+                          "'duplicates': `identifier` is a duplicate of `blocked`. "
+                          "'relates_to': a plain association, no direction implied.")
+    ] = "blocks",
+) -> dict:
+    """Relate two issues: by default, `identifier` blocks `blocked`.
+
+    Direction matters for `blocks` -- the issue named first is the one
+    holding the other up, and it's the second one that stops showing up
+    in issue_ready. Creating the same pair twice is a no-op, not an
+    error.
+    """
+    _require_auth()
+    iss = _client().get_issue_by_identifier(identifier)
+    other = _client().get_issue_by_identifier(blocked)
+    return _client().create_relation(iss["id"], other["id"], relation_type)
+
+
+@_boundary
+def issue_unblock(
+    identifier: Annotated[str, Field(description="Issue identifier the relation hangs off, e.g. CHT-123.")],
+    related: Annotated[
+        str | None,
+        Field(description="Identifier of the issue on the other end, e.g. CHT-456. "
+                          "Resolved to a relation automatically. Use relation_id instead "
+                          "if more than one relation connects the two.")
+    ] = None,
+    relation_id: Annotated[
+        str | None,
+        Field(description="Exact relation id from issue_relations. Takes precedence over `related`.")
+    ] = None,
+) -> dict:
+    """Remove a relation between two issues.
+
+    Name the other issue with `related` and the relation is looked up
+    for you; pass `relation_id` from issue_relations when the two issues
+    are connected by more than one relation.
+
+    Removes only the relation -- neither issue is touched.
+    """
+    if not related and not relation_id:
+        raise ToolInputError("Pass either `related` (the other issue) or `relation_id`.")
+
+    _require_auth()
+    iss = _client().get_issue_by_identifier(identifier)
+
+    if not relation_id:
+        other = _client().get_issue_by_identifier(related)
+        matches = [
+            r for r in (_client().get_relations(iss["id"]) or [])
+            if r.get("related_issue_id") == other["id"]
+        ]
+        if not matches:
+            raise ToolInputError(
+                f"No relation between {identifier} and {related}."
+            )
+        if len(matches) > 1:
+            listed = ", ".join(f"{r['relation_type']} (id={r['id']})" for r in matches)
+            raise ToolInputError(
+                f"{identifier} and {related} are connected by {len(matches)} relations: "
+                f"{listed}. Pass `relation_id` to say which one to remove."
+            )
+        relation_id = matches[0]["id"]
+
+    _client().delete_relation(iss["id"], relation_id)
+    return {
+        "deleted": True,
+        "id": relation_id,
+        "issue_id": iss["id"],
+        "identifier": identifier,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
@@ -652,7 +756,7 @@ def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    issue_ready,
+    issue_ready, issue_relations, issue_block, issue_unblock,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

@@ -31,6 +31,9 @@ _IDENTICAL_TOOLS = {
     # which already searches every team the API key can reach -- so neither
     # needs the additive `team` parameter the tools below take.
     "doc_view", "doc_update",
+    # Relation tools resolve issues by identifier, which is already
+    # team-unambiguous, so they need no `team` parameter either.
+    "issue_relations", "issue_block", "issue_unblock",
 }
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
@@ -58,7 +61,7 @@ def test_all_tools_registered():
     assert {fn.__name__ for fn in ALL_TOOLS} == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 
 
-async def test_backend_covers_all_thirteen_tools(snapshot):
+async def test_backend_covers_the_full_toolset(snapshot):
     live = await _live_toolset()
     assert set(live.keys()) == set(snapshot.keys()) == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 

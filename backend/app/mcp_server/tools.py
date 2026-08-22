@@ -50,7 +50,7 @@ from mcp.server.fastmcp import FastMCP
 
 from app.api import documents as documents_api
 from app.api import issues as issues_api
-from app.enums import IssueStatus, IssuePriority, IssueType
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType
 from app.mcp_server.context import get_current_mcp_user
 from app.mcp_server.scope import (
     ToolContextError,
@@ -60,7 +60,9 @@ from app.mcp_server.scope import (
     resolve_team,
 )
 from app.schemas.document import DocumentCreate, DocumentUpdate
-from app.schemas.issue import IssueCommentCreate, IssueCreate, IssueUpdate
+from app.schemas.issue import (
+    IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
+)
 from app.schemas.project import ProjectResponse
 from app.services.project_service import ProjectService
 
@@ -543,6 +545,117 @@ async def issue_ready(
     return {"issues": [i.model_dump(mode="json") for i in (issues or [])]}
 
 
+RELATION_TYPES = Literal["blocks", "relates_to", "duplicates"]
+
+
+@_boundary
+async def issue_relations(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+) -> dict:
+    """Show an issue's relations: what it blocks, what blocks it, duplicates, and related work.
+
+    Each relation carries a `direction` ("outgoing"/"incoming") and its
+    own `id` -- pass that id to issue_unblock to remove it. Incoming
+    `blocks` edges are reported as `blocked_by`, so the relation_type
+    always reads from the perspective of the issue you asked about.
+
+    Worth calling before issue_start: issue_view does not report
+    blockers, so an issue can look startable there while being blocked.
+    """
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    relations = await issues_api.list_relations(issue_id=iss.id, current_user=user)
+    return {"relations": relations or []}
+
+
+@_boundary
+async def issue_block(
+    identifier: Annotated[str, Field(description="The blocking issue's identifier, e.g. CHT-123.")],
+    blocked: Annotated[
+        str,
+        Field(description="The identifier of the issue on the other end of the relation, e.g. CHT-456.")
+    ],
+    relation_type: Annotated[
+        RELATION_TYPES,
+        Field(description="Relation to create. 'blocks': `identifier` blocks `blocked`. "
+                          "'duplicates': `identifier` is a duplicate of `blocked`. "
+                          "'relates_to': a plain association, no direction implied.")
+    ] = "blocks",
+) -> dict:
+    """Relate two issues: by default, `identifier` blocks `blocked`.
+
+    Direction matters for `blocks` -- the issue named first is the one
+    holding the other up, and it's the second one that stops showing up
+    in issue_ready. Creating the same pair twice is a no-op, not an
+    error.
+    """
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    other = await issues_api.get_issue_by_identifier(blocked, user)
+    created = await issues_api.create_relation(
+        issue_id=iss.id,
+        relation_in=IssueRelationCreate(
+            related_issue_id=other.id,
+            relation_type=IssueRelationType(relation_type),
+        ),
+        current_user=user,
+    )
+    return created if isinstance(created, dict) else created.model_dump(mode="json")
+
+
+@_boundary
+async def issue_unblock(
+    identifier: Annotated[str, Field(description="Issue identifier the relation hangs off, e.g. CHT-123.")],
+    related: Annotated[
+        str | None,
+        Field(description="Identifier of the issue on the other end, e.g. CHT-456. "
+                          "Resolved to a relation automatically. Use relation_id instead "
+                          "if more than one relation connects the two.")
+    ] = None,
+    relation_id: Annotated[
+        str | None,
+        Field(description="Exact relation id from issue_relations. Takes precedence over `related`.")
+    ] = None,
+) -> dict:
+    """Remove a relation between two issues.
+
+    Name the other issue with `related` and the relation is looked up
+    for you; pass `relation_id` from issue_relations when the two issues
+    are connected by more than one relation.
+
+    Removes only the relation -- neither issue is touched.
+    """
+    if not related and not relation_id:
+        raise ToolContextError("Pass either `related` (the other issue) or `relation_id`.")
+
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+
+    if not relation_id:
+        other = await issues_api.get_issue_by_identifier(related, user)
+        existing = await issues_api.list_relations(issue_id=iss.id, current_user=user)
+        matches = [r for r in (existing or []) if r.get("related_issue_id") == other.id]
+        if not matches:
+            raise ToolContextError(f"No relation between {identifier} and {related}.")
+        if len(matches) > 1:
+            listed = ", ".join(f"{r['relation_type']} (id={r['id']})" for r in matches)
+            raise ToolContextError(
+                f"{identifier} and {related} are connected by {len(matches)} relations: "
+                f"{listed}. Pass `relation_id` to say which one to remove."
+            )
+        relation_id = matches[0]["id"]
+
+    await issues_api.delete_relation(
+        issue_id=iss.id, relation_id=relation_id, current_user=user
+    )
+    return {
+        "deleted": True,
+        "id": relation_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
@@ -745,7 +858,7 @@ async def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    issue_ready,
+    issue_ready, issue_relations, issue_block, issue_unblock,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

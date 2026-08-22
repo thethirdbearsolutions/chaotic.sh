@@ -252,6 +252,92 @@ class TestIssueReady:
 
 
 
+class TestIssueRelationTools:
+    async def test_block_then_relations_reports_both_ends(self, test_project):
+        blocker = await tools.issue_create(title="Blocker", status="todo")
+        blocked = await tools.issue_create(title="Blocked", status="todo")
+
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        # Outgoing from the blocker's perspective...
+        out = await tools.issue_relations(identifier=blocker["identifier"])
+        assert [r["relation_type"] for r in out["relations"]] == ["blocks"]
+        assert out["relations"][0]["direction"] == "outgoing"
+
+        # ...and reported as blocked_by from the other end.
+        inc = await tools.issue_relations(identifier=blocked["identifier"])
+        assert [r["relation_type"] for r in inc["relations"]] == ["blocked_by"]
+        assert inc["relations"][0]["direction"] == "incoming"
+
+    async def test_block_removes_target_from_issue_ready(self, test_project):
+        """The behavioural reason relations matter to an agent."""
+        blocker = await tools.issue_create(title="First", status="todo")
+        blocked = await tools.issue_create(title="Second", status="todo")
+
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocker["identifier"] in idents
+        assert blocked["identifier"] not in idents
+
+    async def test_unblock_restores_readiness(self, test_project):
+        blocker = await tools.issue_create(title="Gate", status="todo")
+        blocked = await tools.issue_create(title="Gated", status="todo")
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        result = await tools.issue_unblock(
+            identifier=blocker["identifier"], related=blocked["identifier"],
+        )
+        assert result["deleted"] is True
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocked["identifier"] in idents
+
+    async def test_block_is_idempotent(self, test_project):
+        a = await tools.issue_create(title="A", status="todo")
+        b = await tools.issue_create(title="B", status="todo")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        second = await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        assert "error" not in second
+        rels = await tools.issue_relations(identifier=a["identifier"])
+        assert len(rels["relations"]) == 1
+
+    async def test_relation_type_duplicates(self, test_project):
+        a = await tools.issue_create(title="Dupe", status="todo")
+        b = await tools.issue_create(title="Original", status="todo")
+        await tools.issue_block(
+            identifier=a["identifier"], blocked=b["identifier"], relation_type="duplicates",
+        )
+        rels = await tools.issue_relations(identifier=a["identifier"])
+        assert rels["relations"][0]["relation_type"] == "duplicates"
+
+    async def test_unblock_by_relation_id(self, test_project):
+        a = await tools.issue_create(title="X", status="todo")
+        b = await tools.issue_create(title="Y", status="todo")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        rel_id = (await tools.issue_relations(identifier=a["identifier"]))["relations"][0]["id"]
+
+        result = await tools.issue_unblock(identifier=a["identifier"], relation_id=rel_id)
+
+        assert result["deleted"] is True
+        assert (await tools.issue_relations(identifier=a["identifier"]))["relations"] == []
+
+    async def test_unblock_without_a_selector_is_an_error(self, test_project):
+        a = await tools.issue_create(title="Solo", status="todo")
+        result = await tools.issue_unblock(identifier=a["identifier"])
+        assert "error" in result
+
+    async def test_unblock_unrelated_pair_is_an_error(self, test_project):
+        a = await tools.issue_create(title="P", status="todo")
+        b = await tools.issue_create(title="Q", status="todo")
+        result = await tools.issue_unblock(identifier=a["identifier"], related=b["identifier"])
+        assert "error" in result
+
+    async def test_relations_unknown_issue_is_an_error(self, test_project):
+        assert "error" in await tools.issue_relations(identifier="NOPE-999")
+
+
+
 class TestDocListDocCreateExplicitProject:
     async def test_doc_list_explicit_project(self, test_project):
         created = await tools.doc_create(title="Scoped doc", project=test_project.key)

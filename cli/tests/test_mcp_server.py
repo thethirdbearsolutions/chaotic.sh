@@ -80,15 +80,18 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """Exactly the 13 tools (the 10 from CHT-1247 plus project_list,
-        CHT-1284; doc_update, CHT-1330; issue_ready, CHT-1334), no more,
-        no less."""
+        """The full curated toolset, no more, no less.
+
+        Deliberately spelled out rather than counted: the count moves
+        every time a tool lands, and a number in the test name tells
+        you nothing about which tool went missing.
+        """
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
             "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start", "issue_ready", "doc_list",
-            "doc_view", "doc_create", "doc_update", "activity_recent",
-            "project_list",
+            "issue_comment", "issue_start", "issue_ready", "issue_relations",
+            "issue_block", "issue_unblock", "doc_list", "doc_view",
+            "doc_create", "doc_update", "activity_recent", "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -568,6 +571,105 @@ class TestIssueStart:
 
         client.update_issue.assert_called_once_with("issue-uuid-1", assignee_id="user-1", status="in_progress")
         assert result == started
+
+
+
+class TestIssueRelations:
+    def test_issue_relations(self, mcp_mod, mock_issue):
+        from cli.main import client
+        rels = [{"id": "rel-1", "related_issue_id": "issue-uuid-2",
+                 "relation_type": "blocked_by", "direction": "incoming"}]
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=rels)
+
+        assert mcp_mod.issue_relations(identifier="CHT-100") == {"relations": rels}
+        client.get_relations.assert_called_once_with("issue-uuid-1")
+
+    def test_issue_relations_empty(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=None)
+        assert mcp_mod.issue_relations(identifier="CHT-100") == {"relations": []}
+
+    def test_issue_block_direction(self, mcp_mod, mock_issue):
+        """`identifier` blocks `blocked` -- the first issue is the blocker."""
+        from cli.main import client
+        blocker = dict(mock_issue, id="issue-uuid-1", identifier="CHT-100")
+        blocked = dict(mock_issue, id="issue-uuid-2", identifier="CHT-200")
+        client.get_issue_by_identifier = MagicMock(side_effect=[blocker, blocked])
+        client.create_relation = MagicMock(return_value={"id": "rel-1"})
+
+        mcp_mod.issue_block(identifier="CHT-100", blocked="CHT-200")
+
+        client.create_relation.assert_called_once_with(
+            "issue-uuid-1", "issue-uuid-2", "blocks",
+        )
+
+    def test_issue_block_custom_type(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.create_relation = MagicMock(return_value={"id": "rel-1"})
+
+        mcp_mod.issue_block(identifier="CHT-1", blocked="CHT-2", relation_type="duplicates")
+
+        assert client.create_relation.call_args[0][2] == "duplicates"
+
+    def test_issue_unblock_resolves_relation_from_the_other_issue(self, mcp_mod, mock_issue):
+        from cli.main import client
+        iss = dict(mock_issue, id="issue-uuid-1")
+        other = dict(mock_issue, id="issue-uuid-2")
+        client.get_issue_by_identifier = MagicMock(side_effect=[iss, other])
+        client.get_relations = MagicMock(return_value=[
+            {"id": "rel-1", "related_issue_id": "issue-uuid-2", "relation_type": "blocks"},
+            {"id": "rel-9", "related_issue_id": "issue-uuid-9", "relation_type": "blocks"},
+        ])
+        client.delete_relation = MagicMock(return_value=None)
+
+        result = mcp_mod.issue_unblock(identifier="CHT-100", related="CHT-200")
+
+        assert result["deleted"] is True
+        client.delete_relation.assert_called_once_with("issue-uuid-1", "rel-1")
+
+    def test_issue_unblock_ambiguous_pair_asks_for_relation_id(self, mcp_mod, mock_issue):
+        """Two relations between the same pair: refuse rather than guess."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.get_relations = MagicMock(return_value=[
+            {"id": "rel-1", "related_issue_id": "b", "relation_type": "blocks"},
+            {"id": "rel-2", "related_issue_id": "b", "relation_type": "relates_to"},
+        ])
+        client.delete_relation = MagicMock(return_value=None)
+
+        result = mcp_mod.issue_unblock(identifier="CHT-1", related="CHT-2")
+
+        assert "error" in result
+        assert "relation_id" in result["error"]
+        client.delete_relation.assert_not_called()
+
+    def test_issue_unblock_no_such_relation(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.get_relations = MagicMock(return_value=[])
+        result = mcp_mod.issue_unblock(identifier="CHT-1", related="CHT-2")
+        assert "error" in result
+
+    def test_issue_unblock_by_relation_id_skips_lookup(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, id="a"))
+        client.get_relations = MagicMock(return_value=[])
+        client.delete_relation = MagicMock(return_value=None)
+
+        mcp_mod.issue_unblock(identifier="CHT-1", relation_id="rel-7")
+
+        client.delete_relation.assert_called_once_with("a", "rel-7")
+        client.get_relations.assert_not_called()
+
+    def test_issue_unblock_requires_one_of_the_two_selectors(self, mcp_mod):
+        result = mcp_mod.issue_unblock(identifier="CHT-1")
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------

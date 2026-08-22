@@ -237,6 +237,40 @@
         "type": "object"
       }
     },
+    "issue_block": {
+      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\n    Direction matters for `blocks` -- the issue named first is the one\n    holding the other up, and it's the second one that stops showing up\n    in issue_ready. Creating the same pair twice is a no-op, not an\n    error.\n    ",
+      "inputSchema": {
+        "properties": {
+          "blocked": {
+            "description": "The identifier of the issue on the other end of the relation, e.g. CHT-456.",
+            "title": "Blocked",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "The blocking issue's identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "relation_type": {
+            "default": "blocks",
+            "description": "Relation to create. 'blocks': `identifier` blocks `blocked`. 'duplicates': `identifier` is a duplicate of `blocked`. 'relates_to': a plain association, no direction implied.",
+            "enum": [
+              "blocks",
+              "relates_to",
+              "duplicates"
+            ],
+            "title": "Relation Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier",
+          "blocked"
+        ],
+        "title": "issue_blockArguments",
+        "type": "object"
+      }
+    },
     "issue_comment": {
       "description": "Add a comment to an issue, optionally assigning it in the same call.",
       "inputSchema": {
@@ -595,6 +629,23 @@
         "type": "object"
       }
     },
+    "issue_relations": {
+      "description": "Show an issue's relations: what it blocks, what blocks it, duplicates, and related work.\n\n    Each relation carries a `direction` (\"outgoing\"/\"incoming\") and its\n    own `id` -- pass that id to issue_unblock to remove it. Incoming\n    `blocks` edges are reported as `blocked_by`, so the relation_type\n    always reads from the perspective of the issue you asked about.\n\n    Worth calling before issue_start: issue_view does not report\n    blockers, so an issue can look startable there while being blocked.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_relationsArguments",
+        "type": "object"
+      }
+    },
     "issue_start": {
       "description": "Claim an issue: assign it to yourself and move it to in_progress.\n\n    Equivalent to `chaotic issue start`.\n    ",
       "inputSchema": {
@@ -609,6 +660,49 @@
           "identifier"
         ],
         "title": "issue_startArguments",
+        "type": "object"
+      }
+    },
+    "issue_unblock": {
+      "description": "Remove a relation between two issues.\n\n    Name the other issue with `related` and the relation is looked up\n    for you; pass `relation_id` from issue_relations when the two issues\n    are connected by more than one relation.\n\n    Removes only the relation -- neither issue is touched.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier the relation hangs off, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "related": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Identifier of the issue on the other end, e.g. CHT-456. Resolved to a relation automatically. Use relation_id instead if more than one relation connects the two.",
+            "title": "Related"
+          },
+          "relation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Exact relation id from issue_relations. Takes precedence over `related`.",
+            "title": "Relation Id"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_unblockArguments",
         "type": "object"
       }
     },
