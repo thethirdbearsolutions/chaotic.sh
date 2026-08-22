@@ -512,6 +512,55 @@ class TestDocUpdate:
         assert "error" in result
 
 
+class TestDocLinkUnlink:
+    async def test_link_then_doc_view_shows_it(self, test_project):
+        doc = await tools.doc_create(title="Design note", content="...")
+        iss = await tools.issue_create(title="Implements the design")
+
+        result = await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        assert result["linked"] is True
+
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert [i["identifier"] for i in viewed["linked_issues"]] == [iss["identifier"]]
+
+    async def test_unlink_removes_it_but_keeps_both_ends(self, test_project):
+        doc = await tools.doc_create(title="Temporary link", content="...")
+        iss = await tools.issue_create(title="Unrelated after all")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+
+        result = await tools.doc_unlink(document_id=doc["id"], identifier=iss["identifier"])
+        assert result["unlinked"] is True
+
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert viewed["linked_issues"] == []
+        # Both ends survive -- this removes an association, not content.
+        assert "error" not in await tools.issue_view(iss["identifier"])
+
+    async def test_link_is_idempotent(self, test_project):
+        doc = await tools.doc_create(title="Linked twice", content="...")
+        iss = await tools.issue_create(title="Same issue")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        second = await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+
+        assert "error" not in second
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert len(viewed["linked_issues"]) == 1
+
+    async def test_link_resolves_document_by_title(self, test_project):
+        doc = await tools.doc_create(title="Findable By Title", content="...")
+        iss = await tools.issue_create(title="Points at it")
+
+        result = await tools.doc_link(
+            document_id="Findable By Title", identifier=iss["identifier"],
+        )
+        assert result["document_id"] == doc["id"]
+
+    async def test_link_unknown_issue_is_an_error(self, test_project):
+        doc = await tools.doc_create(title="Orphan link", content="...")
+        assert "error" in await tools.doc_link(document_id=doc["id"], identifier="NOPE-1")
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")

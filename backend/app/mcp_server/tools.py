@@ -913,6 +913,54 @@ async def doc_update(
     return updated.model_dump(mode="json")
 
 
+@_boundary
+async def doc_link(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    identifier: Annotated[str, Field(description="Issue identifier to link to, e.g. CHT-123.")],
+) -> dict:
+    """Link a document to an issue.
+
+    The link shows up in doc_view's `linked_issues`. Linking a pair
+    that's already linked is a no-op rather than an error.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    await documents_api.link_document_to_issue(
+        document_id=resolved_id, issue_id=iss.id, current_user=user,
+    )
+    return {
+        "linked": True,
+        "document_id": resolved_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
+@_boundary
+async def doc_unlink(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    identifier: Annotated[str, Field(description="Issue identifier to unlink, e.g. CHT-123.")],
+) -> dict:
+    """Remove the link between a document and an issue.
+
+    Removes only the association -- neither the document nor the issue
+    is deleted.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    await documents_api.unlink_document_from_issue(
+        document_id=resolved_id, issue_id=iss.id, current_user=user,
+    )
+    return {
+        "unlinked": True,
+        "document_id": resolved_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
@@ -970,6 +1018,7 @@ ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
     label_list, issue_label,
+    doc_link, doc_unlink,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

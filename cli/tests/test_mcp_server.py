@@ -88,11 +88,11 @@ class TestServerAssembly:
         """
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
-            "activity_recent", "doc_create", "doc_list", "doc_update",
-            "doc_view", "issue_block", "issue_comment", "issue_create",
-            "issue_label", "issue_list", "issue_ready", "issue_relations",
-            "issue_start", "issue_unblock", "issue_update", "issue_view",
-            "label_list", "project_list",
+            "activity_recent", "doc_create", "doc_link", "doc_list",
+            "doc_unlink", "doc_update", "doc_view", "issue_block",
+            "issue_comment", "issue_create", "issue_label", "issue_list",
+            "issue_ready", "issue_relations", "issue_start", "issue_unblock",
+            "issue_update", "issue_view", "label_list", "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -954,6 +954,53 @@ class TestDocs:
 
         assert "error" in result
         client.update_document.assert_not_called()
+
+
+
+class TestDocLinkUnlink:
+    def test_doc_link(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.doc_link(document_id="doc-uuid-1", identifier="CHT-100")
+
+        assert result["linked"] is True
+        client.link_document_to_issue.assert_called_once_with("doc-uuid-1", "issue-uuid-1")
+
+    def test_doc_link_resolves_document_by_title(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        mcp_mod.doc_link(document_id="Sprint Report", identifier="CHT-100")
+
+        assert client.link_document_to_issue.call_args[0][0] == "doc-uuid-1"
+
+    def test_doc_unlink(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.unlink_document_from_issue = MagicMock(return_value=None)
+
+        result = mcp_mod.doc_unlink(document_id="doc-uuid-1", identifier="CHT-100")
+
+        assert result["unlinked"] is True
+        client.unlink_document_from_issue.assert_called_once_with("doc-uuid-1", "issue-uuid-1")
+
+    def test_doc_link_unknown_issue_is_an_error(self, mcp_mod, mock_document):
+        from cli.main import client
+        from cli.client import APIError
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found"))
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.doc_link(document_id="doc-uuid-1", identifier="CHT-999")
+
+        assert "error" in result
+        client.link_document_to_issue.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

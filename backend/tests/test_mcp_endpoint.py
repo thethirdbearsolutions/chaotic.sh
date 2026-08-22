@@ -316,11 +316,11 @@ class TestToolsList:
         tools = resp.json()["result"]["tools"]
         names = {t["name"] for t in tools}
         assert names == {
-            "activity_recent", "doc_create", "doc_list", "doc_update",
-            "doc_view", "issue_block", "issue_comment", "issue_create",
-            "issue_label", "issue_list", "issue_ready", "issue_relations",
-            "issue_start", "issue_unblock", "issue_update", "issue_view",
-            "label_list", "project_list",
+            "activity_recent", "doc_create", "doc_link", "doc_list",
+            "doc_unlink", "doc_update", "doc_view", "issue_block",
+            "issue_comment", "issue_create", "issue_label", "issue_list",
+            "issue_ready", "issue_relations", "issue_start", "issue_unblock",
+            "issue_update", "issue_view", "label_list", "project_list",
         }
 
 

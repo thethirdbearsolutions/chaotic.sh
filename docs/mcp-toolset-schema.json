@@ -96,6 +96,29 @@
         "type": "object"
       }
     },
+    "doc_link": {
+      "description": "Link a document to an issue.\n\n    The link shows up in doc_view's `linked_issues`. Linking a pair\n    that's already linked is a no-op rather than an error.\n    ",
+      "inputSchema": {
+        "properties": {
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "Issue identifier to link to, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "identifier"
+        ],
+        "title": "doc_linkArguments",
+        "type": "object"
+      }
+    },
     "doc_list": {
       "description": "List documents (project-scoped by default, team-wide with all_projects=true).",
       "inputSchema": {
@@ -142,6 +165,29 @@
           }
         },
         "title": "doc_listArguments",
+        "type": "object"
+      }
+    },
+    "doc_unlink": {
+      "description": "Remove the link between a document and an issue.\n\n    Removes only the association -- neither the document nor the issue\n    is deleted.\n    ",
+      "inputSchema": {
+        "properties": {
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "Issue identifier to unlink, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "identifier"
+        ],
+        "title": "doc_unlinkArguments",
         "type": "object"
       }
     },

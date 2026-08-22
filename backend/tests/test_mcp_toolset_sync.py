@@ -36,6 +36,8 @@ _IDENTICAL_TOOLS = {
     "issue_relations", "issue_block", "issue_unblock",
     # issue_label resolves its team from the issue itself.
     "issue_label",
+    # doc_link/doc_unlink resolve both ends by id/identifier.
+    "doc_link", "doc_unlink",
 }
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
