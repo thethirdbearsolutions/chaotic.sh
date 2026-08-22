@@ -9,10 +9,22 @@ CHAOTIC_PROFILE / CHAOTIC_HOME / config.json resolution the CLI itself
 uses (see ``cli.config``); whatever ``chaotic status`` reports is what
 this server sees. There is no MCP-specific auth or session state.
 
-Toolset (13, curated for quality over coverage — see CHT-1247):
-    issue_list, issue_view, issue_create, issue_update, issue_comment,
-    issue_start, issue_ready, doc_list, doc_view, doc_create,
-    doc_update, activity_recent, project_list.
+Toolset (30, curated for quality over coverage — see CHT-1247):
+    issues:    issue_list, issue_view, issue_create, issue_update,
+               issue_comment, issue_start, issue_ready, issue_relations,
+               issue_block, issue_unblock, issue_label
+    docs:      doc_list, doc_view, doc_create, doc_update, doc_link,
+               doc_unlink
+    sprints:   sprint_current, sprint_list, sprint_close,
+               sprint_transactions, sprint_add, sprint_remove
+    rituals:   ritual_pending, ritual_list, ritual_attest,
+               ritual_complete
+    other:     label_list, activity_recent, project_list
+
+The sprint and ritual groups exist because governance state can BLOCK
+the rest of this surface: arrears stops ticket transitions project-wide
+and limbo stops a sprint rotating, and an agent that can't see or clear
+either is simply stuck (CHT-1332/CHT-1333).
 
 Deliberately NOT included:
   * Any delete tool (issue/doc/comment). Destructive operations need a
@@ -1009,6 +1021,232 @@ def _set_sprint_on_issues(identifiers: list[str], sprint_id: str | None) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Rituals
+# ---------------------------------------------------------------------------
+
+_TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
+
+
+def _trigger_of(rit: dict) -> str:
+    """A ritual's trigger, normalised to the enum's lowercase value.
+
+    Case-folded rather than compared directly: the trigger can come back
+    as the stored enum NAME ("TICKET_CLOSE") rather than its value,
+    depending on how the response was serialised, and dispatching
+    case-sensitively would silently route every ticket ritual down the
+    sprint path.
+    """
+    return (rit.get("trigger") or "").lower()
+
+
+def _find_ritual(project_id: str, name: str) -> dict:
+    """Resolve a ritual by name (case-insensitively), or by id."""
+    rituals = _client().get_rituals(project_id) or []
+    if not rituals:
+        raise ToolInputError("This project has no rituals configured.")
+
+    for rit in rituals:
+        if rit.get("id") == name:
+            return rit
+    lowered = name.lower()
+    matches = [r for r in rituals if (r.get("name") or "").lower() == lowered]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ToolInputError(f"Ambiguous ritual name '{name}'.")
+
+    known = ", ".join(sorted(r["name"] for r in rituals))
+    raise ToolInputError(f"No ritual named '{name}'. This project's rituals: {known}.")
+
+
+def _require_note(rit: dict, note: str | None) -> None:
+    """Reject a missing note the way the CLI does -- quoting the ritual's
+    own prompt, because that prompt is the question the note has to
+    answer and the caller has no other way to see it.
+    """
+    if rit.get("note_required", True) and not (note and note.strip()):
+        raise ToolInputError(
+            f"Ritual '{rit['name']}' requires a note. It asks: \"{rit.get('prompt')}\". "
+            "Pass `note` with your answer."
+        )
+
+
+@_boundary
+def ritual_pending(
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier for ticket-level rituals, e.g. CHT-123. "
+                          "Omit for the project's sprint rituals.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Show which rituals are currently blocking you, and what each one asks.
+
+    Without `identifier`: the project's pending SPRINT rituals -- what a
+    sprint sitting in limbo after sprint_close is waiting on.
+    With `identifier`: the pending close/claim rituals gating that ticket.
+
+    This is the lookup that makes attestation possible at all: rituals
+    are addressed by name, and nothing else on this surface tells you
+    what those names are or what each one is asking for. Each entry
+    carries its `prompt` (the question your note must answer),
+    `approval_mode`, and any existing `attestation`.
+    """
+    project_id = _require_project(project)
+
+    if identifier:
+        iss = _client().get_issue_by_identifier(identifier)
+        pending = _client().get_pending_issue_rituals(iss["id"]) or {}
+        rituals = pending.get("pending_rituals", []) or []
+        return {
+            "scope": "ticket",
+            "identifier": identifier,
+            "pending_rituals": rituals,
+            "unattested": [r["name"] for r in rituals if not r.get("attestation")],
+        }
+
+    status = _client().get_limbo_status(project_id) or {}
+    rituals = status.get("pending_rituals", []) or []
+    return {
+        "scope": "sprint",
+        "in_limbo": bool(status.get("in_limbo")),
+        "pending_rituals": rituals,
+        "unattested": [r["name"] for r in rituals if not r.get("attestation")],
+    }
+
+
+@_boundary
+def ritual_list(
+    include_inactive: Annotated[
+        bool,
+        Field(description="Include deactivated rituals as well as active ones.")
+    ] = False,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """List a project's configured rituals: name, trigger, prompt, and approval mode.
+
+    `trigger` tells you which scope a ritual belongs to -- ticket_close
+    and ticket_claim gate individual tickets, everything else gates the
+    sprint. ritual_attest works that out for you.
+    """
+    project_id = _require_project(project)
+    rituals = _client().get_rituals(project_id, include_inactive=include_inactive)
+    return {"rituals": rituals or []}
+
+
+@_boundary
+def ritual_attest(
+    ritual: Annotated[str, Field(description="Ritual name (or id), from ritual_pending/ritual_list.")],
+    note: Annotated[
+        str | None,
+        Field(description="Your attestation note -- the answer to the ritual's prompt. "
+                          "Required unless the ritual sets note_required=false.")
+    ] = None,
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier, for ticket-level rituals. Looked up "
+                          "automatically when the ritual is ticket-scoped.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Attest a ritual -- confirm you did the thing it asks about.
+
+    Dispatches on the ritual's own trigger, so you don't have to know
+    whether it's sprint-scoped or ticket-scoped: pass `identifier` when
+    attesting a ticket's close/claim gate, omit it for a sprint ritual.
+
+    If the ritual's approval_mode is `auto` this clears it outright;
+    under `review`/`gate` it records the attestation and leaves it
+    pending a human. The result says which happened.
+    """
+    project_id = _require_project(project)
+    rit = _find_ritual(project_id, ritual)
+    _require_note(rit, note)
+
+    if _trigger_of(rit) in _TICKET_TRIGGERS:
+        if not identifier:
+            raise ToolInputError(
+                f"Ritual '{rit['name']}' is a {_trigger_of(rit)} ritual -- pass "
+                "`identifier` naming the ticket it gates."
+            )
+        iss = _client().get_issue_by_identifier(identifier)
+        result = _client().attest_ritual_for_issue(rit["id"], iss["id"], note)
+        return {
+            "scope": "ticket",
+            "ritual": rit["name"],
+            "identifier": identifier,
+            "approved": bool(result.get("approved_at")),
+            "attestation": result,
+        }
+
+    result = _client().attest_ritual(rit["id"], project_id, note)
+    status = _client().get_limbo_status(project_id) or {}
+    return {
+        "scope": "sprint",
+        "ritual": rit["name"],
+        "approved": bool(result.get("approved_at")),
+        "still_in_limbo": bool(status.get("in_limbo")),
+        "remaining": [r["name"] for r in (status.get("pending_rituals") or [])],
+        "attestation": result,
+    }
+
+
+@_boundary
+def ritual_complete(
+    ritual: Annotated[str, Field(description="Ritual name (or id), from ritual_pending/ritual_list.")],
+    note: Annotated[str | None, Field(description="Optional note about the completion.")] = None,
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier, for ticket-level rituals.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+) -> dict:
+    """Complete a GATE-mode ritual.
+
+    Distinct from ritual_attest: gate rituals are the ones a human is
+    supposed to sign off, and the server enforces that -- expect a
+    permission error rather than success if the calling identity isn't
+    allowed to. Attesting is the normal path; this is for the rare case
+    where you legitimately hold that role.
+    """
+    project_id = _require_project(project)
+    rit = _find_ritual(project_id, ritual)
+
+    if _trigger_of(rit) in _TICKET_TRIGGERS:
+        if not identifier:
+            raise ToolInputError(
+                f"Ritual '{rit['name']}' is a {_trigger_of(rit)} ritual -- pass "
+                "`identifier` naming the ticket it gates."
+            )
+        iss = _client().get_issue_by_identifier(identifier)
+        result = _client().complete_gate_ritual_for_issue(rit["id"], iss["id"], note)
+        return {"scope": "ticket", "ritual": rit["name"],
+                "identifier": identifier, "attestation": result}
+
+    result = _client().complete_gate_ritual(rit["id"], project_id, note)
+    status = _client().get_limbo_status(project_id) or {}
+    return {
+        "scope": "sprint",
+        "ritual": rit["name"],
+        "still_in_limbo": bool(status.get("in_limbo")),
+        "remaining": [r["name"] for r in (status.get("pending_rituals") or [])],
+        "attestation": result,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
 
@@ -1060,6 +1298,7 @@ ALL_TOOLS = (
     doc_link, doc_unlink,
     sprint_current, sprint_list, sprint_close, sprint_transactions,
     sprint_add, sprint_remove,
+    ritual_pending, ritual_list, ritual_attest, ritual_complete,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

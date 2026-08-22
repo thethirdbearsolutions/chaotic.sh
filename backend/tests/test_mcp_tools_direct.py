@@ -703,6 +703,116 @@ class TestSprintTools:
 
 
 
+class TestRitualTools:
+    """CHT-1333: issue_update took an `attest` map keyed by ritual name,
+    but nothing on this surface could tell you those names -- and
+    sprint_close could drop a project into limbo with no way out.
+    """
+
+    async def _make_ritual(self, project_id, name, prompt="Did you do it?", **kw):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        return await RitualService().create(
+            RitualCreate(name=name, prompt=prompt,
+                         trigger=kw.pop("trigger", RitualTrigger.EVERY_SPRINT), **kw),
+            project_id,
+        )
+
+    async def test_ritual_list_exposes_names_and_prompts(self, test_project):
+        await self._make_ritual(test_project.id, "retro", prompt="Write the retro.")
+        result = await tools.ritual_list()
+        by_name = {r["name"]: r for r in result["rituals"]}
+        assert "retro" in by_name
+        assert by_name["retro"]["prompt"] == "Write the retro."
+
+    async def test_ritual_pending_is_empty_when_not_in_limbo(self, test_project):
+        await self._make_ritual(test_project.id, "retro")
+        result = await tools.ritual_pending()
+        assert result["scope"] == "sprint"
+        assert result["in_limbo"] is False
+
+    async def test_close_enters_limbo_and_attesting_clears_it(self, test_project):
+        """The full way out, which had no MCP path before."""
+        await self._make_ritual(test_project.id, "retro", prompt="Write the retro.")
+        await tools.sprint_current()
+
+        closed = await tools.sprint_close()
+        assert closed["entered_limbo"] is True
+
+        pending = await tools.ritual_pending()
+        assert pending["in_limbo"] is True
+        assert pending["unattested"] == ["retro"]
+        # The prompt is there: the agent can see what to write.
+        assert pending["pending_rituals"][0]["prompt"] == "Write the retro."
+
+        result = await tools.ritual_attest(ritual="retro", note="Retro written up.")
+        assert result["approved"] is True
+        assert result["still_in_limbo"] is False
+
+        assert (await tools.ritual_pending())["in_limbo"] is False
+
+    async def test_attest_requires_a_note_and_quotes_the_prompt(self, test_project):
+        """A note-less attest must say what the note should answer --
+        the caller has no other way to see the prompt."""
+        await self._make_ritual(test_project.id, "gate", prompt="Is the ADR written?")
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        result = await tools.ritual_attest(ritual="gate")
+
+        assert "error" in result
+        assert "Is the ADR written?" in result["error"]
+
+    async def test_attest_unknown_ritual_lists_the_real_ones(self, test_project):
+        await self._make_ritual(test_project.id, "retro")
+        result = await tools.ritual_attest(ritual="no-such-ritual", note="x")
+        assert "error" in result
+        assert "retro" in result["error"]
+
+    async def test_ritual_name_match_is_case_insensitive(self, test_project):
+        await self._make_ritual(test_project.id, "Retro")
+        await tools.sprint_current()
+        await tools.sprint_close()
+        result = await tools.ritual_attest(ritual="retro", note="done")
+        assert "error" not in result
+
+    async def test_ticket_ritual_pending_and_attest(self, test_project):
+        """Ticket-scoped rituals: the names issue_update's `attest` needs."""
+        from app.enums import RitualTrigger
+        await self._make_ritual(
+            test_project.id, "close-gate", prompt="Linked the commit?",
+            trigger=RitualTrigger.TICKET_CLOSE,
+        )
+        iss = await tools.issue_create(title="Gated ticket")
+
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        assert pending["scope"] == "ticket"
+        assert "close-gate" in pending["unattested"]
+
+        result = await tools.ritual_attest(
+            ritual="close-gate", note="abc123", identifier=iss["identifier"],
+        )
+        assert result["scope"] == "ticket"
+        assert "error" not in result
+
+        # Having attested, the close now goes through.
+        done = await tools.issue_update(identifier=iss["identifier"], status="done")
+        assert "error" not in done
+        assert done["status"] == "done"
+
+    async def test_ticket_ritual_without_identifier_says_so(self, test_project):
+        """Dispatch is automatic, but a ticket ritual still needs a ticket."""
+        from app.enums import RitualTrigger
+        await self._make_ritual(
+            test_project.id, "claim-gate", trigger=RitualTrigger.TICKET_CLAIM,
+        )
+        result = await tools.ritual_attest(ritual="claim-gate", note="x")
+        assert "error" in result
+        assert "identifier" in result["error"]
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")

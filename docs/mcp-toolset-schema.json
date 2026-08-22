@@ -960,6 +960,181 @@
         "type": "object"
       }
     },
+    "ritual_attest": {
+      "description": "Attest a ritual -- confirm you did the thing it asks about.\n\n    Dispatches on the ritual's own trigger, so you don't have to know\n    whether it's sprint-scoped or ticket-scoped: pass `identifier` when\n    attesting a ticket's close/claim gate, omit it for a sprint ritual.\n\n    If the ritual's approval_mode is `auto` this clears it outright;\n    under `review`/`gate` it records the attestation and leaves it\n    pending a human. The result says which happened.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Issue identifier, for ticket-level rituals. Looked up automatically when the ritual is ticket-scoped.",
+            "title": "Identifier"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Your attestation note -- the answer to the ritual's prompt. Required unless the ritual sets note_required=false.",
+            "title": "Note"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "ritual": {
+            "description": "Ritual name (or id), from ritual_pending/ritual_list.",
+            "title": "Ritual",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ritual"
+        ],
+        "title": "ritual_attestArguments",
+        "type": "object"
+      }
+    },
+    "ritual_complete": {
+      "description": "Complete a GATE-mode ritual.\n\n    Distinct from ritual_attest: gate rituals are the ones a human is\n    supposed to sign off, and the server enforces that -- expect a\n    permission error rather than success if the calling identity isn't\n    allowed to. Attesting is the normal path; this is for the rare case\n    where you legitimately hold that role.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Issue identifier, for ticket-level rituals.",
+            "title": "Identifier"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional note about the completion.",
+            "title": "Note"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "ritual": {
+            "description": "Ritual name (or id), from ritual_pending/ritual_list.",
+            "title": "Ritual",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ritual"
+        ],
+        "title": "ritual_completeArguments",
+        "type": "object"
+      }
+    },
+    "ritual_list": {
+      "description": "List a project's configured rituals: name, trigger, prompt, and approval mode.\n\n    `trigger` tells you which scope a ritual belongs to -- ticket_close\n    and ticket_claim gate individual tickets, everything else gates the\n    sprint. ritual_attest works that out for you.\n    ",
+      "inputSchema": {
+        "properties": {
+          "include_inactive": {
+            "default": false,
+            "description": "Include deactivated rituals as well as active ones.",
+            "title": "Include Inactive",
+            "type": "boolean"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          }
+        },
+        "title": "ritual_listArguments",
+        "type": "object"
+      }
+    },
+    "ritual_pending": {
+      "description": "Show which rituals are currently blocking you, and what each one asks.\n\n    Without `identifier`: the project's pending SPRINT rituals -- what a\n    sprint sitting in limbo after sprint_close is waiting on.\n    With `identifier`: the pending close/claim rituals gating that ticket.\n\n    This is the lookup that makes attestation possible at all: rituals\n    are addressed by name, and nothing else on this surface tells you\n    what those names are or what each one is asking for. Each entry\n    carries its `prompt` (the question your note must answer),\n    `approval_mode`, and any existing `attestation`.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Issue identifier for ticket-level rituals, e.g. CHT-123. Omit for the project's sprint rituals.",
+            "title": "Identifier"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          }
+        },
+        "title": "ritual_pendingArguments",
+        "type": "object"
+      }
+    },
     "sprint_add": {
       "description": "Add issues to a sprint.\n\n    Sprint membership does not by itself charge budget -- only closing a\n    ticket does, and it charges whichever sprint is active at that\n    moment.\n    ",
       "inputSchema": {

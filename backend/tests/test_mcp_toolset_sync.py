@@ -49,6 +49,7 @@ _ADDITIVE_TEAM_TOOLS = {
     "label_list",
     "sprint_current", "sprint_list", "sprint_close",
     "sprint_transactions", "sprint_add",
+    "ritual_pending", "ritual_list", "ritual_attest", "ritual_complete",
 }
 
 

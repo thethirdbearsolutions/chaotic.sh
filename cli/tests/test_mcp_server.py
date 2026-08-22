@@ -93,8 +93,9 @@ class TestServerAssembly:
             "issue_comment", "issue_create", "issue_label", "issue_list",
             "issue_ready", "issue_relations", "issue_start", "issue_unblock",
             "issue_update", "issue_view", "label_list", "project_list",
-            "sprint_add", "sprint_close", "sprint_current", "sprint_list",
-            "sprint_remove", "sprint_transactions",
+            "ritual_attest", "ritual_complete", "ritual_list",
+            "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
+            "sprint_list", "sprint_remove", "sprint_transactions",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -1108,6 +1109,136 @@ class TestSprintTools:
 
     def test_sprint_add_requires_identifiers(self, mcp_mod):
         assert "error" in mcp_mod.sprint_add(identifiers=[])
+
+
+
+class TestRitualTools:
+    SPRINT_RITUAL = {"id": "r-1", "name": "retro", "prompt": "Write the retro.",
+                     "trigger": "every_sprint", "note_required": True}
+    TICKET_RITUAL = {"id": "r-2", "name": "close-gate", "prompt": "Linked the commit?",
+                     "trigger": "ticket_close", "note_required": True}
+
+    def test_ritual_list(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        assert mcp_mod.ritual_list() == {"rituals": [self.SPRINT_RITUAL]}
+
+    def test_ritual_pending_sprint_scope(self, mcp_mod):
+        from cli.main import client
+        client.get_limbo_status = MagicMock(return_value={
+            "in_limbo": True, "pending_rituals": [self.SPRINT_RITUAL],
+        })
+        result = mcp_mod.ritual_pending()
+        assert result["scope"] == "sprint"
+        assert result["in_limbo"] is True
+        assert result["unattested"] == ["retro"]
+
+    def test_ritual_pending_ticket_scope(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.TICKET_RITUAL]})
+        result = mcp_mod.ritual_pending(identifier="CHT-100")
+        assert result["scope"] == "ticket"
+        assert result["unattested"] == ["close-gate"]
+
+    def test_attest_dispatches_sprint_ritual(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={"approved_at": "now"})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        result = mcp_mod.ritual_attest(ritual="retro", note="Done it.")
+
+        assert result["scope"] == "sprint"
+        assert result["approved"] is True
+        assert result["still_in_limbo"] is False
+        client.attest_ritual.assert_called_once_with("r-1", "test-project-123", "Done it.")
+
+    def test_attest_dispatches_ticket_ritual(self, mcp_mod, mock_issue):
+        """Dispatch is on the ritual's own trigger, not on the caller."""
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.TICKET_RITUAL])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "now"})
+
+        result = mcp_mod.ritual_attest(
+            ritual="close-gate", note="abc123", identifier="CHT-100")
+
+        assert result["scope"] == "ticket"
+        client.attest_ritual_for_issue.assert_called_once_with("r-2", "issue-uuid-1", "abc123")
+
+    def test_attest_trigger_match_is_case_insensitive(self, mcp_mod, mock_issue):
+        """The trigger can arrive as the stored enum NAME; dispatching
+        case-sensitively would route ticket rituals down the sprint path."""
+        from cli.main import client
+        client.get_rituals = MagicMock(
+            return_value=[dict(self.TICKET_RITUAL, trigger="TICKET_CLOSE")])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+
+        result = mcp_mod.ritual_attest(
+            ritual="close-gate", note="x", identifier="CHT-100")
+
+        assert result["scope"] == "ticket"
+        client.attest_ritual_for_issue.assert_called_once()
+
+    def test_attest_ticket_ritual_without_identifier(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.TICKET_RITUAL])
+        result = mcp_mod.ritual_attest(ritual="close-gate", note="x")
+        assert "error" in result
+        assert "identifier" in result["error"]
+
+    def test_attest_missing_note_quotes_the_prompt(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={})
+
+        result = mcp_mod.ritual_attest(ritual="retro")
+
+        assert "Write the retro." in result["error"]
+        client.attest_ritual.assert_not_called()
+
+    def test_attest_note_not_required(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(
+            return_value=[dict(self.SPRINT_RITUAL, note_required=False)])
+        client.attest_ritual = MagicMock(return_value={"approved_at": "now"})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        assert "error" not in mcp_mod.ritual_attest(ritual="retro")
+
+    def test_attest_unknown_ritual_lists_the_real_ones(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        result = mcp_mod.ritual_attest(ritual="nope", note="x")
+        assert "retro" in result["error"]
+
+    def test_attest_reports_pending_approval(self, mcp_mod):
+        """approval_mode review/gate: attested but not cleared."""
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={"approved_at": None})
+        client.get_limbo_status = MagicMock(
+            return_value={"in_limbo": True, "pending_rituals": [self.SPRINT_RITUAL]})
+
+        result = mcp_mod.ritual_attest(ritual="retro", note="done")
+
+        assert result["approved"] is False
+        assert result["still_in_limbo"] is True
+        assert result["remaining"] == ["retro"]
+
+    def test_ritual_complete_sprint(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.complete_gate_ritual = MagicMock(return_value={})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        result = mcp_mod.ritual_complete(ritual="retro", note="signed off")
+
+        assert result["still_in_limbo"] is False
+        client.complete_gate_ritual.assert_called_once_with("r-1", "test-project-123", "signed off")
 
 
 # ---------------------------------------------------------------------------
