@@ -80,13 +80,13 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """Exactly the 11 tools (the 10 from CHT-1247 plus project_list,
-        CHT-1284), no more, no less."""
+        """Exactly the 12 tools (the 10 from CHT-1247 plus project_list,
+        CHT-1284, and doc_update, CHT-1330), no more, no less."""
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
             "issue_list", "issue_view", "issue_create", "issue_update",
             "issue_comment", "issue_start", "doc_list", "doc_view",
-            "doc_create", "activity_recent", "project_list",
+            "doc_create", "doc_update", "activity_recent", "project_list",
         }
 
     def test_no_delete_tools(self, mcp_mod):
@@ -637,6 +637,68 @@ class TestDocs:
 
         _, kwargs = client.create_document.call_args
         assert kwargs["project_id"] is None
+
+    def test_doc_update_partial_only_sends_given_fields(self, mcp_mod, mock_document):
+        """Omitted fields must not reach the PATCH body: the backend keys
+        off model_dump(exclude_unset=True), and it's that same dict that
+        decides whether the edit snapshots a new revision (CHT-1330).
+        """
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(document_id="doc-uuid-1", content="## Rewritten")
+
+        assert result == mock_document
+        client.update_document.assert_called_once_with(
+            "doc-uuid-1", content="## Rewritten",
+        )
+
+    def test_doc_update_resolves_document_by_title(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        mcp_mod.doc_update(document_id="Sprint Report", title="Sprint Report Q3")
+
+        args, kwargs = client.update_document.call_args
+        assert args[0] == "doc-uuid-1"
+        assert kwargs == {"title": "Sprint Report Q3"}
+
+    def test_doc_update_is_global_detaches_project(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        mcp_mod.doc_update(document_id="doc-uuid-1", is_global=True)
+
+        _, kwargs = client.update_document.call_args
+        assert kwargs == {"project_id": None}
+
+    def test_doc_update_no_fields_is_an_error(self, mcp_mod, mock_document):
+        """A no-op PATCH would still bump updated_at and log an activity
+        row, so refuse it at the boundary rather than pass it through.
+        """
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(document_id="doc-uuid-1")
+
+        assert "error" in result
+        client.update_document.assert_not_called()
+
+    def test_doc_update_rejects_project_and_is_global_together(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(
+            document_id="doc-uuid-1", project="OTHER", is_global=True,
+        )
+
+        assert "error" in result
+        client.update_document.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

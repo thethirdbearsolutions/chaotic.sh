@@ -60,7 +60,7 @@ from app.mcp_server.scope import (
     resolve_sprint,
     resolve_team,
 )
-from app.schemas.document import DocumentCreate
+from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import IssueCommentCreate, IssueCreate, IssueUpdate
 from app.schemas.project import ProjectResponse
 from app.services.project_service import ProjectService
@@ -570,6 +570,71 @@ async def doc_create(
     return created.model_dump(mode="json")
 
 
+@_boundary
+async def doc_update(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    title: Annotated[str | None, Field(description="New document title. Omit to leave unchanged.")] = None,
+    content: Annotated[
+        str | None,
+        Field(description="New document body (markdown). Omit to leave unchanged.")
+    ] = None,
+    icon: Annotated[
+        str | None,
+        Field(description="New emoji or short icon label. Omit to leave unchanged.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Move the document to this project (id, key, or name).")
+    ] = None,
+    is_global: Annotated[
+        bool,
+        Field(description="Make the document global/team-wide by detaching it from its project.")
+    ] = False,
+) -> dict:
+    """Update a document's title, content, icon, or project.
+
+    Only the fields you pass are changed; omitted ones are left alone.
+    Editing the title or content appends a new revision snapshot, so the
+    prior version stays readable in the document's history -- an edit
+    never destroys what it replaced.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+
+    fields: dict = {}
+    if title is not None:
+        fields["title"] = title
+    if content is not None:
+        fields["content"] = content
+    if icon is not None:
+        fields["icon"] = icon
+    if project and is_global:
+        raise ToolContextError(
+            "Pass either `project` (move to that project) or `is_global` "
+            "(detach from any project), not both."
+        )
+    if project:
+        project_id, _ = await resolve_project(user, project, None)
+        fields["project_id"] = project_id
+    elif is_global:
+        fields["project_id"] = None
+
+    if not fields:
+        raise ToolContextError(
+            "No updates provided. Pass at least one of: title, content, "
+            "icon, project, is_global."
+        )
+
+    # Build with only the caller's fields set: DocumentService.update()
+    # keys off model_dump(exclude_unset=True), and it's that same
+    # dict that decides whether the edit snapshots a new revision.
+    document_in = DocumentUpdate(**fields)
+    updated = await documents_api.update_document(
+        document_id=resolved_id, document_in=document_in, current_user=user
+    )
+    return updated.model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
@@ -625,7 +690,7 @@ async def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    doc_list, doc_view, doc_create, activity_recent, project_list,
+    doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 
 

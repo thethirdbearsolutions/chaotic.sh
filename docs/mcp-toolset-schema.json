@@ -145,6 +145,81 @@
         "type": "object"
       }
     },
+    "doc_update": {
+      "description": "Update a document's title, content, icon, or project.\n\n    Only the fields you pass are changed; omitted ones are left alone.\n    Editing the title or content appends a new revision snapshot, so the\n    prior version stays readable in the document's history -- an edit\n    never destroys what it replaced.\n    ",
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New document body (markdown). Omit to leave unchanged.",
+            "title": "Content"
+          },
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New emoji or short icon label. Omit to leave unchanged.",
+            "title": "Icon"
+          },
+          "is_global": {
+            "default": false,
+            "description": "Make the document global/team-wide by detaching it from its project.",
+            "title": "Is Global",
+            "type": "boolean"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Move the document to this project (id, key, or name).",
+            "title": "Project"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New document title. Omit to leave unchanged.",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "doc_updateArguments",
+        "type": "object"
+      }
+    },
     "doc_view": {
       "description": "Show a document's content, comments, and linked issues.",
       "inputSchema": {

@@ -496,6 +496,64 @@ def doc_create(
     return _client().create_document(team_id, title, content=content, icon=icon, project_id=project_id)
 
 
+@_boundary
+def doc_update(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    title: Annotated[str | None, Field(description="New document title. Omit to leave unchanged.")] = None,
+    content: Annotated[
+        str | None,
+        Field(description="New document body (markdown). Omit to leave unchanged.")
+    ] = None,
+    icon: Annotated[
+        str | None,
+        Field(description="New emoji or short icon label. Omit to leave unchanged.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Move the document to this project (id, key, or name).")
+    ] = None,
+    is_global: Annotated[
+        bool,
+        Field(description="Make the document global/team-wide by detaching it from its project.")
+    ] = False,
+) -> dict:
+    """Update a document's title, content, icon, or project.
+
+    Only the fields you pass are changed; omitted ones are left alone.
+    Editing the title or content appends a new revision snapshot, so the
+    prior version stays readable in the document's history -- an edit
+    never destroys what it replaced.
+    """
+    team_id = _require_team()
+    m = _main()
+    document_id = m.resolve_document_id(document_id, team_id)
+
+    data: dict = {}
+    if title is not None:
+        data["title"] = title
+    if content is not None:
+        data["content"] = content
+    if icon is not None:
+        data["icon"] = icon
+    if project and is_global:
+        raise ToolInputError(
+            "Pass either `project` (move to that project) or `is_global` "
+            "(detach from any project), not both."
+        )
+    if project:
+        data["project_id"] = m.resolve_project_id(project)
+    elif is_global:
+        data["project_id"] = None
+
+    if not data:
+        raise ToolInputError(
+            "No updates provided. Pass at least one of: title, content, "
+            "icon, project, is_global."
+        )
+
+    return _client().update_document(document_id, **data)
+
+
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
@@ -543,7 +601,7 @@ def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    doc_list, doc_view, doc_create, activity_recent, project_list,
+    doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 
 

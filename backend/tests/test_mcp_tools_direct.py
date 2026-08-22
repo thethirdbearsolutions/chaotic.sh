@@ -219,6 +219,75 @@ class TestDocListDocCreateExplicitProject:
         assert result["project_id"] is None
 
 
+class TestDocUpdate:
+    """doc_update goes through documents_api.update_document (CHT-1330),
+    which is what makes revision history work -- there is no DB trigger
+    behind document_revisions, the snapshot is appended by
+    DocumentService.update(). A tool that wrote via the ORM directly
+    would silently gap the history, so the revision assertions below are
+    the point of this class, not incidental coverage.
+    """
+
+    async def test_doc_update_content(self, test_project):
+        created = await tools.doc_create(title="Editable", content="v1 body")
+        result = await tools.doc_update(document_id=created["id"], content="v2 body")
+        assert result["content"] == "v2 body"
+        assert result["title"] == "Editable"
+
+    async def test_doc_update_appends_a_revision(self, test_project):
+        from app.services.document_service import DocumentService
+
+        created = await tools.doc_create(title="Versioned", content="v1 body")
+        await tools.doc_update(document_id=created["id"], content="v2 body")
+
+        revisions = await DocumentService().list_revisions(created["id"])
+        assert [r.version for r in revisions] == [2, 1]
+        # The pre-edit body is still readable -- the edit didn't destroy it.
+        assert next(r for r in revisions if r.version == 1).content == "v1 body"
+        assert next(r for r in revisions if r.version == 2).content == "v2 body"
+
+    async def test_doc_update_omitted_fields_untouched(self, test_project):
+        created = await tools.doc_create(title="Keep icon", content="body", icon="📘")
+        result = await tools.doc_update(document_id=created["id"], title="Renamed")
+        assert result["title"] == "Renamed"
+        assert result["icon"] == "📘"
+        assert result["content"] == "body"
+
+    async def test_doc_update_resolves_by_title(self, test_project):
+        created = await tools.doc_create(title="Fuzzy Editable Doc", content="body")
+        result = await tools.doc_update(document_id="Fuzzy Editable Doc", content="edited")
+        assert result["id"] == created["id"]
+        assert result["content"] == "edited"
+
+    async def test_doc_update_move_to_project(self, test_project):
+        created = await tools.doc_create(title="Movable", is_global=True)
+        assert created["project_id"] is None
+        result = await tools.doc_update(document_id=created["id"], project=test_project.key)
+        assert result["project_id"] == test_project.id
+
+    async def test_doc_update_is_global_detaches_project(self, test_project):
+        created = await tools.doc_create(title="Detachable", project=test_project.key)
+        assert created["project_id"] == test_project.id
+        result = await tools.doc_update(document_id=created["id"], is_global=True)
+        assert result["project_id"] is None
+
+    async def test_doc_update_no_fields_is_an_error(self, test_project):
+        created = await tools.doc_create(title="Untouched", content="body")
+        result = await tools.doc_update(document_id=created["id"])
+        assert "error" in result
+
+    async def test_doc_update_rejects_project_and_is_global_together(self, test_project):
+        created = await tools.doc_create(title="Ambiguous", content="body")
+        result = await tools.doc_update(
+            document_id=created["id"], project=test_project.key, is_global=True,
+        )
+        assert "error" in result
+
+    async def test_doc_update_unknown_document_is_an_error(self, test_project):
+        result = await tools.doc_update(document_id="no-such-document", content="x")
+        assert "error" in result
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")

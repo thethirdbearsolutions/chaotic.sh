@@ -25,7 +25,13 @@ from app.mcp_server.tools import ALL_TOOLS, build_server
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
 
 # Tools whose schema must match the stdio server exactly.
-_IDENTICAL_TOOLS = {"issue_view", "issue_update", "issue_comment", "issue_start", "doc_view"}
+_IDENTICAL_TOOLS = {
+    "issue_view", "issue_update", "issue_comment", "issue_start",
+    # doc_view/doc_update resolve their document via _resolve_document_id,
+    # which already searches every team the API key can reach -- so neither
+    # needs the additive `team` parameter the tools below take.
+    "doc_view", "doc_update",
+}
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
 _ADDITIVE_TEAM_TOOLS = {"issue_list", "issue_create", "doc_list", "doc_create", "activity_recent", "project_list"}
@@ -49,7 +55,7 @@ def test_all_tools_registered():
     assert {fn.__name__ for fn in ALL_TOOLS} == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 
 
-async def test_backend_covers_all_eleven_tools(snapshot):
+async def test_backend_covers_all_twelve_tools(snapshot):
     live = await _live_toolset()
     assert set(live.keys()) == set(snapshot.keys()) == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 

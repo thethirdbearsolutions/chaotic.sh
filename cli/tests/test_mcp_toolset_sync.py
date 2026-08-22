@@ -55,11 +55,11 @@ def test_stdio_toolset_matches_snapshot_exactly():
     )
 
 
-def test_snapshot_covers_all_eleven_tools():
+def test_snapshot_covers_all_twelve_tools():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
     assert set(snapshot.keys()) == {
         "issue_list", "issue_view", "issue_create", "issue_update",
         "issue_comment", "issue_start",
-        "doc_list", "doc_view", "doc_create",
+        "doc_list", "doc_view", "doc_create", "doc_update",
         "activity_recent", "project_list",
     }
