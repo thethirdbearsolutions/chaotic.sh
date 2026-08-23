@@ -128,23 +128,34 @@ async def resolve_project(user: User, project: str | None, team: str | None = No
 
 async def resolve_sprint(project_id: str, sprint: str) -> str:
     """Resolve a sprint reference within a project: 'current', 'next', an
-    id, or a name (case-insensitive) -- mirrors the CLI's
-    ``resolve_sprint_id`` semantics closely enough for tool parity without
-    importing the CLI package (see mcp_server/tools.py module docstring).
+    id, an id prefix, a bare sprint number, or a name (exact then
+    substring, both case-insensitive).
+
+    Mirrors the CLI's ``resolve_sprint_id`` (cli/src/cli/commands/shared.py)
+    rather than approximating it -- this used to accept only exact names,
+    so `sprint="1"` and `sprint="Sprint"` resolved on stdio and errored
+    here, for the same tool and argument (CHT-1351). Ambiguity raises
+    rather than silently picking one.
+
+    ``current``/``next`` MATERIALIZE. ``ensure_sprints_exist`` is what the
+    routed ``GET /sprints/current`` calls, so the stdio transport -- which
+    reaches this over HTTP -- has always created a sprint on demand. Doing
+    a bare read here meant every sprint tool failed on a project whose
+    first sprint had never been created, while the same call over stdio
+    succeeded (CHT-1351).
     """
+    import re
+
     from app.services.sprint_service import SprintService
 
     sprint_service = SprintService()
     lowered = sprint.strip().lower()
-    if lowered == "current":
-        found = await sprint_service.get_current_sprint(project_id)
+
+    if lowered in ("current", "next"):
+        current, next_sprint = await sprint_service.ensure_sprints_exist(project_id)
+        found = current if lowered == "current" else next_sprint
         if not found:
-            raise ToolContextError("No current sprint for this project.")
-        return found.id
-    if lowered == "next":
-        found = await sprint_service.get_next_sprint(project_id)
-        if not found:
-            raise ToolContextError("No next sprint for this project.")
+            raise ToolContextError(f"No {lowered} sprint for this project.")
         return found.id
 
     by_id = await sprint_service.get_by_id(sprint)
@@ -152,10 +163,32 @@ async def resolve_sprint(project_id: str, sprint: str) -> str:
         return by_id.id
 
     sprints = await sprint_service.list_by_project(project_id, limit=1000)
-    for s in sprints:
-        if s.name.lower() == lowered:
-            return s.id
-    raise ToolContextError(f"Sprint '{sprint}' not found in this project.")
+
+    def _one(matches, kind):
+        if len(matches) == 1:
+            return matches[0].id
+        if len(matches) > 1:
+            listed = ", ".join(f"{s.name} (id={s.id})" for s in matches)
+            raise ToolContextError(f"Ambiguous sprint {kind} '{sprint}'. Matches: {listed}.")
+        return None
+
+    # Bare number: "44" matches "Sprint 44" on a word boundary (CHT-892).
+    if sprint.strip().isdigit():
+        pattern = r"\b" + re.escape(sprint.strip()) + r"\b"
+        if (hit := _one([s for s in sprints if re.search(pattern, s.name or "")], "number")):
+            return hit
+
+    if (hit := _one([s for s in sprints if (s.name or "").lower() == lowered], "name")):
+        return hit
+    if (hit := _one([s for s in sprints if lowered in (s.name or "").lower()], "name substring")):
+        return hit
+    if (hit := _one([s for s in sprints if s.id.startswith(sprint)], "id prefix")):
+        return hit
+
+    known = ", ".join(s.name for s in sprints) or "none"
+    raise ToolContextError(
+        f"Sprint '{sprint}' not found in this project. Sprints here: {known}."
+    )
 
 
 async def resolve_assignee(user: User, team_id: str, assignee: str) -> str | None:
