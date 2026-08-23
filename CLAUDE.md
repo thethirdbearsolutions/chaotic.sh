@@ -99,10 +99,16 @@ form back to a member on read. So:
 
 - **Comparing in service code?** Compare members, never strings:
   `sprint.status == SprintStatus.ACTIVE`.
-- **Producing output for anything outside this process?** Dump through the
-  response schema (`SprintResponse`, `RitualResponse`, …), not the ORM row.
-  FastAPI routes do this for you; anything calling an API function
+- **Producing output for anything outside this process?** Build the
+  response schema (`SprintResponse`, `RitualResponse`, …); do not dump the ORM
+  row. FastAPI routes do this for you; anything calling an API function
   **in-process does not** — see `_dump()` in `app/mcp_server/tools.py`.
+  This is not only about casing. `response_model` also **filters** to the
+  schema's fields, and an ORM row carries more: `OxydeIssue` has a `creator`
+  relation whose user row includes `hashed_password` and `is_superuser`, none
+  of which exist on `IssueResponse`. Since CHT-1345 a raw json dump has
+  correct-looking enums, so it no longer looks wrong while still being
+  unfiltered — `TestNoLeakedInternalFields` is what catches that.
 - **Never** `str(member)` or f-string a member: that yields a third form,
   `"IssueStatus.BACKLOG"`, which nothing expects (the frontend's `cleanValue`
   still strips that prefix as legacy defense).

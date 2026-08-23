@@ -25,6 +25,23 @@ Scoping the serializer makes the obvious thing correct instead.
 
 Service code compares members natively either way:
 ``sprint.status == SprintStatus.ACTIVE``.
+
+IMPORTANT -- what this does NOT make safe. A model dumped with
+``mode="json"`` now has correct-looking enum fields, and that is exactly
+why it must not be mistaken for a wire payload. An ORM row is the
+PERSISTENCE representation; a response schema is the serializer-ready
+one. The schema also FILTERS, and this does not:
+
+    OxydeIssue.model_dump(mode="json")   ->  includes `creator`, whose
+                                             sub-object carries
+                                             hashed_password and
+                                             is_superuser
+    IssueResponse                        ->  has no `creator` at all
+
+Before this change a raw dump announced itself with "BACKLOG"; now it
+reads as plausible. Removing that tell is the cost of fixing the casing,
+so: build the response schema (CHT-1348), do not dump the row. See
+``_dump()`` in app/mcp_server/tools.py and TestNoLeakedInternalFields.
 """
 from typing import Annotated
 
