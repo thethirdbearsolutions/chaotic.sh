@@ -22,7 +22,10 @@ dependencies = [
     "jinja2>=3.1.3",
     "itsdangerous>=2.1.2",
     "oxyde>=0.7.1,<0.8",
-    "mcp>=1.9.0",
+    # Upper bound is load-bearing: mcp 2.0.0 removed mcp.server.fastmcp,
+    # which both MCP transports import. Lift it only together with a
+    # migration to the 2.x API surface (CHT-1331).
+    "mcp>=1.9.0,<2",
 ]
 
 [project.optional-dependencies]
