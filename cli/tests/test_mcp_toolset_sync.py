@@ -7,7 +7,8 @@ over HTTP into itself). Instead both sides assert their live toolset
 against the same checked-in snapshot, docs/mcp-toolset-schema.json --
 this is the stdio half of that guard. See
 backend/tests/test_mcp_toolset_sync.py for the HTTP half, which allows
-the documented additive ``team`` parameter on five tools; this file
+the documented additive ``team`` parameter on the team-scoped tools
+(``_ADDITIVE_TEAM_TOOLS`` there); this file
 requires an EXACT match, since the stdio toolset is the schema's source
 of truth (docs/mcp-toolset-schema.json's own ``_meta.generated_from``
 points at ``cli.mcp_server.build_server()``, and
@@ -55,11 +56,15 @@ def test_stdio_toolset_matches_snapshot_exactly():
     )
 
 
-def test_snapshot_covers_all_eleven_tools():
+def test_snapshot_covers_the_full_toolset():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
     assert set(snapshot.keys()) == {
-        "issue_list", "issue_view", "issue_create", "issue_update",
-        "issue_comment", "issue_start",
-        "doc_list", "doc_view", "doc_create",
-        "activity_recent", "project_list",
+        "activity_recent", "doc_create", "doc_link", "doc_list",
+        "doc_unlink", "doc_update", "doc_view", "issue_block",
+        "issue_comment", "issue_create", "issue_label", "issue_list",
+        "issue_ready", "issue_relations", "issue_start", "issue_unblock",
+        "issue_update", "issue_view", "label_list", "project_list",
+        "ritual_attest", "ritual_complete", "ritual_list",
+        "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
+        "sprint_list", "sprint_remove", "sprint_transactions",
     }

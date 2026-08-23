@@ -310,16 +310,20 @@ class TestCapabilityPathRedaction:
 
 
 class TestToolsList:
-    async def test_tools_list_returns_all_eleven(self, client, bearer_headers):
+    async def test_tools_list_returns_the_full_toolset(self, client, bearer_headers):
         resp = await client.post("/mcp", json=_rpc("tools/list"), headers=bearer_headers)
         assert resp.status_code == 200
         tools = resp.json()["result"]["tools"]
         names = {t["name"] for t in tools}
         assert names == {
-            "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start",
-            "doc_list", "doc_view", "doc_create",
-            "activity_recent", "project_list",
+            "activity_recent", "doc_create", "doc_link", "doc_list",
+            "doc_unlink", "doc_update", "doc_view", "issue_block",
+            "issue_comment", "issue_create", "issue_label", "issue_list",
+            "issue_ready", "issue_relations", "issue_start", "issue_unblock",
+            "issue_update", "issue_view", "label_list", "project_list",
+            "ritual_attest", "ritual_complete", "ritual_list",
+            "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
+            "sprint_list", "sprint_remove", "sprint_transactions",
         }
 
 

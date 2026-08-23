@@ -1,9 +1,10 @@
 """Remote MCP tool definitions (CHT-1266) -- the backend-hosted sibling of
 ``chaotic mcp`` (cli/src/cli/mcp_server.py, stdio transport, CHT-1247/#215).
 
-Same 11 tools, same names, same docstrings/descriptions, same shared
+Same toolset, same names, same docstrings/descriptions, same shared
 parameters (name, type, default, description) -- see cli/src/cli/mcp_server.py
-for the canonical prose on each. What's DIFFERENT here, and why this
+for the canonical prose on each; docs/mcp-toolset-schema.json is the
+checked-in snapshot both sides are asserted against. What's DIFFERENT here, and why this
 isn't a shared import between the cli/ and backend/ packages:
 
 * The stdio server is a thin adapter over ``cli.client.Client`` making
@@ -16,14 +17,13 @@ isn't a shared import between the cli/ and backend/ packages:
   server-side. Here it's resolved per-request from the caller's API key
   (``auth.py`` -> ``context.py``), and an API key's user can belong to
   more than one team/project where a CLI profile can't. That's the one
-  place the schemas legitimately diverge: ``issue_list``, ``doc_list``,
-  ``issue_create``, ``doc_create``, ``activity_recent``, and
-  ``project_list`` gain an additional optional ``team`` parameter the
-  stdio version doesn't have (``project`` already existed on all but
-  ``project_list``; see ``scope.py``). The other four tools
-  (``issue_view``, ``issue_update``, ``issue_comment``, ``issue_start``)
-  key off a globally-unique issue identifier and need no extra scoping
-  parameter at all.
+  place the schemas legitimately diverge: the team-scoped tools gain an
+  additional optional ``team`` parameter the stdio version doesn't have
+  (see ``_ADDITIVE_TEAM_TOOLS`` in backend/tests/test_mcp_toolset_sync.py
+  for the current set, and ``scope.py`` for how it resolves). Tools that
+  key off a globally-unique issue identifier, or that resolve their team
+  from the entity they were handed, need no extra scoping parameter at
+  all (``_IDENTICAL_TOOLS`` in that same test).
 * ``cli/tests/test_mcp_server.py`` and ``backend/tests/test_mcp_toolset_sync.py``
   both assert their live toolset against the same checked-in snapshot
   (``docs/mcp-toolset-schema.json``) -- if either side's tool names,
@@ -35,9 +35,8 @@ isn't a shared import between the cli/ and backend/ packages:
   same reason -- there's no cross-package import to enforce it, the sync
   test is what does.
 
-Deliberately NOT included in v1 (mirrors the stdio server exactly, see
-its module docstring for the full rationale): no delete tool, no
-``issue_ready``.
+Deliberately NOT included (mirrors the stdio server exactly, see its
+module docstring for the full rationale): no delete tool.
 """
 from __future__ import annotations
 
@@ -50,8 +49,13 @@ from pydantic import Field, ValidationError as PydanticValidationError
 from mcp.server.fastmcp import FastMCP
 
 from app.api import documents as documents_api
+from app.api import labels as labels_api
+from app.api import rituals as rituals_api
+from app.api import sprints as sprints_api
 from app.api import issues as issues_api
-from app.enums import IssueStatus, IssuePriority, IssueType
+from app.enums import (
+    IssueStatus, IssuePriority, IssueType, IssueRelationType, SprintStatus,
+)
 from app.mcp_server.context import get_current_mcp_user
 from app.mcp_server.scope import (
     ToolContextError,
@@ -60,9 +64,14 @@ from app.mcp_server.scope import (
     resolve_sprint,
     resolve_team,
 )
-from app.schemas.document import DocumentCreate
-from app.schemas.issue import IssueCommentCreate, IssueCreate, IssueUpdate
+from app.schemas.budget_transaction import BudgetTransactionResponse
+from app.schemas.document import DocumentCreate, DocumentUpdate
+from app.schemas.issue import (
+    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
+    IssueUpdate,
+)
 from app.schemas.project import ProjectResponse
+from app.schemas.ritual import RitualAttestationCreate
 from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
@@ -173,6 +182,54 @@ def _boundary(fn):
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
             return {"error": f"Unexpected error ({type(e).__name__}): {e}"}
     return wrapper
+
+
+
+async def _apply_ticket_attestations(user, iss, identifier: str, attest: dict[str, str]) -> None:
+    """Record per-ritual attestations on a ticket before a gated transition.
+
+    Shared by issue_update and issue_start (CHT-1326/CHT-1342): both are
+    non-interactive callers, and a gated transition attempted without
+    these opens an intent the caller can never satisfy. Attesting the
+    last pending ritual may fire the one-step auto-transition
+    server-side, which makes the caller's own status change a no-op
+    rather than a conflict.
+    """
+    from app.enums import ApprovalMode
+
+    ritual_status = await rituals_api.get_pending_ticket_rituals(
+        issue_id=iss.id, current_user=user,
+    )
+    pending = {r.name: r for r in ritual_status.pending_rituals}
+    completed = {r.name for r in ritual_status.completed_rituals}
+    for name, note in attest.items():
+        if not (note and note.strip()):
+            raise ToolContextError(
+                f"Attestation note for ritual '{name}' must be non-empty."
+            )
+        rit = pending.get(name)
+        if rit is None:
+            if name in completed:
+                continue  # already attested — idempotent
+            known = ", ".join(sorted(pending)) or "none"
+            raise ToolContextError(
+                f"Ritual '{name}' is not a pending ticket ritual for "
+                f"{identifier}. Pending: {known}."
+            )
+        if rit.attestation is not None:
+            continue  # attested, awaiting approval — nothing to add
+        attestation_in = RitualAttestationCreate(note=note)
+        if rit.approval_mode == ApprovalMode.GATE:
+            # Gate completion is human-only; the endpoint enforces it.
+            await rituals_api.complete_gate_ritual_for_issue(
+                ritual_id=rit.id, issue_id=iss.id,
+                attestation_in=attestation_in, current_user=user,
+            )
+        else:
+            await rituals_api.attest_ritual_for_issue(
+                ritual_id=rit.id, issue_id=iss.id,
+                attestation_in=attestation_in, current_user=user,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -379,43 +436,7 @@ async def issue_update(
     # pending ritual may fire the one-step auto-transition server-side;
     # the update below is then a no-op for the status field.
     if attest:
-        from app.api import rituals as rituals_api
-        from app.enums import ApprovalMode
-        from app.schemas.ritual import RitualAttestationCreate
-
-        ritual_status = await rituals_api.get_pending_ticket_rituals(
-            issue_id=iss.id, current_user=user,
-        )
-        pending = {r.name: r for r in ritual_status.pending_rituals}
-        completed = {r.name for r in ritual_status.completed_rituals}
-        for name, note in attest.items():
-            if not (note and note.strip()):
-                raise ToolContextError(
-                    f"Attestation note for ritual '{name}' must be non-empty."
-                )
-            rit = pending.get(name)
-            if rit is None:
-                if name in completed:
-                    continue  # already attested — idempotent
-                known = ", ".join(sorted(pending)) or "none"
-                raise ToolContextError(
-                    f"Ritual '{name}' is not a pending ticket ritual for "
-                    f"{identifier}. Pending: {known}."
-                )
-            if rit.attestation is not None:
-                continue  # attested, awaiting approval — nothing to add
-            attestation_in = RitualAttestationCreate(note=note)
-            if rit.approval_mode == ApprovalMode.GATE:
-                # Gate completion is human-only; the endpoint enforces it.
-                await rituals_api.complete_gate_ritual_for_issue(
-                    ritual_id=rit.id, issue_id=iss.id,
-                    attestation_in=attestation_in, current_user=user,
-                )
-            else:
-                await rituals_api.attest_ritual_for_issue(
-                    ritual_id=rit.id, issue_id=iss.id,
-                    attestation_in=attestation_in, current_user=user,
-                )
+        await _apply_ticket_attestations(user, iss, identifier, attest)
 
     fields: dict = {}
     if title is not None:
@@ -473,19 +494,348 @@ async def issue_comment(
 @_boundary
 async def issue_start(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    attest: Annotated[
+        dict[str, str] | None,
+        Field(description=(
+            "Ritual attestation notes to record BEFORE claiming, as a map of "
+            'ritual name -> note, e.g. {"claim-gate": "branch cut"}. Required '
+            "when the ticket has pending claim rituals -- without them the "
+            "claim is blocked (CHT-1326). Use ritual_pending to see which "
+            "rituals apply and what each one asks."
+        )),
+    ] = None,
+    lease_seconds: Annotated[
+        int | None,
+        Field(description="Claim lease duration in seconds. Defaults to the "
+                          "server-configured lease (CHT-1246).", ge=1)
+    ] = None,
 ) -> dict:
     """Claim an issue: assign it to yourself and move it to in_progress.
 
-    Equivalent to `chaotic issue start`.
+    Equivalent to `chaotic issue start` (itself an alias for `issue
+    claim`). Re-claiming a ticket you already hold extends the lease.
     """
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
+
+    if attest:
+        await _apply_ticket_attestations(user, iss, identifier, attest)
+
     updated = await issues_api.update_issue(
         issue_id=iss.id,
-        issue_in=IssueUpdate(assignee_id=user.id, status=IssueStatus.IN_PROGRESS),
+        issue_in=IssueUpdate(
+            assignee_id=user.id,
+            status=IssueStatus.IN_PROGRESS,
+            lease_seconds=lease_seconds,
+        ),
         current_user=user,
     )
     return updated.model_dump(mode="json")
+
+
+@_boundary
+async def issue_ready(
+    mine: Annotated[
+        bool,
+        Field(description="Restrict to issues already assigned to you instead of unassigned ones.")
+    ] = False,
+    include_assigned: Annotated[
+        bool,
+        Field(description="Widen beyond unassigned-only to include already-assigned (but not-started) issues.")
+    ] = False,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name to scope to. Defaults to the current project.")
+    ] = None,
+    all_projects: Annotated[
+        bool,
+        Field(description="Query across every project in the team instead of just the current/given one.")
+    ] = False,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+    limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 20,
+) -> dict:
+    """List issues that are open, unblocked, and unclaimed -- what you can start right now.
+
+    Open + not-started (backlog/todo) only; excludes anything already
+    in_progress/in_review/done/canceled, and excludes issues with an
+    unresolved blocking relation. Priority-sorted (urgent first), then
+    oldest first. Unassigned by default -- `mine` restricts to your own
+    assigned-but-not-started work, `include_assigned` widens to every
+    not-started issue regardless of assignee.
+
+    Prefer this over issue_list when the question is "what should I pick
+    up"; issue_list can filter by status and assignee but cannot express
+    "has no unresolved blocker".
+    """
+    if mine and include_assigned:
+        raise ToolContextError("Pass either `mine` or `include_assigned`, not both.")
+
+    user = get_current_mcp_user()
+
+    project_id = None
+    if all_projects and not project:
+        team_id = await resolve_team(user, team)
+    else:
+        project_id, team_id = await resolve_project(user, project, team)
+
+    issues = await issues_api.list_ready_issues(
+        current_user=user,
+        project_id=project_id,
+        team_id=team_id if not project_id else None,
+        mine=mine,
+        include_assigned=include_assigned,
+        limit=limit,
+    )
+    return {"issues": [i.model_dump(mode="json") for i in (issues or [])]}
+
+
+RELATION_TYPES = Literal["blocks", "relates_to", "duplicates"]
+
+
+@_boundary
+async def issue_relations(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+) -> dict:
+    """Show an issue's relations: what it blocks, what blocks it, duplicates, and related work.
+
+    Each relation carries a `direction` ("outgoing"/"incoming") and its
+    own `id` -- pass that id to issue_unblock to remove it. Incoming
+    `blocks` edges are reported as `blocked_by`, so the relation_type
+    always reads from the perspective of the issue you asked about.
+
+    Worth calling before issue_start: issue_view does not report
+    blockers, so an issue can look startable there while being blocked.
+    """
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    relations = await issues_api.list_relations(issue_id=iss.id, current_user=user)
+    return {"relations": relations or []}
+
+
+@_boundary
+async def issue_block(
+    identifier: Annotated[str, Field(description="The blocking issue's identifier, e.g. CHT-123.")],
+    blocked: Annotated[
+        str,
+        Field(description="The identifier of the issue on the other end of the relation, e.g. CHT-456.")
+    ],
+    relation_type: Annotated[
+        RELATION_TYPES,
+        Field(description="Relation to create. 'blocks': `identifier` blocks `blocked`. "
+                          "'duplicates': `identifier` is a duplicate of `blocked`. "
+                          "'relates_to': a plain association, no direction implied.")
+    ] = "blocks",
+) -> dict:
+    """Relate two issues: by default, `identifier` blocks `blocked`.
+
+    Direction matters for `blocks` -- the issue named first is the one
+    holding the other up, and it's the second one that stops showing up
+    in issue_ready.
+
+    Re-relating an already-related pair is a no-op that returns the
+    EXISTING relation -- including when you pass a different
+    relation_type, which is silently not applied. To change the type,
+    issue_unblock the pair first, then relate it again.
+    """
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    other = await issues_api.get_issue_by_identifier(blocked, user)
+    created = await issues_api.create_relation(
+        issue_id=iss.id,
+        relation_in=IssueRelationCreate(
+            related_issue_id=other.id,
+            relation_type=IssueRelationType(relation_type),
+        ),
+        current_user=user,
+    )
+    return created if isinstance(created, dict) else created.model_dump(mode="json")
+
+
+@_boundary
+async def issue_unblock(
+    identifier: Annotated[str, Field(description="Issue identifier the relation hangs off, e.g. CHT-123.")],
+    related: Annotated[
+        str | None,
+        Field(description="Identifier of the issue on the other end, e.g. CHT-456. "
+                          "Resolved to a relation automatically. Use relation_id instead "
+                          "if more than one relation connects the two.")
+    ] = None,
+    relation_id: Annotated[
+        str | None,
+        Field(description="Exact relation id from issue_relations. Takes precedence over `related`.")
+    ] = None,
+) -> dict:
+    """Remove a relation between two issues.
+
+    Name the other issue with `related` and the relation is looked up
+    for you; pass `relation_id` from issue_relations when the two issues
+    are connected by more than one relation.
+
+    Removes only the relation -- neither issue is touched.
+    """
+    if not related and not relation_id:
+        raise ToolContextError("Pass either `related` (the other issue) or `relation_id`.")
+
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+
+    if not relation_id:
+        other = await issues_api.get_issue_by_identifier(related, user)
+        existing = await issues_api.list_relations(issue_id=iss.id, current_user=user)
+        matches = [r for r in (existing or []) if r.get("related_issue_id") == other.id]
+        if not matches:
+            raise ToolContextError(f"No relation between {identifier} and {related}.")
+        if len(matches) > 1:
+            listed = ", ".join(f"{r['relation_type']} (id={r['id']})" for r in matches)
+            raise ToolContextError(
+                f"{identifier} and {related} are connected by {len(matches)} relations: "
+                f"{listed}. Pass `relation_id` to say which one to remove."
+            )
+        relation_id = matches[0]["id"]
+
+    await issues_api.delete_relation(
+        issue_id=iss.id, relation_id=relation_id, current_user=user
+    )
+    return {
+        "deleted": True,
+        "id": relation_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+async def _resolve_label_id(team_id: str, value: str) -> str:
+    """Resolve a label name or id to a label id -- mirrors the CLI's
+    ``resolve_label_id`` (cli/src/cli/commands/shared.py) closely enough
+    for tool parity: exact id, then case-insensitive name, then id
+    prefix (see module docstring on why this isn't a shared import).
+    """
+    # limit=1000: the API default is 100, and a team past that would make
+    # a real label silently unresolvable -- reported as "no label matching
+    # 'x'", a false negative dressed as user error (CHT-1351). project_list
+    # widened for the same reason.
+    try:
+        labels = await labels_api.list_labels(
+            team_id=team_id, current_user=get_current_mcp_user(), limit=1000,
+        )
+    except HTTPException as e:
+        # Labels are a TEAM-level list, but this key may be scoped to a
+        # single project. The write itself (add_label_to_issue) needs only
+        # project access and would succeed -- it's the name->id lookup that
+        # can't be performed. Say that, rather than surfacing the API's
+        # "Not authorized to access this team", which names a team the
+        # caller never mentioned and reads as though the write was refused.
+        # Whether such keys should resolve team labels at all is an
+        # authorization question, tracked separately (CHT-1352).
+        if e.status_code in (401, 403):
+            raise ToolContextError(
+                "This API key is scoped to a project, and labels are defined "
+                "per team -- so label names can't be looked up with it. Pass "
+                "an explicit label id instead of a name, or use a team-scoped "
+                "key."
+            ) from e
+        raise
+    if not labels:
+        raise ToolContextError("No labels exist in this team yet.")
+
+    for label in labels:
+        if label.id == value:
+            return label.id
+
+    lowered = value.lower()
+    by_name = [l for l in labels if (l.name or "").lower() == lowered]
+    if len(by_name) == 1:
+        return by_name[0].id
+    if len(by_name) > 1:
+        listed = ", ".join(f"{l.name} (id={l.id})" for l in by_name)
+        raise ToolContextError(f"Ambiguous label name '{value}'. Matches: {listed}.")
+
+    by_prefix = [l for l in labels if l.id.startswith(value)]
+    if len(by_prefix) == 1:
+        return by_prefix[0].id
+    if len(by_prefix) > 1:
+        raise ToolContextError(f"Ambiguous label id prefix '{value}'.")
+
+    known = ", ".join(sorted(l.name for l in labels))
+    raise ToolContextError(f"No label matching '{value}'. Team labels: {known}.")
+
+
+@_boundary
+async def label_list(
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """List the team's labels: id, name, and color.
+
+    The lookup that makes issue_list's `label` filter usable -- without
+    it a caller has to already know the taxonomy to filter by it, or
+    guess. Also the source of the names issue_label accepts.
+    """
+    user = get_current_mcp_user()
+    team_id = await resolve_team(user, team)
+    labels = await labels_api.list_labels(team_id=team_id, current_user=user, limit=1000)
+    return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
+
+
+@_boundary
+async def issue_label(
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    add: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to add. Names are matched case-insensitively.")
+    ] = None,
+    remove: Annotated[
+        list[str] | None,
+        Field(description="Label names (or ids) to remove.")
+    ] = None,
+) -> dict:
+    """Add and/or remove labels on an issue.
+
+    Additive and subtractive rather than replacing the whole set, so
+    labelling an issue never silently drops someone else's label. Labels
+    must already exist -- this does not create them. Use label_list to
+    see them, or pass a label id directly if your key is project-scoped
+    (label_list is team-scoped and needs a team-scoped key).
+
+    Adding a label the issue already has, or removing one it doesn't
+    have, is a no-op rather than an error, so the same call is safe to
+    repeat.
+    """
+    if not add and not remove:
+        raise ToolContextError("Pass `add` and/or `remove` with at least one label.")
+
+    user = get_current_mcp_user()
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    team_id = await _team_id_for_project(iss.project_id)
+
+    existing = {l.id for l in (iss.labels or [])}
+
+    added, removed = [], []
+    for value in add or []:
+        label_id = await _resolve_label_id(team_id, value)
+        if label_id not in existing:
+            await issues_api.add_label_to_issue(
+                issue_id=iss.id, body=AddLabelRequest(label_id=label_id), current_user=user,
+            )
+            existing.add(label_id)
+            added.append(value)
+    for value in remove or []:
+        label_id = await _resolve_label_id(team_id, value)
+        if label_id in existing:
+            await issues_api.remove_label_from_issue(
+                issue_id=iss.id, label_id=label_id, current_user=user,
+            )
+            existing.discard(label_id)
+            removed.append(value)
+
+    updated = await issues_api.get_issue_by_identifier(identifier, user)
+    result = updated.model_dump(mode="json")
+    result["labels_added"] = added
+    result["labels_removed"] = removed
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +920,623 @@ async def doc_create(
     return created.model_dump(mode="json")
 
 
+@_boundary
+async def doc_update(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    title: Annotated[str | None, Field(description="New document title. Omit to leave unchanged.")] = None,
+    content: Annotated[
+        str | None,
+        Field(description="New document body (markdown). Omit to leave unchanged.")
+    ] = None,
+    icon: Annotated[
+        str | None,
+        Field(description="New emoji or short icon label. Omit to leave unchanged.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Move the document to this project (id, key, or name).")
+    ] = None,
+    is_global: Annotated[
+        bool,
+        Field(description="Make the document global/team-wide by detaching it from its project.")
+    ] = False,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Update a document's title, content, icon, or project.
+
+    Only the fields you pass are changed; omitted ones are left alone.
+    Editing the title or content appends a new revision snapshot, so the
+    prior version stays readable in the document's history -- an edit
+    never destroys what it replaced.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+
+    fields: dict = {}
+    if title is not None:
+        fields["title"] = title
+    if content is not None:
+        fields["content"] = content
+    if icon is not None:
+        fields["icon"] = icon
+    if project and is_global:
+        raise ToolContextError(
+            "Pass either `project` (move to that project) or `is_global` "
+            "(detach from any project), not both."
+        )
+    if project:
+        # `team` is needed here and nowhere else in this tool: the document
+        # itself is found by _resolve_document_id (which already spans every
+        # team the key can reach), but naming a DESTINATION project needs a
+        # team to disambiguate against. Without it a multi-team key was told
+        # to "pass `team`" by a tool that had no such parameter (CHT-1351).
+        project_id, _ = await resolve_project(user, project, team)
+        fields["project_id"] = project_id
+    elif is_global:
+        fields["project_id"] = None
+
+    if not fields:
+        raise ToolContextError(
+            "No updates provided. Pass at least one of: title, content, "
+            "icon, project, is_global."
+        )
+
+    # Build with only the caller's fields set: DocumentService.update()
+    # keys off model_dump(exclude_unset=True), and it's that same
+    # dict that decides whether the edit snapshots a new revision.
+    document_in = DocumentUpdate(**fields)
+    updated = await documents_api.update_document(
+        document_id=resolved_id, document_in=document_in, current_user=user
+    )
+    return updated.model_dump(mode="json")
+
+
+@_boundary
+async def doc_link(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    identifier: Annotated[str, Field(description="Issue identifier to link to, e.g. CHT-123.")],
+) -> dict:
+    """Link a document to an issue.
+
+    The link shows up in doc_view's `linked_issues`. Linking a pair
+    that's already linked is a no-op rather than an error.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    await documents_api.link_document_to_issue(
+        document_id=resolved_id, issue_id=iss.id, current_user=user,
+    )
+    return {
+        "linked": True,
+        "document_id": resolved_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
+@_boundary
+async def doc_unlink(
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    identifier: Annotated[str, Field(description="Issue identifier to unlink, e.g. CHT-123.")],
+) -> dict:
+    """Remove the link between a document and an issue.
+
+    Removes only the association -- neither the document nor the issue
+    is deleted.
+    """
+    user = get_current_mcp_user()
+    resolved_id = await _resolve_document_id(user, document_id)
+    iss = await issues_api.get_issue_by_identifier(identifier, user)
+    await documents_api.unlink_document_from_issue(
+        document_id=resolved_id, issue_id=iss.id, current_user=user,
+    )
+    return {
+        "unlinked": True,
+        "document_id": resolved_id,
+        "issue_id": iss.id,
+        "identifier": identifier,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sprints
+# ---------------------------------------------------------------------------
+
+SPRINT_STATUS_VALUES = Literal["planned", "active", "completed"]
+
+
+def _with_budget_state(sprint: dict) -> dict:
+    """Annotate a sprint with its derived budget state.
+
+    ``budget``/``points_spent`` are stored; "am I in arrears" is not --
+    it's the comparison between them, and it's the thing that decides
+    whether issue_update can move a ticket to in_progress/done/canceled
+    at all. An agent that has to derive that itself will usually not
+    think to, so spell it out.
+    """
+    budget = sprint.get("budget")
+    spent = sprint.get("points_spent") or 0
+    over = (spent - budget) if budget is not None else 0
+    sprint = dict(sprint)
+    sprint["in_arrears"] = over > 0
+    sprint["arrears_by"] = max(over, 0)
+    sprint["points_remaining"] = None if budget is None else budget - spent
+    return sprint
+
+
+@_boundary
+async def sprint_current(
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Show the active sprint: budget, points spent, limbo and arrears state.
+
+    Call this when a write is refused with `sprint_in_arrears` or
+    `sprint_in_limbo` -- it reports what's actually blocking, which
+    nothing else on this surface does.
+
+    Only closed tickets accrue budget: completing an issue charges the
+    project's currently-active sprint (estimate points, or 1 point if
+    unestimated), whichever sprint the ticket itself belonged to.
+    Going over budget blocks moving any ticket to in_progress/done/
+    canceled project-wide until the sprint is closed.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    sprint = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
+    return _with_budget_state(sprint.model_dump(mode="json"))
+
+
+@_boundary
+async def sprint_list(
+    status: Annotated[
+        SPRINT_STATUS_VALUES | None,
+        Field(description="Filter by sprint status.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """List a project's sprints, with each one's budget state."""
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    sprints = await sprints_api.list_sprints(
+        project_id=project_id,
+        current_user=user,
+        sprint_status=SprintStatus(status) if status else None,
+    )
+    return {"sprints": [_with_budget_state(s.model_dump(mode="json")) for s in (sprints or [])]}
+
+
+@_boundary
+async def sprint_close(
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Close a sprint and rotate to the next planned one.
+
+    This is the remedy for `sprint_in_arrears`: budget is only released
+    by closing, not by editing tickets.
+
+    If the project has per-sprint rituals, closing enters LIMBO instead
+    of rotating -- the returned sprint has `limbo: true`, and the next
+    step is ritual_pending / ritual_complete. Check `limbo` on the
+    result rather than assuming the rotation happened.
+
+    Rotating sprints is a project-wide state change that affects
+    everyone's budget accounting, so prefer sprint_current first and
+    close deliberately.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    sprint_id = await resolve_sprint(project_id, sprint or "current")
+    closed = await sprints_api.close_sprint(sprint_id=sprint_id, current_user=user)
+    result = _with_budget_state(closed.model_dump(mode="json"))
+    result["entered_limbo"] = bool(result.get("limbo"))
+
+    # Budget state on the CLOSED sprint is history: it stays in arrears
+    # forever, because that is what it spent. What the caller actually
+    # asked -- "am I unblocked now?" -- is a property of whatever sprint
+    # is active AFTER the rotation, so report that separately rather than
+    # leaving `in_arrears: true` on a successful close to be misread as
+    # "still blocked" (CHT-1351).
+    if not result["entered_limbo"]:
+        active = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
+        result["now_active"] = _with_budget_state(active.model_dump(mode="json")) if active else None
+    else:
+        result["now_active"] = None
+    return result
+
+
+@_boundary
+async def sprint_transactions(
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Show a sprint's budget transactions -- the audit trail behind points_spent.
+
+    One row per ticket completion charged to this sprint. Use it to
+    reconcile a points_spent number that looks wrong before assuming a
+    bug: closing older work after a rotation charges the *new* active
+    sprint by design.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    sprint_id = await resolve_sprint(project_id, sprint or "current")
+    txns = await sprints_api.list_transactions(sprint_id=sprint_id, current_user=user)
+    # Through the response schema, not the raw row: list_transactions is an
+    # undecorated api function, so its response_model never runs here
+    # (CHT-1351). Output is identical today -- the model and schema have
+    # the same fields and no enums -- so this is about not being the next
+    # instance of that bug rather than fixing a live one.
+    return {
+        "transactions": [
+            BudgetTransactionResponse.model_validate(t).model_dump(mode="json")
+            for t in (txns or [])
+        ]
+    }
+
+
+async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | None) -> dict:
+    """Apply a sprint change per-issue, reporting partial success.
+
+    Mirrors the CLI's own loop: the backend's batch-update endpoint
+    deliberately excludes sprint_id (sprint moves need per-issue
+    validation), so one bad identifier in a list shouldn't silently
+    discard the rest -- collect failures and report both sides.
+    """
+    updated, failed = [], []
+    for identifier in identifiers:
+        try:
+            iss = await issues_api.get_issue_by_identifier(identifier, user)
+            await issues_api.update_issue(
+                issue_id=iss.id,
+                issue_in=IssueUpdate(sprint_id=sprint_id),
+                current_user=user,
+            )
+            updated.append(identifier)
+        except HTTPException as e:
+            failed.append({"identifier": identifier, "error": e.detail})
+    return {"updated": updated, "failed": failed, "sprint_id": sprint_id}
+
+
+@_boundary
+async def sprint_add(
+    identifiers: Annotated[
+        list[str],
+        Field(description="Issue identifiers to add, e.g. ['CHT-12', 'CHT-13'].")
+    ],
+    sprint: Annotated[
+        str | None,
+        Field(description="Sprint name, id, or 'current'. Defaults to the active sprint.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Add issues to a sprint.
+
+    Sprint membership does not by itself charge budget -- only closing a
+    ticket does, and it charges whichever sprint is active at that
+    moment.
+    """
+    if not identifiers:
+        raise ToolContextError("Pass at least one issue identifier.")
+
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    sprint_id = await resolve_sprint(project_id, sprint or "current")
+    return await _set_sprint_on_issues(user, identifiers, sprint_id)
+
+
+@_boundary
+async def sprint_remove(
+    identifiers: Annotated[
+        list[str],
+        Field(description="Issue identifiers to remove from their sprint.")
+    ],
+) -> dict:
+    """Remove issues from whatever sprint they're in (leaves them unscheduled)."""
+    if not identifiers:
+        raise ToolContextError("Pass at least one issue identifier.")
+    return await _set_sprint_on_issues(get_current_mcp_user(), identifiers, None)
+
+
+# ---------------------------------------------------------------------------
+# Rituals
+# ---------------------------------------------------------------------------
+
+_TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
+
+
+def _trigger_of(rit: dict) -> str:
+    """A ritual's trigger, normalised to the enum's lowercase value.
+
+    Calling these API functions in-process skips FastAPI's
+    ``response_model`` coercion (same gotcha as the Query-sentinel note
+    on issue_list), so a trigger can arrive as the raw stored enum NAME
+    -- "TICKET_CLOSE" -- rather than the value "ticket_close" an HTTP
+    client would see. Dispatching case-sensitively on that silently
+    routes every ticket ritual down the sprint path.
+    """
+    return (rit.get("trigger") or "").lower()
+
+
+def _as_dict(value):
+    """Attestation endpoints return a response model; tools return JSON."""
+    return value if isinstance(value, dict) else value.model_dump(mode="json")
+
+
+async def _limbo(user, project_id: str) -> dict:
+    status = await rituals_api.get_limbo_status(project_id=project_id, current_user=user)
+    return _as_dict(status) if status else {}
+
+
+async def _find_ritual(user, project_id: str, name: str) -> dict:
+    """Resolve a ritual by name (case-insensitively), or by id."""
+    rituals = [
+        r.model_dump(mode="json")
+        for r in (await rituals_api.list_rituals(project_id=project_id, current_user=user) or [])
+    ]
+    if not rituals:
+        raise ToolContextError("This project has no rituals configured.")
+
+    for rit in rituals:
+        if rit.get("id") == name:
+            return rit
+    lowered = name.lower()
+    matches = [r for r in rituals if (r.get("name") or "").lower() == lowered]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ToolContextError(f"Ambiguous ritual name '{name}'.")
+
+    known = ", ".join(sorted(r["name"] for r in rituals))
+    raise ToolContextError(f"No ritual named '{name}'. This project's rituals: {known}.")
+
+
+def _require_note(rit: dict, note: str | None) -> None:
+    """Reject a missing note the way the CLI does -- quoting the ritual's
+    own prompt, because that prompt is the question the note has to
+    answer and the caller has no other way to see it.
+    """
+    if rit.get("note_required", True) and not (note and note.strip()):
+        raise ToolContextError(
+            f"Ritual '{rit['name']}' requires a note. It asks: \"{rit.get('prompt')}\". "
+            "Pass `note` with your answer."
+        )
+
+
+@_boundary
+async def ritual_pending(
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier for ticket-level rituals, e.g. CHT-123. "
+                          "Omit for the project's sprint rituals.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Show which rituals are currently blocking you, and what each one asks.
+
+    Without `identifier`: the project's pending SPRINT rituals -- what a
+    sprint sitting in limbo after sprint_close is waiting on.
+    With `identifier`: the pending close/claim rituals gating that ticket.
+
+    This is the lookup that makes attestation possible at all: rituals
+    are addressed by name, and nothing else on this surface tells you
+    what those names are or what each one is asking for. Each entry
+    carries its `prompt` (the question your note must answer),
+    `approval_mode`, and any existing `attestation`.
+    """
+    user = get_current_mcp_user()
+
+    if identifier:
+        # Resolved AFTER the branch: a ticket's rituals are found from the
+        # issue itself, so demanding project/team disambiguation here made
+        # a multi-team key supply scoping that was then discarded -- and
+        # blocked the call outright when it couldn't (CHT-1351).
+        iss = await issues_api.get_issue_by_identifier(identifier, user)
+        pending = _as_dict(await rituals_api.get_pending_ticket_rituals(
+            issue_id=iss.id, current_user=user
+        )) or {}
+        rituals = pending.get("pending_rituals", []) or []
+        return {
+            "scope": "ticket",
+            "identifier": identifier,
+            "pending_rituals": rituals,
+            "unattested": [r["name"] for r in rituals if not r.get("attestation")],
+        }
+
+    project_id, _ = await resolve_project(user, project, team)
+    status = await _limbo(user, project_id)
+    rituals = status.get("pending_rituals", []) or []
+    return {
+        "scope": "sprint",
+        "in_limbo": bool(status.get("in_limbo")),
+        "pending_rituals": rituals,
+        "unattested": [r["name"] for r in rituals if not r.get("attestation")],
+    }
+
+
+@_boundary
+async def ritual_list(
+    include_inactive: Annotated[
+        bool,
+        Field(description="Include deactivated rituals as well as active ones.")
+    ] = False,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """List a project's configured rituals: name, trigger, prompt, and approval mode.
+
+    `trigger` tells you which scope a ritual belongs to -- ticket_close
+    and ticket_claim gate individual tickets, everything else gates the
+    sprint. ritual_attest works that out for you.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    rituals = await rituals_api.list_rituals(
+        project_id=project_id, current_user=user, include_inactive=include_inactive,
+    )
+    return {"rituals": [r.model_dump(mode="json") for r in (rituals or [])]}
+
+
+@_boundary
+async def ritual_attest(
+    ritual: Annotated[str, Field(description="Ritual name (or id), from ritual_pending/ritual_list.")],
+    note: Annotated[
+        str | None,
+        Field(description="Your attestation note -- the answer to the ritual's prompt. "
+                          "Required unless the ritual sets note_required=false.")
+    ] = None,
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier, for ticket-level rituals. Looked up "
+                          "automatically when the ritual is ticket-scoped.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Attest a ritual -- confirm you did the thing it asks about.
+
+    Dispatches on the ritual's own trigger, so you don't have to know
+    whether it's sprint-scoped or ticket-scoped: pass `identifier` when
+    attesting a ticket's close/claim gate, omit it for a sprint ritual.
+
+    If the ritual's approval_mode is `auto` this clears it outright.
+    Under `review` it records the attestation and leaves it pending a
+    human; `approved` in the result says which happened.
+
+    Under `gate` this is REFUSED -- gate rituals are human-completion
+    only and the server rejects an attestation outright rather than
+    recording one. Use ritual_complete for those, and ritual_list to see
+    each ritual's approval_mode before choosing.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    rit = await _find_ritual(user, project_id, ritual)
+    _require_note(rit, note)
+
+    if _trigger_of(rit) in _TICKET_TRIGGERS:
+        if not identifier:
+            raise ToolContextError(
+                f"Ritual '{rit['name']}' is a {_trigger_of(rit)} ritual -- pass "
+                "`identifier` naming the ticket it gates."
+            )
+        iss = await issues_api.get_issue_by_identifier(identifier, user)
+        result = _as_dict(await rituals_api.attest_ritual_for_issue(
+            ritual_id=rit["id"], issue_id=iss.id,
+            attestation_in=RitualAttestationCreate(note=note), current_user=user,
+        ))
+        return {
+            "scope": "ticket",
+            "ritual": rit["name"],
+            "identifier": identifier,
+            "approved": bool(result.get("approved_at")),
+            "attestation": result,
+        }
+
+    result = _as_dict(await rituals_api.attest_ritual(
+        ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
+        current_user=user, project_id=project_id,
+    ))
+    status = await _limbo(user, project_id)
+    return {
+        "scope": "sprint",
+        "ritual": rit["name"],
+        "approved": bool(result.get("approved_at")),
+        "still_in_limbo": bool(status.get("in_limbo")),
+        "remaining": [r["name"] for r in (status.get("pending_rituals") or [])],
+        "attestation": result,
+    }
+
+
+@_boundary
+async def ritual_complete(
+    ritual: Annotated[str, Field(description="Ritual name (or id), from ritual_pending/ritual_list.")],
+    note: Annotated[str | None, Field(description="Optional note about the completion.")] = None,
+    identifier: Annotated[
+        str | None,
+        Field(description="Issue identifier, for ticket-level rituals.")
+    ] = None,
+    project: Annotated[
+        str | None,
+        Field(description="Project id, key, or name. Defaults to the current project.")
+    ] = None,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+) -> dict:
+    """Complete a GATE-mode ritual.
+
+    Distinct from ritual_attest: gate rituals are the ones a human is
+    supposed to sign off, and the server enforces that -- expect a
+    permission error rather than success if the calling identity isn't
+    allowed to. Attesting is the normal path; this is for the rare case
+    where you legitimately hold that role.
+    """
+    user = get_current_mcp_user()
+    project_id, _ = await resolve_project(user, project, team)
+    rit = await _find_ritual(user, project_id, ritual)
+
+    if _trigger_of(rit) in _TICKET_TRIGGERS:
+        if not identifier:
+            raise ToolContextError(
+                f"Ritual '{rit['name']}' is a {_trigger_of(rit)} ritual -- pass "
+                "`identifier` naming the ticket it gates."
+            )
+        iss = await issues_api.get_issue_by_identifier(identifier, user)
+        result = _as_dict(await rituals_api.complete_gate_ritual_for_issue(
+            ritual_id=rit["id"], issue_id=iss.id,
+            attestation_in=RitualAttestationCreate(note=note), current_user=user,
+        ))
+        return {"scope": "ticket", "ritual": rit["name"],
+                "identifier": identifier, "attestation": result}
+
+    result = _as_dict(await rituals_api.complete_gate_ritual(
+        ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
+        current_user=user, project_id=project_id,
+    ))
+    status = await _limbo(user, project_id)
+    return {
+        "scope": "sprint",
+        "ritual": rit["name"],
+        "still_in_limbo": bool(status.get("in_limbo")),
+        "remaining": [r["name"] for r in (status.get("pending_rituals") or [])],
+        "attestation": result,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
@@ -625,7 +1592,13 @@ async def activity_recent(
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
-    doc_list, doc_view, doc_create, activity_recent, project_list,
+    issue_ready, issue_relations, issue_block, issue_unblock,
+    label_list, issue_label,
+    doc_link, doc_unlink,
+    sprint_current, sprint_list, sprint_close, sprint_transactions,
+    sprint_add, sprint_remove,
+    ritual_pending, ritual_list, ritual_attest, ritual_complete,
+    doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 
 

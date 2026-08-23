@@ -193,6 +193,230 @@ class TestIssueCommentAssignTo:
         assert updated["assignee_id"] == test_user.id
 
 
+class TestIssueReady:
+    """issue_ready (CHT-1334) exists because issue_list cannot express
+    "has no unresolved blocker" -- so these tests pin the blocker
+    filtering specifically, not just that the call returns issues.
+    """
+
+    async def test_issue_ready_lists_unassigned_not_started(self, test_project):
+        created = await tools.issue_create(title="Pick me up", status="todo")
+        result = await tools.issue_ready()
+        assert any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_excludes_in_progress(self, test_project):
+        created = await tools.issue_create(title="Already going", status="todo")
+        await tools.issue_start(created["identifier"])
+        result = await tools.issue_ready()
+        assert not any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_excludes_blocked(self, test_project):
+        """The whole reason this tool exists rather than an issue_list filter."""
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        blocker = await tools.issue_create(title="Do this first", status="todo")
+        blocked = await tools.issue_create(title="Waits on the other", status="todo")
+
+        svc = IssueService()
+        blocked_row = await svc.get_by_identifier(blocked["identifier"])
+        blocker_row = await svc.get_by_identifier(blocker["identifier"])
+        # Direction matters: a BLOCKS relation runs blocker -> blocked,
+        # and list_ready_issues filters on the *incoming* edge.
+        await svc.create_relation(
+            blocker_row.id,
+            IssueRelationCreate(
+                issue_id=blocker_row.id,
+                related_issue_id=blocked_row.id,
+                relation_type="blocks",
+            ),
+        )
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocker["identifier"] in idents
+        assert blocked["identifier"] not in idents
+
+    async def test_issue_ready_mine_excludes_unassigned(self, test_project):
+        unassigned = await tools.issue_create(title="Nobody's", status="todo")
+        result = await tools.issue_ready(mine=True)
+        assert not any(i["identifier"] == unassigned["identifier"] for i in result["issues"])
+
+    async def test_issue_ready_rejects_mine_with_include_assigned(self, test_project):
+        result = await tools.issue_ready(mine=True, include_assigned=True)
+        assert "error" in result
+
+    async def test_issue_ready_all_projects(self, test_project, test_team):
+        created = await tools.issue_create(title="Team-wide ready", status="todo")
+        result = await tools.issue_ready(all_projects=True)
+        assert any(i["identifier"] == created["identifier"] for i in result["issues"])
+
+
+
+class TestIssueRelationTools:
+    async def test_block_then_relations_reports_both_ends(self, test_project):
+        blocker = await tools.issue_create(title="Blocker", status="todo")
+        blocked = await tools.issue_create(title="Blocked", status="todo")
+
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        # Outgoing from the blocker's perspective...
+        out = await tools.issue_relations(identifier=blocker["identifier"])
+        assert [r["relation_type"] for r in out["relations"]] == ["blocks"]
+        assert out["relations"][0]["direction"] == "outgoing"
+
+        # ...and reported as blocked_by from the other end.
+        inc = await tools.issue_relations(identifier=blocked["identifier"])
+        assert [r["relation_type"] for r in inc["relations"]] == ["blocked_by"]
+        assert inc["relations"][0]["direction"] == "incoming"
+
+    async def test_block_removes_target_from_issue_ready(self, test_project):
+        """The behavioural reason relations matter to an agent."""
+        blocker = await tools.issue_create(title="First", status="todo")
+        blocked = await tools.issue_create(title="Second", status="todo")
+
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocker["identifier"] in idents
+        assert blocked["identifier"] not in idents
+
+    async def test_unblock_restores_readiness(self, test_project):
+        blocker = await tools.issue_create(title="Gate", status="todo")
+        blocked = await tools.issue_create(title="Gated", status="todo")
+        await tools.issue_block(identifier=blocker["identifier"], blocked=blocked["identifier"])
+
+        result = await tools.issue_unblock(
+            identifier=blocker["identifier"], related=blocked["identifier"],
+        )
+        assert result["deleted"] is True
+
+        idents = {i["identifier"] for i in (await tools.issue_ready())["issues"]}
+        assert blocked["identifier"] in idents
+
+    async def test_block_is_idempotent(self, test_project):
+        a = await tools.issue_create(title="A", status="todo")
+        b = await tools.issue_create(title="B", status="todo")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        second = await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        assert "error" not in second
+        rels = await tools.issue_relations(identifier=a["identifier"])
+        assert len(rels["relations"]) == 1
+
+    async def test_relation_type_duplicates(self, test_project):
+        a = await tools.issue_create(title="Dupe", status="todo")
+        b = await tools.issue_create(title="Original", status="todo")
+        await tools.issue_block(
+            identifier=a["identifier"], blocked=b["identifier"], relation_type="duplicates",
+        )
+        rels = await tools.issue_relations(identifier=a["identifier"])
+        assert rels["relations"][0]["relation_type"] == "duplicates"
+
+    async def test_unblock_by_relation_id(self, test_project):
+        a = await tools.issue_create(title="X", status="todo")
+        b = await tools.issue_create(title="Y", status="todo")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+        rel_id = (await tools.issue_relations(identifier=a["identifier"]))["relations"][0]["id"]
+
+        result = await tools.issue_unblock(identifier=a["identifier"], relation_id=rel_id)
+
+        assert result["deleted"] is True
+        assert (await tools.issue_relations(identifier=a["identifier"]))["relations"] == []
+
+    async def test_unblock_without_a_selector_is_an_error(self, test_project):
+        a = await tools.issue_create(title="Solo", status="todo")
+        result = await tools.issue_unblock(identifier=a["identifier"])
+        assert "error" in result
+
+    async def test_unblock_unrelated_pair_is_an_error(self, test_project):
+        a = await tools.issue_create(title="P", status="todo")
+        b = await tools.issue_create(title="Q", status="todo")
+        result = await tools.issue_unblock(identifier=a["identifier"], related=b["identifier"])
+        assert "error" in result
+
+    async def test_relations_unknown_issue_is_an_error(self, test_project):
+        assert "error" in await tools.issue_relations(identifier="NOPE-999")
+
+
+
+class TestLabelTools:
+    async def _make_label(self, team_id, name):
+        from app.schemas.issue import LabelCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create_label(LabelCreate(name=name), team_id)
+
+    async def test_label_list(self, test_team):
+        await self._make_label(test_team.id, "triage")
+        result = await tools.label_list()
+        assert "triage" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_add_by_name(self, test_project, test_team):
+        await self._make_label(test_team.id, "urgent-ish")
+        iss = await tools.issue_create(title="Needs a label")
+
+        result = await tools.issue_label(identifier=iss["identifier"], add=["urgent-ish"])
+
+        assert result["labels_added"] == ["urgent-ish"]
+        assert "urgent-ish" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_name_match_is_case_insensitive(self, test_project, test_team):
+        await self._make_label(test_team.id, "Backend")
+        iss = await tools.issue_create(title="Case test")
+        result = await tools.issue_label(identifier=iss["identifier"], add=["backend"])
+        assert "Backend" in {l["name"] for l in result["labels"]}
+
+    async def test_issue_label_is_additive_not_replacing(self, test_project, test_team):
+        """Labelling must never silently drop a label someone else set."""
+        await self._make_label(test_team.id, "first")
+        await self._make_label(test_team.id, "second")
+        iss = await tools.issue_create(title="Two labels")
+
+        await tools.issue_label(identifier=iss["identifier"], add=["first"])
+        result = await tools.issue_label(identifier=iss["identifier"], add=["second"])
+
+        assert {l["name"] for l in result["labels"]} == {"first", "second"}
+
+    async def test_issue_label_remove(self, test_project, test_team):
+        await self._make_label(test_team.id, "removable")
+        iss = await tools.issue_create(title="Will lose a label")
+        await tools.issue_label(identifier=iss["identifier"], add=["removable"])
+
+        result = await tools.issue_label(identifier=iss["identifier"], remove=["removable"])
+
+        assert result["labels_removed"] == ["removable"]
+        assert result["labels"] == []
+
+    async def test_issue_label_add_twice_is_idempotent(self, test_project, test_team):
+        await self._make_label(test_team.id, "dupe-label")
+        iss = await tools.issue_create(title="Idempotent")
+        await tools.issue_label(identifier=iss["identifier"], add=["dupe-label"])
+        result = await tools.issue_label(identifier=iss["identifier"], add=["dupe-label"])
+
+        assert result["labels_added"] == []
+        assert len(result["labels"]) == 1
+
+    async def test_labelled_issue_is_findable_by_the_issue_list_filter(
+        self, test_project, test_team
+    ):
+        """Closes the loop the ticket was about: filterable AND writable."""
+        await self._make_label(test_team.id, "findme")
+        iss = await tools.issue_create(title="Findable")
+        await tools.issue_label(identifier=iss["identifier"], add=["findme"])
+
+        found = await tools.issue_list(label="findme")
+        assert any(i["identifier"] == iss["identifier"] for i in found["issues"])
+
+    async def test_issue_label_unknown_label_is_an_error(self, test_project, test_team):
+        await self._make_label(test_team.id, "known")
+        iss = await tools.issue_create(title="Bad label")
+        result = await tools.issue_label(identifier=iss["identifier"], add=["no-such-label"])
+        assert "error" in result
+
+    async def test_issue_label_requires_add_or_remove(self, test_project):
+        iss = await tools.issue_create(title="Nothing to do")
+        assert "error" in await tools.issue_label(identifier=iss["identifier"])
+
+
+
 class TestDocListDocCreateExplicitProject:
     async def test_doc_list_explicit_project(self, test_project):
         created = await tools.doc_create(title="Scoped doc", project=test_project.key)
@@ -217,6 +441,599 @@ class TestDocListDocCreateExplicitProject:
     async def test_doc_create_is_global(self, test_team):
         result = await tools.doc_create(title="Global doc", is_global=True)
         assert result["project_id"] is None
+
+
+class TestDocUpdate:
+    """doc_update goes through documents_api.update_document (CHT-1330),
+    which is what makes revision history work -- there is no DB trigger
+    behind document_revisions, the snapshot is appended by
+    DocumentService.update(). A tool that wrote via the ORM directly
+    would silently gap the history, so the revision assertions below are
+    the point of this class, not incidental coverage.
+    """
+
+    async def test_doc_update_content(self, test_project):
+        created = await tools.doc_create(title="Editable", content="v1 body")
+        result = await tools.doc_update(document_id=created["id"], content="v2 body")
+        assert result["content"] == "v2 body"
+        assert result["title"] == "Editable"
+
+    async def test_doc_update_appends_a_revision(self, test_project):
+        from app.services.document_service import DocumentService
+
+        created = await tools.doc_create(title="Versioned", content="v1 body")
+        await tools.doc_update(document_id=created["id"], content="v2 body")
+
+        revisions = await DocumentService().list_revisions(created["id"])
+        assert [r.version for r in revisions] == [2, 1]
+        # The pre-edit body is still readable -- the edit didn't destroy it.
+        assert next(r for r in revisions if r.version == 1).content == "v1 body"
+        assert next(r for r in revisions if r.version == 2).content == "v2 body"
+
+    async def test_doc_update_omitted_fields_untouched(self, test_project):
+        created = await tools.doc_create(title="Keep icon", content="body", icon="📘")
+        result = await tools.doc_update(document_id=created["id"], title="Renamed")
+        assert result["title"] == "Renamed"
+        assert result["icon"] == "📘"
+        assert result["content"] == "body"
+
+    async def test_doc_update_resolves_by_title(self, test_project):
+        created = await tools.doc_create(title="Fuzzy Editable Doc", content="body")
+        result = await tools.doc_update(document_id="Fuzzy Editable Doc", content="edited")
+        assert result["id"] == created["id"]
+        assert result["content"] == "edited"
+
+    async def test_doc_update_move_to_project(self, test_project):
+        created = await tools.doc_create(title="Movable", is_global=True)
+        assert created["project_id"] is None
+        result = await tools.doc_update(document_id=created["id"], project=test_project.key)
+        assert result["project_id"] == test_project.id
+
+    async def test_doc_update_is_global_detaches_project(self, test_project):
+        created = await tools.doc_create(title="Detachable", project=test_project.key)
+        assert created["project_id"] == test_project.id
+        result = await tools.doc_update(document_id=created["id"], is_global=True)
+        assert result["project_id"] is None
+
+    async def test_doc_update_no_fields_is_an_error(self, test_project):
+        created = await tools.doc_create(title="Untouched", content="body")
+        result = await tools.doc_update(document_id=created["id"])
+        assert "error" in result
+
+    async def test_doc_update_rejects_project_and_is_global_together(self, test_project):
+        created = await tools.doc_create(title="Ambiguous", content="body")
+        result = await tools.doc_update(
+            document_id=created["id"], project=test_project.key, is_global=True,
+        )
+        assert "error" in result
+
+    async def test_doc_update_unknown_document_is_an_error(self, test_project):
+        result = await tools.doc_update(document_id="no-such-document", content="x")
+        assert "error" in result
+
+
+class TestDocLinkUnlink:
+    async def test_link_then_doc_view_shows_it(self, test_project):
+        doc = await tools.doc_create(title="Design note", content="...")
+        iss = await tools.issue_create(title="Implements the design")
+
+        result = await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        assert result["linked"] is True
+
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert [i["identifier"] for i in viewed["linked_issues"]] == [iss["identifier"]]
+
+    async def test_unlink_removes_it_but_keeps_both_ends(self, test_project):
+        doc = await tools.doc_create(title="Temporary link", content="...")
+        iss = await tools.issue_create(title="Unrelated after all")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+
+        result = await tools.doc_unlink(document_id=doc["id"], identifier=iss["identifier"])
+        assert result["unlinked"] is True
+
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert viewed["linked_issues"] == []
+        # Both ends survive -- this removes an association, not content.
+        assert "error" not in await tools.issue_view(iss["identifier"])
+
+    async def test_link_is_idempotent(self, test_project):
+        doc = await tools.doc_create(title="Linked twice", content="...")
+        iss = await tools.issue_create(title="Same issue")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        second = await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+
+        assert "error" not in second
+        viewed = await tools.doc_view(document_id=doc["id"])
+        assert len(viewed["linked_issues"]) == 1
+
+    async def test_link_resolves_document_by_title(self, test_project):
+        doc = await tools.doc_create(title="Findable By Title", content="...")
+        iss = await tools.issue_create(title="Points at it")
+
+        result = await tools.doc_link(
+            document_id="Findable By Title", identifier=iss["identifier"],
+        )
+        assert result["document_id"] == doc["id"]
+
+    async def test_link_unknown_issue_is_an_error(self, test_project):
+        doc = await tools.doc_create(title="Orphan link", content="...")
+        assert "error" in await tools.doc_link(document_id=doc["id"], identifier="NOPE-1")
+
+
+
+class TestSprintTools:
+    """CHT-1332: an agent that hits sprint_in_arrears could previously
+    neither see why nor clear it. These tests reproduce that dead end and
+    prove the new tools break it.
+    """
+
+    async def _active(self, project_id=None):
+        """The active sprint.
+
+        This used to exist because the sprint tools could not cope with a
+        project whose first sprint had never been materialised -- calling
+        sprint_current() first was a workaround, and it hid that bug from
+        every test in this class. resolve_sprint now materialises like the
+        routed endpoint does (CHT-1351), so this is just a convenience for
+        getting at the sprint's fields; TestReviewRegressions covers the
+        fresh-project path directly.
+        """
+        return await tools.sprint_current()
+
+    async def _set_budget(self, sprint_id, budget):
+        from app.schemas.sprint import SprintUpdate
+        from app.services.sprint_service import SprintService
+        svc = SprintService()
+        return await svc.update(await svc.get_by_id(sprint_id), SprintUpdate(budget=budget))
+
+    async def test_sprint_current_reports_budget_state(self, test_project):
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 10)
+
+        result = await tools.sprint_current()
+
+        assert result["budget"] == 10
+        assert result["points_spent"] == 0
+        assert result["in_arrears"] is False
+        assert result["arrears_by"] == 0
+        assert result["points_remaining"] == 10
+
+    async def test_sprint_current_surfaces_arrears(self, test_project):
+        """The state that blocks issue_update, made visible."""
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 1)
+
+        for title in ("First", "Second"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        result = await tools.sprint_current()
+
+        assert result["points_spent"] == 2
+        assert result["in_arrears"] is True
+        assert result["arrears_by"] == 1
+        assert result["points_remaining"] == -1
+
+    async def test_arrears_blocks_writes_and_close_clears_it(self, test_project):
+        """End to end: the dead end, then the way out."""
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], 1)
+
+        for title in ("A", "B"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        blocked = await tools.issue_create(title="Cannot start")
+        refused = await tools.issue_update(
+            identifier=blocked["identifier"], status="in_progress",
+        )
+        assert "error" in refused
+
+        closed = await tools.sprint_close()
+        assert "error" not in closed
+
+        # A fresh active sprint, and the write now goes through.
+        after = await tools.issue_update(
+            identifier=blocked["identifier"], status="in_progress",
+        )
+        assert "error" not in after
+        assert after["status"] == "in_progress"
+
+    async def test_sprint_current_unlimited_budget(self, test_project):
+        sprint = await self._active()
+        await self._set_budget(sprint["id"], None)
+        result = await tools.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["points_remaining"] is None
+
+    async def test_sprint_list(self, test_project):
+        await self._active()
+        result = await tools.sprint_list()
+        assert len(result["sprints"]) >= 1
+        assert "in_arrears" in result["sprints"][0]
+
+    async def test_sprint_close_reports_whether_it_rotated(self, test_project):
+        await self._active()
+        result = await tools.sprint_close()
+        assert "entered_limbo" in result
+        assert result["entered_limbo"] is False
+
+    async def test_sprint_transactions_audit_trail(self, test_project):
+        await self._active()
+        iss = await tools.issue_create(title="Charged", estimate=3)
+        await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        result = await tools.sprint_transactions()
+
+        assert len(result["transactions"]) == 1
+        assert result["transactions"][0]["points"] == 3
+
+    async def test_unestimated_ticket_charges_one_point(self, test_project):
+        """Documented rule (DEFAULT_ONE_POINT) -- pinned so the tool's
+        docstring stays honest."""
+        await self._active()
+        iss = await tools.issue_create(title="No estimate")
+        await tools.issue_update(identifier=iss["identifier"], status="done")
+
+        assert (await tools.sprint_current())["points_spent"] == 1
+
+    async def test_sprint_add_and_remove(self, test_project):
+        await self._active()
+        a = await tools.issue_create(title="Sched A")
+        b = await tools.issue_create(title="Sched B")
+
+        added = await tools.sprint_add(identifiers=[a["identifier"], b["identifier"]])
+        assert added["updated"] == [a["identifier"], b["identifier"]]
+        assert added["failed"] == []
+        assert (await tools.issue_view(a["identifier"]))["sprint_id"] == added["sprint_id"]
+
+        removed = await tools.sprint_remove(identifiers=[a["identifier"]])
+        assert removed["updated"] == [a["identifier"]]
+        assert (await tools.issue_view(a["identifier"]))["sprint_id"] is None
+
+    async def test_sprint_add_reports_partial_failure(self, test_project):
+        """One bad identifier must not discard the rest of the batch."""
+        await self._active()
+        good = await tools.issue_create(title="Real one")
+
+        result = await tools.sprint_add(identifiers=[good["identifier"], "NOPE-999"])
+
+        assert result["updated"] == [good["identifier"]]
+        assert [f["identifier"] for f in result["failed"]] == ["NOPE-999"]
+
+    async def test_sprint_add_requires_identifiers(self, test_project):
+        assert "error" in await tools.sprint_add(identifiers=[])
+
+
+
+class TestRitualTools:
+    """CHT-1333: issue_update took an `attest` map keyed by ritual name,
+    but nothing on this surface could tell you those names -- and
+    sprint_close could drop a project into limbo with no way out.
+    """
+
+    async def _make_ritual(self, project_id, name, prompt="Did you do it?", **kw):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        return await RitualService().create(
+            RitualCreate(name=name, prompt=prompt,
+                         trigger=kw.pop("trigger", RitualTrigger.EVERY_SPRINT), **kw),
+            project_id,
+        )
+
+    async def test_ritual_list_exposes_names_and_prompts(self, test_project):
+        await self._make_ritual(test_project.id, "retro", prompt="Write the retro.")
+        result = await tools.ritual_list()
+        by_name = {r["name"]: r for r in result["rituals"]}
+        assert "retro" in by_name
+        assert by_name["retro"]["prompt"] == "Write the retro."
+
+    async def test_ritual_pending_is_empty_when_not_in_limbo(self, test_project):
+        await self._make_ritual(test_project.id, "retro")
+        result = await tools.ritual_pending()
+        assert result["scope"] == "sprint"
+        assert result["in_limbo"] is False
+
+    async def test_close_enters_limbo_and_attesting_clears_it(self, test_project):
+        """The full way out, which had no MCP path before."""
+        await self._make_ritual(test_project.id, "retro", prompt="Write the retro.")
+        await tools.sprint_current()
+
+        closed = await tools.sprint_close()
+        assert closed["entered_limbo"] is True
+
+        pending = await tools.ritual_pending()
+        assert pending["in_limbo"] is True
+        assert pending["unattested"] == ["retro"]
+        # The prompt is there: the agent can see what to write.
+        assert pending["pending_rituals"][0]["prompt"] == "Write the retro."
+
+        result = await tools.ritual_attest(ritual="retro", note="Retro written up.")
+        assert result["approved"] is True
+        assert result["still_in_limbo"] is False
+
+        assert (await tools.ritual_pending())["in_limbo"] is False
+
+    async def test_attest_requires_a_note_and_quotes_the_prompt(self, test_project):
+        """A note-less attest must say what the note should answer --
+        the caller has no other way to see the prompt."""
+        await self._make_ritual(test_project.id, "gate", prompt="Is the ADR written?")
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        result = await tools.ritual_attest(ritual="gate")
+
+        assert "error" in result
+        assert "Is the ADR written?" in result["error"]
+
+    async def test_attest_unknown_ritual_lists_the_real_ones(self, test_project):
+        await self._make_ritual(test_project.id, "retro")
+        result = await tools.ritual_attest(ritual="no-such-ritual", note="x")
+        assert "error" in result
+        assert "retro" in result["error"]
+
+    async def test_ritual_name_match_is_case_insensitive(self, test_project):
+        await self._make_ritual(test_project.id, "Retro")
+        await tools.sprint_current()
+        await tools.sprint_close()
+        result = await tools.ritual_attest(ritual="retro", note="done")
+        assert "error" not in result
+
+    async def test_ticket_ritual_pending_and_attest(self, test_project):
+        """Ticket-scoped rituals: the names issue_update's `attest` needs."""
+        from app.enums import RitualTrigger
+        await self._make_ritual(
+            test_project.id, "close-gate", prompt="Linked the commit?",
+            trigger=RitualTrigger.TICKET_CLOSE,
+        )
+        iss = await tools.issue_create(title="Gated ticket")
+
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        assert pending["scope"] == "ticket"
+        assert "close-gate" in pending["unattested"]
+
+        result = await tools.ritual_attest(
+            ritual="close-gate", note="abc123", identifier=iss["identifier"],
+        )
+        assert result["scope"] == "ticket"
+        assert "error" not in result
+
+        # Having attested, the close now goes through.
+        done = await tools.issue_update(identifier=iss["identifier"], status="done")
+        assert "error" not in done
+        assert done["status"] == "done"
+
+    async def test_ticket_ritual_without_identifier_says_so(self, test_project):
+        """Dispatch is automatic, but a ticket ritual still needs a ticket."""
+        from app.enums import RitualTrigger
+        await self._make_ritual(
+            test_project.id, "claim-gate", trigger=RitualTrigger.TICKET_CLAIM,
+        )
+        result = await tools.ritual_attest(ritual="claim-gate", note="x")
+        assert "error" in result
+        assert "identifier" in result["error"]
+
+
+
+class TestIssueStartClaimParity:
+    async def test_claim_gated_ticket_cannot_start_without_attest(self, test_project):
+        """The bug: a claim ritual made issue_start unusable, with the
+        only workaround being to bypass it via issue_update."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch cut?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Gated claim")
+
+        refused = await tools.issue_start(identifier=iss["identifier"])
+        assert "error" in refused
+
+        started = await tools.issue_start(
+            identifier=iss["identifier"], attest={"claim-gate": "cut feature/x"},
+        )
+        assert "error" not in started
+        assert started["status"] == "in_progress"
+
+    async def test_lease_seconds_is_honoured(self, test_project):
+        iss = await tools.issue_create(title="Long job")
+        started = await tools.issue_start(identifier=iss["identifier"], lease_seconds=14400)
+        assert "error" not in started
+        assert started["lease_expires_at"] is not None
+
+    async def test_start_without_lease_still_works(self, test_project):
+        iss = await tools.issue_create(title="Default lease")
+        started = await tools.issue_start(identifier=iss["identifier"])
+        assert started["status"] == "in_progress"
+
+    async def test_start_rejects_empty_attestation_note(self, test_project):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Blank note")
+        result = await tools.issue_start(identifier=iss["identifier"], attest={"claim-gate": " "})
+        assert "error" in result
+
+    async def test_ritual_pending_supplies_the_name_issue_start_needs(self, test_project):
+        """CHT-1333 + CHT-1342 together: discover the ritual, then use it."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="claim-gate", prompt="Branch cut?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Discoverable")
+
+        pending = await tools.ritual_pending(identifier=iss["identifier"])
+        name = pending["unattested"][0]
+
+        started = await tools.issue_start(
+            identifier=iss["identifier"], attest={name: "cut it"},
+        )
+        assert started["status"] == "in_progress"
+
+
+
+class TestReviewRegressions:
+    """Regressions for the oppositional review on PR #262 (CHT-1351)."""
+
+    async def _ritual(self, project_id, name, **kw):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        return await RitualService().create(
+            RitualCreate(name=name, prompt=kw.pop("prompt", "?"),
+                         trigger=kw.pop("trigger", RitualTrigger.EVERY_SPRINT), **kw),
+            project_id,
+        )
+
+    # --- C1: sprint tools on a project whose first sprint was never created ---
+
+    async def test_sprint_tools_work_on_a_project_with_no_sprint_yet(self, test_project):
+        """Previously every sprint tool errored here while the same call
+        over stdio silently created the sprint. The old test suite hid
+        this by calling sprint_current() first."""
+        iss = await tools.issue_create(title="Needs scheduling")
+
+        result = await tools.sprint_add(identifiers=[iss["identifier"]])
+
+        assert "error" not in result
+        assert result["updated"] == [iss["identifier"]]
+
+    async def test_sprint_transactions_on_a_fresh_project(self, test_project):
+        result = await tools.sprint_transactions()
+        assert "error" not in result
+        assert result["transactions"] == []
+
+    async def test_sprint_close_on_a_fresh_project(self, test_project):
+        result = await tools.sprint_close()
+        assert "error" not in result
+
+    # --- C8: sprint reference resolution matches the CLI's ---
+
+    async def test_sprint_resolves_by_bare_number_and_substring(self, test_project):
+        await tools.sprint_current()  # materialise "Sprint 1"
+        iss = await tools.issue_create(title="Schedulable")
+
+        by_number = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="1")
+        assert "error" not in by_number
+
+        # "Sprint" alone matches both Sprint 1 and Sprint 2, and ambiguity
+        # must refuse rather than silently pick -- same as the CLI.
+        ambiguous = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="Sprint")
+        assert "error" in ambiguous
+        assert "Ambiguous" in str(ambiguous["error"])
+
+        by_substring = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="rint 1")
+        assert "error" not in by_substring
+
+    async def test_unknown_sprint_names_the_real_ones(self, test_project):
+        await tools.sprint_current()
+        result = await tools.sprint_add(identifiers=["X-1"], sprint="nope")
+        assert "error" in result
+        assert "Sprint 1" in str(result["error"])
+
+    # --- C3: a successful close must not read as "still blocked" ---
+
+    async def test_sprint_close_reports_the_newly_active_sprint(self, test_project):
+        from app.schemas.sprint import SprintUpdate
+        from app.services.sprint_service import SprintService
+
+        cur = await tools.sprint_current()
+        svc = SprintService()
+        await svc.update(await svc.get_by_id(cur["id"]), SprintUpdate(budget=1))
+        for title in ("A", "B"):
+            i = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=i["identifier"], status="done")
+
+        assert (await tools.sprint_current())["in_arrears"] is True
+
+        closed = await tools.sprint_close()
+
+        # The closed sprint keeps its history...
+        assert closed["in_arrears"] is True
+        # ...but the caller's real question is answered separately.
+        assert closed["now_active"] is not None
+        assert closed["now_active"]["in_arrears"] is False
+        assert closed["now_active"]["id"] != closed["id"]
+
+    # --- C12: ritual_pending(identifier=...) needs no project scoping ---
+
+    async def test_ritual_pending_for_a_ticket_needs_no_project_context(self, test_project):
+        from app.enums import RitualTrigger
+        await self._ritual(test_project.id, "close-gate", trigger=RitualTrigger.TICKET_CLOSE)
+        iss = await tools.issue_create(title="Gated")
+
+        result = await tools.ritual_pending(identifier=iss["identifier"])
+
+        assert "error" not in result
+        assert result["scope"] == "ticket"
+
+    # --- ritual_complete had no backend behavioural test at all ---
+
+    async def test_ritual_complete_clears_a_gate_sprint_ritual(self, test_project):
+        from app.enums import ApprovalMode
+        await self._ritual(test_project.id, "signoff", approval_mode=ApprovalMode.GATE)
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        assert (await tools.ritual_pending())["in_limbo"] is True
+
+        result = await tools.ritual_complete(ritual="signoff", note="signed")
+
+        assert "error" not in result
+        assert result["scope"] == "sprint"
+        assert result["still_in_limbo"] is False
+
+    async def test_ritual_complete_dispatches_to_the_ticket_branch(self, test_project):
+        """The _trigger_of dispatch, whose own docstring warns the failure
+        is silent and surfaces as an unrelated 'not in limbo' error."""
+        from app.enums import ApprovalMode, RitualTrigger
+        await self._ritual(test_project.id, "close-signoff",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.GATE)
+        iss = await tools.issue_create(title="Gate-closed")
+
+        result = await tools.ritual_complete(
+            ritual="close-signoff", note="signed", identifier=iss["identifier"],
+        )
+
+        assert "error" not in result
+        assert result["scope"] == "ticket"
+        assert result["identifier"] == iss["identifier"]
+
+    async def test_ritual_complete_ticket_ritual_without_identifier(self, test_project):
+        from app.enums import ApprovalMode, RitualTrigger
+        await self._ritual(test_project.id, "needs-ticket",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.GATE)
+        result = await tools.ritual_complete(ritual="needs-ticket", note="x")
+        assert "error" in result
+        assert "identifier" in str(result["error"])
+
+    # --- C6: gate rituals refuse attestation; the docstring now says so ---
+
+    async def test_attesting_a_gate_ritual_is_refused(self, test_project):
+        from app.enums import ApprovalMode
+        await self._ritual(test_project.id, "gate-only", approval_mode=ApprovalMode.GATE)
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        result = await tools.ritual_attest(ritual="gate-only", note="nope")
+
+        assert "error" in result
+
 
 
 class TestActivityRecentExplicitProject:

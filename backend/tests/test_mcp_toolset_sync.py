@@ -25,10 +25,34 @@ from app.mcp_server.tools import ALL_TOOLS, build_server
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
 
 # Tools whose schema must match the stdio server exactly.
-_IDENTICAL_TOOLS = {"issue_view", "issue_update", "issue_comment", "issue_start", "doc_view"}
+_IDENTICAL_TOOLS = {
+    "issue_view", "issue_update", "issue_comment", "issue_start",
+    # doc_view resolves its document via _resolve_document_id, which
+    # already searches every team the API key can reach, so it needs no
+    # `team`. doc_update DOES take one -- not to find the document, but
+    # to disambiguate a destination `project` when moving it (CHT-1351) --
+    # so it lives in the additive set below.
+    "doc_view",
+    # Relation tools resolve issues by identifier, which is already
+    # team-unambiguous, so they need no `team` parameter either.
+    "issue_relations", "issue_block", "issue_unblock",
+    # issue_label resolves its team from the issue itself.
+    "issue_label",
+    # doc_link/doc_unlink resolve both ends by id/identifier.
+    "doc_link", "doc_unlink",
+    # sprint_remove takes only issue identifiers.
+    "sprint_remove",
+}
 # Tools that legitimately gain one additional optional `team` parameter
 # for HTTP's multi-team-per-API-key context resolution (scope.py).
-_ADDITIVE_TEAM_TOOLS = {"issue_list", "issue_create", "doc_list", "doc_create", "activity_recent", "project_list"}
+_ADDITIVE_TEAM_TOOLS = {
+    "issue_list", "issue_create", "issue_ready", "doc_list", "doc_create",
+    "activity_recent", "project_list",
+    "label_list",
+    "sprint_current", "sprint_list", "sprint_close",
+    "sprint_transactions", "sprint_add", "doc_update",
+    "ritual_pending", "ritual_list", "ritual_attest", "ritual_complete",
+}
 
 
 async def _live_toolset() -> dict:
@@ -49,7 +73,7 @@ def test_all_tools_registered():
     assert {fn.__name__ for fn in ALL_TOOLS} == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 
 
-async def test_backend_covers_all_eleven_tools(snapshot):
+async def test_backend_covers_the_full_toolset(snapshot):
     live = await _live_toolset()
     assert set(live.keys()) == set(snapshot.keys()) == _IDENTICAL_TOOLS | _ADDITIVE_TEAM_TOOLS
 

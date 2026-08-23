@@ -80,18 +80,33 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """Exactly the 11 tools (the 10 from CHT-1247 plus project_list,
-        CHT-1284), no more, no less."""
+        """The full curated toolset, no more, no less.
+
+        Deliberately spelled out rather than counted: the count moves
+        every time a tool lands, and a number in the test name tells
+        you nothing about which tool went missing.
+        """
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
-            "issue_list", "issue_view", "issue_create", "issue_update",
-            "issue_comment", "issue_start", "doc_list", "doc_view",
-            "doc_create", "activity_recent", "project_list",
+            "activity_recent", "doc_create", "doc_link", "doc_list",
+            "doc_unlink", "doc_update", "doc_view", "issue_block",
+            "issue_comment", "issue_create", "issue_label", "issue_list",
+            "issue_ready", "issue_relations", "issue_start", "issue_unblock",
+            "issue_update", "issue_view", "label_list", "project_list",
+            "ritual_attest", "ritual_complete", "ritual_list",
+            "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
+            "sprint_list", "sprint_remove", "sprint_transactions",
         }
 
     def test_no_delete_tools(self, mcp_mod):
+        """Destructive operations stay off this surface deliberately.
+
+        This used to also assert no `ready` tool, pinning the v1
+        exclusion that deferred it to CHT-1245. That ticket landed, so
+        issue_ready is now intentionally present (CHT-1334) and only the
+        delete guard is still a live invariant.
+        """
         assert not any("delete" in t.__name__ for t in mcp_mod.ALL_TOOLS)
-        assert not any("ready" in t.__name__ for t in mcp_mod.ALL_TOOLS)
 
     def test_build_server_registers_all_tools(self, mcp_mod):
         server = mcp_mod.build_server()
@@ -562,6 +577,287 @@ class TestIssueStart:
         assert result == started
 
 
+
+class TestIssueStartClaimParity:
+    """CHT-1342: issue_start is the CLI's `issue claim` alias, so it has
+    to carry claim's --attest and --lease. Without attest, a ticket with
+    a claim ritual simply could not be started through this tool.
+    """
+
+    RITUAL = {"id": "r-1", "name": "claim-gate", "approval_mode": "auto",
+              "attestation": None}
+
+    def test_start_attests_claim_ritual_before_claiming(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "branch cut"})
+
+        client.attest_ritual_for_issue.assert_called_once_with(
+            "r-1", "issue-uuid-1", "branch cut")
+        # Attestation happens before the claim, not after.
+        assert client.update_issue.called
+
+    def test_start_passes_lease_seconds(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100", lease_seconds=14400)
+
+        _, kwargs = client.update_issue.call_args
+        assert kwargs["lease_seconds"] == 14400
+
+    def test_start_omits_lease_when_not_given(self, mcp_mod, mock_issue):
+        """No lease means server default, not an explicit null."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.update_issue = MagicMock(return_value={})
+
+        mcp_mod.issue_start(identifier="CHT-100")
+
+        _, kwargs = client.update_issue.call_args
+        assert "lease_seconds" not in kwargs
+
+    def test_start_rejects_empty_attestation_note(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "  "})
+
+        assert "error" in result
+        client.update_issue.assert_not_called()
+
+    def test_start_attesting_an_already_done_ritual_is_idempotent(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_me = MagicMock(return_value={"id": "user-1"})
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [],
+                          "completed_rituals": [{"name": "claim-gate"}]})
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "done"})
+
+        assert "error" not in result
+        client.attest_ritual_for_issue.assert_not_called()
+
+    def test_start_unknown_ritual_names_the_pending_ones(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.RITUAL], "completed_rituals": []})
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_start(identifier="CHT-100", attest={"wrong-name": "x"})
+
+        assert "claim-gate" in result["error"]
+        client.update_issue.assert_not_called()
+
+
+class TestIssueRelations:
+    def test_issue_relations(self, mcp_mod, mock_issue):
+        from cli.main import client
+        rels = [{"id": "rel-1", "related_issue_id": "issue-uuid-2",
+                 "relation_type": "blocked_by", "direction": "incoming"}]
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=rels)
+
+        assert mcp_mod.issue_relations(identifier="CHT-100") == {"relations": rels}
+        client.get_relations.assert_called_once_with("issue-uuid-1")
+
+    def test_issue_relations_empty(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=None)
+        assert mcp_mod.issue_relations(identifier="CHT-100") == {"relations": []}
+
+    def test_issue_block_direction(self, mcp_mod, mock_issue):
+        """`identifier` blocks `blocked` -- the first issue is the blocker."""
+        from cli.main import client
+        blocker = dict(mock_issue, id="issue-uuid-1", identifier="CHT-100")
+        blocked = dict(mock_issue, id="issue-uuid-2", identifier="CHT-200")
+        client.get_issue_by_identifier = MagicMock(side_effect=[blocker, blocked])
+        client.create_relation = MagicMock(return_value={"id": "rel-1"})
+
+        mcp_mod.issue_block(identifier="CHT-100", blocked="CHT-200")
+
+        client.create_relation.assert_called_once_with(
+            "issue-uuid-1", "issue-uuid-2", "blocks",
+        )
+
+    def test_issue_block_custom_type(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.create_relation = MagicMock(return_value={"id": "rel-1"})
+
+        mcp_mod.issue_block(identifier="CHT-1", blocked="CHT-2", relation_type="duplicates")
+
+        assert client.create_relation.call_args[0][2] == "duplicates"
+
+    def test_issue_unblock_resolves_relation_from_the_other_issue(self, mcp_mod, mock_issue):
+        from cli.main import client
+        iss = dict(mock_issue, id="issue-uuid-1")
+        other = dict(mock_issue, id="issue-uuid-2")
+        client.get_issue_by_identifier = MagicMock(side_effect=[iss, other])
+        client.get_relations = MagicMock(return_value=[
+            {"id": "rel-1", "related_issue_id": "issue-uuid-2", "relation_type": "blocks"},
+            {"id": "rel-9", "related_issue_id": "issue-uuid-9", "relation_type": "blocks"},
+        ])
+        client.delete_relation = MagicMock(return_value=None)
+
+        result = mcp_mod.issue_unblock(identifier="CHT-100", related="CHT-200")
+
+        assert result["deleted"] is True
+        client.delete_relation.assert_called_once_with("issue-uuid-1", "rel-1")
+
+    def test_issue_unblock_ambiguous_pair_asks_for_relation_id(self, mcp_mod, mock_issue):
+        """Two relations between the same pair: refuse rather than guess."""
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.get_relations = MagicMock(return_value=[
+            {"id": "rel-1", "related_issue_id": "b", "relation_type": "blocks"},
+            {"id": "rel-2", "related_issue_id": "b", "relation_type": "relates_to"},
+        ])
+        client.delete_relation = MagicMock(return_value=None)
+
+        result = mcp_mod.issue_unblock(identifier="CHT-1", related="CHT-2")
+
+        assert "error" in result
+        assert "relation_id" in result["error"]
+        client.delete_relation.assert_not_called()
+
+    def test_issue_unblock_no_such_relation(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[dict(mock_issue, id="a"), dict(mock_issue, id="b")])
+        client.get_relations = MagicMock(return_value=[])
+        result = mcp_mod.issue_unblock(identifier="CHT-1", related="CHT-2")
+        assert "error" in result
+
+    def test_issue_unblock_by_relation_id_skips_lookup(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, id="a"))
+        client.get_relations = MagicMock(return_value=[])
+        client.delete_relation = MagicMock(return_value=None)
+
+        mcp_mod.issue_unblock(identifier="CHT-1", relation_id="rel-7")
+
+        client.delete_relation.assert_called_once_with("a", "rel-7")
+        client.get_relations.assert_not_called()
+
+    def test_issue_unblock_requires_one_of_the_two_selectors(self, mcp_mod):
+        result = mcp_mod.issue_unblock(identifier="CHT-1")
+        assert "error" in result
+
+
+
+class TestLabelTools:
+    def test_label_list(self, mcp_mod):
+        from cli.main import client
+        labels = [{"id": "lab-1", "name": "bug", "color": "#f00"}]
+        client.get_labels = MagicMock(return_value=labels)
+        assert mcp_mod.label_list() == {"labels": labels}
+        # limit=1000 so a team with >100 labels stays resolvable (CHT-1351)
+        client.get_labels.assert_called_once_with("test-team-123", limit=1000)
+
+    def test_label_list_empty(self, mcp_mod):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=None)
+        assert mcp_mod.label_list() == {"labels": []}
+
+    def test_issue_label_add_resolves_name_to_id(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"])
+
+        client.add_label_to_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        assert result["labels_added"] == ["bug"]
+
+    def test_issue_label_add_is_idempotent(self, mcp_mod, mock_issue):
+        """Already-present label: no call, no error."""
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-1", "name": "bug"}]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"])
+
+        client.add_label_to_issue.assert_not_called()
+        assert result["labels_added"] == []
+
+    def test_issue_label_remove(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-1", "name": "bug"}]))
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", remove=["bug"])
+
+        client.remove_label_from_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        assert result["labels_removed"] == ["bug"]
+
+    def test_issue_label_remove_absent_is_a_noop(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", remove=["bug"])
+
+        client.remove_label_from_issue.assert_not_called()
+        assert result["labels_removed"] == []
+
+    def test_issue_label_add_and_remove_in_one_call(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[
+            {"id": "lab-1", "name": "bug"}, {"id": "lab-2", "name": "triage"}])
+        client.get_issue_by_identifier = MagicMock(
+            return_value=dict(mock_issue, labels=[{"id": "lab-2", "name": "triage"}]))
+        client.add_label_to_issue = MagicMock(return_value={})
+        client.remove_label_from_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["bug"], remove=["triage"])
+
+        client.add_label_to_issue.assert_called_once_with("issue-uuid-1", "lab-1")
+        client.remove_label_from_issue.assert_called_once_with("issue-uuid-1", "lab-2")
+        assert result["labels_added"] == ["bug"]
+        assert result["labels_removed"] == ["triage"]
+
+    def test_issue_label_unknown_label_is_an_error(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_labels = MagicMock(return_value=[{"id": "lab-1", "name": "bug"}])
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue, labels=[]))
+        client.add_label_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.issue_label(identifier="CHT-100", add=["nonexistent"])
+
+        assert "error" in result
+        client.add_label_to_issue.assert_not_called()
+
+    def test_issue_label_requires_add_or_remove(self, mcp_mod):
+        result = mcp_mod.issue_label(identifier="CHT-100")
+        assert "error" in result
+
+
 # ---------------------------------------------------------------------------
 # doc_list / doc_view / doc_create
 # ---------------------------------------------------------------------------
@@ -629,6 +925,57 @@ class TestDocs:
             content="## Summary", icon=None, project_id="test-project-123",
         )
 
+    def test_issue_ready_defaults_to_current_project(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        result = mcp_mod.issue_ready()
+
+        assert result == {"issues": [mock_issue]}
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["project_id"] == "test-project-123"
+        assert kwargs["team_id"] is None
+        assert kwargs["mine"] is False
+        assert kwargs["include_assigned"] is False
+
+    def test_issue_ready_all_projects_scopes_to_team(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_ready(all_projects=True)
+
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["project_id"] is None
+        assert kwargs["team_id"] == "test-team-123"
+
+    def test_issue_ready_mine(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[mock_issue])
+
+        mcp_mod.issue_ready(mine=True)
+
+        _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["mine"] is True
+
+    def test_issue_ready_rejects_mine_with_include_assigned(self, mcp_mod):
+        """Mirrors the CLI's own UsageError -- the two flags mean opposite
+        things about assignment, so silently letting one win would answer
+        a question the caller didn't ask.
+        """
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=[])
+
+        result = mcp_mod.issue_ready(mine=True, include_assigned=True)
+
+        assert "error" in result
+        client.get_ready_issues.assert_not_called()
+
+    def test_issue_ready_empty_returns_empty_list(self, mcp_mod):
+        from cli.main import client
+        client.get_ready_issues = MagicMock(return_value=None)
+        assert mcp_mod.issue_ready() == {"issues": []}
+
+
     def test_doc_create_global(self, mcp_mod, mock_document):
         from cli.main import client
         client.create_document = MagicMock(return_value=mock_document)
@@ -637,6 +984,350 @@ class TestDocs:
 
         _, kwargs = client.create_document.call_args
         assert kwargs["project_id"] is None
+
+    def test_doc_update_partial_only_sends_given_fields(self, mcp_mod, mock_document):
+        """Omitted fields must not reach the PATCH body: the backend keys
+        off model_dump(exclude_unset=True), and it's that same dict that
+        decides whether the edit snapshots a new revision (CHT-1330).
+        """
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(document_id="doc-uuid-1", content="## Rewritten")
+
+        assert result == mock_document
+        client.update_document.assert_called_once_with(
+            "doc-uuid-1", content="## Rewritten",
+        )
+
+    def test_doc_update_resolves_document_by_title(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        mcp_mod.doc_update(document_id="Sprint Report", title="Sprint Report Q3")
+
+        args, kwargs = client.update_document.call_args
+        assert args[0] == "doc-uuid-1"
+        assert kwargs == {"title": "Sprint Report Q3"}
+
+    def test_doc_update_is_global_detaches_project(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        mcp_mod.doc_update(document_id="doc-uuid-1", is_global=True)
+
+        _, kwargs = client.update_document.call_args
+        assert kwargs == {"project_id": None}
+
+    def test_doc_update_no_fields_is_an_error(self, mcp_mod, mock_document):
+        """A no-op PATCH would still bump updated_at and log an activity
+        row, so refuse it at the boundary rather than pass it through.
+        """
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(document_id="doc-uuid-1")
+
+        assert "error" in result
+        client.update_document.assert_not_called()
+
+    def test_doc_update_rejects_project_and_is_global_together(self, mcp_mod, mock_document):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.update_document = MagicMock(return_value=mock_document)
+
+        result = mcp_mod.doc_update(
+            document_id="doc-uuid-1", project="OTHER", is_global=True,
+        )
+
+        assert "error" in result
+        client.update_document.assert_not_called()
+
+
+
+class TestDocLinkUnlink:
+    def test_doc_link(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.doc_link(document_id="doc-uuid-1", identifier="CHT-100")
+
+        assert result["linked"] is True
+        client.link_document_to_issue.assert_called_once_with("doc-uuid-1", "issue-uuid-1")
+
+    def test_doc_link_resolves_document_by_title(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        mcp_mod.doc_link(document_id="Sprint Report", identifier="CHT-100")
+
+        assert client.link_document_to_issue.call_args[0][0] == "doc-uuid-1"
+
+    def test_doc_unlink(self, mcp_mod, mock_document, mock_issue):
+        from cli.main import client
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.unlink_document_from_issue = MagicMock(return_value=None)
+
+        result = mcp_mod.doc_unlink(document_id="doc-uuid-1", identifier="CHT-100")
+
+        assert result["unlinked"] is True
+        client.unlink_document_from_issue.assert_called_once_with("doc-uuid-1", "issue-uuid-1")
+
+    def test_doc_link_unknown_issue_is_an_error(self, mcp_mod, mock_document):
+        from cli.main import client
+        from cli.client import APIError
+        client.get_documents = MagicMock(return_value=[mock_document])
+        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found"))
+        client.link_document_to_issue = MagicMock(return_value={})
+
+        result = mcp_mod.doc_link(document_id="doc-uuid-1", identifier="CHT-999")
+
+        assert "error" in result
+        client.link_document_to_issue.assert_not_called()
+
+
+
+class TestSprintTools:
+    def test_sprint_current_annotates_budget_state(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "budget": 10, "points_spent": 4,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["arrears_by"] == 0
+        assert result["points_remaining"] == 6
+
+    def test_sprint_current_flags_arrears(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "budget": 13, "points_spent": 14,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is True
+        assert result["arrears_by"] == 1
+        assert result["points_remaining"] == -1
+
+    def test_sprint_current_unlimited_budget_is_never_in_arrears(self, mcp_mod):
+        from cli.main import client
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-1", "budget": None, "points_spent": 99,
+        })
+        result = mcp_mod.sprint_current()
+        assert result["in_arrears"] is False
+        assert result["points_remaining"] is None
+
+    def test_sprint_list(self, mcp_mod):
+        from cli.main import client
+        client.get_sprints = MagicMock(return_value=[
+            {"id": "sp-1", "budget": 5, "points_spent": 1},
+        ])
+        result = mcp_mod.sprint_list()
+        assert result["sprints"][0]["points_remaining"] == 4
+
+    def test_sprint_close_reports_rotation(self, mcp_mod, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.close_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "limbo": False, "budget": 5, "points_spent": 5,
+        })
+        result = mcp_mod.sprint_close()
+        assert result["entered_limbo"] is False
+        client.close_sprint.assert_called_once_with("sp-1")
+
+    def test_sprint_close_reports_limbo(self, mcp_mod, monkeypatch):
+        """Closing a ritual-bearing project enters limbo instead of
+        rotating -- the caller has to be able to tell which happened."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.close_sprint = MagicMock(return_value={
+            "id": "sp-1", "name": "Sprint 1", "limbo": True, "budget": 5, "points_spent": 5,
+        })
+        result = mcp_mod.sprint_close()
+        assert result["entered_limbo"] is True
+
+    def test_sprint_transactions(self, mcp_mod, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_sprint_transactions = MagicMock(return_value=[{"id": "tx-1", "points": 3}])
+        assert mcp_mod.sprint_transactions() == {"transactions": [{"id": "tx-1", "points": 3}]}
+
+    def test_sprint_add(self, mcp_mod, mock_issue, monkeypatch):
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_add(identifiers=["CHT-100"])
+
+        assert result["updated"] == ["CHT-100"]
+        client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id="sp-1")
+
+    def test_sprint_remove_clears_sprint_id(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_remove(identifiers=["CHT-100"])
+
+        assert result["updated"] == ["CHT-100"]
+        client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id=None)
+
+    def test_sprint_add_continues_past_a_bad_identifier(self, mcp_mod, mock_issue, monkeypatch):
+        """Partial success is reported, not swallowed -- one typo in a
+        batch shouldn't silently drop the rest."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_issue_by_identifier = MagicMock(
+            side_effect=[mock_issue, APIError("Issue not found")])
+        client.update_issue = MagicMock(return_value={})
+
+        result = mcp_mod.sprint_add(identifiers=["CHT-100", "CHT-999"])
+
+        assert result["updated"] == ["CHT-100"]
+        assert result["failed"][0]["identifier"] == "CHT-999"
+
+    def test_sprint_add_requires_identifiers(self, mcp_mod):
+        assert "error" in mcp_mod.sprint_add(identifiers=[])
+
+
+
+class TestRitualTools:
+    SPRINT_RITUAL = {"id": "r-1", "name": "retro", "prompt": "Write the retro.",
+                     "trigger": "every_sprint", "note_required": True}
+    TICKET_RITUAL = {"id": "r-2", "name": "close-gate", "prompt": "Linked the commit?",
+                     "trigger": "ticket_close", "note_required": True}
+
+    def test_ritual_list(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        assert mcp_mod.ritual_list() == {"rituals": [self.SPRINT_RITUAL]}
+
+    def test_ritual_pending_sprint_scope(self, mcp_mod):
+        from cli.main import client
+        client.get_limbo_status = MagicMock(return_value={
+            "in_limbo": True, "pending_rituals": [self.SPRINT_RITUAL],
+        })
+        result = mcp_mod.ritual_pending()
+        assert result["scope"] == "sprint"
+        assert result["in_limbo"] is True
+        assert result["unattested"] == ["retro"]
+
+    def test_ritual_pending_ticket_scope(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_pending_issue_rituals = MagicMock(
+            return_value={"pending_rituals": [self.TICKET_RITUAL]})
+        result = mcp_mod.ritual_pending(identifier="CHT-100")
+        assert result["scope"] == "ticket"
+        assert result["unattested"] == ["close-gate"]
+
+    def test_attest_dispatches_sprint_ritual(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={"approved_at": "now"})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        result = mcp_mod.ritual_attest(ritual="retro", note="Done it.")
+
+        assert result["scope"] == "sprint"
+        assert result["approved"] is True
+        assert result["still_in_limbo"] is False
+        client.attest_ritual.assert_called_once_with("r-1", "test-project-123", "Done it.")
+
+    def test_attest_dispatches_ticket_ritual(self, mcp_mod, mock_issue):
+        """Dispatch is on the ritual's own trigger, not on the caller."""
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.TICKET_RITUAL])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.attest_ritual_for_issue = MagicMock(return_value={"approved_at": "now"})
+
+        result = mcp_mod.ritual_attest(
+            ritual="close-gate", note="abc123", identifier="CHT-100")
+
+        assert result["scope"] == "ticket"
+        client.attest_ritual_for_issue.assert_called_once_with("r-2", "issue-uuid-1", "abc123")
+
+    def test_attest_trigger_match_is_case_insensitive(self, mcp_mod, mock_issue):
+        """The trigger can arrive as the stored enum NAME; dispatching
+        case-sensitively would route ticket rituals down the sprint path."""
+        from cli.main import client
+        client.get_rituals = MagicMock(
+            return_value=[dict(self.TICKET_RITUAL, trigger="TICKET_CLOSE")])
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.attest_ritual_for_issue = MagicMock(return_value={})
+
+        result = mcp_mod.ritual_attest(
+            ritual="close-gate", note="x", identifier="CHT-100")
+
+        assert result["scope"] == "ticket"
+        client.attest_ritual_for_issue.assert_called_once()
+
+    def test_attest_ticket_ritual_without_identifier(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.TICKET_RITUAL])
+        result = mcp_mod.ritual_attest(ritual="close-gate", note="x")
+        assert "error" in result
+        assert "identifier" in result["error"]
+
+    def test_attest_missing_note_quotes_the_prompt(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={})
+
+        result = mcp_mod.ritual_attest(ritual="retro")
+
+        assert "Write the retro." in result["error"]
+        client.attest_ritual.assert_not_called()
+
+    def test_attest_note_not_required(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(
+            return_value=[dict(self.SPRINT_RITUAL, note_required=False)])
+        client.attest_ritual = MagicMock(return_value={"approved_at": "now"})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        assert "error" not in mcp_mod.ritual_attest(ritual="retro")
+
+    def test_attest_unknown_ritual_lists_the_real_ones(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        result = mcp_mod.ritual_attest(ritual="nope", note="x")
+        assert "retro" in result["error"]
+
+    def test_attest_reports_pending_approval(self, mcp_mod):
+        """approval_mode review/gate: attested but not cleared."""
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.attest_ritual = MagicMock(return_value={"approved_at": None})
+        client.get_limbo_status = MagicMock(
+            return_value={"in_limbo": True, "pending_rituals": [self.SPRINT_RITUAL]})
+
+        result = mcp_mod.ritual_attest(ritual="retro", note="done")
+
+        assert result["approved"] is False
+        assert result["still_in_limbo"] is True
+        assert result["remaining"] == ["retro"]
+
+    def test_ritual_complete_sprint(self, mcp_mod):
+        from cli.main import client
+        client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
+        client.complete_gate_ritual = MagicMock(return_value={})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+
+        result = mcp_mod.ritual_complete(ritual="retro", note="signed off")
+
+        assert result["still_in_limbo"] is False
+        client.complete_gate_ritual.assert_called_once_with("r-1", "test-project-123", "signed off")
 
 
 # ---------------------------------------------------------------------------
