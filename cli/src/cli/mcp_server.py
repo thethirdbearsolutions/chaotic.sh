@@ -1083,15 +1083,29 @@ _TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
 
 
 def _trigger_of(rit: dict) -> str:
-    """A ritual's trigger, normalised to the enum's lowercase value.
+    """A ritual's trigger as the enum's VALUE, whatever form it arrives in.
 
-    Case-folded rather than compared directly: the trigger can come back
-    as the stored enum NAME ("TICKET_CLOSE") rather than its value,
-    depending on how the response was serialised, and dispatching
-    case-sensitively would silently route every ticket ritual down the
-    sprint path.
+    This transport reads over HTTP, so the trigger arrives already as
+    the enum's value; normalised anyway so both transports dispatch
+    identically. The old fold
+    worked only because every current member happens to satisfy
+    ``NAME.lower() == value`` -- a coincidence of these three, not a
+    property of the codebase: ``DocumentActivityType.CREATED`` is
+    ``"doc_created"`` and would break it silently. Adding such a member
+    to RitualTrigger would have stopped the belt belting with no test
+    failing (CHT-1354).
+
+    Falls back to the raw string for a value the enum doesn't know, so an
+    unrecognised trigger still reaches the sprint branch rather than
+    raising here.
     """
-    return (rit.get("trigger") or "").lower()
+    raw = rit.get("trigger") or ""
+    # The stdio server can't import app.enums (separate package), so map
+    # the known NAME form explicitly rather than assuming NAME.lower()
+    # equals the value.
+    known = {"EVERY_SPRINT": "every_sprint", "TICKET_CLOSE": "ticket_close",
+             "TICKET_CLAIM": "ticket_claim"}
+    return known.get(raw, raw)
 
 
 def _find_ritual(project_id: str, name: str) -> dict:

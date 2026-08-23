@@ -8,6 +8,9 @@ combinations (epic filters, sprint filters, assignee resolution,
 explicit `project`/`team` overrides, `unassigned`), the `_boundary`
 error-translation paths, and doc_view's fuzzy id/title matching.
 """
+import pathlib
+import re
+
 import pytest
 
 from app.mcp_server import context, tools
@@ -885,6 +888,207 @@ class TestIssueStartClaimParity:
 
 
 
+class TestEnumSerialisationParity:
+    """These API functions are undecorated coroutines; the response_model
+    that shapes their output lives on the routed wrappers in nested.py.
+    So an in-process caller gets raw Oxyde rows, and dumping one of those
+    emits enum NAMES ("ACTIVE") where every HTTP client sees VALUES
+    ("active"). The toolset sync test compares schemas, not response
+    values, so nothing else catches that divergence.
+    """
+
+    async def test_sprint_status_is_the_enum_value(self, test_project):
+        assert (await tools.sprint_current())["status"] == "active"
+
+    async def test_sprint_list_status_is_the_enum_value(self, test_project):
+        await tools.sprint_current()
+        statuses = {s["status"] for s in (await tools.sprint_list())["sprints"]}
+        assert statuses and all(s == s.lower() for s in statuses)
+
+    async def test_sprint_close_status_is_the_enum_value(self, test_project):
+        await tools.sprint_current()
+        closed = await tools.sprint_close()
+        assert closed["status"] == closed["status"].lower()
+
+    async def test_ritual_trigger_is_the_enum_value(self, test_project):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="close-gate", prompt="?",
+                         trigger=RitualTrigger.TICKET_CLOSE),
+            test_project.id,
+        )
+        rituals = (await tools.ritual_list())["rituals"]
+        assert rituals[0]["trigger"] == "ticket_close"
+        assert rituals[0]["approval_mode"] == "auto"
+
+    async def test_matches_what_an_http_client_sees(self, test_project, test_user,
+                                                    client, auth_headers):
+        """The actual contract: same field, same value, both transports."""
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        await RitualService().create(
+            RitualCreate(name="parity", prompt="?",
+                         trigger=RitualTrigger.TICKET_CLAIM),
+            test_project.id,
+        )
+
+        via_tool = (await tools.ritual_list())["rituals"][0]["trigger"]
+        resp = await client.get(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+        )
+        via_http = resp.json()[0]["trigger"]
+
+        assert via_tool == via_http == "ticket_claim"
+
+
+
+class TestNoLeakedEnumNames:
+    """Sweep every read tool's output for leaked enum NAMES.
+
+    Enum-valued fields must reach callers as the enum VALUE ("backlog"),
+    the way every HTTP client sees them. An Oxyde row dumped directly
+    yields the NAME ("BACKLOG") instead -- see _dump. A per-tool
+    assertion would only ever cover the tools someone remembered to
+    write one for, so this sweeps them all and fails on anything that
+    looks like a NAME.
+    """
+
+    # Fields whose values are legitimately SHOUTY (keys, uuids, identifiers).
+    IGNORE = {
+        "key", "identifier", "id", "team_id", "project_id", "sprint_id",
+        "parent_id", "assignee_id", "creator_id", "author_id", "document_id",
+        "issue_id", "related_issue_id", "label_id", "ritual_id",
+        # activity old_value/new_value store the raw written string and
+        # currently hold enum NAMES on every transport, HTTP included --
+        # a pre-existing leak, tracked separately, not this sweep's business.
+        "old_value", "new_value",
+    }
+    # "BACKLOG" (the enum NAME) and "IssueStatus.BACKLOG" (str() of a
+    # member -- a third form that reached production once already; the
+    # frontend's cleanValue() still strips that prefix today).
+    NAME_LIKE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$|^[A-Za-z]\w*\.[A-Z][A-Z0-9_]*$")
+
+    def _leaks(self, obj, path=""):
+        found = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k not in self.IGNORE:
+                    found += self._leaks(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                found += self._leaks(v, f"{path}[{i}]")
+        elif isinstance(obj, str) and self.NAME_LIKE.match(obj):
+            found.append((path, obj))
+        return found
+
+    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team):
+        from app.enums import RitualTrigger
+        from app.schemas.issue import LabelCreate
+        from app.schemas.ritual import RitualCreate
+        from app.services.issue_service import IssueService
+        from app.services.ritual_service import RitualService
+
+        await IssueService().create_label(LabelCreate(name="sweep"), test_team.id)
+        await RitualService().create(
+            RitualCreate(name="gate", prompt="?", trigger=RitualTrigger.TICKET_CLOSE),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Sweep me", estimate=1)
+        blocker = await tools.issue_create(title="Blocker")
+        await tools.issue_block(identifier=blocker["identifier"], blocked=iss["identifier"])
+        doc = await tools.doc_create(title="Sweep doc", content="x")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        await tools.issue_label(identifier=iss["identifier"], add=["sweep"])
+        await tools.issue_update(identifier=iss["identifier"], priority="high")
+
+        outputs = {
+            "issue_view": await tools.issue_view(iss["identifier"]),
+            "issue_list": await tools.issue_list(),
+            "issue_ready": await tools.issue_ready(),
+            "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "label_list": await tools.label_list(),
+            "doc_list": await tools.doc_list(),
+            "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "sprint_current": await tools.sprint_current(),
+            "sprint_list": await tools.sprint_list(),
+            "ritual_list": await tools.ritual_list(),
+            "ritual_pending": await tools.ritual_pending(identifier=iss["identifier"]),
+            "activity_recent": await tools.activity_recent(),
+            "project_list": await tools.project_list(),
+        }
+
+        # A tool that raised comes back as {"error": ...} and would sweep
+        # clean -- so the sweep would report full coverage precisely when
+        # it inspected nothing. Assert the calls actually succeeded first
+        # (CHT-1354).
+        errored = {n: o["error"] for n, o in outputs.items() if isinstance(o, dict) and "error" in o}
+        assert not errored, f"tools failed, so the sweep below proves nothing: {errored}"
+
+        leaked = {name: found for name, out in outputs.items() if (found := self._leaks(out))}
+        assert not leaked, (
+            "tool output contains enum NAMES where values are expected "
+            f"(dump through the response schema via _dump): {leaked}"
+        )
+
+
+
+class TestNoLeakedInternalFields:
+    """No tool may return a field its response schema omits (CHT-1348).
+
+    ``response_model`` does two jobs: it serialises, and it FILTERS the
+    payload down to the schema's fields. An in-process caller that dumps
+    an ORM row gets neither -- and where the enum-casing half of that is
+    cosmetic, this half is not. ``OxydeUser`` carries
+    ``hashed_password``, ``is_superuser`` and the agent-scoping columns,
+    none of which are on ``UserResponse``; ``OxydeIssue.creator`` and
+    ``OxydeRitual.group`` are live relations to rows like that.
+
+    Nothing leaks today -- the issue/doc tools call functions that
+    already return response models, and the rest go through ``_dump``.
+    This pins that, because the failure would be silent and the blast
+    radius is a password hash rather than a lowercase letter.
+    """
+
+    FORBIDDEN = (
+        "hashed_password", "is_superuser", "parent_user_id", "parent_user",
+        "agent_team_id", "agent_project_id", "key_hash", "api_key",
+    )
+
+    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team):
+        import json
+
+        iss = await tools.issue_create(title="Field sweep")
+        doc = await tools.doc_create(title="Field sweep doc", content="x")
+
+        outputs = {
+            "issue_view": await tools.issue_view(iss["identifier"]),
+            "issue_list": await tools.issue_list(),
+            "issue_create": iss,
+            "issue_ready": await tools.issue_ready(),
+            "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "doc_list": await tools.doc_list(),
+            "activity_recent": await tools.activity_recent(),
+            "project_list": await tools.project_list(),
+            "sprint_current": await tools.sprint_current(),
+            "sprint_list": await tools.sprint_list(),
+            "label_list": await tools.label_list(),
+            "ritual_list": await tools.ritual_list(),
+        }
+
+        errored = {n: o["error"] for n, o in outputs.items() if isinstance(o, dict) and "error" in o}
+        assert not errored, f"tools failed, so the sweep below proves nothing: {errored}"
+
+        leaked = {}
+        for name, out in outputs.items():
+            blob = json.dumps(out, default=str)
+            hits = [f for f in self.FORBIDDEN if f'"{f}"' in blob]
+            if hits:
+                leaked[name] = hits
+        assert not leaked, f"tool output exposes non-schema fields: {leaked}"
 class TestReviewRegressions:
     """Regressions for the oppositional review on PR #262 (CHT-1351)."""
 
@@ -1033,6 +1237,142 @@ class TestReviewRegressions:
         result = await tools.ritual_attest(ritual="gate-only", note="nope")
 
         assert "error" in result
+
+
+
+class TestOutputMatchesResponseSchema:
+    """Every entity a tool returns must have the SHAPE of its response
+    schema -- no field the schema drops.
+
+    TestNoLeakedInternalFields is a name blocklist, which can only catch
+    leaks someone thought to list. It names ``OxydeRitual.group`` in its
+    own docstring and cannot actually catch it: reverting ``_dump`` in
+    ``ritual_list`` ships the entire joined group row, and every FORBIDDEN
+    string is absent, so the sweep stays green (CHT-1354).
+
+    Deriving the expectation from the schema instead catches any dropped
+    field, including ones that do not exist yet. Fields a tool adds on
+    purpose are declared per-tool, so the additions stay deliberate
+    rather than becoming a hole.
+    """
+
+    # tool -> (path to the entity list/object, schema, deliberately-added keys)
+    CASES = {
+        "ritual_list": ("rituals", "RitualResponse", set()),
+        "label_list": ("labels", "LabelResponse", set()),
+        "sprint_list": ("sprints", "SprintResponse",
+                        {"in_arrears", "arrears_by", "points_remaining"}),
+        "issue_relations": ("relations", "IssueRelationResponse", set()),
+    }
+
+    def _schema(self, name):
+        from app.schemas import issue as issue_schemas
+        from app.schemas import ritual as ritual_schemas
+        from app.schemas import sprint as sprint_schemas
+        for mod in (ritual_schemas, issue_schemas, sprint_schemas):
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        raise AssertionError(f"schema {name} not found")
+
+    async def test_tool_output_has_no_field_its_schema_drops(self, test_project, test_team):
+        from app.enums import RitualTrigger
+        from app.schemas.issue import LabelCreate
+        from app.schemas.ritual import RitualCreate, RitualGroupCreate
+        from app.services.issue_service import IssueService
+        from app.services.ritual_service import RitualService
+
+        # A ritual IN A GROUP, so the `group` relation is populated -- an
+        # unjoined null would make this pass for the wrong reason.
+        svc = RitualService()
+        group = await svc.create_group(RitualGroupCreate(name="grp"), test_project.id)
+        await svc.create(
+            RitualCreate(name="grouped", prompt="?", trigger=RitualTrigger.TICKET_CLOSE,
+                         group_id=group.id),
+            test_project.id,
+        )
+        await IssueService().create_label(LabelCreate(name="shape"), test_team.id)
+        await tools.sprint_current()
+        a = await tools.issue_create(title="Shape A")
+        b = await tools.issue_create(title="Shape B")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+
+        outputs = {
+            "ritual_list": await tools.ritual_list(),
+            "label_list": await tools.label_list(),
+            "sprint_list": await tools.sprint_list(),
+            "issue_relations": await tools.issue_relations(identifier=a["identifier"]),
+        }
+
+        errored = {n: o["error"] for n, o in outputs.items() if "error" in o}
+        assert not errored, f"tools failed, so this proves nothing: {errored}"
+
+        problems = {}
+        for tool, (key, schema_name, extra) in self.CASES.items():
+            allowed = set(self._schema(schema_name).model_fields) | extra
+            entities = outputs[tool][key]
+            assert entities, f"{tool} returned nothing; the check would be vacuous"
+            for ent in entities:
+                if surplus := set(ent) - allowed:
+                    problems.setdefault(tool, set()).update(surplus)
+
+        assert not problems, (
+            "tool output carries fields its response schema drops -- dump "
+            f"through the schema via _dump: {problems}"
+        )
+
+
+
+class TestSweepCoverage:
+    """The output sweeps must account for every tool in ALL_TOOLS.
+
+    The sweeps enumerate the tools they call by hand. That list sat next
+    to a 30-entry ALL_TOOLS and had drifted to 13, silently omitting the
+    very tools that still dumped raw ORM rows (CHT-1354) -- the same
+    failure mode TestNoLeakedEnumNames's own docstring warns about for
+    per-tool assertions.
+
+    This does not call the missing tools; it forces the omission to be
+    explicit and justified, so adding a tool means deciding whether it is
+    swept rather than forgetting.
+    """
+
+    # Write tools with side effects the sweeps don't want, or tools whose
+    # output is already covered via another tool's result.
+    NOT_SWEPT = {
+        # mutations -- swept indirectly via the read tools that show them
+        "issue_create", "issue_update", "issue_comment", "issue_start",
+        "issue_block", "issue_unblock", "issue_label",
+        "doc_create", "doc_update", "doc_link", "doc_unlink",
+        "sprint_add", "sprint_remove", "sprint_close",
+        "ritual_attest", "ritual_complete",
+        # read tools whose shape is asserted in their own tests
+        "issue_view", "sprint_transactions",
+    }
+
+    def test_every_tool_is_swept_or_explicitly_excluded(self):
+        import re
+
+        from app.mcp_server.tools import ALL_TOOLS
+
+        source = pathlib.Path(__file__).read_text()
+        swept = set(re.findall(r'"(\w+)": await tools\.(?:\w+)\(', source))
+        swept |= set(re.findall(r'"(\w+)": (?:await )?tools\.\w+', source))
+
+        all_names = {t.__name__ for t in ALL_TOOLS}
+        unaccounted = all_names - swept - self.NOT_SWEPT
+
+        assert not unaccounted, (
+            "these tools are neither swept for leaked enum names / internal "
+            "fields nor listed in NOT_SWEPT -- add them to a sweep, or to "
+            f"NOT_SWEPT with a reason: {sorted(unaccounted)}"
+        )
+
+    def test_not_swept_list_has_no_stale_entries(self):
+        from app.mcp_server.tools import ALL_TOOLS
+
+        all_names = {t.__name__ for t in ALL_TOOLS}
+        stale = self.NOT_SWEPT - all_names
+        assert not stale, f"NOT_SWEPT names tools that no longer exist: {sorted(stale)}"
 
 
 

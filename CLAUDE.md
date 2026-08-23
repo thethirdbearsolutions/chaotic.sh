@@ -83,6 +83,48 @@ smell — treat the following as invariants:
 If a budget number surprises you, reconcile it against *"points from tickets
 closed while this sprint was active (unestimated = 1)"* before suspecting a bug.
 
+## Enum Representation (read this before "fixing" a casing bug)
+
+Every enum here has **two** legitimate string forms, and they are not
+interchangeable:
+
+- **`.name`** — `"BACKLOG"`, `"TICKET_CLOSE"`. What the **database stores**,
+  and what `DbEnum` emits in python-mode `model_dump()` (Oxyde's write path).
+- **`.value`** — `"backlog"`, `"ticket_close"`. The **wire format**: what every
+  FastAPI `response_model` emits, and what the CLI and frontend parse.
+
+`DbEnum` (`backend/app/oxyde_models/enums.py`) picks by serialization mode —
+python mode gives `.name`, `mode="json"` gives `.value` — and coerces either
+form back to a member on read. So:
+
+- **Comparing in service code?** Compare members, never strings:
+  `sprint.status == SprintStatus.ACTIVE`.
+- **Producing output for anything outside this process?** Build the
+  response schema (`SprintResponse`, `RitualResponse`, …); do not dump the ORM
+  row. FastAPI routes do this for you; anything calling an API function
+  **in-process does not** — see `_dump()` in `app/mcp_server/tools.py`.
+  This is not only about casing. `response_model` also **filters** to the
+  schema's fields, and an ORM row carries more: `OxydeIssue` has a `creator`
+  relation whose user row includes `hashed_password` and `is_superuser`, none
+  of which exist on `IssueResponse`. Since CHT-1345 a raw json dump has
+  correct-looking enums, so it no longer looks wrong while still being
+  unfiltered — `TestNoLeakedInternalFields` is what catches that.
+- **Never** `str(member)` or f-string a member: that yields a third form,
+  `"IssueStatus.BACKLOG"`, which nothing expects (the frontend's `cleanValue`
+  still strips that prefix as legacy defense).
+
+This is guarded, not just documented: `backend/tests/test_dbenum_contract.py`
+pins the contract for every `DbEnum` field (registry-derived, so new models are
+covered automatically) and asserts Oxyde still persists via python mode;
+`TestOutputMatchesResponseSchema` checks tool output against the response
+schemas, and `TestNoLeakedEnumNames` sweeps for leaked names. Note what is
+*not* guarded: an enum column typed as a bare `str` rather than `DbEnum` is
+invisible to all of it (`OxydeTicketLimbo.limbo_type` is one, and is
+inconsistent today — CHT-1353). If you are about to add a `.lower()`, a `.upper()`, or a
+name↔value translation at some boundary — stop. That is how this bug class
+survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
+schema, not at a seventh boundary. Background: CHT-1345.
+
 ## Project Structure
 
 - `backend/` - FastAPI backend (Python)

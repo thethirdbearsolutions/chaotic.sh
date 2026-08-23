@@ -68,10 +68,14 @@ from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
-    IssueUpdate,
+    IssueRelationResponse, IssueUpdate, LabelResponse,
 )
 from app.schemas.project import ProjectResponse
-from app.schemas.ritual import RitualAttestationCreate
+from app.schemas.sprint import SprintResponse
+from app.schemas.ritual import (
+    LimboStatusResponse, RitualAttestationCreate, RitualAttestationResponse,
+    RitualResponse, TicketRitualsStatusResponse,
+)
 from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
@@ -609,7 +613,10 @@ async def issue_relations(
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
     relations = await issues_api.list_relations(issue_id=iss.id, current_user=user)
-    return {"relations": relations or []}
+    # Through the response schema, not raw: list_relations builds its dicts
+    # from raw SQL, so related_issue_status arrives as the stored enum NAME
+    # ("BACKLOG") where every HTTP client sees the value ("backlog").
+    return {"relations": [_dump(IssueRelationResponse, r) for r in (relations or [])]}
 
 
 @_boundary
@@ -777,7 +784,7 @@ async def label_list(
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
     labels = await labels_api.list_labels(team_id=team_id, current_user=user, limit=1000)
-    return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
+    return {"labels": [_dump(LabelResponse, l) for l in (labels or [])]}
 
 
 @_boundary
@@ -1088,7 +1095,7 @@ async def sprint_current(
     user = get_current_mcp_user()
     project_id, _ = await resolve_project(user, project, team)
     sprint = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
-    return _with_budget_state(sprint.model_dump(mode="json"))
+    return _with_budget_state(_dump(SprintResponse, sprint))
 
 
 @_boundary
@@ -1111,7 +1118,7 @@ async def sprint_list(
         current_user=user,
         sprint_status=SprintStatus(status) if status else None,
     )
-    return {"sprints": [_with_budget_state(s.model_dump(mode="json")) for s in (sprints or [])]}
+    return {"sprints": [_with_budget_state(_dump(SprintResponse, s)) for s in (sprints or [])]}
 
 
 @_boundary
@@ -1144,7 +1151,7 @@ async def sprint_close(
     project_id, _ = await resolve_project(user, project, team)
     sprint_id = await resolve_sprint(project_id, sprint or "current")
     closed = await sprints_api.close_sprint(sprint_id=sprint_id, current_user=user)
-    result = _with_budget_state(closed.model_dump(mode="json"))
+    result = _with_budget_state(_dump(SprintResponse, closed))
     result["entered_limbo"] = bool(result.get("limbo"))
 
     # Budget state on the CLOSED sprint is history: it stays in arrears
@@ -1155,7 +1162,7 @@ async def sprint_close(
     # "still blocked" (CHT-1351).
     if not result["entered_limbo"]:
         active = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
-        result["now_active"] = _with_budget_state(active.model_dump(mode="json")) if active else None
+        result["now_active"] = _with_budget_state(_dump(SprintResponse, active)) if active else None
     else:
         result["now_active"] = None
     return result
@@ -1272,32 +1279,80 @@ _TICKET_TRIGGERS = ("ticket_close", "ticket_claim")
 
 
 def _trigger_of(rit: dict) -> str:
-    """A ritual's trigger, normalised to the enum's lowercase value.
+    """A ritual's trigger as the enum's VALUE, whatever form it arrives in.
 
-    Calling these API functions in-process skips FastAPI's
-    ``response_model`` coercion (same gotcha as the Query-sentinel note
-    on issue_list), so a trigger can arrive as the raw stored enum NAME
-    -- "TICKET_CLOSE" -- rather than the value "ticket_close" an HTTP
-    client would see. Dispatching case-sensitively on that silently
-    routes every ticket ritual down the sprint path.
+    Coerced through RitualTrigger rather than case-folded. The old fold
+    worked only because every current member happens to satisfy
+    ``NAME.lower() == value`` -- a coincidence of these three, not a
+    property of the codebase: ``DocumentActivityType.CREATED`` is
+    ``"doc_created"`` and would break it silently. Adding such a member
+    to RitualTrigger would have stopped the belt belting with no test
+    failing (CHT-1354).
+
+    Falls back to the raw string for a value the enum doesn't know, so an
+    unrecognised trigger still reaches the sprint branch rather than
+    raising here.
     """
-    return (rit.get("trigger") or "").lower()
+    from app.enums import RitualTrigger
+
+    raw = rit.get("trigger") or ""
+    if isinstance(raw, RitualTrigger):
+        return raw.value
+    try:
+        return RitualTrigger[raw].value
+    except KeyError:
+        pass
+    try:
+        return RitualTrigger(raw).value
+    except ValueError:
+        return raw
 
 
-def _as_dict(value):
-    """Attestation endpoints return a response model; tools return JSON."""
-    return value if isinstance(value, dict) else value.model_dump(mode="json")
+def _dump(schema, obj) -> dict:
+    """Serialise an ORM row the way an HTTP client would see it.
+
+    These API functions are plain undecorated coroutines -- the
+    ``response_model`` that shapes their output lives on the routed
+    wrappers in api/nested.py, so calling them in-process returns raw
+    Oxyde rows. Dumping one of those directly is not the same thing:
+    Oxyde serialises an enum field by NAME ("ACTIVE", "TICKET_CLOSE")
+    while the response schema emits its VALUE ("active",
+    "ticket_close"). Round-tripping through the schema keeps this
+    transport's output identical to the stdio one, which reaches the
+    same data over HTTP. (The toolset sync test compares schemas, not
+    response values, so it cannot catch that divergence for us.)
+    """
+    # from_attributes explicitly, so this helper works for any response
+    # schema rather than only those that happen to set it in ConfigDict.
+    return schema.model_validate(obj, from_attributes=True).model_dump(mode="json")
+
+
+def _rituals_dump(schema, value):
+    """Serialise a rituals-api result through its response schema.
+
+    These endpoints are undecorated coroutines returning raw Oxyde rows or
+    plain response objects -- ``response_model`` lives on the routed
+    wrapper, as everywhere else ``_dump`` exists for. A single shared
+    helper used to guess one schema for all of them, which silently
+    shipped ``ritual``/``sprint``/``issue`` relation slots that aren't on
+    ``RitualAttestationResponse`` and dropped the
+    ``attested_by_name``/``approved_by_name`` it adds (CHT-1354). Each
+    call site now names its own schema, because they genuinely differ.
+    """
+    if isinstance(value, dict):
+        return value
+    return _dump(schema, value)
 
 
 async def _limbo(user, project_id: str) -> dict:
     status = await rituals_api.get_limbo_status(project_id=project_id, current_user=user)
-    return _as_dict(status) if status else {}
+    return _rituals_dump(LimboStatusResponse, status) if status else {}
 
 
 async def _find_ritual(user, project_id: str, name: str) -> dict:
     """Resolve a ritual by name (case-insensitively), or by id."""
     rituals = [
-        r.model_dump(mode="json")
+        _dump(RitualResponse, r)
         for r in (await rituals_api.list_rituals(project_id=project_id, current_user=user) or [])
     ]
     if not rituals:
@@ -1362,7 +1417,7 @@ async def ritual_pending(
         # a multi-team key supply scoping that was then discarded -- and
         # blocked the call outright when it couldn't (CHT-1351).
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        pending = _as_dict(await rituals_api.get_pending_ticket_rituals(
+        pending = _rituals_dump(TicketRitualsStatusResponse, await rituals_api.get_pending_ticket_rituals(
             issue_id=iss.id, current_user=user
         )) or {}
         rituals = pending.get("pending_rituals", []) or []
@@ -1407,7 +1462,7 @@ async def ritual_list(
     rituals = await rituals_api.list_rituals(
         project_id=project_id, current_user=user, include_inactive=include_inactive,
     )
-    return {"rituals": [r.model_dump(mode="json") for r in (rituals or [])]}
+    return {"rituals": [_dump(RitualResponse, r) for r in (rituals or [])]}
 
 
 @_boundary
@@ -1456,7 +1511,7 @@ async def ritual_attest(
                 "`identifier` naming the ticket it gates."
             )
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        result = _as_dict(await rituals_api.attest_ritual_for_issue(
+        result = _rituals_dump(RitualAttestationResponse, await rituals_api.attest_ritual_for_issue(
             ritual_id=rit["id"], issue_id=iss.id,
             attestation_in=RitualAttestationCreate(note=note), current_user=user,
         ))
@@ -1468,7 +1523,7 @@ async def ritual_attest(
             "attestation": result,
         }
 
-    result = _as_dict(await rituals_api.attest_ritual(
+    result = _rituals_dump(RitualAttestationResponse, await rituals_api.attest_ritual(
         ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
         current_user=user, project_id=project_id,
     ))
@@ -1516,14 +1571,14 @@ async def ritual_complete(
                 "`identifier` naming the ticket it gates."
             )
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        result = _as_dict(await rituals_api.complete_gate_ritual_for_issue(
+        result = _rituals_dump(RitualAttestationResponse, await rituals_api.complete_gate_ritual_for_issue(
             ritual_id=rit["id"], issue_id=iss.id,
             attestation_in=RitualAttestationCreate(note=note), current_user=user,
         ))
         return {"scope": "ticket", "ritual": rit["name"],
                 "identifier": identifier, "attestation": result}
 
-    result = _as_dict(await rituals_api.complete_gate_ritual(
+    result = _rituals_dump(RitualAttestationResponse, await rituals_api.complete_gate_ritual(
         ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
         current_user=user, project_id=project_id,
     ))
