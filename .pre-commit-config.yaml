@@ -19,7 +19,9 @@ repos:
         entry: backend/.venv/bin/python -m pytest backend/tests/test_dbenum_contract.py -q --no-cov -p no:cacheprovider
         language: system
         pass_filenames: false
-        files: ^backend/(app/(oxyde_models|enums)|tests/test_dbenum_contract)\.?.*
+        # Includes app/schemas: the four _coerce_enum copies the contract
+        # test pins live there, so editing them must fire this hook.
+        files: ^backend/(app/(oxyde_models|schemas)/.*|app/enums\.py|tests/test_dbenum_contract\.py)$
         types_or: [python]
 
       # Both MCP transports must expose the same toolset (CHT-1266).

@@ -8,6 +8,7 @@ combinations (epic filters, sprint filters, assignee resolution,
 explicit `project`/`team` overrides, `unassigned`), the `_boundary`
 error-translation paths, and doc_view's fuzzy id/title matching.
 """
+import pathlib
 import re
 
 import pytest
@@ -1019,6 +1020,13 @@ class TestNoLeakedEnumNames:
             "project_list": await tools.project_list(),
         }
 
+        # A tool that raised comes back as {"error": ...} and would sweep
+        # clean -- so the sweep would report full coverage precisely when
+        # it inspected nothing. Assert the calls actually succeeded first
+        # (CHT-1354).
+        errored = {n: o["error"] for n, o in outputs.items() if isinstance(o, dict) and "error" in o}
+        assert not errored, f"tools failed, so the sweep below proves nothing: {errored}"
+
         leaked = {name: found for name, out in outputs.items() if (found := self._leaks(out))}
         assert not leaked, (
             "tool output contains enum NAMES where values are expected "
@@ -1070,6 +1078,9 @@ class TestNoLeakedInternalFields:
             "label_list": await tools.label_list(),
             "ritual_list": await tools.ritual_list(),
         }
+
+        errored = {n: o["error"] for n, o in outputs.items() if isinstance(o, dict) and "error" in o}
+        assert not errored, f"tools failed, so the sweep below proves nothing: {errored}"
 
         leaked = {}
         for name, out in outputs.items():
@@ -1226,6 +1237,142 @@ class TestReviewRegressions:
         result = await tools.ritual_attest(ritual="gate-only", note="nope")
 
         assert "error" in result
+
+
+
+class TestOutputMatchesResponseSchema:
+    """Every entity a tool returns must have the SHAPE of its response
+    schema -- no field the schema drops.
+
+    TestNoLeakedInternalFields is a name blocklist, which can only catch
+    leaks someone thought to list. It names ``OxydeRitual.group`` in its
+    own docstring and cannot actually catch it: reverting ``_dump`` in
+    ``ritual_list`` ships the entire joined group row, and every FORBIDDEN
+    string is absent, so the sweep stays green (CHT-1354).
+
+    Deriving the expectation from the schema instead catches any dropped
+    field, including ones that do not exist yet. Fields a tool adds on
+    purpose are declared per-tool, so the additions stay deliberate
+    rather than becoming a hole.
+    """
+
+    # tool -> (path to the entity list/object, schema, deliberately-added keys)
+    CASES = {
+        "ritual_list": ("rituals", "RitualResponse", set()),
+        "label_list": ("labels", "LabelResponse", set()),
+        "sprint_list": ("sprints", "SprintResponse",
+                        {"in_arrears", "arrears_by", "points_remaining"}),
+        "issue_relations": ("relations", "IssueRelationResponse", set()),
+    }
+
+    def _schema(self, name):
+        from app.schemas import issue as issue_schemas
+        from app.schemas import ritual as ritual_schemas
+        from app.schemas import sprint as sprint_schemas
+        for mod in (ritual_schemas, issue_schemas, sprint_schemas):
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        raise AssertionError(f"schema {name} not found")
+
+    async def test_tool_output_has_no_field_its_schema_drops(self, test_project, test_team):
+        from app.enums import RitualTrigger
+        from app.schemas.issue import LabelCreate
+        from app.schemas.ritual import RitualCreate, RitualGroupCreate
+        from app.services.issue_service import IssueService
+        from app.services.ritual_service import RitualService
+
+        # A ritual IN A GROUP, so the `group` relation is populated -- an
+        # unjoined null would make this pass for the wrong reason.
+        svc = RitualService()
+        group = await svc.create_group(RitualGroupCreate(name="grp"), test_project.id)
+        await svc.create(
+            RitualCreate(name="grouped", prompt="?", trigger=RitualTrigger.TICKET_CLOSE,
+                         group_id=group.id),
+            test_project.id,
+        )
+        await IssueService().create_label(LabelCreate(name="shape"), test_team.id)
+        await tools.sprint_current()
+        a = await tools.issue_create(title="Shape A")
+        b = await tools.issue_create(title="Shape B")
+        await tools.issue_block(identifier=a["identifier"], blocked=b["identifier"])
+
+        outputs = {
+            "ritual_list": await tools.ritual_list(),
+            "label_list": await tools.label_list(),
+            "sprint_list": await tools.sprint_list(),
+            "issue_relations": await tools.issue_relations(identifier=a["identifier"]),
+        }
+
+        errored = {n: o["error"] for n, o in outputs.items() if "error" in o}
+        assert not errored, f"tools failed, so this proves nothing: {errored}"
+
+        problems = {}
+        for tool, (key, schema_name, extra) in self.CASES.items():
+            allowed = set(self._schema(schema_name).model_fields) | extra
+            entities = outputs[tool][key]
+            assert entities, f"{tool} returned nothing; the check would be vacuous"
+            for ent in entities:
+                if surplus := set(ent) - allowed:
+                    problems.setdefault(tool, set()).update(surplus)
+
+        assert not problems, (
+            "tool output carries fields its response schema drops -- dump "
+            f"through the schema via _dump: {problems}"
+        )
+
+
+
+class TestSweepCoverage:
+    """The output sweeps must account for every tool in ALL_TOOLS.
+
+    The sweeps enumerate the tools they call by hand. That list sat next
+    to a 30-entry ALL_TOOLS and had drifted to 13, silently omitting the
+    very tools that still dumped raw ORM rows (CHT-1354) -- the same
+    failure mode TestNoLeakedEnumNames's own docstring warns about for
+    per-tool assertions.
+
+    This does not call the missing tools; it forces the omission to be
+    explicit and justified, so adding a tool means deciding whether it is
+    swept rather than forgetting.
+    """
+
+    # Write tools with side effects the sweeps don't want, or tools whose
+    # output is already covered via another tool's result.
+    NOT_SWEPT = {
+        # mutations -- swept indirectly via the read tools that show them
+        "issue_create", "issue_update", "issue_comment", "issue_start",
+        "issue_block", "issue_unblock", "issue_label",
+        "doc_create", "doc_update", "doc_link", "doc_unlink",
+        "sprint_add", "sprint_remove", "sprint_close",
+        "ritual_attest", "ritual_complete",
+        # read tools whose shape is asserted in their own tests
+        "issue_view", "sprint_transactions",
+    }
+
+    def test_every_tool_is_swept_or_explicitly_excluded(self):
+        import re
+
+        from app.mcp_server.tools import ALL_TOOLS
+
+        source = pathlib.Path(__file__).read_text()
+        swept = set(re.findall(r'"(\w+)": await tools\.(?:\w+)\(', source))
+        swept |= set(re.findall(r'"(\w+)": (?:await )?tools\.\w+', source))
+
+        all_names = {t.__name__ for t in ALL_TOOLS}
+        unaccounted = all_names - swept - self.NOT_SWEPT
+
+        assert not unaccounted, (
+            "these tools are neither swept for leaked enum names / internal "
+            "fields nor listed in NOT_SWEPT -- add them to a sweep, or to "
+            f"NOT_SWEPT with a reason: {sorted(unaccounted)}"
+        )
+
+    def test_not_swept_list_has_no_stale_entries(self):
+        from app.mcp_server.tools import ALL_TOOLS
+
+        all_names = {t.__name__ for t in ALL_TOOLS}
+        stale = self.NOT_SWEPT - all_names
+        assert not stale, f"NOT_SWEPT names tools that no longer exist: {sorted(stale)}"
 
 
 

@@ -116,6 +116,63 @@ def test_round_trips_through_the_db_format(cls, fname, enum_cls, annotated):
         assert adapter.dump_python(reread) == written
 
 
+def test_a_raw_json_dump_is_wire_shaped():
+    """The consequence of the mode split, not a restatement of it.
+
+    Reverting ``serialize()`` to ``lambda v: v.name`` used to break only
+    ``test_json_mode_serializes_to_value`` -- a line-for-line echo of the
+    implementation. Every behavioural test stayed green, because each one
+    reaches its enums through a response schema, and pydantic emits
+    ``.value`` from those regardless of what it was handed (CHT-1354).
+
+    So state the consequence a caller actually depends on: dumping a row
+    to json yields what an HTTP client sees, for a model nothing has
+    laundered.
+    """
+    from app.enums import SprintStatus
+    from app.oxyde_models.sprint import OxydeSprint
+    from app.schemas.sprint import SprintResponse
+
+    row = OxydeSprint(project_id="p", name="S", status=SprintStatus.ACTIVE)
+
+    via_raw_dump = row.model_dump(mode="json")["status"]
+    via_schema = SprintResponse.model_validate(row).model_dump(mode="json")["status"]
+
+    assert via_raw_dump == via_schema == "active"
+
+
+# ---------------------------------------------------------------------------
+# The other party to the contract: Oxyde's persistence path
+# ---------------------------------------------------------------------------
+
+def test_oxyde_persists_via_python_mode():
+    """Oxyde must keep serialising rows in PYTHON mode, not json.
+
+    The whole safety argument for the mode split is "Oxyde only uses
+    python mode", which was verified by reading a pinned third-party
+    version and asserted nowhere (CHT-1354). If a future oxyde release
+    switched ``_dump_insert_data`` to ``mode="json"`` -- an entirely
+    natural-looking change for a function producing wire IR -- every enum
+    column would silently start storing ``.value``, reproducing CHT-1209,
+    and our own tests would stay green until a ``.name``-bound filter
+    quietly stopped matching.
+
+    So assert against the library itself rather than our side of it.
+    """
+    from app.enums import SprintStatus
+    from app.oxyde_models.sprint import OxydeSprint
+    from oxyde.models import serializers
+
+    row = OxydeSprint(project_id="p", name="S", status=SprintStatus.ACTIVE)
+
+    insert = serializers._dump_insert_data(row)
+    assert insert["status"] == "ACTIVE", (
+        "Oxyde is no longer writing enum columns as .name -- the DbEnum "
+        "mode split (CHT-1345) assumes it does. Every enum column is about "
+        "to be stored in the wrong form."
+    )
+
+
 # ---------------------------------------------------------------------------
 # The four _coerce_enum copies
 # ---------------------------------------------------------------------------

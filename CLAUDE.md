@@ -115,8 +115,12 @@ form back to a member on read. So:
 
 This is guarded, not just documented: `backend/tests/test_dbenum_contract.py`
 pins the contract for every `DbEnum` field (registry-derived, so new models are
-covered automatically), and `TestNoLeakedEnumNames` sweeps MCP tool output for
-leaked names. If you are about to add a `.lower()`, a `.upper()`, or a
+covered automatically) and asserts Oxyde still persists via python mode;
+`TestOutputMatchesResponseSchema` checks tool output against the response
+schemas, and `TestNoLeakedEnumNames` sweeps for leaked names. Note what is
+*not* guarded: an enum column typed as a bare `str` rather than `DbEnum` is
+invisible to all of it (`OxydeTicketLimbo.limbo_type` is one, and is
+inconsistent today — CHT-1353). If you are about to add a `.lower()`, a `.upper()`, or a
 name↔value translation at some boundary — stop. That is how this bug class
 survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
 schema, not at a seventh boundary. Background: CHT-1345.
