@@ -284,7 +284,7 @@
       }
     },
     "issue_block": {
-      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\n    Direction matters for `blocks` -- the issue named first is the one\n    holding the other up, and it's the second one that stops showing up\n    in issue_ready. Creating the same pair twice is a no-op, not an\n    error.\n    ",
+      "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\n    Direction matters for `blocks` -- the issue named first is the one\n    holding the other up, and it's the second one that stops showing up\n    in issue_ready.\n\n    Re-relating an already-related pair is a no-op that returns the\n    EXISTING relation -- including when you pass a different\n    relation_type, which is silently not applied. To change the type,\n    issue_unblock the pair first, then relate it again.\n    ",
       "inputSchema": {
         "properties": {
           "blocked": {
@@ -456,7 +456,7 @@
       }
     },
     "issue_label": {
-      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist (see label_list) -- this does not create them.\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
+      "description": "Add and/or remove labels on an issue.\n\n    Additive and subtractive rather than replacing the whole set, so\n    labelling an issue never silently drops someone else's label. Labels\n    must already exist -- this does not create them. Use label_list to\n    see them, or pass a label id directly if your key is project-scoped\n    (label_list is team-scoped and needs a team-scoped key).\n\n    Adding a label the issue already has, or removing one it doesn't\n    have, is a no-op rather than an error, so the same call is safe to\n    repeat.\n    ",
       "inputSchema": {
         "properties": {
           "add": {
@@ -991,7 +991,7 @@
       }
     },
     "ritual_attest": {
-      "description": "Attest a ritual -- confirm you did the thing it asks about.\n\n    Dispatches on the ritual's own trigger, so you don't have to know\n    whether it's sprint-scoped or ticket-scoped: pass `identifier` when\n    attesting a ticket's close/claim gate, omit it for a sprint ritual.\n\n    If the ritual's approval_mode is `auto` this clears it outright;\n    under `review`/`gate` it records the attestation and leaves it\n    pending a human. The result says which happened.\n    ",
+      "description": "Attest a ritual -- confirm you did the thing it asks about.\n\n    Dispatches on the ritual's own trigger, so you don't have to know\n    whether it's sprint-scoped or ticket-scoped: pass `identifier` when\n    attesting a ticket's close/claim gate, omit it for a sprint ritual.\n\n    If the ritual's approval_mode is `auto` this clears it outright.\n    Under `review` it records the attestation and leaves it pending a\n    human; `approved` in the result says which happened.\n\n    Under `gate` this is REFUSED -- gate rituals are human-completion\n    only and the server rejects an attestation outright rather than\n    recording one. Use ritual_complete for those, and ritual_list to see\n    each ritual's approval_mode before choosing.\n    ",
       "inputSchema": {
         "properties": {
           "identifier": {

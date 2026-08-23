@@ -1,9 +1,10 @@
 """Remote MCP tool definitions (CHT-1266) -- the backend-hosted sibling of
 ``chaotic mcp`` (cli/src/cli/mcp_server.py, stdio transport, CHT-1247/#215).
 
-Same 11 tools, same names, same docstrings/descriptions, same shared
+Same toolset, same names, same docstrings/descriptions, same shared
 parameters (name, type, default, description) -- see cli/src/cli/mcp_server.py
-for the canonical prose on each. What's DIFFERENT here, and why this
+for the canonical prose on each; docs/mcp-toolset-schema.json is the
+checked-in snapshot both sides are asserted against. What's DIFFERENT here, and why this
 isn't a shared import between the cli/ and backend/ packages:
 
 * The stdio server is a thin adapter over ``cli.client.Client`` making
@@ -16,14 +17,13 @@ isn't a shared import between the cli/ and backend/ packages:
   server-side. Here it's resolved per-request from the caller's API key
   (``auth.py`` -> ``context.py``), and an API key's user can belong to
   more than one team/project where a CLI profile can't. That's the one
-  place the schemas legitimately diverge: ``issue_list``, ``doc_list``,
-  ``issue_create``, ``doc_create``, ``activity_recent``, and
-  ``project_list`` gain an additional optional ``team`` parameter the
-  stdio version doesn't have (``project`` already existed on all but
-  ``project_list``; see ``scope.py``). The other four tools
-  (``issue_view``, ``issue_update``, ``issue_comment``, ``issue_start``)
-  key off a globally-unique issue identifier and need no extra scoping
-  parameter at all.
+  place the schemas legitimately diverge: the team-scoped tools gain an
+  additional optional ``team`` parameter the stdio version doesn't have
+  (see ``_ADDITIVE_TEAM_TOOLS`` in backend/tests/test_mcp_toolset_sync.py
+  for the current set, and ``scope.py`` for how it resolves). Tools that
+  key off a globally-unique issue identifier, or that resolve their team
+  from the entity they were handed, need no extra scoping parameter at
+  all (``_IDENTICAL_TOOLS`` in that same test).
 * ``cli/tests/test_mcp_server.py`` and ``backend/tests/test_mcp_toolset_sync.py``
   both assert their live toolset against the same checked-in snapshot
   (``docs/mcp-toolset-schema.json``) -- if either side's tool names,
@@ -64,6 +64,7 @@ from app.mcp_server.scope import (
     resolve_sprint,
     resolve_team,
 )
+from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
@@ -629,8 +630,12 @@ async def issue_block(
 
     Direction matters for `blocks` -- the issue named first is the one
     holding the other up, and it's the second one that stops showing up
-    in issue_ready. Creating the same pair twice is a no-op, not an
-    error.
+    in issue_ready.
+
+    Re-relating an already-related pair is a no-op that returns the
+    EXISTING relation -- including when you pass a different
+    relation_type, which is silently not applied. To change the type,
+    issue_unblock the pair first, then relate it again.
     """
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
@@ -709,7 +714,31 @@ async def _resolve_label_id(team_id: str, value: str) -> str:
     for tool parity: exact id, then case-insensitive name, then id
     prefix (see module docstring on why this isn't a shared import).
     """
-    labels = await labels_api.list_labels(team_id=team_id, current_user=get_current_mcp_user())
+    # limit=1000: the API default is 100, and a team past that would make
+    # a real label silently unresolvable -- reported as "no label matching
+    # 'x'", a false negative dressed as user error (CHT-1351). project_list
+    # widened for the same reason.
+    try:
+        labels = await labels_api.list_labels(
+            team_id=team_id, current_user=get_current_mcp_user(), limit=1000,
+        )
+    except HTTPException as e:
+        # Labels are a TEAM-level list, but this key may be scoped to a
+        # single project. The write itself (add_label_to_issue) needs only
+        # project access and would succeed -- it's the name->id lookup that
+        # can't be performed. Say that, rather than surfacing the API's
+        # "Not authorized to access this team", which names a team the
+        # caller never mentioned and reads as though the write was refused.
+        # Whether such keys should resolve team labels at all is an
+        # authorization question, tracked separately (CHT-1352).
+        if e.status_code in (401, 403):
+            raise ToolContextError(
+                "This API key is scoped to a project, and labels are defined "
+                "per team -- so label names can't be looked up with it. Pass "
+                "an explicit label id instead of a name, or use a team-scoped "
+                "key."
+            ) from e
+        raise
     if not labels:
         raise ToolContextError("No labels exist in this team yet.")
 
@@ -747,7 +776,7 @@ async def label_list(
     """
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
-    labels = await labels_api.list_labels(team_id=team_id, current_user=user)
+    labels = await labels_api.list_labels(team_id=team_id, current_user=user, limit=1000)
     return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
 
 
@@ -767,7 +796,9 @@ async def issue_label(
 
     Additive and subtractive rather than replacing the whole set, so
     labelling an issue never silently drops someone else's label. Labels
-    must already exist (see label_list) -- this does not create them.
+    must already exist -- this does not create them. Use label_list to
+    see them, or pass a label id directly if your key is project-scoped
+    (label_list is team-scoped and needs a team-scoped key).
 
     Adding a label the issue already has, or removing one it doesn't
     have, is a no-op rather than an error, so the same call is safe to
@@ -909,6 +940,7 @@ async def doc_update(
         bool,
         Field(description="Make the document global/team-wide by detaching it from its project.")
     ] = False,
+    team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
 ) -> dict:
     """Update a document's title, content, icon, or project.
 
@@ -933,7 +965,12 @@ async def doc_update(
             "(detach from any project), not both."
         )
     if project:
-        project_id, _ = await resolve_project(user, project, None)
+        # `team` is needed here and nowhere else in this tool: the document
+        # itself is found by _resolve_document_id (which already spans every
+        # team the key can reach), but naming a DESTINATION project needs a
+        # team to disambiguate against. Without it a multi-team key was told
+        # to "pass `team`" by a tool that had no such parameter (CHT-1351).
+        project_id, _ = await resolve_project(user, project, team)
         fields["project_id"] = project_id
     elif is_global:
         fields["project_id"] = None
@@ -1109,6 +1146,18 @@ async def sprint_close(
     closed = await sprints_api.close_sprint(sprint_id=sprint_id, current_user=user)
     result = _with_budget_state(closed.model_dump(mode="json"))
     result["entered_limbo"] = bool(result.get("limbo"))
+
+    # Budget state on the CLOSED sprint is history: it stays in arrears
+    # forever, because that is what it spent. What the caller actually
+    # asked -- "am I unblocked now?" -- is a property of whatever sprint
+    # is active AFTER the rotation, so report that separately rather than
+    # leaving `in_arrears: true` on a successful close to be misread as
+    # "still blocked" (CHT-1351).
+    if not result["entered_limbo"]:
+        active = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
+        result["now_active"] = _with_budget_state(active.model_dump(mode="json")) if active else None
+    else:
+        result["now_active"] = None
     return result
 
 
@@ -1135,7 +1184,17 @@ async def sprint_transactions(
     project_id, _ = await resolve_project(user, project, team)
     sprint_id = await resolve_sprint(project_id, sprint or "current")
     txns = await sprints_api.list_transactions(sprint_id=sprint_id, current_user=user)
-    return {"transactions": [t.model_dump(mode="json") for t in (txns or [])]}
+    # Through the response schema, not the raw row: list_transactions is an
+    # undecorated api function, so its response_model never runs here
+    # (CHT-1351). Output is identical today -- the model and schema have
+    # the same fields and no enums -- so this is about not being the next
+    # instance of that bug rather than fixing a live one.
+    return {
+        "transactions": [
+            BudgetTransactionResponse.model_validate(t).model_dump(mode="json")
+            for t in (txns or [])
+        ]
+    }
 
 
 async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | None) -> dict:
@@ -1296,9 +1355,12 @@ async def ritual_pending(
     `approval_mode`, and any existing `attestation`.
     """
     user = get_current_mcp_user()
-    project_id, _ = await resolve_project(user, project, team)
 
     if identifier:
+        # Resolved AFTER the branch: a ticket's rituals are found from the
+        # issue itself, so demanding project/team disambiguation here made
+        # a multi-team key supply scoping that was then discarded -- and
+        # blocked the call outright when it couldn't (CHT-1351).
         iss = await issues_api.get_issue_by_identifier(identifier, user)
         pending = _as_dict(await rituals_api.get_pending_ticket_rituals(
             issue_id=iss.id, current_user=user
@@ -1311,6 +1373,7 @@ async def ritual_pending(
             "unattested": [r["name"] for r in rituals if not r.get("attestation")],
         }
 
+    project_id, _ = await resolve_project(user, project, team)
     status = await _limbo(user, project_id)
     rituals = status.get("pending_rituals", []) or []
     return {
@@ -1372,9 +1435,14 @@ async def ritual_attest(
     whether it's sprint-scoped or ticket-scoped: pass `identifier` when
     attesting a ticket's close/claim gate, omit it for a sprint ritual.
 
-    If the ritual's approval_mode is `auto` this clears it outright;
-    under `review`/`gate` it records the attestation and leaves it
-    pending a human. The result says which happened.
+    If the ritual's approval_mode is `auto` this clears it outright.
+    Under `review` it records the attestation and leaves it pending a
+    human; `approved` in the result says which happened.
+
+    Under `gate` this is REFUSED -- gate rituals are human-completion
+    only and the server rejects an attestation outright rather than
+    recording one. Use ritual_complete for those, and ritual_list to see
+    each ritual's approval_mode before choosing.
     """
     user = get_current_mcp_user()
     project_id, _ = await resolve_project(user, project, team)

@@ -569,8 +569,12 @@ def issue_block(
 
     Direction matters for `blocks` -- the issue named first is the one
     holding the other up, and it's the second one that stops showing up
-    in issue_ready. Creating the same pair twice is a no-op, not an
-    error.
+    in issue_ready.
+
+    Re-relating an already-related pair is a no-op that returns the
+    EXISTING relation -- including when you pass a different
+    relation_type, which is silently not applied. To change the type,
+    issue_unblock the pair first, then relate it again.
     """
     _require_auth()
     iss = _client().get_issue_by_identifier(identifier)
@@ -646,7 +650,7 @@ def label_list() -> dict:
     guess. Also the source of the names issue_label accepts.
     """
     team_id = _require_team()
-    return {"labels": _client().get_labels(team_id) or []}
+    return {"labels": _client().get_labels(team_id, limit=1000) or []}
 
 
 @_boundary
@@ -665,7 +669,9 @@ def issue_label(
 
     Additive and subtractive rather than replacing the whole set, so
     labelling an issue never silently drops someone else's label. Labels
-    must already exist (see label_list) -- this does not create them.
+    must already exist -- this does not create them. Use label_list to
+    see them, or pass a label id directly if your key is project-scoped
+    (label_list is team-scoped and needs a team-scoped key).
 
     Adding a label the issue already has, or removing one it doesn't
     have, is a no-op rather than an error, so the same call is safe to
@@ -967,6 +973,18 @@ def sprint_close(
     result = _client().close_sprint(sprint_id)
     result = _with_budget_state(result)
     result["entered_limbo"] = bool(result.get("limbo"))
+
+    # Budget state on the CLOSED sprint is history: it stays in arrears
+    # forever, because that is what it spent. What the caller actually
+    # asked -- "am I unblocked now?" -- is a property of whatever sprint
+    # is active AFTER the rotation, so report that separately rather than
+    # leaving `in_arrears: true` on a successful close to be misread as
+    # "still blocked" (CHT-1351).
+    if not result["entered_limbo"]:
+        active = _client().get_current_sprint(project_id)
+        result["now_active"] = _with_budget_state(active) if active else None
+    else:
+        result["now_active"] = None
     return result
 
 
@@ -1132,9 +1150,12 @@ def ritual_pending(
     carries its `prompt` (the question your note must answer),
     `approval_mode`, and any existing `attestation`.
     """
-    project_id = _require_project(project)
-
     if identifier:
+        # Resolved AFTER the branch: a ticket's rituals are found from the
+        # issue itself, so requiring project context here made the call
+        # fail for a caller with no current project even though nothing
+        # on this path uses it (CHT-1351).
+        _require_auth()
         iss = _client().get_issue_by_identifier(identifier)
         pending = _client().get_pending_issue_rituals(iss["id"]) or {}
         rituals = pending.get("pending_rituals", []) or []
@@ -1145,6 +1166,7 @@ def ritual_pending(
             "unattested": [r["name"] for r in rituals if not r.get("attestation")],
         }
 
+    project_id = _require_project(project)
     status = _client().get_limbo_status(project_id) or {}
     rituals = status.get("pending_rituals", []) or []
     return {
@@ -1201,9 +1223,14 @@ def ritual_attest(
     whether it's sprint-scoped or ticket-scoped: pass `identifier` when
     attesting a ticket's close/claim gate, omit it for a sprint ritual.
 
-    If the ritual's approval_mode is `auto` this clears it outright;
-    under `review`/`gate` it records the attestation and leaves it
-    pending a human. The result says which happened.
+    If the ritual's approval_mode is `auto` this clears it outright.
+    Under `review` it records the attestation and leaves it pending a
+    human; `approved` in the result says which happened.
+
+    Under `gate` this is REFUSED -- gate rituals are human-completion
+    only and the server rejects an attestation outright rather than
+    recording one. Use ritual_complete for those, and ritual_list to see
+    each ritual's approval_mode before choosing.
     """
     project_id = _require_project(project)
     rit = _find_ritual(project_id, ritual)

@@ -568,12 +568,15 @@ class TestSprintTools:
     """
 
     async def _active(self, project_id=None):
-        """The active sprint, creating it if the project has none yet.
+        """The active sprint.
 
-        Deliberately goes through the tool rather than
-        SprintService.get_current_sprint: only the API-layer function
-        creates a sprint on demand (ensure_sprints_exist), and a project
-        fixture starts with none.
+        This used to exist because the sprint tools could not cope with a
+        project whose first sprint had never been materialised -- calling
+        sprint_current() first was a workaround, and it hid that bug from
+        every test in this class. resolve_sprint now materialises like the
+        routed endpoint does (CHT-1351), so this is just a convenience for
+        getting at the sprint's fields; TestReviewRegressions covers the
+        fresh-project path directly.
         """
         return await tools.sprint_current()
 
@@ -879,6 +882,157 @@ class TestIssueStartClaimParity:
             identifier=iss["identifier"], attest={name: "cut it"},
         )
         assert started["status"] == "in_progress"
+
+
+
+class TestReviewRegressions:
+    """Regressions for the oppositional review on PR #262 (CHT-1351)."""
+
+    async def _ritual(self, project_id, name, **kw):
+        from app.enums import RitualTrigger
+        from app.schemas.ritual import RitualCreate
+        from app.services.ritual_service import RitualService
+        return await RitualService().create(
+            RitualCreate(name=name, prompt=kw.pop("prompt", "?"),
+                         trigger=kw.pop("trigger", RitualTrigger.EVERY_SPRINT), **kw),
+            project_id,
+        )
+
+    # --- C1: sprint tools on a project whose first sprint was never created ---
+
+    async def test_sprint_tools_work_on_a_project_with_no_sprint_yet(self, test_project):
+        """Previously every sprint tool errored here while the same call
+        over stdio silently created the sprint. The old test suite hid
+        this by calling sprint_current() first."""
+        iss = await tools.issue_create(title="Needs scheduling")
+
+        result = await tools.sprint_add(identifiers=[iss["identifier"]])
+
+        assert "error" not in result
+        assert result["updated"] == [iss["identifier"]]
+
+    async def test_sprint_transactions_on_a_fresh_project(self, test_project):
+        result = await tools.sprint_transactions()
+        assert "error" not in result
+        assert result["transactions"] == []
+
+    async def test_sprint_close_on_a_fresh_project(self, test_project):
+        result = await tools.sprint_close()
+        assert "error" not in result
+
+    # --- C8: sprint reference resolution matches the CLI's ---
+
+    async def test_sprint_resolves_by_bare_number_and_substring(self, test_project):
+        await tools.sprint_current()  # materialise "Sprint 1"
+        iss = await tools.issue_create(title="Schedulable")
+
+        by_number = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="1")
+        assert "error" not in by_number
+
+        # "Sprint" alone matches both Sprint 1 and Sprint 2, and ambiguity
+        # must refuse rather than silently pick -- same as the CLI.
+        ambiguous = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="Sprint")
+        assert "error" in ambiguous
+        assert "Ambiguous" in str(ambiguous["error"])
+
+        by_substring = await tools.sprint_add(identifiers=[iss["identifier"]], sprint="rint 1")
+        assert "error" not in by_substring
+
+    async def test_unknown_sprint_names_the_real_ones(self, test_project):
+        await tools.sprint_current()
+        result = await tools.sprint_add(identifiers=["X-1"], sprint="nope")
+        assert "error" in result
+        assert "Sprint 1" in str(result["error"])
+
+    # --- C3: a successful close must not read as "still blocked" ---
+
+    async def test_sprint_close_reports_the_newly_active_sprint(self, test_project):
+        from app.schemas.sprint import SprintUpdate
+        from app.services.sprint_service import SprintService
+
+        cur = await tools.sprint_current()
+        svc = SprintService()
+        await svc.update(await svc.get_by_id(cur["id"]), SprintUpdate(budget=1))
+        for title in ("A", "B"):
+            i = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(identifier=i["identifier"], status="done")
+
+        assert (await tools.sprint_current())["in_arrears"] is True
+
+        closed = await tools.sprint_close()
+
+        # The closed sprint keeps its history...
+        assert closed["in_arrears"] is True
+        # ...but the caller's real question is answered separately.
+        assert closed["now_active"] is not None
+        assert closed["now_active"]["in_arrears"] is False
+        assert closed["now_active"]["id"] != closed["id"]
+
+    # --- C12: ritual_pending(identifier=...) needs no project scoping ---
+
+    async def test_ritual_pending_for_a_ticket_needs_no_project_context(self, test_project):
+        from app.enums import RitualTrigger
+        await self._ritual(test_project.id, "close-gate", trigger=RitualTrigger.TICKET_CLOSE)
+        iss = await tools.issue_create(title="Gated")
+
+        result = await tools.ritual_pending(identifier=iss["identifier"])
+
+        assert "error" not in result
+        assert result["scope"] == "ticket"
+
+    # --- ritual_complete had no backend behavioural test at all ---
+
+    async def test_ritual_complete_clears_a_gate_sprint_ritual(self, test_project):
+        from app.enums import ApprovalMode
+        await self._ritual(test_project.id, "signoff", approval_mode=ApprovalMode.GATE)
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        assert (await tools.ritual_pending())["in_limbo"] is True
+
+        result = await tools.ritual_complete(ritual="signoff", note="signed")
+
+        assert "error" not in result
+        assert result["scope"] == "sprint"
+        assert result["still_in_limbo"] is False
+
+    async def test_ritual_complete_dispatches_to_the_ticket_branch(self, test_project):
+        """The _trigger_of dispatch, whose own docstring warns the failure
+        is silent and surfaces as an unrelated 'not in limbo' error."""
+        from app.enums import ApprovalMode, RitualTrigger
+        await self._ritual(test_project.id, "close-signoff",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.GATE)
+        iss = await tools.issue_create(title="Gate-closed")
+
+        result = await tools.ritual_complete(
+            ritual="close-signoff", note="signed", identifier=iss["identifier"],
+        )
+
+        assert "error" not in result
+        assert result["scope"] == "ticket"
+        assert result["identifier"] == iss["identifier"]
+
+    async def test_ritual_complete_ticket_ritual_without_identifier(self, test_project):
+        from app.enums import ApprovalMode, RitualTrigger
+        await self._ritual(test_project.id, "needs-ticket",
+                           trigger=RitualTrigger.TICKET_CLOSE,
+                           approval_mode=ApprovalMode.GATE)
+        result = await tools.ritual_complete(ritual="needs-ticket", note="x")
+        assert "error" in result
+        assert "identifier" in str(result["error"])
+
+    # --- C6: gate rituals refuse attestation; the docstring now says so ---
+
+    async def test_attesting_a_gate_ritual_is_refused(self, test_project):
+        from app.enums import ApprovalMode
+        await self._ritual(test_project.id, "gate-only", approval_mode=ApprovalMode.GATE)
+        await tools.sprint_current()
+        await tools.sprint_close()
+
+        result = await tools.ritual_attest(ritual="gate-only", note="nope")
+
+        assert "error" in result
 
 
 

@@ -771,7 +771,8 @@ class TestLabelTools:
         labels = [{"id": "lab-1", "name": "bug", "color": "#f00"}]
         client.get_labels = MagicMock(return_value=labels)
         assert mcp_mod.label_list() == {"labels": labels}
-        client.get_labels.assert_called_once_with("test-team-123")
+        # limit=1000 so a team with >100 labels stays resolvable (CHT-1351)
+        client.get_labels.assert_called_once_with("test-team-123", limit=1000)
 
     def test_label_list_empty(self, mcp_mod):
         from cli.main import client

@@ -7,7 +7,8 @@ over HTTP into itself). Instead both sides assert their live toolset
 against the same checked-in snapshot, docs/mcp-toolset-schema.json --
 this is the stdio half of that guard. See
 backend/tests/test_mcp_toolset_sync.py for the HTTP half, which allows
-the documented additive ``team`` parameter on five tools; this file
+the documented additive ``team`` parameter on the team-scoped tools
+(``_ADDITIVE_TEAM_TOOLS`` there); this file
 requires an EXACT match, since the stdio toolset is the schema's source
 of truth (docs/mcp-toolset-schema.json's own ``_meta.generated_from``
 points at ``cli.mcp_server.build_server()``, and

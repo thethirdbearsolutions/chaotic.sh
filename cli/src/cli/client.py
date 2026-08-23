@@ -505,8 +505,9 @@ class Client:
         data = {"name": name, **kwargs}
         return self._request("POST", f"/teams/{team_id}/labels", data)
 
-    def get_labels(self, team_id: str) -> list:
-        return self._request("GET", f"/teams/{team_id}/labels")
+    def get_labels(self, team_id: str, limit: int = None) -> list:
+        params = f"?limit={limit}" if limit is not None else ""
+        return self._request("GET", f"/teams/{team_id}/labels{params}")
 
     def update_label(self, label_id: str, **kwargs) -> dict:
         return self._request("PATCH", f"/labels/{label_id}", kwargs)

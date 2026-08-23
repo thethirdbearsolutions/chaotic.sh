@@ -144,9 +144,24 @@ class TestResolveSprint:
         assert await resolve_sprint(test_project.id, "CURRENT") == current.id
         assert await resolve_sprint(test_project.id, "next") == nxt.id
 
-    async def test_current_missing_errors(self, test_project):
-        with pytest.raises(ToolContextError, match="No current sprint"):
-            await resolve_sprint(test_project.id, "current")
+    async def test_current_materializes_when_absent(self, test_project):
+        """'current' creates the sprint rather than erroring.
+
+        This used to assert the opposite. That was pinning a real bug: the
+        routed GET /sprints/current calls ensure_sprints_exist, so the stdio
+        transport -- which reaches it over HTTP -- always created on demand,
+        while every HTTP-transport sprint tool failed outright on a project
+        whose first sprint had never been made (CHT-1351).
+        """
+        from app.services.sprint_service import SprintService
+
+        assert await SprintService().get_current_sprint(test_project.id) is None
+
+        sprint_id = await resolve_sprint(test_project.id, "current")
+
+        assert sprint_id
+        created = await SprintService().get_current_sprint(test_project.id)
+        assert created is not None and created.id == sprint_id
 
     async def test_by_id(self, test_project):
         from app.services.sprint_service import SprintService
@@ -164,18 +179,23 @@ class TestResolveSprint:
         with pytest.raises(ToolContextError, match="not found in this project"):
             await resolve_sprint(test_project.id, "nonexistent-sprint")
 
-    async def test_next_missing_errors(self, test_project):
+    async def test_next_rematerializes_when_deleted(self, test_project):
+        """Same contract as 'current': a missing 'next' is created, not an error.
+
+        Previously this deleted the next sprint and asserted a raise. Under
+        the CHT-1351 fix ensure_sprints_exist recreates it, which is what
+        the stdio transport has always done via the routed endpoint.
+        """
+        from app.oxyde_models.sprint import OxydeSprint
         from app.services.sprint_service import SprintService
 
         await SprintService().ensure_sprints_exist(test_project.id)
         nxt = await resolve_sprint(test_project.id, "next")
-        from app.oxyde_models.sprint import OxydeSprint
+        await (await OxydeSprint.objects.get(id=nxt)).delete()
 
-        sprint = await OxydeSprint.objects.get(id=nxt)
-        await sprint.delete()
+        recreated = await resolve_sprint(test_project.id, "next")
 
-        with pytest.raises(ToolContextError, match="No next sprint"):
-            await resolve_sprint(test_project.id, "next")
+        assert recreated and recreated != nxt
 
 
 class TestResolveAssignee:
