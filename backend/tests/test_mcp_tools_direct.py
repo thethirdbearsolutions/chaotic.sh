@@ -1024,6 +1024,60 @@ class TestNoLeakedEnumNames:
 
 
 
+class TestNoLeakedInternalFields:
+    """No tool may return a field its response schema omits (CHT-1348).
+
+    ``response_model`` does two jobs: it serialises, and it FILTERS the
+    payload down to the schema's fields. An in-process caller that dumps
+    an ORM row gets neither -- and where the enum-casing half of that is
+    cosmetic, this half is not. ``OxydeUser`` carries
+    ``hashed_password``, ``is_superuser`` and the agent-scoping columns,
+    none of which are on ``UserResponse``; ``OxydeIssue.creator`` and
+    ``OxydeRitual.group`` are live relations to rows like that.
+
+    Nothing leaks today -- the issue/doc tools call functions that
+    already return response models, and the rest go through ``_dump``.
+    This pins that, because the failure would be silent and the blast
+    radius is a password hash rather than a lowercase letter.
+    """
+
+    FORBIDDEN = (
+        "hashed_password", "is_superuser", "parent_user_id", "parent_user",
+        "agent_team_id", "agent_project_id", "key_hash", "api_key",
+    )
+
+    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team):
+        import json
+
+        iss = await tools.issue_create(title="Field sweep")
+        doc = await tools.doc_create(title="Field sweep doc", content="x")
+
+        outputs = {
+            "issue_view": await tools.issue_view(iss["identifier"]),
+            "issue_list": await tools.issue_list(),
+            "issue_create": iss,
+            "issue_ready": await tools.issue_ready(),
+            "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "doc_list": await tools.doc_list(),
+            "activity_recent": await tools.activity_recent(),
+            "project_list": await tools.project_list(),
+            "sprint_current": await tools.sprint_current(),
+            "sprint_list": await tools.sprint_list(),
+            "label_list": await tools.label_list(),
+            "ritual_list": await tools.ritual_list(),
+        }
+
+        leaked = {}
+        for name, out in outputs.items():
+            blob = json.dumps(out, default=str)
+            hits = [f for f in self.FORBIDDEN if f'"{f}"' in blob]
+            if hits:
+                leaked[name] = hits
+        assert not leaked, f"tool output exposes non-schema fields: {leaked}"
+
+
+
 class TestActivityRecentExplicitProject:
     async def test_activity_recent_explicit_project(self, test_project):
         await tools.issue_create(title="For activity")
