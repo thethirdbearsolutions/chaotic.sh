@@ -67,7 +67,7 @@ from app.mcp_server.scope import (
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
-    IssueUpdate, LabelResponse,
+    IssueRelationResponse, IssueUpdate, LabelResponse,
 )
 from app.schemas.project import ProjectResponse
 from app.schemas.sprint import SprintResponse
@@ -609,7 +609,10 @@ async def issue_relations(
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
     relations = await issues_api.list_relations(issue_id=iss.id, current_user=user)
-    return {"relations": relations or []}
+    # Through the response schema, not raw: list_relations builds its dicts
+    # from raw SQL, so related_issue_status arrives as the stored enum NAME
+    # ("BACKLOG") where every HTTP client sees the value ("backlog").
+    return {"relations": [_dump(IssueRelationResponse, r) for r in (relations or [])]}
 
 
 @_boundary

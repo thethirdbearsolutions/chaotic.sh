@@ -8,6 +8,8 @@ combinations (epic filters, sprint filters, assignee resolution,
 explicit `project`/`team` overrides, `unassigned`), the `_boundary`
 error-translation paths, and doc_view's fuzzy id/title matching.
 """
+import re
+
 import pytest
 
 from app.mcp_server import context, tools
@@ -936,6 +938,89 @@ class TestEnumSerialisationParity:
         via_http = resp.json()[0]["trigger"]
 
         assert via_tool == via_http == "ticket_claim"
+
+
+
+class TestNoLeakedEnumNames:
+    """Sweep every read tool's output for leaked enum NAMES.
+
+    Enum-valued fields must reach callers as the enum VALUE ("backlog"),
+    the way every HTTP client sees them. An Oxyde row dumped directly
+    yields the NAME ("BACKLOG") instead -- see _dump. A per-tool
+    assertion would only ever cover the tools someone remembered to
+    write one for, so this sweeps them all and fails on anything that
+    looks like a NAME.
+    """
+
+    # Fields whose values are legitimately SHOUTY (keys, uuids, identifiers).
+    IGNORE = {
+        "key", "identifier", "id", "team_id", "project_id", "sprint_id",
+        "parent_id", "assignee_id", "creator_id", "author_id", "document_id",
+        "issue_id", "related_issue_id", "label_id", "ritual_id",
+        # activity old_value/new_value store the raw written string and
+        # currently hold enum NAMES on every transport, HTTP included --
+        # a pre-existing leak, tracked separately, not this sweep's business.
+        "old_value", "new_value",
+    }
+    # "BACKLOG" (the enum NAME) and "IssueStatus.BACKLOG" (str() of a
+    # member -- a third form that reached production once already; the
+    # frontend's cleanValue() still strips that prefix today).
+    NAME_LIKE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$|^[A-Za-z]\w*\.[A-Z][A-Z0-9_]*$")
+
+    def _leaks(self, obj, path=""):
+        found = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k not in self.IGNORE:
+                    found += self._leaks(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                found += self._leaks(v, f"{path}[{i}]")
+        elif isinstance(obj, str) and self.NAME_LIKE.match(obj):
+            found.append((path, obj))
+        return found
+
+    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team):
+        from app.enums import RitualTrigger
+        from app.schemas.issue import LabelCreate
+        from app.schemas.ritual import RitualCreate
+        from app.services.issue_service import IssueService
+        from app.services.ritual_service import RitualService
+
+        await IssueService().create_label(LabelCreate(name="sweep"), test_team.id)
+        await RitualService().create(
+            RitualCreate(name="gate", prompt="?", trigger=RitualTrigger.TICKET_CLOSE),
+            test_project.id,
+        )
+        iss = await tools.issue_create(title="Sweep me", estimate=1)
+        blocker = await tools.issue_create(title="Blocker")
+        await tools.issue_block(identifier=blocker["identifier"], blocked=iss["identifier"])
+        doc = await tools.doc_create(title="Sweep doc", content="x")
+        await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
+        await tools.issue_label(identifier=iss["identifier"], add=["sweep"])
+        await tools.issue_update(identifier=iss["identifier"], priority="high")
+
+        outputs = {
+            "issue_view": await tools.issue_view(iss["identifier"]),
+            "issue_list": await tools.issue_list(),
+            "issue_ready": await tools.issue_ready(),
+            "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "label_list": await tools.label_list(),
+            "doc_list": await tools.doc_list(),
+            "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "sprint_current": await tools.sprint_current(),
+            "sprint_list": await tools.sprint_list(),
+            "ritual_list": await tools.ritual_list(),
+            "ritual_pending": await tools.ritual_pending(identifier=iss["identifier"]),
+            "activity_recent": await tools.activity_recent(),
+            "project_list": await tools.project_list(),
+        }
+
+        leaked = {name: found for name, out in outputs.items() if (found := self._leaks(out))}
+        assert not leaked, (
+            "tool output contains enum NAMES where values are expected "
+            f"(dump through the response schema via _dump): {leaked}"
+        )
 
 
 
