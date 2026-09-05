@@ -13,29 +13,37 @@ The fix is that API functions return their response schema *by
 construction*, and say so in their signature. These tests keep that
 true:
 
-* every public, undecorated ``app/api`` function declares a return type
-  (those exist specifically to be called in-process);
-* every API function the MCP tools call declares a return type that is
-  a response schema, a list of one, ``dict``, or ``None`` -- so the
-  next tool added cannot silently receive an ORM row;
+* every public, undecorated ``app/api`` function (those exist
+  specifically to be called in-process) declares a return type that is
+  a response schema, a list of one, a scalar, or ``None`` -- never an
+  ORM row;
+* every API function the MCP tools call declares a schema return type,
+  where the set of API modules the tools import is derived from the
+  tools module itself, so a newly imported module cannot slip past;
+* the tools module never validates or launders a row itself;
 * a handful of representative functions, called in-process the way the
   tools call them, return schema instances rather than model rows.
 
-The first two are AST/signature checks and run without a database.
+The first three are AST/signature checks and run without a database.
 """
 import ast
+import importlib
 import pathlib
 import re
 import typing
 
 import pytest
+from oxyde import Model as OxydeModel
 from pydantic import BaseModel
 
 import app.api as api_pkg
-from app.api import documents, issues, labels, rituals, sprints
 
 _API_DIR = pathlib.Path(api_pkg.__file__).parent
 _TOOLS_PATH = _API_DIR.parent / "mcp_server" / "tools.py"
+
+# Auth dependencies, not API functions: they return the current user row,
+# a bool, or an auth-method string, and are never a tool's output.
+_NOT_API_FUNCTIONS = {"deps"}
 
 
 def _route_decorated(node: ast.AST) -> bool:
@@ -53,6 +61,8 @@ def _public_functions():
     """(module_name, function_name, is_routed, has_return_annotation)."""
     out = []
     for path in sorted(_API_DIR.glob("*.py")):
+        if path.stem in _NOT_API_FUNCTIONS or path.stem.startswith("_"):
+            continue
         tree = ast.parse(path.read_text())
         for node in tree.body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -67,6 +77,40 @@ PUBLIC_FUNCTIONS = _public_functions()
 UNDECORATED = [(m, f) for m, f, routed, _ in PUBLIC_FUNCTIONS if not routed]
 
 
+def _is_orm_row(annotation) -> bool:
+    return isinstance(annotation, type) and issubclass(annotation, OxydeModel)
+
+
+def _is_schema_return(annotation, *, allow_scalars: bool = False) -> bool:
+    """A return annotation an in-process caller can dump safely.
+
+    A response schema, ``list[schema]``, ``None``, or unions of those.
+    ``dict`` is deliberately NOT accepted: ``-> dict`` would let
+    ``{"items": [row, ...]}`` through unseen. Scalars (str/bool/int) are
+    allowed only for the undecorated helpers (``get_author_name``), never
+    for anything a tool calls.
+    """
+    if annotation is None or annotation is type(None):
+        return True
+    if _is_orm_row(annotation):
+        return False
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return True
+    if allow_scalars and annotation in (str, bool, int):
+        return True
+    origin = typing.get_origin(annotation)
+    if origin is list:
+        (inner,) = typing.get_args(annotation)
+        return _is_schema_return(inner, allow_scalars=False) and inner is not type(None)
+    if origin is typing.Union or str(origin) == "<class 'types.UnionType'>":
+        return all(_is_schema_return(a, allow_scalars=allow_scalars) for a in typing.get_args(annotation))
+    return False
+
+
+def _resolve(module: str, func: str):
+    return getattr(importlib.import_module(f"app.api.{module}"), func)
+
+
 def test_the_sweep_found_the_api_layer():
     assert len(PUBLIC_FUNCTIONS) > 100
     assert len(UNDECORATED) >= 10
@@ -77,17 +121,21 @@ def test_the_sweep_found_the_api_layer():
     UNDECORATED,
     ids=[f"{m}.{f}" for m, f in UNDECORATED],
 )
-def test_undecorated_api_function_declares_its_return(module, func):
+def test_undecorated_api_function_returns_a_schema(module, func):
     """An undecorated ``app/api`` function has no ``response_model`` to
     fall back on: the only place its output contract can live is its
-    signature. If this fails, annotate the function with the response
-    schema it returns and construct that schema in the body."""
-    has_annotation = next(
-        ann for m, f, _, ann in PUBLIC_FUNCTIONS if (m, f) == (module, func)
-    )
-    assert has_annotation, (
+    signature, and that contract must not be an ORM row. If this fails,
+    annotate the function with the response schema it returns and
+    construct that schema in the body."""
+    hints = typing.get_type_hints(_resolve(module, func))
+    assert "return" in hints, (
         f"app/api/{module}.py::{func} is called in-process (it has no route "
         f"decorator) but declares no return type -- see ADR-0005"
+    )
+    ret = hints["return"]
+    assert _is_schema_return(ret, allow_scalars=True), (
+        f"app/api/{module}.py::{func} declares -> {ret!r}; in-process callers need "
+        f"a response schema, list[schema], a scalar, or None -- never an Oxyde row"
     )
 
 
@@ -95,49 +143,39 @@ def test_undecorated_api_function_declares_its_return(module, func):
 # Functions reachable from the MCP tools
 # --------------------------------------------------------------------------
 
-_ALIASES = {
-    "documents_api": documents,
-    "issues_api": issues,
-    "labels_api": labels,
-    "rituals_api": rituals,
-    "sprints_api": sprints,
-}
+def _tools_api_aliases() -> dict:
+    """``{alias: module_name}`` for every ``from app.api import X as
+    X_api`` in tools.py -- derived, so a newly imported API module is
+    covered the day it lands."""
+    tree = ast.parse(_TOOLS_PATH.read_text())
+    aliases = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "app.api":
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = alias.name
+    return aliases
+
+
+_ALIASES = _tools_api_aliases()
 _CALL_RE = re.compile(r"\b([a-z_]+_api)\.([a-z_]+)\b")
 
 
 def _tools_api_calls():
     src = _TOOLS_PATH.read_text()
-    calls = sorted({(alias, fn) for alias, fn in _CALL_RE.findall(src) if alias in _ALIASES})
-    return calls
+    return sorted({(alias, fn) for alias, fn in _CALL_RE.findall(src)})
 
 
 TOOL_CALLS = _tools_api_calls()
 
 
 def test_tools_module_calls_the_api_layer():
-    """Sanity: the regex still finds the in-process call sites. If the
-    tools module switches aliasing conventions this needs updating,
-    otherwise the parametrized test below would silently test nothing."""
+    """Sanity for the derivation above: every ``*_api.`` reference in
+    tools.py resolves to an import we found, and every import is used.
+    If tools.py changes aliasing conventions this fails loudly instead
+    of the parametrized test below silently testing nothing."""
     assert len(TOOL_CALLS) >= 20
-    for alias in _ALIASES:
-        assert any(a == alias for a, _ in TOOL_CALLS), alias
-
-
-def _is_schema_return(annotation) -> bool:
-    """A return annotation an in-process caller can dump safely."""
-    if annotation is None or annotation is type(None):
-        return True
-    if annotation is dict:
-        return True
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return True
-    origin = typing.get_origin(annotation)
-    if origin is list:
-        (inner,) = typing.get_args(annotation)
-        return isinstance(inner, type) and issubclass(inner, BaseModel)
-    if origin is typing.Union or str(origin) == "<class 'types.UnionType'>":
-        return all(_is_schema_return(a) for a in typing.get_args(annotation))
-    return False
+    referenced = {a for a, _ in TOOL_CALLS}
+    assert referenced == set(_ALIASES), (referenced ^ set(_ALIASES))
 
 
 @pytest.mark.parametrize(
@@ -147,34 +185,31 @@ def _is_schema_return(annotation) -> bool:
 )
 def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     """Every API function the MCP tools call must declare that it returns
-    a response schema (or list/dict/None). A function returning a raw
-    Oxyde row here is exactly the CHT-1333 bug waiting for its next
-    caller -- the tool would ``model_dump`` a row and emit whatever the
-    row carries."""
-    fn = getattr(_ALIASES[alias], func)
+    a response schema (or list/None). A function returning a raw Oxyde
+    row here is exactly the CHT-1333 bug waiting for its next caller --
+    the tool would ``model_dump`` a row and emit whatever the row
+    carries."""
+    module = _ALIASES[alias]
+    fn = _resolve(module, func)
     hints = typing.get_type_hints(fn)
     assert "return" in hints, (
-        f"app/api/{_ALIASES[alias].__name__.rsplit('.', 1)[-1]}.py::{func} is called "
-        f"from app/mcp_server/tools.py but declares no return type -- see ADR-0005"
+        f"app/api/{module}.py::{func} is called from app/mcp_server/tools.py "
+        f"but declares no return type -- see ADR-0005"
     )
     ret = hints["return"]
     assert _is_schema_return(ret), (
         f"{func} declares -> {ret!r}; in-process callers need a response schema, "
-        f"list[schema], dict, or None"
+        f"list[schema], or None"
     )
 
 
 def test_tools_module_never_validates_a_row_itself():
     """The tools module must not need to know about ORM rows at all: no
-    ``Schema.model_validate(...)`` on something an API function handed
-    it, and no ``from_attributes=`` laundering. (``project_list`` reads
-    ``ProjectService`` directly and is the one sanctioned exception.)"""
+    ``Schema.model_validate(...)`` and no ``from_attributes=`` laundering
+    anywhere in it. Every row-to-schema conversion belongs in app/api."""
     src = _TOOLS_PATH.read_text()
     assert "from_attributes" not in src
-    validates = [
-        line.strip() for line in src.splitlines()
-        if ".model_validate(" in line and "ProjectResponse.model_validate(p)" not in line
-    ]
+    validates = [line.strip() for line in src.splitlines() if ".model_validate(" in line]
     assert validates == [], validates
 
 
@@ -189,11 +224,19 @@ class TestInProcessCallsReturnSchemas:
     comparison would pass either way; the type is the contract."""
 
     async def test_list_labels(self, test_team, test_user, test_label):
+        from app.api import labels
         from app.schemas.issue import LabelResponse
         result = await labels.list_labels(team_id=test_team.id, current_user=test_user)
         assert result and all(type(r) is LabelResponse for r in result)
 
+    async def test_list_projects(self, test_team, test_user, test_project):
+        from app.api import projects
+        from app.schemas.project import ProjectResponse
+        result = await projects.list_projects(team_id=test_team.id, current_user=test_user)
+        assert result and all(type(p) is ProjectResponse for p in result)
+
     async def test_list_sprints_and_current(self, test_project, test_user):
+        from app.api import sprints
         from app.schemas.sprint import SprintResponse
         current = await sprints.get_current_sprint(project_id=test_project.id, current_user=test_user)
         assert type(current) is SprintResponse
@@ -202,12 +245,14 @@ class TestInProcessCallsReturnSchemas:
         assert listed and all(type(s) is SprintResponse for s in listed)
 
     async def test_list_rituals(self, test_project, test_user, auto_close_ritual):
+        from app.api import rituals
         from app.schemas.ritual import RitualResponse
         result = await rituals.list_rituals(project_id=test_project.id, current_user=test_user)
         assert result and all(type(r) is RitualResponse for r in result)
         assert result[0].trigger.value == "ticket_close"
 
     async def test_list_relations(self, test_project, test_user, test_issue):
+        from app.api import issues
         from app.schemas.issue import IssueCreate, IssueRelationCreate, IssueRelationResponse
         other = await issues.create_issue(
             project_id=test_project.id,
@@ -226,16 +271,26 @@ class TestInProcessCallsReturnSchemas:
         assert result[0].relation_type == "blocked_by"
         assert result[0].related_issue_status.value == "backlog"
 
-    async def test_list_transactions(self, test_project, test_user):
+    async def test_list_transactions(self, test_project, test_user, test_issue):
+        from app.api import issues, sprints
+        from app.enums import IssueStatus
         from app.schemas.budget_transaction import BudgetTransactionResponse
+        from app.schemas.issue import IssueUpdate
+        # Closing an issue is what writes a transaction (against the sprint
+        # that is active at the time, so make sure one exists first);
+        # without one the list is empty and ``all([])`` would pass vacuously.
         current = await sprints.get_current_sprint(project_id=test_project.id, current_user=test_user)
+        await issues.update_issue(
+            issue_id=test_issue.id, issue_in=IssueUpdate(status=IssueStatus.DONE), current_user=test_user,
+        )
         result = await sprints.list_transactions(sprint_id=current.id, current_user=test_user)
-        assert all(type(t) is BudgetTransactionResponse for t in result)
+        assert result and all(type(t) is BudgetTransactionResponse for t in result)
 
     async def test_no_schema_instance_carries_internal_fields(self, test_project, test_user, test_issue):
         """The filtering half of response_model, by construction: the
         object an in-process caller receives cannot carry a field the
         schema doesn't declare, however the row's relations are loaded."""
+        from app.api import issues
         got = await issues.get_issue_by_identifier(test_issue.identifier, test_user)
         dumped = got.model_dump(mode="json")
         assert "creator" not in dumped

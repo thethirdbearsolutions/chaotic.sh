@@ -950,7 +950,8 @@ class TestNoLeakedEnumNames:
 
     Enum-valued fields must reach callers as the enum VALUE ("backlog"),
     the way every HTTP client sees them. An Oxyde row dumped directly
-    yields the NAME ("BACKLOG") instead -- see _dump. A per-tool
+    yields the NAME ("BACKLOG") instead -- which is why the api layer
+    returns response schemas (ADR-0005). A per-tool
     assertion would only ever cover the tools someone remembered to
     write one for, so this sweeps them all and fails on anything that
     looks like a NAME.
@@ -1030,7 +1031,7 @@ class TestNoLeakedEnumNames:
         leaked = {name: found for name, out in outputs.items() if (found := self._leaks(out))}
         assert not leaked, (
             "tool output contains enum NAMES where values are expected "
-            f"(dump through the response schema via _dump): {leaked}"
+            f"(the api function must return its response schema, ADR-0005): {leaked}"
         )
 
 
@@ -1047,7 +1048,7 @@ class TestNoLeakedInternalFields:
     ``OxydeRitual.group`` are live relations to rows like that.
 
     Nothing leaks today -- the issue/doc tools call functions that
-    already return response models, and the rest go through ``_dump``.
+    return response models by construction (CHT-1348, ADR-0005).
     This pins that, because the failure would be silent and the blast
     radius is a password hash rather than a lowercase letter.
     """
@@ -1246,8 +1247,8 @@ class TestOutputMatchesResponseSchema:
 
     TestNoLeakedInternalFields is a name blocklist, which can only catch
     leaks someone thought to list. It names ``OxydeRitual.group`` in its
-    own docstring and cannot actually catch it: reverting ``_dump`` in
-    ``ritual_list`` ships the entire joined group row, and every FORBIDDEN
+    own docstring and cannot actually catch it: having ``list_rituals``
+    return raw rows again ships the entire joined group row, and every FORBIDDEN
     string is absent, so the sweep stays green (CHT-1354).
 
     Deriving the expectation from the schema instead catches any dropped
@@ -1316,8 +1317,8 @@ class TestOutputMatchesResponseSchema:
                     problems.setdefault(tool, set()).update(surplus)
 
         assert not problems, (
-            "tool output carries fields its response schema drops -- dump "
-            f"through the schema via _dump: {problems}"
+            "tool output carries fields its response schema drops -- the api "
+            f"function must return its response schema (ADR-0005): {problems}"
         )
 
 

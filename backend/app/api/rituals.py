@@ -1159,12 +1159,14 @@ async def attest_ritual(
             user_id=current_user.id,
             note=attestation_in.note,
         )
-        return await _build_attestation_response(attestation)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    # Outside the try: pydantic's ValidationError is a ValueError, and a
+    # schema-construction failure is a server bug, not a 400.
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/approve", response_model=RitualAttestationResponse)

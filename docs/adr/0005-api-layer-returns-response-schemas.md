@@ -19,8 +19,9 @@ CHT-1266 added a second caller. The backend-hosted MCP transport
 it lives in, so its tools call the `app/api` functions directly. At
 that moment those functions stopped being route handlers and became a
 shared API layer with two consumers, and the output contract did not
-move with them: 122 routed functions and 11 undecorated in-process
-functions declared no return type, so an in-process caller received
+move with them: 122 routed functions and 20 public undecorated
+functions (11 resource create/list functions called from `nested.py`,
+plus auth dependencies and `build_*` helpers) declared no return type, so an in-process caller received
 whatever the body happened to `return` -- usually a raw Oxyde row.
 
 The consequences were exactly what the split predicts:

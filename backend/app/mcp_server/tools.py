@@ -55,6 +55,7 @@ from pydantic import Field, ValidationError as PydanticValidationError
 from mcp.server.fastmcp import FastMCP
 
 from app.api import documents as documents_api
+from app.api import projects as projects_api
 from app.api import labels as labels_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
@@ -74,7 +75,6 @@ from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
 )
-from app.schemas.project import ProjectResponse
 from app.schemas.ritual import RitualAttestationCreate
 from app.services.project_service import ProjectService
 
@@ -1560,8 +1560,10 @@ async def project_list(
     """
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
-    projects = await ProjectService().list_by_team(team_id, limit=1000)
-    return {"projects": [ProjectResponse.model_validate(p).model_dump(mode="json") for p in projects]}
+    # limit=1000 for the same reason as label_list: the API default of 100
+    # would make a real project silently unresolvable (CHT-1351).
+    projects = await projects_api.list_projects(team_id=team_id, current_user=user, limit=1000)
+    return {"projects": [p.model_dump(mode="json") for p in (projects or [])]}
 
 
 # ---------------------------------------------------------------------------
