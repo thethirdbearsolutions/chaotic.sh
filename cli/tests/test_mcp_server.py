@@ -306,6 +306,29 @@ class TestIssueList:
         result = mcp_mod.issue_list(limit=2, sort_by="status")
         assert result["count"] == 1 and result["truncated"] is False
 
+    def test_compact_rows_carry_resolved_names(self, mcp_mod, mock_issue):
+        """CHT-1371: names, not UUIDs, in compact rows."""
+        from cli.main import client
+        row = dict(mock_issue, assignee_id="u1", assignee_name="Ada", sprint_id="s1",
+                   sprint_name="Sprint 3", parent_id="p1", parent_identifier="CHT-1")
+        client.get_issues = MagicMock(return_value=[row])
+        compact = mcp_mod.issue_list()["issues"][0]
+        assert compact["assignee_name"] == "Ada"
+        assert compact["sprint_name"] == "Sprint 3"
+        assert compact["parent_identifier"] == "CHT-1"
+        assert "assignee_id" not in compact and "sprint_id" not in compact
+
+    def test_compact_rows_fall_back_to_uuids_on_an_older_backend(self, mcp_mod, mock_issue):
+        """A backend predating CHT-1371 sends no *_name keys; the UUID must
+        survive in the compact slot rather than reading as unassigned."""
+        from cli.main import client
+        row = dict(mock_issue, assignee_id="u1", sprint_id="s1", parent_id="p1")
+        client.get_issues = MagicMock(return_value=[row])
+        compact = mcp_mod.issue_list()["issues"][0]
+        assert compact["assignee_name"] == "u1"
+        assert compact["sprint_name"] == "s1"
+        assert compact["parent_identifier"] == "p1"
+
     def test_compact_row_flattens_labels_to_names(self, mcp_mod, mock_issue):
         from cli.main import client
         row = dict(mock_issue, labels=[{"id": "l1", "name": "bug", "color": "#f00", "team_id": "t"}])
@@ -1252,6 +1275,18 @@ class TestSprintTools:
         # The target is named, not just a UUID (CHT-1371).
         assert result["sprint"] == {"id": "sp-1", "name": "Sprint 7"}
         assert result["sprint_id"] == "sp-1"
+
+    def test_sprint_add_survives_a_failed_name_lookup(self, mcp_mod, mock_issue, monkeypatch):
+        """The writes already happened; the name lookup failing must not
+        report the batch as an error (PR #268 review)."""
+        from cli.main import client
+        monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.update_issue = MagicMock(return_value={})
+        client.get_sprint = MagicMock(side_effect=APIError("gone", status_code=404))
+        result = mcp_mod.sprint_add(identifiers=["CHT-100"])
+        assert result["updated"] == ["CHT-100"]
+        assert result["sprint"] == {"id": "sp-1", "name": None}
 
     def test_sprint_remove_clears_sprint_id(self, mcp_mod, mock_issue):
         from cli.main import client

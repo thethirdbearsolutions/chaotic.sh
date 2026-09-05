@@ -298,12 +298,25 @@ def _preview(text, limit: int = TEXT_PREVIEW_CHARS):
     return f"{text[:limit]}...(+{len(text) - limit} chars)"
 
 
+# When a compact field is a resolved name the row does not carry at all
+# (a backend older than CHT-1371 behind the stdio server), fall back to
+# the UUID rather than silently reporting "unassigned/unparented".
+_COMPACT_FALLBACKS = {
+    "assignee_name": "assignee_id",
+    "sprint_name": "sprint_id",
+    "parent_identifier": "parent_id",
+}
+
+
 def _compact(row: dict, fields) -> dict:
     """Project a full response-schema row down to `fields`. Labels become
     their names; a `description` becomes a preview."""
     out = {}
     for key in fields:
-        value = row.get(key)
+        if key not in row and key in _COMPACT_FALLBACKS:
+            value = row.get(_COMPACT_FALLBACKS[key])
+        else:
+            value = row.get(key)
         if key == "labels" and isinstance(value, list):
             value = [lab["name"] if isinstance(lab, dict) else lab for lab in value]
         elif key == "description":
@@ -1217,8 +1230,13 @@ def _set_sprint_on_issues(identifiers: list[str], sprint_id: str | None) -> dict
     # Name the target sprint, not just its UUID (CHT-1371); None on remove.
     sprint = None
     if sprint_id:
-        s = _client().get_sprint(sprint_id)
-        sprint = {"id": s["id"], "name": s.get("name")}
+        # The writes above already happened; a failed name lookup must not
+        # turn a successful batch into {"error": ...} (PR #268 review).
+        try:
+            s = _client().get_sprint(sprint_id)
+            sprint = {"id": s["id"], "name": s.get("name")}
+        except APIError:
+            sprint = {"id": sprint_id, "name": None}
     return {"updated": updated, "failed": failed, "sprint_id": sprint_id, "sprint": sprint}
 
 

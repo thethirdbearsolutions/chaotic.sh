@@ -222,8 +222,14 @@ async def issues_to_responses(issues) -> list[IssueResponse]:
         ids = [i for i in ids if i]
         if not ids:
             return {}
-        rows = await model.objects.filter(id__in=list(set(ids))).all()
-        return {row.id: getattr(row, attr) for row in rows}
+        # Two columns, not whole rows: the parent lookup would otherwise
+        # load every parent's description to read one identifier.
+        rows = await model.objects.filter(id__in=list(set(ids))).values("id", attr).all()
+        return {
+            (row["id"] if isinstance(row, dict) else row.id):
+            (row[attr] if isinstance(row, dict) else getattr(row, attr))
+            for row in rows
+        }
 
     assignees = await _lookup(OxydeUser, {i.assignee_id for i in issues}, "name")
     sprints = await _lookup(OxydeSprint, {i.sprint_id for i in issues}, "name")

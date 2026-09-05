@@ -207,7 +207,9 @@ sprint_name, parent_identifier, labels as names, updated_at), plus `count`
 and `truncated`. Foreign keys travel as names an agent can pass straight
 back into another tool; the UUIDs are still on the full rows
 (`detail: true`, `issue_view`) alongside `assignee_name`, `sprint_name`,
-`parent_identifier` and `project_key`. `truncated: true` means `limit` cut the list -- narrow the
+`parent_identifier` and `project_key`. Against a backend older than
+those fields, the stdio server falls back to the UUIDs in the same
+compact slots rather than reporting everything as unassigned. `truncated: true` means `limit` cut the list -- narrow the
 filter rather than assume you saw everything. Pass `detail: true` for the
 full response-schema rows; use `issue_view`/`doc_view` for one record.
 `activity_recent` cuts `old_value`/`new_value` to a 200-character preview

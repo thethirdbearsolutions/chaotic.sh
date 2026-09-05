@@ -1730,6 +1730,24 @@ class TestResolvedCompanions:
         assert full["project_key"] == test_project.key
         assert full["assignee_name"] is None and full["sprint_name"] is None
 
+    async def test_doc_view_linked_issues_carry_companions(self, test_project, test_user):
+        """get_document_issues built IssueResponse by hand and missed the
+        companions (PR #268 review); now it uses the shared builder."""
+        parent = await tools.issue_create(title="P3")
+        child = await tools.issue_create(title="C3", parent=parent["identifier"])
+        await tools.issue_update(child["identifier"], assignee="me")
+        doc = await tools.doc_create(title="Linked", content="x")
+        await tools.doc_link(document_id=doc["id"], identifier=child["identifier"])
+        linked = (await tools.doc_view(document_id=doc["id"]))["linked_issues"]
+        assert linked[0]["parent_identifier"] == parent["identifier"]
+        assert linked[0]["assignee_name"] == test_user.name
+        assert linked[0]["project_key"] == test_project.key
+        assert "lease_expires_at" in linked[0]  # the hand-rolled copy had dropped it
+
+    # No dangling-FK test: issues.assignee_id/sprint_id/parent_id are real
+    # FOREIGN KEY constraints (a write with an unknown id fails at the DB),
+    # so the `.get()` -> None path in issues_to_responses is unreachable.
+
     async def test_sub_issue_rows_name_their_parent(self, test_project):
         parent = await tools.issue_create(title="P2")
         await tools.issue_create(title="C2", parent=parent["identifier"])
