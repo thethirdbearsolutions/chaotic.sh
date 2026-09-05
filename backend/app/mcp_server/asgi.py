@@ -34,8 +34,8 @@ import logging
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+from mcp.server.mcpserver import MCPServer
+from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
@@ -43,7 +43,7 @@ from app.config import get_settings
 from app.mcp_server.auth import BearerHeaderAuth, CapabilityPathRedaction, CapabilityURLAuth
 from app.mcp_server.tools import ALL_TOOLS
 
-_fastmcp: FastMCP | None = None
+_fastmcp: MCPServer | None = None
 
 
 def _transport_security() -> TransportSecuritySettings:
@@ -83,8 +83,8 @@ def _transport_security() -> TransportSecuritySettings:
     )
 
 
-def get_fastmcp() -> FastMCP:
-    """Build (once) the shared FastMCP instance backing /mcp.
+def get_fastmcp() -> MCPServer:
+    """Build (once) the shared MCPServer instance backing /mcp.
 
     Lazy so importing this module doesn't require an app to exist yet;
     tests that just want a toolset to inspect use ``tools.build_server()``
@@ -92,7 +92,7 @@ def get_fastmcp() -> FastMCP:
     """
     global _fastmcp
     if _fastmcp is None:
-        # FastMCP.__init__ unconditionally calls the SDK's
+        # MCPServer.__init__ unconditionally calls the SDK's
         # configure_logging(), which logging.basicConfig()s a
         # RichHandler onto the ROOT logger at INFO -- a global side
         # effect that would hijack the whole backend's logging (every
@@ -104,7 +104,7 @@ def get_fastmcp() -> FastMCP:
         prev_handlers = root.handlers[:]
         prev_level = root.level
         try:
-            _fastmcp = FastMCP(
+            _fastmcp = MCPServer(
                 name="chaotic",
                 instructions=(
                     'Tools for the Chaotic issue tracker, scoped to the API key '
@@ -115,19 +115,22 @@ def get_fastmcp() -> FastMCP:
                     '"error_code": "..."}} rather than a protocol error -- switch on '
                     'error_code, read message.'
                 ),
-                json_response=True,
-                stateless_http=True,
-                transport_security=_transport_security(),
             )
         finally:
             root.handlers[:] = prev_handlers
             root.setLevel(prev_level)
         for tool_fn in ALL_TOOLS:
             _fastmcp.add_tool(tool_fn)
-        # streamable_http_app() is what lazily builds the session manager;
-        # its *returned* Starlette app is discarded -- we register our own
-        # Route objects below instead (see module docstring on Mount).
-        _fastmcp.streamable_http_app()
+        # streamable_http_app() is what builds the session manager, and in
+        # mcp 2.x it is also where the transport settings live (they were
+        # constructor arguments in 1.x). Its *returned* Starlette app is
+        # discarded -- we register our own Route objects below instead
+        # (see module docstring on Mount).
+        _fastmcp.streamable_http_app(
+            json_response=True,
+            stateless_http=True,
+            transport_security=_transport_security(),
+        )
     return _fastmcp
 
 

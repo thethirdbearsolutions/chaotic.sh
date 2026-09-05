@@ -58,7 +58,7 @@ _ADDITIVE_TEAM_TOOLS = {
 async def _live_toolset() -> dict:
     mcp = build_server()
     tools = await mcp.list_tools()
-    return {t.name: {"description": t.description, "inputSchema": t.inputSchema} for t in tools}
+    return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
 
 
 @pytest.fixture
@@ -79,6 +79,16 @@ def test_response_shapes_match_snapshot():
         "backend RESPONSE_SHAPES diverged from cli.mcp_server's (docs/mcp-toolset-schema.json) "
         "-- the two transports must project list rows identically"
     )
+
+
+def test_every_tool_is_async():
+    """mcp 2.x runs `def` handlers on worker threads with no event-loop
+    affinity; every backend tool awaits the API layer, so a sync one would
+    trip `asyncio.get_running_loop()` off-loop. Pin that they are all
+    coroutines (CHT-1367)."""
+    import inspect
+    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(getattr(t, "__wrapped__", t))]
+    assert sync == [], f"backend tools must be `async def`: {sync}"
 
 
 def test_all_tools_registered():

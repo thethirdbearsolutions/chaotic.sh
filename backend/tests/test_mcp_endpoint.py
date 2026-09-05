@@ -286,8 +286,10 @@ class TestCapabilityPathRedaction:
         async def _boom(*args, **kwargs):
             raise RuntimeError("forced for log test")
 
+        # mcp 2.x's StreamableHTTPASGIApp dispatches through the session
+        # manager's `asgi_app` (1.x went through `handle_request`).
         monkeypatch.setattr(
-            asgi_mod.get_fastmcp().session_manager, "handle_request", _boom
+            asgi_mod.get_fastmcp().session_manager, "asgi_app", _boom
         )
 
         ac, _recorder = recording_client

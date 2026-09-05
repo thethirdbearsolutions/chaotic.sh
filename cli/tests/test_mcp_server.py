@@ -5,7 +5,7 @@ Two layers:
     Client -- same idiom as every other cli.commands.* test (see
     conftest.py's patched_client/patched_auth/patched_project).
   * One integration-style test driving the real MCP protocol loop
-    in-memory (mcp.shared.memory.create_connected_server_and_client_session),
+    in-memory (_connected_session, over mcp.shared.memory streams),
     proving list_tools/call_tool actually round-trip through the SDK's
     session/transport layer, not just plain Python calls.
 """
@@ -125,11 +125,11 @@ class TestServerAssembly:
         server = mcp_mod.build_server()
         tools = asyncio.run(server.list_tools())
         by_name = {t.name: t for t in tools}
-        assert set(by_name["issue_list"].inputSchema["properties"]) == {
+        assert set(by_name["issue_list"].input_schema["properties"]) == {
             "status", "priority", "assignee", "label", "search", "sprint",
             "epic", "all_projects", "project", "limit", "sort_by", "order", "detail",
         }
-        assert by_name["issue_view"].inputSchema["properties"]["identifier"]["type"] == "string"
+        assert by_name["issue_view"].input_schema["properties"]["identifier"]["type"] == "string"
 
 
 # ---------------------------------------------------------------------------
@@ -1601,27 +1601,58 @@ class TestProjectList:
         server = mcp_mod.build_server()
         tools = asyncio.run(server.list_tools())
         by_name = {t.name: t for t in tools}
-        assert set(by_name["project_list"].inputSchema.get("properties", {})) == {"detail"}
+        assert set(by_name["project_list"].input_schema.get("properties", {})) == {"detail"}
 
 
 # ---------------------------------------------------------------------------
 # Integration-style: drive the real MCP protocol loop in-memory
 # ---------------------------------------------------------------------------
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _connected_session(server):
+    """A real ClientSession wired to `server` over in-memory streams.
+
+    mcp 2.x removed the SDK's in-memory connected-session helper
+    (CHT-1367); this is the same few lines it used to do: a pair of
+    memory streams, the server's lowlevel run loop in a task, and an
+    initialized ClientSession on the other end.
+    """
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.shared.memory import create_client_server_memory_streams
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        client_read, client_write = client_streams
+        server_read, server_write = server_streams
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                lambda: server._lowlevel_server.run(
+                    server_read, server_write,
+                    server._lowlevel_server.create_initialization_options(),
+                    raise_exceptions=True,
+                )
+            )
+            async with ClientSession(client_read, client_write) as session:
+                await session.initialize()
+                yield session
+            tg.cancel_scope.cancel()
+
+
 class TestMCPProtocolLoop:
-    """Uses mcp.shared.memory.create_connected_server_and_client_session
-    to run a real ClientSession against a real FastMCP server instance
-    over in-memory streams -- exercises initialize/list_tools/call_tool
-    through the actual SDK session and message-framing layers, not just
-    plain Python function calls.
+    """Runs a real ClientSession against a real MCPServer instance over
+    in-memory streams (see _connected_session) -- exercises
+    initialize/list_tools/call_tool through the actual SDK session and
+    message-framing layers, not just plain Python function calls.
     """
 
     def test_list_tools_over_protocol(self, mcp_mod):
-        from mcp.shared.memory import create_connected_server_and_client_session
 
         async def run():
             server = mcp_mod.build_server()
-            async with create_connected_server_and_client_session(server) as session:
+            async with _connected_session(server) as session:
                 result = await session.list_tools()
                 return {t.name for t in result.tools}
 
@@ -1630,17 +1661,16 @@ class TestMCPProtocolLoop:
 
     def test_call_tool_over_protocol_success(self, mcp_mod, mock_issue):
         from cli.main import client
-        from mcp.shared.memory import create_connected_server_and_client_session
 
         client.get_issues = MagicMock(return_value=[mock_issue])
 
         async def run():
             server = mcp_mod.build_server()
-            async with create_connected_server_and_client_session(server) as session:
+            async with _connected_session(server) as session:
                 return await session.call_tool("issue_list", {})
 
         result = asyncio.run(run())
-        assert result.isError is not True
+        assert result.is_error is not True
         text = next(c.text for c in result.content if c.type == "text")
         payload = json.loads(text)
         assert payload == {
@@ -1650,30 +1680,28 @@ class TestMCPProtocolLoop:
 
     def test_call_tool_over_protocol_error_envelope(self, mcp_mod):
         from cli.main import client
-        from mcp.shared.memory import create_connected_server_and_client_session
 
         client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found"))
 
         async def run():
             server = mcp_mod.build_server()
-            async with create_connected_server_and_client_session(server) as session:
+            async with _connected_session(server) as session:
                 return await session.call_tool("issue_view", {"identifier": "CHT-999"})
 
         result = asyncio.run(run())
         # Our _boundary catches the error and returns a normal {"error": ...}
         # payload rather than raising -- so this is NOT an MCP-protocol-level
         # error (isError=False); the error is data, per CHT-1247's contract.
-        assert result.isError is not True
+        assert result.is_error is not True
         text = next(c.text for c in result.content if c.type == "text")
         assert json.loads(text) == {"error": {"message": "Issue not found"}}
 
     def test_unknown_tool_is_a_protocol_error(self, mcp_mod):
-        from mcp.shared.memory import create_connected_server_and_client_session
 
         async def run():
             server = mcp_mod.build_server()
-            async with create_connected_server_and_client_session(server) as session:
+            async with _connected_session(server) as session:
                 return await session.call_tool("issue_delete_everything", {})
 
         result = asyncio.run(run())
-        assert result.isError is True
+        assert result.is_error is True
