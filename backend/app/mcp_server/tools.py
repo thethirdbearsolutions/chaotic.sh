@@ -255,7 +255,7 @@ async def _apply_ticket_attestations(user, iss, identifier: str, attest: dict[st
 
 COMPACT_ISSUE_FIELDS = (
     "identifier", "title", "status", "priority", "issue_type", "estimate",
-    "assignee_id", "sprint_id", "parent_id", "labels", "updated_at",
+    "assignee_name", "sprint_name", "parent_identifier", "labels", "updated_at",
 )
 COMPACT_DOCUMENT_FIELDS = (
     "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
@@ -1368,7 +1368,12 @@ async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | N
             updated.append(identifier)
         except HTTPException as e:
             failed.append({"identifier": identifier, "error": e.detail})
-    return {"updated": updated, "failed": failed, "sprint_id": sprint_id}
+    # Name the target sprint, not just its UUID (CHT-1371); None on remove.
+    sprint = None
+    if sprint_id:
+        s = await sprints_api.get_sprint(sprint_id=sprint_id, current_user=user)
+        sprint = {"id": s.id, "name": s.name}
+    return {"updated": updated, "failed": failed, "sprint_id": sprint_id, "sprint": sprint}
 
 
 @_boundary

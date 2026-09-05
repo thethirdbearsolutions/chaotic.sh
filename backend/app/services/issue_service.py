@@ -802,12 +802,12 @@ class IssueService:
         """
         try:
             from app.websocket import broadcast_issue_event
-            from app.api.issues import issue_to_response
+            from app.api.issues import issue_response
 
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project is None:
                 return
-            response = issue_to_response(issue)
+            response = await issue_response(issue)
             await broadcast_issue_event(
                 project.team_id, "updated", response.model_dump(mode="json"),
             )

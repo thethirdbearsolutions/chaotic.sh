@@ -74,6 +74,14 @@ class IssueResponse(BaseModel):
     creator_name: str | None = None
     sprint_id: str | None
     parent_id: str | None
+    # Resolved companions for the UUID foreign keys (CHT-1371). Every tool
+    # *input* addresses things by name/identifier; without these, output
+    # handed a model a UUID it had no tool to look up. Populated by
+    # app.api.issues.issues_to_responses (batched); None when unset.
+    assignee_name: str | None = None
+    sprint_name: str | None = None
+    parent_identifier: str | None = None
+    project_key: str | None = None
     due_date: DateTimeUTC | None
     completed_at: DateTimeUTC | None
     lease_expires_at: DateTimeUTC | None = None

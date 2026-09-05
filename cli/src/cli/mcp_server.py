@@ -230,7 +230,7 @@ def _apply_ticket_attestations(iss: dict, identifier: str, attest: dict[str, str
 
 COMPACT_ISSUE_FIELDS = (
     "identifier", "title", "status", "priority", "issue_type", "estimate",
-    "assignee_id", "sprint_id", "parent_id", "labels", "updated_at",
+    "assignee_name", "sprint_name", "parent_identifier", "labels", "updated_at",
 )
 COMPACT_DOCUMENT_FIELDS = (
     "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
@@ -1214,7 +1214,12 @@ def _set_sprint_on_issues(identifiers: list[str], sprint_id: str | None) -> dict
             updated.append(identifier)
         except APIError as e:
             failed.append({"identifier": identifier, "error": str(e)})
-    return {"updated": updated, "failed": failed, "sprint_id": sprint_id}
+    # Name the target sprint, not just its UUID (CHT-1371); None on remove.
+    sprint = None
+    if sprint_id:
+        s = _client().get_sprint(sprint_id)
+        sprint = {"id": s["id"], "name": s.get("name")}
+    return {"updated": updated, "failed": failed, "sprint_id": sprint_id, "sprint": sprint}
 
 
 # ---------------------------------------------------------------------------

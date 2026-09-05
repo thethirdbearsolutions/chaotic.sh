@@ -1243,11 +1243,15 @@ class TestSprintTools:
         monkeypatch.setattr("cli.main.resolve_sprint_id", lambda *a, **k: "sp-1")
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.update_issue = MagicMock(return_value={})
+        client.get_sprint = MagicMock(return_value={"id": "sp-1", "name": "Sprint 7", "status": "active"})
 
         result = mcp_mod.sprint_add(identifiers=["CHT-100"])
 
         assert result["updated"] == ["CHT-100"]
         client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id="sp-1")
+        # The target is named, not just a UUID (CHT-1371).
+        assert result["sprint"] == {"id": "sp-1", "name": "Sprint 7"}
+        assert result["sprint_id"] == "sp-1"
 
     def test_sprint_remove_clears_sprint_id(self, mcp_mod, mock_issue):
         from cli.main import client
@@ -1257,6 +1261,7 @@ class TestSprintTools:
         result = mcp_mod.sprint_remove(identifiers=["CHT-100"])
 
         assert result["updated"] == ["CHT-100"]
+        assert result["sprint"] is None
         client.update_issue.assert_called_once_with("issue-uuid-1", sprint_id=None)
 
     def test_sprint_add_continues_past_a_bad_identifier(self, mcp_mod, mock_issue, monkeypatch):
@@ -1267,6 +1272,7 @@ class TestSprintTools:
         client.get_issue_by_identifier = MagicMock(
             side_effect=[mock_issue, APIError("Issue not found")])
         client.update_issue = MagicMock(return_value={})
+        client.get_sprint = MagicMock(return_value={"id": "sp-1", "name": "Sprint 7"})
 
         result = mcp_mod.sprint_add(identifiers=["CHT-100", "CHT-999"])
 

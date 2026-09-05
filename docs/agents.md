@@ -202,9 +202,12 @@ reacts to, not a crash.
 
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:
-identifier, title, status, priority, issue_type, estimate, assignee_id,
-sprint_id, parent_id, labels as names, updated_at), plus `count` and
-`truncated`. `truncated: true` means `limit` cut the list -- narrow the
+identifier, title, status, priority, issue_type, estimate, assignee_name,
+sprint_name, parent_identifier, labels as names, updated_at), plus `count`
+and `truncated`. Foreign keys travel as names an agent can pass straight
+back into another tool; the UUIDs are still on the full rows
+(`detail: true`, `issue_view`) alongside `assignee_name`, `sprint_name`,
+`parent_identifier` and `project_key`. `truncated: true` means `limit` cut the list -- narrow the
 filter rather than assume you saw everything. Pass `detail: true` for the
 full response-schema rows; use `issue_view`/`doc_view` for one record.
 `activity_recent` cuts `old_value`/`new_value` to a 200-character preview

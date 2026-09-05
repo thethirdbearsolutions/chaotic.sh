@@ -42,7 +42,10 @@ class TestIssueListBranches:
         await tools.issue_update((await tools.issue_list())["issues"][0]["identifier"], assignee="me")
         result = await tools.issue_list(assignee="me")
         assert "error" not in result
-        assert all(i["assignee_id"] == test_user.id for i in result["issues"])
+        # Compact rows carry the resolved name, not the UUID (CHT-1371).
+        assert all(i["assignee_name"] == test_user.name for i in result["issues"])
+        full = await tools.issue_list(assignee="me", detail=True)
+        assert all(i["assignee_id"] == test_user.id for i in full["issues"])
 
     async def test_sprint_and_all_projects_conflict(self, test_project):
         result = await tools.issue_list(all_projects=True, sprint="current")
@@ -688,7 +691,11 @@ class TestSprintTools:
         added = await tools.sprint_add(identifiers=[a["identifier"], b["identifier"]])
         assert added["updated"] == [a["identifier"], b["identifier"]]
         assert added["failed"] == []
-        assert (await tools.issue_view(a["identifier"]))["sprint_id"] == added["sprint_id"]
+        view = await tools.issue_view(a["identifier"])
+        assert view["sprint_id"] == added["sprint_id"]
+        # The target sprint is named, and the issue row carries the name too (CHT-1371).
+        assert added["sprint"] == {"id": added["sprint_id"], "name": (await tools.sprint_current())["name"]}
+        assert view["sprint_name"] == added["sprint"]["name"]
 
         removed = await tools.sprint_remove(identifiers=[a["identifier"]])
         assert removed["updated"] == [a["identifier"]]
@@ -960,6 +967,7 @@ class TestNoLeakedEnumNames:
     # Fields whose values are legitimately SHOUTY (keys, uuids, identifiers).
     IGNORE = {
         "key", "identifier", "id", "team_id", "project_id", "sprint_id",
+        "project_key", "parent_identifier",  # resolved companions (CHT-1371)
         "parent_id", "assignee_id", "creator_id", "author_id", "document_id",
         "issue_id", "related_issue_id", "label_id", "ritual_id",
         # activity old_value/new_value store the raw written string and
@@ -1693,4 +1701,38 @@ class TestCompactListing:
         full = json.dumps(await tools.issue_list(limit=50, detail=True))
         assert len(compact) < 40_000, len(compact)
         assert len(full) > 250_000, len(full)
+
+
+class TestResolvedCompanions:
+    """UUID foreign keys travel with resolved names (CHT-1371), so a row's
+    output is usable as the next call's input on this surface, where every
+    tool addresses assignees/sprints/parents/projects by name or identifier."""
+
+    async def test_compact_rows_carry_names_not_uuids(self, test_project, test_user):
+        await tools.sprint_current()
+        parent = await tools.issue_create(title="Epic-ish", issue_type="epic")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        await tools.issue_update(child["identifier"], assignee="me")
+        await tools.sprint_add(identifiers=[child["identifier"]])
+
+        row = next(r for r in (await tools.issue_list())["issues"] if r["identifier"] == child["identifier"])
+        assert row["assignee_name"] == test_user.name
+        assert row["parent_identifier"] == parent["identifier"]
+        assert row["sprint_name"] == (await tools.sprint_current())["name"]
+        assert "assignee_id" not in row and "parent_id" not in row and "sprint_id" not in row
+
+    async def test_detail_rows_carry_both(self, test_project, test_user):
+        parent = await tools.issue_create(title="P")
+        child = await tools.issue_create(title="C", parent=parent["identifier"])
+        full = await tools.issue_view(child["identifier"])
+        assert full["parent_id"] == parent["id"]
+        assert full["parent_identifier"] == parent["identifier"]
+        assert full["project_key"] == test_project.key
+        assert full["assignee_name"] is None and full["sprint_name"] is None
+
+    async def test_sub_issue_rows_name_their_parent(self, test_project):
+        parent = await tools.issue_create(title="P2")
+        await tools.issue_create(title="C2", parent=parent["identifier"])
+        view = await tools.issue_view(parent["identifier"])
+        assert view["sub_issues"][0]["parent_identifier"] == parent["identifier"]
 
