@@ -1639,8 +1639,49 @@ class TestCompactListing:
         assert view["comment_count"] == tools.ISSUE_VIEW_COMMENT_CAP + 5
         assert len(view["comments"]) == tools.ISSUE_VIEW_COMMENT_CAP
         assert view["comments"][-1]["content"] == f"c{tools.ISSUE_VIEW_COMMENT_CAP + 4}"  # newest kept
-        assert view["description"] is None or "description" in view  # detail shape stays on the issue itself
+        # The issue itself keeps the detail shape; only sub-issues are compact.
+        assert "description" in view and "id" in view
+        assert view["sub_issue_count"] == 1
         assert set(view["sub_issues"][0]) == set(tools.COMPACT_ISSUE_FIELDS)
+
+    async def test_issue_view_counts_past_the_rest_default_page(self, test_project):
+        """The REST comments route defaults to the OLDEST 100. issue_view must
+        fetch past that or "newest 20 of comment_count" is silently wrong
+        above 100 comments (review of CHT-1370)."""
+        iss = await tools.issue_create(title="Chatty")
+        for i in range(105):
+            await tools.issue_comment(iss["identifier"], content=f"c{i}")
+        view = await tools.issue_view(iss["identifier"])
+        assert view["comment_count"] == 105
+        assert [c["content"] for c in view["comments"]][-1] == "c104"
+        assert len(view["comments"]) == tools.ISSUE_VIEW_COMMENT_CAP
+
+    async def test_python_sorted_keys_probe_by_offset(self, test_project):
+        """priority/status are re-sorted in Python after SQL LIMIT; the page
+        must be the same rows as before the truncation probe existed."""
+        from app.services.issue_service import _SORT_PYTHON_KEYS
+        assert set(tools.OFFSET_PROBE_SORT_KEYS) == set(_SORT_PYTHON_KEYS), (
+            "OFFSET_PROBE_SORT_KEYS must name exactly the service's Python-sorted keys"
+        )
+        a = await tools.issue_create(title="A", priority="low")
+        b = await tools.issue_create(title="B", priority="urgent")
+        c = await tools.issue_create(title="C", priority="low")
+        result = await tools.issue_list(limit=2, sort_by="priority")
+        # The page is the newest two by created_at (B, C) re-sorted by
+        # priority -- exactly what it was before the probe existed. An
+        # over-fetch of 3 would have let the re-sort push A onto the page.
+        assert {r["identifier"] for r in result["issues"]} == {b["identifier"], c["identifier"]}
+        assert result["truncated"] is True
+        full = await tools.issue_list(limit=3, sort_by="priority")
+        assert full["count"] == 3 and full["truncated"] is False
+
+    async def test_activity_probe_at_tool_maximum(self, test_project):
+        """No route cap on activities, so limit=200 still probes 201."""
+        iss = await tools.issue_create(title="Busy")
+        for i in range(3):
+            await tools.issue_comment(iss["identifier"], content=f"x{i}")
+        result = await tools.activity_recent(limit=200)
+        assert result["truncated"] is False and result["count"] >= 4
 
     async def test_fifty_verbose_issues_fit_a_model_context(self, test_project):
         """The number in CHT-1370: 50 issues with 5 KB descriptions must list

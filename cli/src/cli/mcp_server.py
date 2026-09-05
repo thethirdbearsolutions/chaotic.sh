@@ -247,6 +247,15 @@ COMPACT_PROJECT_FIELDS = (
 TEXT_PREVIEW_CHARS = 200
 # issue_view returns the newest N comments plus `comment_count`.
 ISSUE_VIEW_COMMENT_CAP = 20
+# issue_view fetches comments/sub-issues with this limit so the counts it
+# reports are real: the REST defaults are 100, oldest-first, which would
+# make "newest 20 of comment_count" silently wrong past 100 comments.
+ISSUE_VIEW_FETCH_LIMIT = 10_000
+# issue_list sort keys the service orders in Python AFTER a SQL
+# `LIMIT ... ORDER BY created_at DESC` (IssueService._SORT_PYTHON_KEYS).
+# Over-fetching limit+1 for these would let the re-sort drop the wrong
+# row, so the truncation probe is a second query at offset=limit instead.
+OFFSET_PROBE_SORT_KEYS = ("priority", "status")
 
 RESPONSE_SHAPES = {
     "compact_issue_fields": list(COMPACT_ISSUE_FIELDS),
@@ -254,24 +263,30 @@ RESPONSE_SHAPES = {
     "compact_project_fields": list(COMPACT_PROJECT_FIELDS),
     "text_preview_chars": TEXT_PREVIEW_CHARS,
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
+    "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,
+    "offset_probe_sort_keys": list(OFFSET_PROBE_SORT_KEYS),
 }
 
+
+def _fields_prose(fields) -> str:
+    return ", ".join("labels (names)" if f == "labels" else f for f in fields)
+
+
+# Built from the tuples so the prose cannot drift from the projection.
 _DETAIL_ISSUE_DESC = (
     "Return every field of each issue (including description) instead of the "
-    "compact row. Compact rows carry: identifier, title, status, priority, "
-    "issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), "
-    "updated_at. Use issue_view for one issue's full detail."
+    f"compact row. Compact rows carry: {_fields_prose(COMPACT_ISSUE_FIELDS)}. "
+    "Use issue_view for one issue's full detail."
 )
 _DETAIL_DOC_DESC = (
     "Return every field of each document (including content) instead of the "
-    "compact row. Compact rows carry: id, title, icon, project_id, sprint_id, "
-    "author_name, labels (names), updated_at. Use doc_view for one document."
+    f"compact row. Compact rows carry: {_fields_prose(COMPACT_DOCUMENT_FIELDS)}. "
+    "Use doc_view for one document."
 )
 _DETAIL_PROJECT_DESC = (
     "Return every field of each project instead of the compact row. Compact rows "
-    "carry: id, key, name, description (first 200 chars), issue_count, "
-    "estimate_scale, unestimated_handling, default_sprint_budget, "
-    "require_estimate_on_claim, human_rituals_required."
+    f"carry: {_fields_prose(COMPACT_PROJECT_FIELDS)} (description is a "
+    f"{TEXT_PREVIEW_CHARS}-char preview)."
 )
 
 
@@ -398,10 +413,25 @@ def issue_list(
         search=search,
         sprint_id=sprint_id,
         parent_id=parent_id,
-        limit=limit + 1,
+        limit=limit if sort_by in OFFSET_PROBE_SORT_KEYS else limit + 1,
         sort_by=sort_by,
         order=order,
     )
+    if sort_by in OFFSET_PROBE_SORT_KEYS:
+        # See OFFSET_PROBE_SORT_KEYS: probe for a row past `limit` with the
+        # same filters instead of over-fetching, which would perturb the
+        # page after the service's Python re-sort.
+        more = _client().get_issues(
+            project_id=project_id, team_id=team_id,
+            status=",".join(status) if status else None,
+            priority=",".join(priority) if priority else None,
+            assignee_id=assignee_id, label=label, search=search,
+            sprint_id=sprint_id, parent_id=parent_id,
+            skip=limit, limit=1, sort_by="created", order="desc",
+        )
+        result = _listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
+        result["truncated"] = bool(more)
+        return result
     return _listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
@@ -410,16 +440,18 @@ def issue_view(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
 ) -> dict:
     """Show full issue detail: fields, description, the newest comments
-    (up to 20, with `comment_count`), and compact rows for its sub-issues."""
+    (up to 20, with `comment_count`), and compact rows for its sub-issues
+    (with `sub_issue_count`)."""
     _require_auth()
     iss = _client().get_issue_by_identifier(identifier)
-    comments = _client().get_comments(iss["id"]) or []
+    comments = _client().get_comments(iss["id"], limit=ISSUE_VIEW_FETCH_LIMIT) or []
     iss["comment_count"] = len(comments)
     iss["comments"] = comments[-ISSUE_VIEW_COMMENT_CAP:]
     try:
-        subs = _client().get_sub_issues(iss["id"]) or []
+        subs = _client().get_sub_issues(iss["id"], limit=ISSUE_VIEW_FETCH_LIMIT) or []
     except APIError:
         subs = []
+    iss["sub_issue_count"] = len(subs)
     iss["sub_issues"] = [_compact(s, COMPACT_ISSUE_FIELDS) for s in subs]
     return iss
 
@@ -1442,7 +1474,8 @@ def ritual_complete(
 def project_list(
     detail: Annotated[bool, Field(description=_DETAIL_PROJECT_DESC)] = False,
 ) -> dict:
-    """List the projects in your team: id, key, name, and issue count.
+    """List the projects in your team: key, name, issue count, and the
+    budget/ritual settings that govern work in each.
 
     The one call that answers "what projects exist" -- every other tool
     takes a `project` filter but none enumerate them. Scoped to the
@@ -1478,9 +1511,7 @@ def activity_recent(
     """
     team_id = _require_team()
     project_id = _main().resolve_project_id(project) if project else None
-    # The REST endpoint caps limit at 200, so the +1 probe stops there.
-    fetch = min(limit + 1, 200)
-    activities = _client().get_team_activities(team_id, limit=fetch, project_id=project_id) or []
+    activities = _client().get_team_activities(team_id, limit=limit + 1, project_id=project_id) or []
     page = activities[:limit]
     for a in page:
         a["old_value"] = _preview(a.get("old_value"))

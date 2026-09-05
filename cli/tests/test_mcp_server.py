@@ -285,6 +285,27 @@ class TestIssueList:
         assert result["truncated"] is True
         assert [r["identifier"] for r in result["issues"]] == ["CHT-0", "CHT-1"]
 
+    def test_priority_sort_probes_by_offset_not_overfetch(self, mcp_mod, mock_issue):
+        """For sort keys the service re-sorts in Python after a SQL LIMIT
+        (priority, status), over-fetching limit+1 would let the re-sort drop
+        the wrong row. So: fetch exactly `limit`, and probe offset=limit."""
+        from cli.main import client
+        rows = [dict(mock_issue, identifier=f"CHT-{i}") for i in range(2)]
+        client.get_issues = MagicMock(side_effect=[rows, [dict(mock_issue, identifier="CHT-9")]])
+        result = mcp_mod.issue_list(limit=2, sort_by="priority")
+        assert [r["identifier"] for r in result["issues"]] == ["CHT-0", "CHT-1"]
+        assert result["count"] == 2 and result["truncated"] is True
+        first, probe = client.get_issues.call_args_list
+        assert first.kwargs["limit"] == 2 and first.kwargs["sort_by"] == "priority"
+        assert probe.kwargs["skip"] == 2 and probe.kwargs["limit"] == 1
+        assert probe.kwargs["project_id"] == first.kwargs["project_id"]
+
+    def test_priority_sort_not_truncated_when_probe_is_empty(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issues = MagicMock(side_effect=[[mock_issue], []])
+        result = mcp_mod.issue_list(limit=2, sort_by="status")
+        assert result["count"] == 1 and result["truncated"] is False
+
     def test_compact_row_flattens_labels_to_names(self, mcp_mod, mock_issue):
         from cli.main import client
         row = dict(mock_issue, labels=[{"id": "l1", "name": "bug", "color": "#f00", "team_id": "t"}])
@@ -344,6 +365,11 @@ class TestIssueView:
         assert result["identifier"] == "CHT-100"
         assert result["comments"] == [{"id": "c1", "content": "hi"}]
         assert result["comment_count"] == 1
+        assert result["sub_issue_count"] == 1
+        # Fetched with an explicit large limit so the counts are real, not
+        # the REST default of 100 oldest-first.
+        client.get_comments.assert_called_once_with("issue-uuid-1", limit=mcp_mod.ISSUE_VIEW_FETCH_LIMIT)
+        client.get_sub_issues.assert_called_once_with("issue-uuid-1", limit=mcp_mod.ISSUE_VIEW_FETCH_LIMIT)
         # Sub-issues are compact rows (CHT-1370), not full records.
         assert result["sub_issues"] == [
             mcp_mod._compact({"id": "sub-1", "identifier": "CHT-101"}, mcp_mod.COMPACT_ISSUE_FIELDS)
@@ -1413,12 +1439,15 @@ class TestActivityRecent:
         assert row["old_value"] == "x" * 200 + "...(+800 chars)"
         assert row["new_value"] == "short"
 
-    def test_limit_probe_stays_within_rest_cap(self, mcp_mod):
+    def test_limit_probe_at_the_tool_maximum(self, mcp_mod):
+        """The activities route has no `le` cap, so the +1 probe applies at
+        the tool's own maximum too (review of CHT-1370 caught a bogus clamp)."""
         from cli.main import client
-        client.get_team_activities = MagicMock(return_value=[])
-        mcp_mod.activity_recent(limit=200)
+        client.get_team_activities = MagicMock(return_value=[{"id": f"a{i}"} for i in range(201)])
+        result = mcp_mod.activity_recent(limit=200)
         _, kwargs = client.get_team_activities.call_args
-        assert kwargs["limit"] == 200  # not 201: the endpoint rejects >200
+        assert kwargs["limit"] == 201
+        assert result["count"] == 200 and result["truncated"] is True
 
     def test_project_scoped(self, mcp_mod):
         from cli.main import client

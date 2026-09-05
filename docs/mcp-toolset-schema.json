@@ -39,6 +39,11 @@
         "human_rituals_required"
       ],
       "issue_view_comment_cap": 20,
+      "issue_view_fetch_limit": 10000,
+      "offset_probe_sort_keys": [
+        "priority",
+        "status"
+      ],
       "text_preview_chars": 200
     }
   },
@@ -1015,7 +1020,7 @@
       }
     },
     "issue_view": {
-      "description": "Show full issue detail: fields, description, the newest comments\n    (up to 20, with `comment_count`), and compact rows for its sub-issues.",
+      "description": "Show full issue detail: fields, description, the newest comments\n    (up to 20, with `comment_count`), and compact rows for its sub-issues\n    (with `sub_issue_count`).",
       "inputSchema": {
         "properties": {
           "identifier": {
@@ -1040,12 +1045,12 @@
       }
     },
     "project_list": {
-      "description": "List the projects in your team: id, key, name, and issue count.\n\n    The one call that answers \"what projects exist\" -- every other tool\n    takes a `project` filter but none enumerate them. Scoped to the\n    current team (`chaotic status`); the HTTP transport adds a `team`\n    parameter for API keys that can see more than one.\n    ",
+      "description": "List the projects in your team: key, name, issue count, and the\n    budget/ritual settings that govern work in each.\n\n    The one call that answers \"what projects exist\" -- every other tool\n    takes a `project` filter but none enumerate them. Scoped to the\n    current team (`chaotic status`); the HTTP transport adds a `team`\n    parameter for API keys that can see more than one.\n    ",
       "inputSchema": {
         "properties": {
           "detail": {
             "default": false,
-            "description": "Return every field of each project instead of the compact row. Compact rows carry: id, key, name, description (first 200 chars), issue_count, estimate_scale, unestimated_handling, default_sprint_budget, require_estimate_on_claim, human_rituals_required.",
+            "description": "Return every field of each project instead of the compact row. Compact rows carry: id, key, name, description, issue_count, estimate_scale, unestimated_handling, default_sprint_budget, require_estimate_on_claim, human_rituals_required (description is a 200-char preview).",
             "title": "Detail",
             "type": "boolean"
           }

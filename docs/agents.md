@@ -209,7 +209,8 @@ filter rather than assume you saw everything. Pass `detail: true` for the
 full response-schema rows; use `issue_view`/`doc_view` for one record.
 `activity_recent` cuts `old_value`/`new_value` to a 200-character preview
 with an explicit `...(+N chars)` marker, and `issue_view` returns the
-newest 20 comments with `comment_count`. The projection is part of the
+newest 20 comments with `comment_count` plus compact sub-issue rows with
+`sub_issue_count`. The projection is part of the
 cross-transport contract (`_meta.response_shapes` in
 `docs/mcp-toolset-schema.json`), so both servers return identical shapes.
 
