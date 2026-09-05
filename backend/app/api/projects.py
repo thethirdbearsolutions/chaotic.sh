@@ -13,7 +13,7 @@ async def create_project(
     team_id: str,
     project_in: ProjectCreate,
     current_user: CurrentUser,
-):
+) -> ProjectResponse:
     """Create a new project.
 
     Not directly routed here (CHT-1223): the canonical route is the
@@ -48,7 +48,7 @@ async def list_projects(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[ProjectResponse]:
     """List projects for a team.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -63,7 +63,7 @@ async def list_projects(
         )
 
     projects = await project_service.list_by_team(team_id, skip, limit)
-    return projects
+    return [ProjectResponse.model_validate(project) for project in projects]
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

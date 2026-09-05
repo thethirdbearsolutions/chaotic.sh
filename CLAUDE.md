@@ -101,8 +101,12 @@ form back to a member on read. So:
   `sprint.status == SprintStatus.ACTIVE`.
 - **Producing output for anything outside this process?** Build the
   response schema (`SprintResponse`, `RitualResponse`, …); do not dump the ORM
-  row. FastAPI routes do this for you; anything calling an API function
-  **in-process does not** — see `_dump()` in `app/mcp_server/tools.py`.
+  row. Since CHT-1348 the `app/api` functions do this themselves: every
+  function reachable in-process returns its response schema and says so in
+  its signature (ADR-0005; `tests/test_api_return_contract.py` enforces it).
+  So an in-process caller (the MCP tools) just `.model_dump(mode="json")`s
+  what it was handed. If you add an API function, annotate its return type
+  and construct the schema in the body — the guard test will tell you.
   This is not only about casing. `response_model` also **filters** to the
   schema's fields, and an ORM row carries more: `OxydeIssue` has a `creator`
   relation whose user row includes `hashed_password` and `is_superuser`, none

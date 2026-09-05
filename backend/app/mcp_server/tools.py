@@ -10,8 +10,14 @@ isn't a shared import between the cli/ and backend/ packages:
 * The stdio server is a thin adapter over ``cli.client.Client`` making
   HTTP calls back to this same backend; a hosted server obviously can't
   loop back through itself, so every tool body below calls straight into
-  ``app.api``/``app.services`` (the exact functions the REST endpoints
-  use -- see each tool's body) instead of an HTTP client.
+  ``app.api``/``app.services`` instead of an HTTP client. Those API
+  functions return their response schema by construction (CHT-1348;
+  ADR-0005), so what a tool gets back is exactly what an HTTP client
+  would see after ``response_model`` -- filtered to the schema's fields
+  and with enums in wire form. A tool only ever ``.model_dump(mode="json")``s
+  what it was handed; it never dumps an ORM row, and
+  tests/test_api_return_contract.py fails if an API function reachable
+  from here stops declaring a schema return type.
 * The stdio server's auth/team/project context comes from the CLI's
   local profile (``chaotic project use``, etc.) -- there's no such thing
   server-side. Here it's resolved per-request from the caller's API key
@@ -49,6 +55,7 @@ from pydantic import Field, ValidationError as PydanticValidationError
 from mcp.server.fastmcp import FastMCP
 
 from app.api import documents as documents_api
+from app.api import projects as projects_api
 from app.api import labels as labels_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
@@ -64,18 +71,11 @@ from app.mcp_server.scope import (
     resolve_sprint,
     resolve_team,
 )
-from app.schemas.budget_transaction import BudgetTransactionResponse
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
-    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate,
-    IssueRelationResponse, IssueUpdate, LabelResponse,
+    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
 )
-from app.schemas.project import ProjectResponse
-from app.schemas.sprint import SprintResponse
-from app.schemas.ritual import (
-    LimboStatusResponse, RitualAttestationCreate, RitualAttestationResponse,
-    RitualResponse, TicketRitualsStatusResponse,
-)
+from app.schemas.ritual import RitualAttestationCreate
 from app.services.project_service import ProjectService
 
 # Kept identical to cli/src/cli/commands/issue_cmd.py's ISSUE_TYPES /
@@ -613,10 +613,7 @@ async def issue_relations(
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
     relations = await issues_api.list_relations(issue_id=iss.id, current_user=user)
-    # Through the response schema, not raw: list_relations builds its dicts
-    # from raw SQL, so related_issue_status arrives as the stored enum NAME
-    # ("BACKLOG") where every HTTP client sees the value ("backlog").
-    return {"relations": [_dump(IssueRelationResponse, r) for r in (relations or [])]}
+    return {"relations": [r.model_dump(mode="json") for r in (relations or [])]}
 
 
 @_boundary
@@ -689,16 +686,16 @@ async def issue_unblock(
     if not relation_id:
         other = await issues_api.get_issue_by_identifier(related, user)
         existing = await issues_api.list_relations(issue_id=iss.id, current_user=user)
-        matches = [r for r in (existing or []) if r.get("related_issue_id") == other.id]
+        matches = [r for r in (existing or []) if r.related_issue_id == other.id]
         if not matches:
             raise ToolContextError(f"No relation between {identifier} and {related}.")
         if len(matches) > 1:
-            listed = ", ".join(f"{r['relation_type']} (id={r['id']})" for r in matches)
+            listed = ", ".join(f"{r.relation_type} (id={r.id})" for r in matches)
             raise ToolContextError(
                 f"{identifier} and {related} are connected by {len(matches)} relations: "
                 f"{listed}. Pass `relation_id` to say which one to remove."
             )
-        relation_id = matches[0]["id"]
+        relation_id = matches[0].id
 
     await issues_api.delete_relation(
         issue_id=iss.id, relation_id=relation_id, current_user=user
@@ -784,7 +781,7 @@ async def label_list(
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
     labels = await labels_api.list_labels(team_id=team_id, current_user=user, limit=1000)
-    return {"labels": [_dump(LabelResponse, l) for l in (labels or [])]}
+    return {"labels": [l.model_dump(mode="json") for l in (labels or [])]}
 
 
 @_boundary
@@ -1095,7 +1092,7 @@ async def sprint_current(
     user = get_current_mcp_user()
     project_id, _ = await resolve_project(user, project, team)
     sprint = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
-    return _with_budget_state(_dump(SprintResponse, sprint))
+    return _with_budget_state(sprint.model_dump(mode="json"))
 
 
 @_boundary
@@ -1118,7 +1115,7 @@ async def sprint_list(
         current_user=user,
         sprint_status=SprintStatus(status) if status else None,
     )
-    return {"sprints": [_with_budget_state(_dump(SprintResponse, s)) for s in (sprints or [])]}
+    return {"sprints": [_with_budget_state(s.model_dump(mode="json")) for s in (sprints or [])]}
 
 
 @_boundary
@@ -1151,7 +1148,7 @@ async def sprint_close(
     project_id, _ = await resolve_project(user, project, team)
     sprint_id = await resolve_sprint(project_id, sprint or "current")
     closed = await sprints_api.close_sprint(sprint_id=sprint_id, current_user=user)
-    result = _with_budget_state(_dump(SprintResponse, closed))
+    result = _with_budget_state(closed.model_dump(mode="json"))
     result["entered_limbo"] = bool(result.get("limbo"))
 
     # Budget state on the CLOSED sprint is history: it stays in arrears
@@ -1162,7 +1159,7 @@ async def sprint_close(
     # "still blocked" (CHT-1351).
     if not result["entered_limbo"]:
         active = await sprints_api.get_current_sprint(project_id=project_id, current_user=user)
-        result["now_active"] = _with_budget_state(_dump(SprintResponse, active)) if active else None
+        result["now_active"] = _with_budget_state(active.model_dump(mode="json")) if active else None
     else:
         result["now_active"] = None
     return result
@@ -1191,17 +1188,7 @@ async def sprint_transactions(
     project_id, _ = await resolve_project(user, project, team)
     sprint_id = await resolve_sprint(project_id, sprint or "current")
     txns = await sprints_api.list_transactions(sprint_id=sprint_id, current_user=user)
-    # Through the response schema, not the raw row: list_transactions is an
-    # undecorated api function, so its response_model never runs here
-    # (CHT-1351). Output is identical today -- the model and schema have
-    # the same fields and no enums -- so this is about not being the next
-    # instance of that bug rather than fixing a live one.
-    return {
-        "transactions": [
-            BudgetTransactionResponse.model_validate(t).model_dump(mode="json")
-            for t in (txns or [])
-        ]
-    }
+    return {"transactions": [t.model_dump(mode="json") for t in (txns or [])]}
 
 
 async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | None) -> dict:
@@ -1308,51 +1295,15 @@ def _trigger_of(rit: dict) -> str:
         return raw
 
 
-def _dump(schema, obj) -> dict:
-    """Serialise an ORM row the way an HTTP client would see it.
-
-    These API functions are plain undecorated coroutines -- the
-    ``response_model`` that shapes their output lives on the routed
-    wrappers in api/nested.py, so calling them in-process returns raw
-    Oxyde rows. Dumping one of those directly is not the same thing:
-    Oxyde serialises an enum field by NAME ("ACTIVE", "TICKET_CLOSE")
-    while the response schema emits its VALUE ("active",
-    "ticket_close"). Round-tripping through the schema keeps this
-    transport's output identical to the stdio one, which reaches the
-    same data over HTTP. (The toolset sync test compares schemas, not
-    response values, so it cannot catch that divergence for us.)
-    """
-    # from_attributes explicitly, so this helper works for any response
-    # schema rather than only those that happen to set it in ConfigDict.
-    return schema.model_validate(obj, from_attributes=True).model_dump(mode="json")
-
-
-def _rituals_dump(schema, value):
-    """Serialise a rituals-api result through its response schema.
-
-    These endpoints are undecorated coroutines returning raw Oxyde rows or
-    plain response objects -- ``response_model`` lives on the routed
-    wrapper, as everywhere else ``_dump`` exists for. A single shared
-    helper used to guess one schema for all of them, which silently
-    shipped ``ritual``/``sprint``/``issue`` relation slots that aren't on
-    ``RitualAttestationResponse`` and dropped the
-    ``attested_by_name``/``approved_by_name`` it adds (CHT-1354). Each
-    call site now names its own schema, because they genuinely differ.
-    """
-    if isinstance(value, dict):
-        return value
-    return _dump(schema, value)
-
-
 async def _limbo(user, project_id: str) -> dict:
     status = await rituals_api.get_limbo_status(project_id=project_id, current_user=user)
-    return _rituals_dump(LimboStatusResponse, status) if status else {}
+    return status.model_dump(mode="json") if status else {}
 
 
 async def _find_ritual(user, project_id: str, name: str) -> dict:
     """Resolve a ritual by name (case-insensitively), or by id."""
     rituals = [
-        _dump(RitualResponse, r)
+        r.model_dump(mode="json")
         for r in (await rituals_api.list_rituals(project_id=project_id, current_user=user) or [])
     ]
     if not rituals:
@@ -1417,9 +1368,9 @@ async def ritual_pending(
         # a multi-team key supply scoping that was then discarded -- and
         # blocked the call outright when it couldn't (CHT-1351).
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        pending = _rituals_dump(TicketRitualsStatusResponse, await rituals_api.get_pending_ticket_rituals(
+        pending = (await rituals_api.get_pending_ticket_rituals(
             issue_id=iss.id, current_user=user
-        )) or {}
+        )).model_dump(mode="json")
         rituals = pending.get("pending_rituals", []) or []
         return {
             "scope": "ticket",
@@ -1462,7 +1413,7 @@ async def ritual_list(
     rituals = await rituals_api.list_rituals(
         project_id=project_id, current_user=user, include_inactive=include_inactive,
     )
-    return {"rituals": [_dump(RitualResponse, r) for r in (rituals or [])]}
+    return {"rituals": [r.model_dump(mode="json") for r in (rituals or [])]}
 
 
 @_boundary
@@ -1511,10 +1462,10 @@ async def ritual_attest(
                 "`identifier` naming the ticket it gates."
             )
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        result = _rituals_dump(RitualAttestationResponse, await rituals_api.attest_ritual_for_issue(
+        result = (await rituals_api.attest_ritual_for_issue(
             ritual_id=rit["id"], issue_id=iss.id,
             attestation_in=RitualAttestationCreate(note=note), current_user=user,
-        ))
+        )).model_dump(mode="json")
         return {
             "scope": "ticket",
             "ritual": rit["name"],
@@ -1523,10 +1474,10 @@ async def ritual_attest(
             "attestation": result,
         }
 
-    result = _rituals_dump(RitualAttestationResponse, await rituals_api.attest_ritual(
+    result = (await rituals_api.attest_ritual(
         ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
         current_user=user, project_id=project_id,
-    ))
+    )).model_dump(mode="json")
     status = await _limbo(user, project_id)
     return {
         "scope": "sprint",
@@ -1571,17 +1522,17 @@ async def ritual_complete(
                 "`identifier` naming the ticket it gates."
             )
         iss = await issues_api.get_issue_by_identifier(identifier, user)
-        result = _rituals_dump(RitualAttestationResponse, await rituals_api.complete_gate_ritual_for_issue(
+        result = (await rituals_api.complete_gate_ritual_for_issue(
             ritual_id=rit["id"], issue_id=iss.id,
             attestation_in=RitualAttestationCreate(note=note), current_user=user,
-        ))
+        )).model_dump(mode="json")
         return {"scope": "ticket", "ritual": rit["name"],
                 "identifier": identifier, "attestation": result}
 
-    result = _rituals_dump(RitualAttestationResponse, await rituals_api.complete_gate_ritual(
+    result = (await rituals_api.complete_gate_ritual(
         ritual_id=rit["id"], attestation_in=RitualAttestationCreate(note=note),
         current_user=user, project_id=project_id,
-    ))
+    )).model_dump(mode="json")
     status = await _limbo(user, project_id)
     return {
         "scope": "sprint",
@@ -1609,8 +1560,10 @@ async def project_list(
     """
     user = get_current_mcp_user()
     team_id = await resolve_team(user, team)
-    projects = await ProjectService().list_by_team(team_id, limit=1000)
-    return {"projects": [ProjectResponse.model_validate(p).model_dump(mode="json") for p in projects]}
+    # limit=1000 for the same reason as label_list: the API default of 100
+    # would make a real project silently unresolvable (CHT-1351).
+    projects = await projects_api.list_projects(team_id=team_id, current_user=user, limit=1000)
+    return {"projects": [p.model_dump(mode="json") for p in (projects or [])]}
 
 
 # ---------------------------------------------------------------------------

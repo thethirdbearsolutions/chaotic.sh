@@ -58,7 +58,7 @@ async def create_ritual(
     project_id: str,
     ritual_in: RitualCreate,
     current_user: CurrentUser,
-):
+) -> RitualResponse:
     """Create a new ritual for a project.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -83,7 +83,7 @@ async def create_ritual(
 
     try:
         ritual = await ritual_service.create(ritual_in, project_id)
-        return ritual
+        return RitualResponse.model_validate(ritual)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -97,7 +97,7 @@ async def list_rituals(
     include_inactive: bool = False,
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[RitualResponse]:
     """List rituals for a project.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -120,7 +120,7 @@ async def list_rituals(
         )
 
     rituals = await ritual_service.list_by_project(project_id, include_inactive=include_inactive)
-    return rituals[skip:skip + limit]
+    return [RitualResponse.model_validate(r) for r in rituals[skip:skip + limit]]
 
 
 @router.get("/history", response_model=list[RitualAttestationHistoryItem])
@@ -173,7 +173,7 @@ async def list_attestation_history(
 async def get_limbo_status(
     project_id: str,
     current_user: CurrentUser,
-):
+) -> LimboStatusResponse:
     """Check if project is in limbo and get pending rituals."""
     project_service = ProjectService()
     ritual_service = RitualService()
@@ -452,7 +452,7 @@ async def force_clear_ticket_limbo(
 async def get_pending_ticket_rituals(
     issue_id: str,
     current_user: CurrentUser,
-):
+) -> TicketRitualsStatusResponse:
     """Get pending ticket-level rituals (both close and claim) for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -534,7 +534,7 @@ async def attest_ritual_for_issue(
     issue_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
-):
+) -> RitualAttestationResponse:
     """Attest to a ticket-close ritual for an issue."""
     ritual_service = RitualService()
     issue_service = IssueService()
@@ -609,7 +609,7 @@ async def attest_ritual_for_issue(
             detail=str(e),
         )
 
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/complete-issue/{issue_id}", response_model=RitualAttestationResponse)
@@ -618,7 +618,7 @@ async def complete_gate_ritual_for_issue(
     issue_id: str,
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
-):
+) -> RitualAttestationResponse:
     """Complete a GATE mode ticket-close ritual (human-only)."""
     ritual_service = RitualService()
     issue_service = IssueService()
@@ -698,7 +698,7 @@ async def complete_gate_ritual_for_issue(
     except Exception:
         pass
 
-    return attestation
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
@@ -1080,7 +1080,7 @@ async def attest_ritual(
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
     project_id: str | None = None,
-):
+) -> RitualAttestationResponse:
     """Attest to a ritual for the current limbo sprint.
 
     ``project_id`` is optional (CHT-1223): the ritual-scoped variants of
@@ -1159,12 +1159,14 @@ async def attest_ritual(
             user_id=current_user.id,
             note=attestation_in.note,
         )
-        return attestation
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    # Outside the try: pydantic's ValidationError is a ValueError, and a
+    # schema-construction failure is a server bug, not a 400.
+    return await _build_attestation_response(attestation)
 
 
 @router.post("/{ritual_id}/approve", response_model=RitualAttestationResponse)
@@ -1247,7 +1249,7 @@ async def complete_gate_ritual(
     attestation_in: RitualAttestationCreate,
     current_user: CurrentUser,
     project_id: str | None = None,
-):
+) -> RitualAttestationResponse:
     """Complete a GATE mode ritual (human-only).
 
     ``project_id`` is optional (CHT-1223) -- derived from the ritual when
@@ -1323,4 +1325,4 @@ async def complete_gate_ritual(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    return attestation
+    return await _build_attestation_response(attestation)

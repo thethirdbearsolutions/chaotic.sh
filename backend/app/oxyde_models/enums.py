@@ -40,8 +40,10 @@ one. The schema also FILTERS, and this does not:
 
 Before this change a raw dump announced itself with "BACKLOG"; now it
 reads as plausible. Removing that tell is the cost of fixing the casing,
-so: build the response schema (CHT-1348), do not dump the row. See
-``_dump()`` in app/mcp_server/tools.py and TestNoLeakedInternalFields.
+so: build the response schema, do not dump the row. Since CHT-1348 the
+app/api functions do this themselves (ADR-0005;
+tests/test_api_return_contract.py), and TestNoLeakedInternalFields
+sweeps the MCP tool output for anything that slipped through.
 """
 from typing import Annotated
 
