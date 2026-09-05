@@ -1,11 +1,50 @@
 {
   "_meta": {
     "generated_from": "cli.mcp_server.build_server() (CHT-1247/#215)",
-    "purpose": "Canonical MCP toolset shape shared by the stdio transport (cli/src/cli/mcp_server.py) and the backend Streamable HTTP transport (backend/app/mcp_server/tools.py, CHT-1266). cli/tests/test_mcp_toolset_sync.py asserts the stdio toolset matches this file exactly; backend/tests/test_mcp_toolset_sync.py asserts the HTTP toolset matches it for name/description and shared parameters, allowing only the documented additive 'team' parameter on issue_list/issue_create/doc_list/doc_create/activity_recent. Regenerate with cli/scripts/gen_mcp_toolset_schema.py if a stdio tool legitimately changes shape."
+    "purpose": "Canonical MCP toolset shape shared by the stdio transport (cli/src/cli/mcp_server.py) and the backend Streamable HTTP transport (backend/app/mcp_server/tools.py, CHT-1266). cli/tests/test_mcp_toolset_sync.py asserts the stdio toolset matches this file exactly; backend/tests/test_mcp_toolset_sync.py asserts the HTTP toolset matches it for name/description and shared parameters, allowing only the documented additive 'team' parameter on issue_list/issue_create/doc_list/doc_create/activity_recent. Regenerate with cli/scripts/gen_mcp_toolset_schema.py if a stdio tool legitimately changes shape.",
+    "response_shapes": {
+      "compact_document_fields": [
+        "id",
+        "title",
+        "icon",
+        "project_id",
+        "sprint_id",
+        "author_name",
+        "labels",
+        "updated_at"
+      ],
+      "compact_issue_fields": [
+        "identifier",
+        "title",
+        "status",
+        "priority",
+        "issue_type",
+        "estimate",
+        "assignee_id",
+        "sprint_id",
+        "parent_id",
+        "labels",
+        "updated_at"
+      ],
+      "compact_project_fields": [
+        "id",
+        "key",
+        "name",
+        "description",
+        "issue_count",
+        "estimate_scale",
+        "unestimated_handling",
+        "default_sprint_budget",
+        "require_estimate_on_claim",
+        "human_rituals_required"
+      ],
+      "issue_view_comment_cap": 20,
+      "text_preview_chars": 200
+    }
   },
   "tools": {
     "activity_recent": {
-      "description": "Show recent team activity: comments, status changes, assignments, etc.",
+      "description": "Show recent team activity: comments, status changes, assignments, etc.\n\n    `old_value`/`new_value` are cut to a 200-char preview (an edited\n    description would otherwise ship two full bodies per row); use\n    issue_view for the current text. Includes `count` and `truncated`.\n    ",
       "inputSchema": {
         "properties": {
           "limit": {
@@ -120,13 +159,19 @@
       }
     },
     "doc_list": {
-      "description": "List documents (project-scoped by default, team-wide with all_projects=true).",
+      "description": "List documents (project-scoped by default, team-wide with all_projects=true).\n\n    Compact rows plus `count` and `truncated`; detail=true for full rows.\n    ",
       "inputSchema": {
         "properties": {
           "all_projects": {
             "default": false,
             "description": "List every document in the team instead of just the current/given project.",
             "title": "All Projects",
+            "type": "boolean"
+          },
+          "detail": {
+            "default": false,
+            "description": "Return every field of each document (including content) instead of the compact row. Compact rows carry: id, title, icon, project_id, sprint_id, author_name, labels (names), updated_at. Use doc_view for one document.",
+            "title": "Detail",
             "type": "boolean"
           },
           "limit": {
@@ -505,7 +550,7 @@
       }
     },
     "issue_list": {
-      "description": "List issues in a project (or team-wide with all_projects=true), with filters.",
+      "description": "List issues in a project (or team-wide with all_projects=true), with filters.\n\n    Returns compact rows plus `count` and `truncated`; truncated=true means\n    `limit` cut the list -- narrow the filter rather than assume you saw\n    everything. Pass detail=true for full rows.\n    ",
       "inputSchema": {
         "properties": {
           "all_projects": {
@@ -526,6 +571,12 @@
             "default": null,
             "description": "Filter by assignee: 'me', a user/agent id, or a name/email.",
             "title": "Assignee"
+          },
+          "detail": {
+            "default": false,
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "title": "Detail",
+            "type": "boolean"
           },
           "epic": {
             "anyOf": [
@@ -684,6 +735,12 @@
             "default": false,
             "description": "Query across every project in the team instead of just the current/given one.",
             "title": "All Projects",
+            "type": "boolean"
+          },
+          "detail": {
+            "default": false,
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "title": "Detail",
             "type": "boolean"
           },
           "include_assigned": {
@@ -958,7 +1015,7 @@
       }
     },
     "issue_view": {
-      "description": "Show full issue detail: fields, description, comments, and sub-issues.",
+      "description": "Show full issue detail: fields, description, the newest comments\n    (up to 20, with `comment_count`), and compact rows for its sub-issues.",
       "inputSchema": {
         "properties": {
           "identifier": {
@@ -985,7 +1042,14 @@
     "project_list": {
       "description": "List the projects in your team: id, key, name, and issue count.\n\n    The one call that answers \"what projects exist\" -- every other tool\n    takes a `project` filter but none enumerate them. Scoped to the\n    current team (`chaotic status`); the HTTP transport adds a `team`\n    parameter for API keys that can see more than one.\n    ",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "detail": {
+            "default": false,
+            "description": "Return every field of each project instead of the compact row. Compact rows carry: id, key, name, description (first 200 chars), issue_count, estimate_scale, unestimated_handling, default_sprint_budget, require_estimate_on_claim, human_rituals_required.",
+            "title": "Detail",
+            "type": "boolean"
+          }
+        },
         "title": "project_listArguments",
         "type": "object"
       }

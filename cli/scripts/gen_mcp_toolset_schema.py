@@ -16,7 +16,7 @@ Do NOT hand-edit docs/mcp-toolset-schema.json.
 import asyncio
 import json
 
-from cli.mcp_server import build_server
+from cli.mcp_server import RESPONSE_SHAPES, build_server
 
 
 async def _main() -> None:
@@ -37,6 +37,10 @@ async def _main() -> None:
                 "activity_recent. Regenerate with cli/scripts/gen_mcp_toolset_schema.py "
                 "if a stdio tool legitimately changes shape."
             ),
+            # What a compact list row contains, and the preview/cap sizes
+            # (CHT-1370). Both transports assert their live constants
+            # against this, the same way they assert tool schemas.
+            "response_shapes": RESPONSE_SHAPES,
         },
         "tools": {},
     }

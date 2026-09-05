@@ -240,6 +240,101 @@ async def _apply_ticket_attestations(user, iss, identifier: str, attest: dict[st
 # Issues
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Response shapes (CHT-1370)
+# ---------------------------------------------------------------------------
+# List tools return a COMPACT projection of each row by default. The full
+# response schema is what a row IS (ADR-0005); a list is what a model needs
+# to SEE to pick the next call, and those differ: `issue_list` at limit=200
+# was ~500 KB of descriptions and UUIDs. `detail=true` opts back into full
+# rows. These constants are the contract for that projection --
+# cli/scripts/gen_mcp_toolset_schema.py writes them into
+# docs/mcp-toolset-schema.json under `_meta.response_shapes`, and both
+# transports' test_mcp_toolset_sync.py assert their live copy matches, so
+# the stdio and HTTP servers cannot drift on what a compact row contains.
+
+COMPACT_ISSUE_FIELDS = (
+    "identifier", "title", "status", "priority", "issue_type", "estimate",
+    "assignee_id", "sprint_id", "parent_id", "labels", "updated_at",
+)
+COMPACT_DOCUMENT_FIELDS = (
+    "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
+)
+COMPACT_PROJECT_FIELDS = (
+    "id", "key", "name", "description", "issue_count", "estimate_scale",
+    "unestimated_handling", "default_sprint_budget", "require_estimate_on_claim",
+    "human_rituals_required",
+)
+# Long free text in list/feed rows is cut to this many chars with an
+# explicit `...(+N chars)` marker: project descriptions in project_list,
+# old_value/new_value in activity_recent (an issue-description edit
+# otherwise ships two full bodies per row).
+TEXT_PREVIEW_CHARS = 200
+# issue_view returns the newest N comments plus `comment_count`.
+ISSUE_VIEW_COMMENT_CAP = 20
+
+RESPONSE_SHAPES = {
+    "compact_issue_fields": list(COMPACT_ISSUE_FIELDS),
+    "compact_document_fields": list(COMPACT_DOCUMENT_FIELDS),
+    "compact_project_fields": list(COMPACT_PROJECT_FIELDS),
+    "text_preview_chars": TEXT_PREVIEW_CHARS,
+    "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
+}
+
+_DETAIL_ISSUE_DESC = (
+    "Return every field of each issue (including description) instead of the "
+    "compact row. Compact rows carry: identifier, title, status, priority, "
+    "issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), "
+    "updated_at. Use issue_view for one issue's full detail."
+)
+_DETAIL_DOC_DESC = (
+    "Return every field of each document (including content) instead of the "
+    "compact row. Compact rows carry: id, title, icon, project_id, sprint_id, "
+    "author_name, labels (names), updated_at. Use doc_view for one document."
+)
+_DETAIL_PROJECT_DESC = (
+    "Return every field of each project instead of the compact row. Compact rows "
+    "carry: id, key, name, description (first 200 chars), issue_count, "
+    "estimate_scale, unestimated_handling, default_sprint_budget, "
+    "require_estimate_on_claim, human_rituals_required."
+)
+
+
+def _preview(text, limit: int = TEXT_PREVIEW_CHARS):
+    """Cut long free text to `limit` chars with a marker that says how much
+    was dropped, so a model knows to fetch the full record if it matters."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return f"{text[:limit]}...(+{len(text) - limit} chars)"
+
+
+def _compact(row: dict, fields) -> dict:
+    """Project a full response-schema row down to `fields`. Labels become
+    their names; a `description` becomes a preview."""
+    out = {}
+    for key in fields:
+        value = row.get(key)
+        if key == "labels" and isinstance(value, list):
+            value = [lab["name"] if isinstance(lab, dict) else lab for lab in value]
+        elif key == "description":
+            value = _preview(value)
+        out[key] = value
+    return out
+
+
+def _listing(key: str, rows, limit: int, fields, detail: bool) -> dict:
+    """Standard list envelope: `{key: rows, count, truncated}`.
+
+    Callers fetch `limit + 1` rows; the extra one is how `truncated` is
+    known without a COUNT query. A model that sees truncated=true should
+    narrow its filter rather than assume it saw everything.
+    """
+    rows = list(rows or [])
+    page = rows[:limit]
+    items = page if detail else [_compact(r, fields) for r in page]
+    return {key: items, "count": len(items), "truncated": len(rows) > limit}
+
+
 @_boundary
 async def issue_list(
     status: Annotated[
@@ -282,8 +377,14 @@ async def issue_list(
     limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 50,
     sort_by: Annotated[SORT_FIELDS, Field(description="Sort field.")] = "updated",
     order: Annotated[SORT_ORDER, Field(description="Sort direction.")] = "desc",
+    detail: Annotated[bool, Field(description=_DETAIL_ISSUE_DESC)] = False,
 ) -> dict:
-    """List issues in a project (or team-wide with all_projects=true), with filters."""
+    """List issues in a project (or team-wide with all_projects=true), with filters.
+
+    Returns compact rows plus `count` and `truncated`; truncated=true means
+    `limit` cut the list -- narrow the filter rather than assume you saw
+    everything. Pass detail=true for full rows.
+    """
     user = get_current_mcp_user()
 
     project_id = None
@@ -337,25 +438,28 @@ async def issue_list(
         search=search,
         sprint_id=sprint_id,
         parent_id=parent_id,
-        limit=limit,
+        limit=limit + 1,
         sort_by=sort_by,
         order=order,
     )
-    return {"issues": [i.model_dump(mode="json") for i in issues]}
+    rows = [i.model_dump(mode="json") for i in (issues or [])]
+    return _listing("issues", rows, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
 @_boundary
 async def issue_view(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
 ) -> dict:
-    """Show full issue detail: fields, description, comments, and sub-issues."""
+    """Show full issue detail: fields, description, the newest comments
+    (up to 20, with `comment_count`), and compact rows for its sub-issues."""
     user = get_current_mcp_user()
     iss = await issues_api.get_issue_by_identifier(identifier, user)
     comments = await issues_api.list_comments(iss.id, user)
     sub_issues = await issues_api.list_sub_issues(iss.id, user)
     result = iss.model_dump(mode="json")
-    result["comments"] = [c.model_dump(mode="json") for c in comments]
-    result["sub_issues"] = [s.model_dump(mode="json") for s in sub_issues]
+    result["comment_count"] = len(comments)
+    result["comments"] = [c.model_dump(mode="json") for c in comments[-ISSUE_VIEW_COMMENT_CAP:]]
+    result["sub_issues"] = [_compact(s.model_dump(mode="json"), COMPACT_ISSUE_FIELDS) for s in sub_issues]
     return result
 
 
@@ -557,6 +661,7 @@ async def issue_ready(
     ] = False,
     team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
     limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 20,
+    detail: Annotated[bool, Field(description=_DETAIL_ISSUE_DESC)] = False,
 ) -> dict:
     """List issues that are open, unblocked, and unclaimed -- what you can start right now.
 
@@ -588,9 +693,10 @@ async def issue_ready(
         team_id=team_id if not project_id else None,
         mine=mine,
         include_assigned=include_assigned,
-        limit=limit,
+        limit=limit + 1,
     )
-    return {"issues": [i.model_dump(mode="json") for i in (issues or [])]}
+    rows = [i.model_dump(mode="json") for i in (issues or [])]
+    return _listing("issues", rows, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
 RELATION_TYPES = Literal["blocks", "relates_to", "duplicates"]
@@ -859,8 +965,12 @@ async def doc_list(
     ] = False,
     team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
     limit: Annotated[int, Field(description="Maximum number of documents to return.", ge=1, le=500)] = 50,
+    detail: Annotated[bool, Field(description=_DETAIL_DOC_DESC)] = False,
 ) -> dict:
-    """List documents (project-scoped by default, team-wide with all_projects=true)."""
+    """List documents (project-scoped by default, team-wide with all_projects=true).
+
+    Compact rows plus `count` and `truncated`; detail=true for full rows.
+    """
     user = get_current_mcp_user()
 
     if project:
@@ -872,9 +982,10 @@ async def doc_list(
         project_id, team_id = await resolve_project(user, None, team)
 
     documents = await documents_api.list_documents(
-        team_id=team_id, current_user=user, project_id=project_id, search=search, limit=limit
+        team_id=team_id, current_user=user, project_id=project_id, search=search, limit=limit + 1
     )
-    return {"documents": [d.model_dump(mode="json") for d in (documents or [])]}
+    rows = [d.model_dump(mode="json") for d in (documents or [])]
+    return _listing("documents", rows, limit, COMPACT_DOCUMENT_FIELDS, detail)
 
 
 @_boundary
@@ -1550,6 +1661,7 @@ async def ritual_complete(
 @_boundary
 async def project_list(
     team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
+    detail: Annotated[bool, Field(description=_DETAIL_PROJECT_DESC)] = False,
 ) -> dict:
     """List the projects in your team: id, key, name, and issue count.
 
@@ -1562,8 +1674,9 @@ async def project_list(
     team_id = await resolve_team(user, team)
     # limit=1000 for the same reason as label_list: the API default of 100
     # would make a real project silently unresolvable (CHT-1351).
-    projects = await projects_api.list_projects(team_id=team_id, current_user=user, limit=1000)
-    return {"projects": [p.model_dump(mode="json") for p in (projects or [])]}
+    projects = await projects_api.list_projects(team_id=team_id, current_user=user, limit=1001)
+    rows = [p.model_dump(mode="json") for p in (projects or [])]
+    return _listing("projects", rows, 1000, COMPACT_PROJECT_FIELDS, detail)
 
 
 # ---------------------------------------------------------------------------
@@ -1579,7 +1692,12 @@ async def activity_recent(
     ] = None,
     team: Annotated[str | None, Field(description=_TEAM_FIELD_DEFAULT)] = None,
 ) -> dict:
-    """Show recent team activity: comments, status changes, assignments, etc."""
+    """Show recent team activity: comments, status changes, assignments, etc.
+
+    `old_value`/`new_value` are cut to a 200-char preview (an edited
+    description would otherwise ship two full bodies per row); use
+    issue_view for the current text. Includes `count` and `truncated`.
+    """
     user = get_current_mcp_user()
 
     project_id = None
@@ -1588,10 +1706,17 @@ async def activity_recent(
     else:
         team_id = await resolve_team(user, team)
 
+    # The REST endpoint caps limit at 200, so the +1 probe stops there.
+    fetch = min(limit + 1, 200)
     activities = await issues_api.list_team_activities(
-        team_id=team_id, current_user=user, limit=limit, project_id=project_id
+        team_id=team_id, current_user=user, limit=fetch, project_id=project_id
     )
-    return {"activities": [a.model_dump(mode="json") for a in (activities or [])]}
+    rows = [a.model_dump(mode="json") for a in (activities or [])]
+    page = rows[:limit]
+    for a in page:
+        a["old_value"] = _preview(a.get("old_value"))
+        a["new_value"] = _preview(a.get("new_value"))
+    return {"activities": page, "count": len(page), "truncated": len(rows) > limit}
 
 
 # ---------------------------------------------------------------------------

@@ -1417,7 +1417,7 @@ class TestProjectList:
             team_id=empty_team.id, user_id=test_user.id, role=TeamRole.MEMBER
         )
         result = await tools.project_list(team=empty_team.key)
-        assert result == {"projects": []}
+        assert result == {"projects": [], "count": 0, "truncated": False}
 
     async def test_team_scoped_agent_sees_its_team(self, db, test_team, test_project):
         from app.oxyde_models.user import OxydeUser
@@ -1564,3 +1564,92 @@ class TestBoundaryUnexpectedException:
         result = await tools.issue_list()
         assert "error" in result
         assert "kaboom" in result["error"]
+
+
+class TestCompactListing:
+    """List tools return a compact projection plus count/truncated (CHT-1370).
+
+    The full response schema is what a row IS (ADR-0005); a list is what a
+    model needs to SEE. issue_list at limit=200 used to be ~500 KB of
+    descriptions and UUIDs. These pin the projection, the `detail` escape
+    hatch, the limit+1 truncation probe, the activity preview, the
+    issue_view comment cap, and a payload-size budget.
+    """
+
+    async def test_issue_rows_are_exactly_the_compact_fields(self, test_project, test_team):
+        from app.schemas.issue import LabelCreate
+        from app.services.issue_service import IssueService
+        label = await IssueService().create_label(LabelCreate(name="compact"), test_team.id)
+        created = await tools.issue_create(title="Compact me", description="x" * 3000)
+        await tools.issue_label(identifier=created["identifier"], add=["compact"])
+
+        result = await tools.issue_list()
+        assert result["count"] == 1 and result["truncated"] is False
+        row = result["issues"][0]
+        assert set(row) == set(tools.COMPACT_ISSUE_FIELDS)
+        assert row["labels"] == ["compact"]
+        assert "description" not in row and "id" not in row
+        assert label.id  # label exists; only its name travels
+
+    async def test_detail_returns_full_schema_rows(self, test_project):
+        from app.schemas.issue import IssueResponse
+        await tools.issue_create(title="Full row", description="body")
+        row = (await tools.issue_list(detail=True))["issues"][0]
+        assert set(row) == set(IssueResponse.model_fields)
+        assert row["description"] == "body"
+
+    async def test_truncated_flag_uses_limit_plus_one(self, test_project):
+        for i in range(3):
+            await tools.issue_create(title=f"T{i}")
+        two = await tools.issue_list(limit=2)
+        assert two["count"] == 2 and two["truncated"] is True
+        three = await tools.issue_list(limit=3)
+        assert three["count"] == 3 and three["truncated"] is False
+
+    async def test_issue_ready_doc_list_project_list_share_the_envelope(self, test_project, test_team):
+        await tools.issue_create(title="Ready", status="todo")
+        await tools.doc_create(title="Doc", content="c" * 2000)
+        ready = await tools.issue_ready()
+        docs = await tools.doc_list()
+        projects = await tools.project_list()
+        for res, key, fields in (
+            (ready, "issues", tools.COMPACT_ISSUE_FIELDS),
+            (docs, "documents", tools.COMPACT_DOCUMENT_FIELDS),
+            (projects, "projects", tools.COMPACT_PROJECT_FIELDS),
+        ):
+            assert set(res) == {key, "count", "truncated"}, key
+            assert res["count"] == len(res[key]) >= 1, key
+            assert all(set(r) == set(fields) for r in res[key]), key
+        assert "content" not in docs["documents"][0]
+
+    async def test_activity_values_are_previewed(self, test_project):
+        created = await tools.issue_create(title="Edited", description="o" * 1000)
+        await tools.issue_update(created["identifier"], description="n" * 1000)
+        rows = (await tools.activity_recent())["activities"]
+        edit = next(r for r in rows if r["field_name"] == "description")
+        assert edit["old_value"] == "o" * 200 + "...(+800 chars)"
+        assert edit["new_value"] == "n" * 200 + "...(+800 chars)"
+
+    async def test_issue_view_caps_comments_and_compacts_sub_issues(self, test_project):
+        parent = await tools.issue_create(title="Parent")
+        await tools.issue_create(title="Child", parent=parent["identifier"], description="d" * 500)
+        for i in range(tools.ISSUE_VIEW_COMMENT_CAP + 5):
+            await tools.issue_comment(parent["identifier"], content=f"c{i}")
+        view = await tools.issue_view(parent["identifier"])
+        assert view["comment_count"] == tools.ISSUE_VIEW_COMMENT_CAP + 5
+        assert len(view["comments"]) == tools.ISSUE_VIEW_COMMENT_CAP
+        assert view["comments"][-1]["content"] == f"c{tools.ISSUE_VIEW_COMMENT_CAP + 4}"  # newest kept
+        assert view["description"] is None or "description" in view  # detail shape stays on the issue itself
+        assert set(view["sub_issues"][0]) == set(tools.COMPACT_ISSUE_FIELDS)
+
+    async def test_fifty_verbose_issues_fit_a_model_context(self, test_project):
+        """The number in CHT-1370: 50 issues with 5 KB descriptions must list
+        in well under 40 KB. Full rows would be ~260 KB."""
+        import json
+        for i in range(50):
+            await tools.issue_create(title=f"Verbose {i}", description="v" * 5000)
+        compact = json.dumps(await tools.issue_list(limit=50))
+        full = json.dumps(await tools.issue_list(limit=50, detail=True))
+        assert len(compact) < 40_000, len(compact)
+        assert len(full) > 250_000, len(full)
+

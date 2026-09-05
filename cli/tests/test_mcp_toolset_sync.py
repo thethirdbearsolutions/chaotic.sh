@@ -44,6 +44,19 @@ def test_snapshot_file_exists():
     )
 
 
+def test_response_shapes_match_snapshot():
+    """The compact-row projection and preview sizes (CHT-1370) are part of
+    the cross-transport contract: the backend asserts the same thing
+    against the same file, so a change here that isn't regenerated into
+    the snapshot fails on both sides."""
+    from cli.mcp_server import RESPONSE_SHAPES
+    snapshot = json.loads(_SCHEMA_PATH.read_text())["_meta"]["response_shapes"]
+    assert RESPONSE_SHAPES == snapshot, (
+        "cli.mcp_server.RESPONSE_SHAPES no longer matches docs/mcp-toolset-schema.json "
+        "-- regenerate with scripts/gen_mcp_toolset_schema.py"
+    )
+
+
 def test_stdio_toolset_matches_snapshot_exactly():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
     live = _live_toolset()
