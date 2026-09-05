@@ -67,7 +67,7 @@ async def create_document(
     team_id: str,
     document_in: DocumentCreate,
     current_user: CurrentUser,
-):
+) -> DocumentResponse:
     """Create a new document.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -140,7 +140,7 @@ async def list_documents(
     search: str | None = None,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentResponse]:
     """List documents for a team.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -192,7 +192,7 @@ async def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(document_id: str, current_user: CurrentUser):
+async def get_document(document_id: str, current_user: CurrentUser) -> DocumentResponse:
     """Get document by ID."""
     document_service = DocumentService()
 
@@ -225,7 +225,7 @@ async def update_document(
     document_id: str,
     document_in: DocumentUpdate,
     current_user: CurrentUser,
-):
+) -> DocumentResponse:
     """Update a document."""
     document_service = DocumentService()
 
@@ -318,7 +318,7 @@ async def delete_document(document_id: str, current_user: CurrentUser):
 
 
 @router.get("/{document_id}/issues", response_model=list[IssueResponse])
-async def get_document_issues(document_id: str, current_user: CurrentUser):
+async def get_document_issues(document_id: str, current_user: CurrentUser) -> list[IssueResponse]:
     """Get issues linked to a document."""
     document_service = DocumentService()
 
@@ -374,7 +374,7 @@ async def get_document_issues(document_id: str, current_user: CurrentUser):
 @router.post("/{document_id}/issues/{issue_id}", response_model=DocumentLinkedResponse, status_code=status.HTTP_201_CREATED)
 async def link_document_to_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
-):
+) -> DocumentLinkedResponse:
     """Link a document to an issue."""
     document_service = DocumentService()
     issue_service = IssueService()
@@ -425,13 +425,13 @@ async def link_document_to_issue(
         await document_service.link_issue(document_id, issue_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    return {"message": "Document linked to issue"}
+    return DocumentLinkedResponse(message="Document linked to issue")
 
 
 @router.delete("/{document_id}/issues/{issue_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink_document_from_issue(
     document_id: str, issue_id: str, current_user: CurrentUser
-):
+) -> None:
     """Unlink a document from an issue."""
     document_service = DocumentService()
     issue_service = IssueService()
@@ -763,7 +763,7 @@ async def list_comments(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentCommentResponse]:
     """List comments for a document."""
     document_service = DocumentService()
 

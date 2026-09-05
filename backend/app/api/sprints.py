@@ -18,7 +18,7 @@ async def list_sprints(
     sprint_status: SprintStatus | None = None,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[SprintResponse]:
     """List sprints for a project.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -41,14 +41,14 @@ async def list_sprints(
         )
 
     sprints = await sprint_service.list_by_project(project_id, skip, limit, sprint_status)
-    return sprints
+    return [SprintResponse.model_validate(sprint) for sprint in sprints]
 
 
 async def create_sprint(
     project_id: str,
     current_user: CurrentUser,
     sprint_in: SprintCreate | None = None,
-):
+) -> SprintResponse:
     """No-op: sprints are managed automatically.
 
     Returns the current active sprint. Sprint rotation happens via
@@ -83,10 +83,10 @@ async def create_sprint(
     # actually just created.
     had_current = await sprint_service.get_current_sprint(project_id) is not None
     current, _ = await sprint_service.ensure_sprints_exist(project_id)
+    response = SprintResponse.model_validate(current)
     if not had_current:
-        response = SprintResponse.model_validate(current, from_attributes=True)
         await broadcast_sprint_event(project.team_id, "created", response.model_dump(mode="json"))
-    return current
+    return response
 
 
 # NOTE: /current must come BEFORE /{sprint_id} for route matching to work
@@ -94,7 +94,7 @@ async def create_sprint(
 async def get_current_sprint(
     project_id: str,
     current_user: CurrentUser,
-):
+) -> SprintResponse:
     """Get the current (active) sprint for a project, creating if needed."""
     sprint_service = SprintService()
     project_service = ProjectService()
@@ -113,11 +113,11 @@ async def get_current_sprint(
         )
 
     current, _ = await sprint_service.ensure_sprints_exist(project_id)
-    return current
+    return SprintResponse.model_validate(current)
 
 
 @router.get("/{sprint_id}", response_model=SprintResponse)
-async def get_sprint(sprint_id: str, current_user: CurrentUser):
+async def get_sprint(sprint_id: str, current_user: CurrentUser) -> SprintResponse:
     """Get sprint by ID."""
     sprint_service = SprintService()
     project_service = ProjectService()
@@ -136,7 +136,7 @@ async def get_sprint(sprint_id: str, current_user: CurrentUser):
             detail="Not a member of this team",
         )
 
-    return sprint
+    return SprintResponse.model_validate(sprint)
 
 
 @router.patch("/{sprint_id}", response_model=SprintResponse)
@@ -144,7 +144,7 @@ async def update_sprint(
     sprint_id: str,
     sprint_in: SprintUpdate,
     current_user: CurrentUser,
-):
+) -> SprintResponse:
     """Update a sprint."""
     sprint_service = SprintService()
     project_service = ProjectService()
@@ -170,7 +170,7 @@ async def update_sprint(
 
 
 @router.post("/{sprint_id}/close", response_model=SprintResponse)
-async def close_sprint(sprint_id: str, current_user: CurrentUser):
+async def close_sprint(sprint_id: str, current_user: CurrentUser) -> SprintResponse:
     """Close the current sprint.
 
     If the project has pending EVERY_SPRINT rituals for this sprint, it
@@ -222,7 +222,7 @@ async def list_transactions(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[BudgetTransactionResponse]:
     """List budget transactions for a sprint.
 
     Returns the audit trail of effort spent against this sprint.
@@ -248,4 +248,4 @@ async def list_transactions(
     transactions = await OxydeBudgetTransaction.objects.filter(
         sprint_id=sprint_id
     ).order_by("-created_at").offset(skip).limit(limit).all()
-    return transactions
+    return [BudgetTransactionResponse.model_validate(t) for t in transactions]

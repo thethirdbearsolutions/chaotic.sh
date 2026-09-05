@@ -208,7 +208,7 @@ async def create_issue(
     issue_in: IssueCreate,
     current_user: CurrentUser,
     x_chaotic_interactive: str | None = Header(default=None),
-):
+) -> IssueResponse:
     """Create a new issue.
 
     Not directly routed here (CHT-1223): canonical route is the
@@ -408,7 +408,7 @@ async def list_issues(
     order: str | None = Query(None, pattern="^(asc|desc)$"),
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[IssueResponse]:
     """List issues with filters. Pass multiple status/priority/label values to filter by multiple values.
 
     ``label_match`` controls multi-``label`` semantics: ``all`` (default —
@@ -665,7 +665,7 @@ async def list_team_activities(
     skip: int = 0,
     limit: int = 50,
     project_id: str | None = None,
-):
+) -> list[IssueActivityFeedResponse]:
     """List recent activities for a team (issues and documents), optionally filtered by project."""
     issue_service = IssueService()
     sprint_service = SprintService()
@@ -836,7 +836,7 @@ async def list_team_comments(
 @router.get("/identifier/{identifier}", response_model=IssueResponse)
 async def get_issue_by_identifier(
     identifier: str, current_user: CurrentUser
-):
+) -> IssueResponse:
     """Get issue by identifier (e.g., PRJ-123)."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -867,7 +867,7 @@ async def get_issue_by_identifier(
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
-async def get_issue(issue_id: str, current_user: CurrentUser):
+async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     """Get issue by ID."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -899,7 +899,7 @@ async def update_issue(
     issue_in: IssueUpdate,
     current_user: CurrentUser,
     x_chaotic_interactive: str | None = Header(default=None),
-):
+) -> IssueResponse:
     """Update an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1060,7 +1060,7 @@ async def add_label_to_issue(
     issue_id: str,
     body: AddLabelRequest,
     current_user: CurrentUser,
-):
+) -> IssueResponse:
     """Add a label to an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1103,7 +1103,7 @@ async def remove_label_from_issue(
     issue_id: str,
     label_id: str,
     current_user: CurrentUser,
-):
+) -> IssueResponse:
     """Remove a label from an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1304,7 +1304,7 @@ async def list_sub_issues(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueResponse]:
     """List sub-issues for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1338,7 +1338,7 @@ async def create_comment(
     issue_id: str,
     comment_in: IssueCommentCreate,
     current_user: CurrentUser,
-):
+) -> IssueCommentResponse:
     """Create a comment on an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1386,7 +1386,7 @@ async def list_comments(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueCommentResponse]:
     """List comments for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1540,7 +1540,7 @@ async def create_relation(
     issue_id: str,
     relation_in: IssueRelationCreate,
     current_user: CurrentUser,
-):
+) -> IssueRelationResponse:
     """Create a relation between two issues."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1655,7 +1655,7 @@ async def list_relations(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 1000,
-):
+) -> list[IssueRelationResponse]:
     """List all relations for an issue."""
     issue_service = IssueService()
     project_service = ProjectService()
@@ -1676,7 +1676,7 @@ async def list_relations(
         )
 
     relations = await issue_service.list_relations(issue_id, team_id=project.team_id)
-    return relations[skip:skip + limit]
+    return [IssueRelationResponse.model_validate(r) for r in relations[skip:skip + limit]]
 
 
 @router.delete(
@@ -1686,7 +1686,7 @@ async def delete_relation(
     issue_id: str,
     relation_id: str,
     current_user: CurrentUser,
-):
+) -> None:
     """Delete a relation."""
     issue_service = IssueService()
     project_service = ProjectService()
