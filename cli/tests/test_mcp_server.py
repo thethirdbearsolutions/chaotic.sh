@@ -139,14 +139,53 @@ class TestServerAssembly:
 class TestErrorBoundary:
     def test_api_error_becomes_error_envelope(self, mcp_mod):
         from cli.main import client
-        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found"))
+        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found", status_code=404))
         result = mcp_mod.issue_view(identifier="CHT-999")
-        assert result == {"error": "Issue not found"}
+        # One envelope on both transports (CHT-1350, ADR-0006): message
+        # always a string, structure additive.
+        assert result == {"error": {"message": "Issue not found", "http_status": 404}}
+
+    def test_structured_api_error_keeps_error_code_and_fields(self, mcp_mod):
+        """A governance 409 arrives with the server's structured detail; the
+        stdio envelope must carry error_code and the pending-ritual list,
+        not just the CLI's flattened sentence (CHT-1350)."""
+        from cli.main import client
+        detail = {
+            "error_code": "claim_rituals_pending",
+            "message": "Ticket has pending claim rituals. Complete them before claiming.",
+            "issue_id": "CHT-1",
+            "pending_rituals": [{"name": "design-review", "prompt": "Write it."}],
+        }
+        client.get_issue_by_identifier = MagicMock(return_value={"id": "i1", "identifier": "CHT-1"})
+        client.update_issue = MagicMock(side_effect=APIError("Ticket has pending rituals: design-review", status_code=409, detail=detail))
+        result = mcp_mod.issue_update(identifier="CHT-1", status="in_progress")
+        err = result["error"]
+        assert err["error_code"] == "claim_rituals_pending"
+        assert err["message"] == detail["message"]  # the server's own sentence wins
+        assert err["pending_rituals"][0]["name"] == "design-review"
+        assert err["http_status"] == 409
+
+    def test_string_detail_without_message_uses_cli_rendering(self, mcp_mod):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Rendered by the CLI", status_code=400, detail={"arrears_by": 3}))
+        err = mcp_mod.issue_view(identifier="CHT-1")["error"]
+        assert err["message"] == "Rendered by the CLI"
+        assert err["arrears_by"] == 3
+
+    def test_validation_detail_becomes_errors_list(self, mcp_mod):
+        from cli.main import client
+        detail = [{"loc": ["body", "title"], "msg": "field required"}]
+        client.get_issue_by_identifier = MagicMock(side_effect=APIError("Validation error: title: field required", status_code=422, detail=detail))
+        err = mcp_mod.issue_view(identifier="CHT-1")["error"]
+        assert err["error_code"] == "validation_error"
+        assert err["errors"] == detail
+        assert isinstance(err["message"], str)
 
     def test_tool_input_error_becomes_error_envelope(self, mcp_mod):
         result = mcp_mod.issue_create(title="Nope", issue_type="not-a-real-type")
         assert "error" in result
-        assert "not-a-real-type" in result["error"]
+        assert "not-a-real-type" in result["error"]["message"]
+        assert result["error"]["error_code"] == "tool_input"
 
     def test_click_exception_becomes_error_envelope(self, mcp_mod, monkeypatch):
         import click
@@ -157,29 +196,30 @@ class TestErrorBoundary:
 
         monkeypatch.setattr("cli.main.resolve_project_id", _boom)
         result = mcp_mod.issue_list(project="foo")
-        assert result == {"error": "Ambiguous project name 'foo'"}
+        assert result == {"error": {"message": "Ambiguous project name 'foo'", "error_code": "tool_input"}}
 
     def test_unexpected_exception_never_crashes(self, mcp_mod):
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(side_effect=RuntimeError("boom"))
         result = mcp_mod.issue_view(identifier="CHT-1")
-        assert result["error"].startswith("Unexpected error (RuntimeError)")
+        assert result["error"]["message"].startswith("Unexpected error (RuntimeError)")
+        assert result["error"]["error_code"] == "unexpected"
 
     def test_not_authenticated(self, mcp_mod, monkeypatch):
         monkeypatch.setattr("cli.main.get_token", lambda: None)
         monkeypatch.setattr("cli.main.get_api_key", lambda: None)
         result = mcp_mod.issue_view(identifier="CHT-1")
-        assert "Not authenticated" in result["error"]
+        assert "Not authenticated" in result["error"]["message"]
 
     def test_no_team_selected(self, mcp_mod, monkeypatch):
         monkeypatch.setattr("cli.main.get_current_team", lambda: None)
         result = mcp_mod.activity_recent()
-        assert "No team selected" in result["error"]
+        assert "No team selected" in result["error"]["message"]
 
     def test_no_project_selected(self, mcp_mod, monkeypatch):
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
         result = mcp_mod.issue_list()
-        assert "No project selected" in result["error"]
+        assert "No project selected" in result["error"]["message"]
 
     def test_connect_error_gets_actionable_message(self, mcp_mod, monkeypatch):
         """Network failures mirror the CLI handle_error decorator's
@@ -189,21 +229,27 @@ class TestErrorBoundary:
         client.get_issue_by_identifier = MagicMock(side_effect=httpx.ConnectError("refused"))
         monkeypatch.setattr("cli.main.get_api_url", lambda: "http://example.test/api")
         result = mcp_mod.issue_view(identifier="CHT-1")
-        assert result == {"error": "Could not connect to server at http://example.test/api. Is the server running?"}
+        assert result == {"error": {
+            "message": "Could not connect to server at http://example.test/api. Is the server running?",
+            "error_code": "connect_error",
+        }}
 
     def test_timeout_gets_actionable_message(self, mcp_mod):
         import httpx
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(side_effect=httpx.ReadTimeout("slow"))
         result = mcp_mod.issue_view(identifier="CHT-1")
-        assert result == {"error": "Request timed out. The server may be overloaded or unreachable."}
+        assert result == {"error": {
+            "message": "Request timed out. The server may be overloaded or unreachable.",
+            "error_code": "timeout",
+        }}
 
     def test_other_httpx_error_gets_network_message(self, mcp_mod):
         import httpx
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(side_effect=httpx.RemoteProtocolError("bad frame"))
         result = mcp_mod.issue_view(identifier="CHT-1")
-        assert result == {"error": "Network error: bad frame"}
+        assert result == {"error": {"message": "Network error: bad frame", "error_code": "network_error"}}
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +387,7 @@ class TestIssueList:
         from cli.main import client
         client.get_issues = MagicMock()
         result = mcp_mod.issue_list(all_projects=True, sprint="current")
-        assert "Cannot combine `sprint` with all_projects" in result["error"]
+        assert "Cannot combine `sprint` with all_projects" in result["error"]["message"]
         client.get_issues.assert_not_called()
 
     def test_explicit_project_wins_over_all_projects(self, mcp_mod, mock_issue, monkeypatch):
@@ -422,7 +468,7 @@ class TestIssueView:
     def test_not_found(self, mcp_mod):
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(side_effect=APIError("Issue not found"))
-        assert mcp_mod.issue_view(identifier="CHT-999") == {"error": "Issue not found"}
+        assert mcp_mod.issue_view(identifier="CHT-999") == {"error": {"message": "Issue not found"}}
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +523,7 @@ class TestIssueCreate:
     def test_create_no_project_selected(self, mcp_mod, monkeypatch):
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
         result = mcp_mod.issue_create(title="X")
-        assert "No project selected" in result["error"]
+        assert "No project selected" in result["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +572,7 @@ class TestIssueUpdate:
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
         result = mcp_mod.issue_update(identifier="CHT-100")
-        assert "No fields provided" in result["error"]
+        assert "No fields provided" in result["error"]["message"]
 
     def test_update_returns_refetched_issue(self, mcp_mod, mock_issue):
         from cli.main import client
@@ -578,7 +624,7 @@ class TestIssueUpdate:
             identifier="CHT-100", status="done", attest={"bogus": "note"},
         )
 
-        assert "not a pending ticket ritual" in result["error"]
+        assert "not a pending ticket ritual" in result["error"]["message"]
         client.update_issue.assert_not_called()
 
     def test_update_attest_only_is_allowed(self, mcp_mod, mock_issue):
@@ -757,7 +803,7 @@ class TestIssueStartClaimParity:
 
         result = mcp_mod.issue_start(identifier="CHT-100", attest={"wrong-name": "x"})
 
-        assert "claim-gate" in result["error"]
+        assert "claim-gate" in result["error"]["message"]
         client.update_issue.assert_not_called()
 
 
@@ -832,7 +878,7 @@ class TestIssueRelations:
         result = mcp_mod.issue_unblock(identifier="CHT-1", related="CHT-2")
 
         assert "error" in result
-        assert "relation_id" in result["error"]
+        assert "relation_id" in result["error"]["message"]
         client.delete_relation.assert_not_called()
 
     def test_issue_unblock_no_such_relation(self, mcp_mod, mock_issue):
@@ -1395,7 +1441,7 @@ class TestRitualTools:
         client.get_rituals = MagicMock(return_value=[self.TICKET_RITUAL])
         result = mcp_mod.ritual_attest(ritual="close-gate", note="x")
         assert "error" in result
-        assert "identifier" in result["error"]
+        assert "identifier" in result["error"]["message"]
 
     def test_attest_missing_note_quotes_the_prompt(self, mcp_mod):
         from cli.main import client
@@ -1404,7 +1450,7 @@ class TestRitualTools:
 
         result = mcp_mod.ritual_attest(ritual="retro")
 
-        assert "Write the retro." in result["error"]
+        assert "Write the retro." in result["error"]["message"]
         client.attest_ritual.assert_not_called()
 
     def test_attest_note_not_required(self, mcp_mod):
@@ -1420,7 +1466,7 @@ class TestRitualTools:
         from cli.main import client
         client.get_rituals = MagicMock(return_value=[self.SPRINT_RITUAL])
         result = mcp_mod.ritual_attest(ritual="nope", note="x")
-        assert "retro" in result["error"]
+        assert "retro" in result["error"]["message"]
 
     def test_attest_reports_pending_approval(self, mcp_mod):
         """approval_mode review/gate: attested but not cleared."""
@@ -1546,7 +1592,7 @@ class TestProjectList:
         # Team-scoped like activity_recent: no team -> {"error": ...}, never a crash.
         monkeypatch.setattr("cli.main.get_current_team", lambda: None)
         result = mcp_mod.project_list()
-        assert "No team selected" in result["error"]
+        assert "No team selected" in result["error"]["message"]
 
     def test_takes_only_detail(self, mcp_mod):
         # The stdio tool has no scoping parameters (the HTTP transport adds
@@ -1619,7 +1665,7 @@ class TestMCPProtocolLoop:
         # error (isError=False); the error is data, per CHT-1247's contract.
         assert result.isError is not True
         text = next(c.text for c in result.content if c.type == "text")
-        assert json.loads(text) == {"error": "Issue not found"}
+        assert json.loads(text) == {"error": {"message": "Issue not found"}}
 
     def test_unknown_tool_is_a_protocol_error(self, mcp_mod):
         from mcp.shared.memory import create_connected_server_and_client_session

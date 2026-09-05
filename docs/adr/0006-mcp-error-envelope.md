@@ -1,6 +1,6 @@
 # ADR-0006: One MCP error envelope on both transports
 
-* **Status**: Proposed (implementation in progress, CHT-1350)
+* **Status**: Accepted
 * **Date**: 2026-09-05
 * **Driver**: CHT-1350 (same tool, same failure, different shape per
   transport), surfaced by the oppositional review of PR #262

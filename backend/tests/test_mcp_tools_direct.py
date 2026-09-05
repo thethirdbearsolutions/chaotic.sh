@@ -50,7 +50,7 @@ class TestIssueListBranches:
     async def test_sprint_and_all_projects_conflict(self, test_project):
         result = await tools.issue_list(all_projects=True, sprint="current")
         assert "error" in result
-        assert "sprint" in result["error"].lower()
+        assert "sprint" in result["error"]["message"].lower()
 
     async def test_all_projects_without_sprint(self, test_project):
         created = await tools.issue_create(title="Team-wide")
@@ -114,7 +114,7 @@ class TestIssueUpdateBranches:
     async def test_update_no_fields_is_error(self, test_issue):
         result = await tools.issue_update(test_issue.identifier)
         assert "error" in result
-        assert "No fields" in result["error"]
+        assert "No fields" in result["error"]["message"]
 
 
 class TestIssueUpdateAttest:
@@ -157,7 +157,7 @@ class TestIssueUpdateAttest:
             test_issue.identifier, status="done", attest={"bogus": "note"},
         )
         assert "error" in result
-        assert "not a pending ticket ritual" in result["error"]
+        assert "not a pending ticket ritual" in result["error"]["message"]
 
     async def test_attest_only_call_is_allowed(self, test_issue, make_ritual):
         from app.enums import ApprovalMode, RitualTrigger
@@ -188,7 +188,7 @@ class TestIssueUpdateAttest:
             test_issue.identifier, status="done", attest={"close-gate": "  "},
         )
         assert "error" in result
-        assert "non-empty" in result["error"]
+        assert "non-empty" in result["error"]["message"]
 
 
 class TestIssueCommentAssignTo:
@@ -775,13 +775,13 @@ class TestRitualTools:
         result = await tools.ritual_attest(ritual="gate")
 
         assert "error" in result
-        assert "Is the ADR written?" in result["error"]
+        assert "Is the ADR written?" in result["error"]["message"]
 
     async def test_attest_unknown_ritual_lists_the_real_ones(self, test_project):
         await self._make_ritual(test_project.id, "retro")
         result = await tools.ritual_attest(ritual="no-such-ritual", note="x")
         assert "error" in result
-        assert "retro" in result["error"]
+        assert "retro" in result["error"]["message"]
 
     async def test_ritual_name_match_is_case_insensitive(self, test_project):
         await self._make_ritual(test_project.id, "Retro")
@@ -822,7 +822,7 @@ class TestRitualTools:
         )
         result = await tools.ritual_attest(ritual="claim-gate", note="x")
         assert "error" in result
-        assert "identifier" in result["error"]
+        assert "identifier" in result["error"]["message"]
 
 
 
@@ -1464,7 +1464,7 @@ class TestProjectList:
         try:
             result = await tools.project_list()
             assert "error" in result
-            assert "scoped to a single project" in result["error"]
+            assert "scoped to a single project" in result["error"]["message"]
         finally:
             context.current_mcp_user.reset(token)
 
@@ -1495,7 +1495,7 @@ class TestDocViewFuzzyMatch:
         await tools.doc_create(title="Dup Title Doc", is_global=True)
         result = await tools.doc_view("Dup Title Doc")
         assert "error" in result
-        assert "Multiple documents" in result["error"]
+        assert "Multiple documents" in result["error"]["message"]
 
 
 class TestIssueTypeAliases:
@@ -1571,7 +1571,7 @@ class TestBoundaryUnexpectedException:
         monkeypatch.setattr(tools.issues_api, "list_issues", _boom)
         result = await tools.issue_list()
         assert "error" in result
-        assert "kaboom" in result["error"]
+        assert "kaboom" in result["error"]["message"]
 
 
 class TestCompactListing:
@@ -1753,4 +1753,59 @@ class TestResolvedCompanions:
         await tools.issue_create(title="C2", parent=parent["identifier"])
         view = await tools.issue_view(parent["identifier"])
         assert view["sub_issues"][0]["parent_identifier"] == parent["identifier"]
+
+
+class TestErrorEnvelope:
+    """One error shape on both transports (CHT-1350, ADR-0006):
+    ``{"error": {"message": str, "error_code"?: str, ...}}``. The stdio
+    server's tests pin the same contract from its side."""
+
+    def _check(self, result):
+        assert set(result) == {"error"}, result
+        err = result["error"]
+        assert isinstance(err, dict) and isinstance(err["message"], str) and err["message"]
+        return err
+
+    async def test_tool_input_errors(self, test_project):
+        err = self._check(await tools.issue_list(all_projects=True, sprint="current"))
+        assert err["error_code"] == "tool_input"
+
+    async def test_string_http_detail_gets_message_and_status(self, test_project):
+        err = self._check(await tools.issue_view("NOPE-1"))
+        assert err["http_status"] == 404
+        assert "not found" in err["message"].lower()
+
+    async def test_governance_409_keeps_its_structure(self, test_project):
+        from app.oxyde_models.sprint import OxydeSprint
+        sprint = await tools.sprint_current()
+        row = await OxydeSprint.objects.get(id=sprint["id"])
+        row.budget = 1
+        await row.save(update_fields={"budget"})
+        for title in ("A", "B"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(iss["identifier"], status="done")
+        blocked = await tools.issue_create(title="C")
+        err = self._check(await tools.issue_update(blocked["identifier"], status="in_progress"))
+        assert err["error_code"] == "sprint_in_arrears"
+        assert err["arrears_by"] == 1
+        assert err["http_status"] == 409
+
+    async def test_unexpected_exception(self, test_project, monkeypatch):
+        async def boom(*a, **k):
+            raise RuntimeError("kaboom")
+        monkeypatch.setattr(tools.issues_api, "get_issue_by_identifier", boom)
+        err = self._check(await tools.issue_view("CHT-1"))
+        assert err["error_code"] == "unexpected"
+
+    async def test_batch_failures_use_the_same_inner_shape(self, test_project):
+        await tools.sprint_current()
+        result = await tools.sprint_add(identifiers=["NOPE-999"])
+        failed = result["failed"][0]
+        assert failed["identifier"] == "NOPE-999"
+        assert isinstance(failed["error"], dict) and isinstance(failed["error"]["message"], str)
+        assert failed["error"]["http_status"] == 404
+
+    async def test_validation_error(self, test_project):
+        err = self._check(await tools.issue_create(title="Too big", estimate=99999))
+        assert err["error_code"] == "validation_error"
 

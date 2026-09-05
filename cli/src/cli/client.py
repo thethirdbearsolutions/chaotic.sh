@@ -13,9 +13,14 @@ class APIError(Exception):
     (4xx) failures should branch on `status_code`.
     """
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: int | None = None, detail=None):
         super().__init__(message)
         self.status_code = status_code
+        # The server's raw `detail` (dict for governance errors, list for
+        # validation errors, str otherwise), kept so callers that speak to
+        # machines (the MCP server, CHT-1350) can forward the structure the
+        # human-readable `message` flattens.
+        self.detail = detail
 
 
 class Client:
@@ -80,6 +85,7 @@ class Client:
                 raise APIError(
                     self._format_error(detail),
                     status_code=response.status_code,
+                    detail=detail,
                 )
 
             return result

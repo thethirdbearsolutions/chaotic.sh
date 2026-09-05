@@ -38,6 +38,15 @@
         "require_estimate_on_claim",
         "human_rituals_required"
       ],
+      "error_envelope": {
+        "always": [
+          "message"
+        ],
+        "when_known": [
+          "error_code",
+          "http_status"
+        ]
+      },
       "issue_view_comment_cap": 20,
       "issue_view_fetch_limit": 10000,
       "offset_probe_sort_keys": [

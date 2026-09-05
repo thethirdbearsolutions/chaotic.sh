@@ -138,11 +138,44 @@ def _resolve_issue_type(value: str | None) -> str | None:
     raise ToolInputError(f"'{value}' is not a valid issue type. Valid: {valid}. Aliases: {aliases}.")
 
 
+def _error(message: str, error_code: str | None = None, **extra) -> dict:
+    """The one error envelope (CHT-1350, ADR-0006): ``{"error": {"message":
+    str, "error_code"?: str, ...}}``. `message` is always a human/agent
+    readable sentence; everything else is additive structure a caller can
+    switch on without parsing prose. Identical on the HTTP transport."""
+    payload = {"message": message}
+    if error_code:
+        payload["error_code"] = error_code
+    payload.update({k: v for k, v in extra.items() if v is not None})
+    return {"error": payload}
+
+
+def _api_error_payload(e: APIError) -> dict:
+    """Turn an APIError into the envelope's inner dict, keeping whatever
+    structure the server sent (error_code, pending_rituals, arrears_by...)
+    and the CLI's human-readable rendering as `message`."""
+    detail = getattr(e, "detail", None)
+    if isinstance(detail, dict):
+        payload = dict(detail)
+        # Governance errors carry their own `message`; keep it so both
+        # transports say the same thing. Otherwise the CLI's rendering.
+        payload.setdefault("message", str(e))
+    elif isinstance(detail, list):
+        payload = {"message": str(e), "error_code": "validation_error", "errors": detail}
+    else:
+        payload = {"message": str(e)}
+    if e.status_code is not None:
+        payload.setdefault("http_status", e.status_code)
+    return payload
+
+
 def _boundary(fn):
     """Wrap a tool body so it NEVER raises -- every failure mode (bad
     input, missing team/project context, API error) comes back as the
-    same {"error": "<message>"} envelope the CLI's --json contract uses
-    (CHT-1222/#206), and the server keeps serving other tool calls.
+    same ``{"error": {"message": ..., ...}}`` envelope (CHT-1350,
+    ADR-0006), and the server keeps serving other tool calls. The HTTP
+    transport's ``_boundary`` (backend/app/mcp_server/tools.py) produces
+    the identical shape; ``RESPONSE_SHAPES["error_envelope"]`` pins it.
 
     Uses functools.wraps (not a manual __name__/__doc__ copy) because
     FastMCP builds each tool's JSON schema from the ORIGINAL function's
@@ -155,22 +188,22 @@ def _boundary(fn):
         try:
             return fn(*args, **kwargs)
         except ToolInputError as e:
-            return {"error": str(e)}
+            return _error(str(e), "tool_input")
         except click.ClickException as e:
-            return {"error": e.format_message()}
+            return _error(e.format_message(), "tool_input")
         except APIError as e:
-            return {"error": str(e)}
+            return {"error": _api_error_payload(e)}
         # Network failures get the same actionable messages the CLI's
         # handle_error decorator produces, not a generic "Unexpected
         # error (ConnectError)" (PR #215 review).
         except httpx.ConnectError:
-            return {"error": f"Could not connect to server at {_main().get_api_url()}. Is the server running?"}
+            return _error(f"Could not connect to server at {_main().get_api_url()}. Is the server running?", "connect_error")
         except httpx.TimeoutException:
-            return {"error": "Request timed out. The server may be overloaded or unreachable."}
+            return _error("Request timed out. The server may be overloaded or unreachable.", "timeout")
         except httpx.HTTPError as e:
-            return {"error": f"Network error: {e}"}
+            return _error(f"Network error: {e}", "network_error")
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
-            return {"error": f"Unexpected error ({type(e).__name__}): {e}"}
+            return _error(f"Unexpected error ({type(e).__name__}): {e}", "unexpected")
     return wrapper
 
 
@@ -265,6 +298,8 @@ RESPONSE_SHAPES = {
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
     "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,
     "offset_probe_sort_keys": list(OFFSET_PROBE_SORT_KEYS),
+    # Every failure is {"error": {...}} with at least these keys (CHT-1350).
+    "error_envelope": {"always": ["message"], "when_known": ["error_code", "http_status"]},
 }
 
 
@@ -1226,7 +1261,7 @@ def _set_sprint_on_issues(identifiers: list[str], sprint_id: str | None) -> dict
             _client().update_issue(iss["id"], sprint_id=sprint_id)
             updated.append(identifier)
         except APIError as e:
-            failed.append({"identifier": identifier, "error": str(e)})
+            failed.append({"identifier": identifier, "error": _api_error_payload(e)})
     # Name the target sprint, not just its UUID (CHT-1371); None on remove.
     sprint = None
     if sprint_id:
@@ -1572,7 +1607,8 @@ def build_server() -> FastMCP:
             "context are inherited from the local chaotic CLI config "
             "(whatever `chaotic status` reports) -- there is no separate "
             "login step. Every tool returns a JSON object; failures come "
-            "back as {\"error\": \"...\"} rather than a protocol error."
+            "back as {\"error\": {\"message\": \"...\", \"error_code\": \"...\"}} "
+            "rather than a protocol error -- switch on error_code, read message."
         ),
     )
     for tool_fn in ALL_TOOLS:

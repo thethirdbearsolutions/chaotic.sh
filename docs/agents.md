@@ -195,10 +195,16 @@ Eleven tools, curated for quality over coverage:
   filters by project, this one tells you which projects exist)
 
 Every tool returns a JSON object. Failures come back as
-`{"error": "..."}` -- the same shape as the CLI's `--json` error
-contract -- rather than an MCP protocol-level error; a bad identifier
-or missing team/project context is something the agent reads and
-reacts to, not a crash.
+`{"error": {"message": "...", "error_code": "...", ...}}` rather than an
+MCP protocol-level error (ADR-0006): `message` is always a sentence you
+can show or reason over, `error_code` is present whenever the failure has
+a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
+`tool_input`, `validation_error`, `unexpected`, ...), and governance
+errors keep their structure (`pending_rituals`, `arrears_by`, `override`
+hints) so you can act on them without parsing prose. Both transports
+produce the identical envelope. (The CLI's own `--json` mode keeps its
+flat `{"error": "..."}` string -- that contract is for shells and exit
+codes, this one is for models.)
 
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:

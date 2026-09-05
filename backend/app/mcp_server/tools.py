@@ -158,11 +158,42 @@ async def _resolve_document_id(user, document_id: str) -> str:
     raise ToolContextError(f"Multiple documents match '{document_id}'; pass the exact document id.")
 
 
+def _error(message: str, error_code: str | None = None, **extra) -> dict:
+    """The one error envelope (CHT-1350, ADR-0006): ``{"error": {"message":
+    str, "error_code"?: str, ...}}``. `message` is always a human/agent
+    readable sentence; everything else is additive structure a caller can
+    switch on without parsing prose. Identical on the stdio transport."""
+    payload = {"message": message}
+    if error_code:
+        payload["error_code"] = error_code
+    payload.update({k: v for k, v in extra.items() if v is not None})
+    return {"error": payload}
+
+
+def _http_error_payload(e: HTTPException) -> dict:
+    """Turn an HTTPException into the envelope's inner dict. Governance
+    409s already carry a structured dict with `error_code` and `message`
+    (see app.main's exception-shape docstring); string details become
+    `message`; FastAPI-style validation lists become `errors`."""
+    detail = e.detail
+    if isinstance(detail, dict):
+        payload = dict(detail)
+        payload.setdefault("message", payload.get("detail") or f"Request failed with HTTP {e.status_code}.")
+    elif isinstance(detail, list):
+        payload = {"message": "Validation failed.", "error_code": "validation_error", "errors": detail}
+    else:
+        payload = {"message": str(detail)}
+    payload.setdefault("http_status", e.status_code)
+    return payload
+
+
 def _boundary(fn):
     """Wrap a tool body so it NEVER raises -- mirrors the stdio server's
     ``_boundary`` (cli/src/cli/mcp_server.py) contract exactly: every
-    failure mode comes back as ``{"error": "<message>"}``, never a
-    protocol-level exception, and the server keeps serving other calls.
+    failure mode comes back as ``{"error": {"message": ..., ...}}``
+    (CHT-1350, ADR-0006), never a protocol-level exception, and the
+    server keeps serving other calls. ``RESPONSE_SHAPES["error_envelope"]``
+    pins the shape on both transports.
     Async (the stdio version's isn't) because every tool body here does
     real I/O. ``functools.wraps`` still matters for the same reason it
     does there: FastMCP derives each tool's JSON schema from the
@@ -174,17 +205,13 @@ def _boundary(fn):
         try:
             return await fn(*args, **kwargs)
         except ToolContextError as e:
-            return {"error": str(e)}
+            return _error(str(e), "tool_input")
         except HTTPException as e:
-            # e.detail may be a plain string or a structured dict
-            # (ritual/limbo/arrears 409s, see app.main's exception-shape
-            # docstring) -- pass it through as-is, JSON-serializable
-            # either way.
-            return {"error": e.detail}
+            return {"error": _http_error_payload(e)}
         except PydanticValidationError as e:
-            return {"error": str(e)}
+            return _error(str(e), "validation_error")
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
-            return {"error": f"Unexpected error ({type(e).__name__}): {e}"}
+            return _error(f"Unexpected error ({type(e).__name__}): {e}", "unexpected")
     return wrapper
 
 
@@ -290,6 +317,8 @@ RESPONSE_SHAPES = {
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
     "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,
     "offset_probe_sort_keys": list(OFFSET_PROBE_SORT_KEYS),
+    # Every failure is {"error": {...}} with at least these keys (CHT-1350).
+    "error_envelope": {"always": ["message"], "when_known": ["error_code", "http_status"]},
 }
 
 
@@ -1380,7 +1409,7 @@ async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | N
             )
             updated.append(identifier)
         except HTTPException as e:
-            failed.append({"identifier": identifier, "error": e.detail})
+            failed.append({"identifier": identifier, "error": _http_error_payload(e)})
     # Name the target sprint, not just its UUID (CHT-1371); None on remove.
     sprint = None
     if sprint_id:
@@ -1817,8 +1846,9 @@ def build_server() -> FastMCP:
             'used to authenticate this connection. If a call reports '
             'multiple accessible teams/projects, pass `team` and/or '
             '`project` explicitly to disambiguate. Every tool returns a '
-            'JSON object; failures come back as {"error": "..."} rather '
-            'than a protocol error.'
+            'JSON object; failures come back as {"error": {"message": "...", '
+            '"error_code": "..."}} rather than a protocol error -- switch on '
+            'error_code, read message.'
         ),
     )
     for tool_fn in ALL_TOOLS:
