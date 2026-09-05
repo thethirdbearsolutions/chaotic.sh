@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from app.mcp_server.tools import ALL_TOOLS, build_server
+from app.mcp_server.tools import ALL_TOOLS, RESPONSE_SHAPES, build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
 
@@ -67,6 +67,18 @@ def snapshot() -> dict:
         f"{_SCHEMA_PATH} is missing -- regenerate with cli/scripts/gen_mcp_toolset_schema.py"
     )
     return json.loads(_SCHEMA_PATH.read_text())["tools"]
+
+
+def test_response_shapes_match_snapshot():
+    """The compact-row projection and preview sizes (CHT-1370) must be the
+    same on both transports. The stdio server is the source of truth
+    (via the generator); this side asserts against the snapshot because
+    it cannot import cli.mcp_server."""
+    snapshot = json.loads(_SCHEMA_PATH.read_text())["_meta"]["response_shapes"]
+    assert RESPONSE_SHAPES == snapshot, (
+        "backend RESPONSE_SHAPES diverged from cli.mcp_server's (docs/mcp-toolset-schema.json) "
+        "-- the two transports must project list rows identically"
+    )
 
 
 def test_all_tools_registered():

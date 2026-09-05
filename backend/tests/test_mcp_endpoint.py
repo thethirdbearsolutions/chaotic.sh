@@ -334,7 +334,7 @@ class TestToolsCall:
         result = resp.json()["result"]
         assert result.get("isError") is not True
         payload = json.loads(result["content"][0]["text"])
-        assert payload == {"issues": []}
+        assert payload == {"issues": [], "count": 0, "truncated": False}
 
     async def test_issue_create_and_view(self, client, bearer_headers, test_project):
         resp = await _tool_call(client, bearer_headers, "issue_create", {"title": "From MCP"})

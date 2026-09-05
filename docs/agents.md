@@ -200,6 +200,20 @@ contract -- rather than an MCP protocol-level error; a bad identifier
 or missing team/project context is something the agent reads and
 reacts to, not a crash.
 
+**List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
+and `project_list` return a projection of each row (for issues:
+identifier, title, status, priority, issue_type, estimate, assignee_id,
+sprint_id, parent_id, labels as names, updated_at), plus `count` and
+`truncated`. `truncated: true` means `limit` cut the list -- narrow the
+filter rather than assume you saw everything. Pass `detail: true` for the
+full response-schema rows; use `issue_view`/`doc_view` for one record.
+`activity_recent` cuts `old_value`/`new_value` to a 200-character preview
+with an explicit `...(+N chars)` marker, and `issue_view` returns the
+newest 20 comments with `comment_count` plus compact sub-issue rows with
+`sub_issue_count`. The projection is part of the
+cross-transport contract (`_meta.response_shapes` in
+`docs/mcp-toolset-schema.json`), so both servers return identical shapes.
+
 No destructive tools (delete) are exposed. Destructive operations need
 a human in the loop for now; that may change behind an explicit opt-in
 flag in a future ticket. `issue_start` acquires a claim lease the same

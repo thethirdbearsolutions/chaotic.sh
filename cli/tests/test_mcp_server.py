@@ -127,7 +127,7 @@ class TestServerAssembly:
         by_name = {t.name: t for t in tools}
         assert set(by_name["issue_list"].inputSchema["properties"]) == {
             "status", "priority", "assignee", "label", "search", "sprint",
-            "epic", "all_projects", "project", "limit", "sort_by", "order",
+            "epic", "all_projects", "project", "limit", "sort_by", "order", "detail",
         }
         assert by_name["issue_view"].inputSchema["properties"]["identifier"]["type"] == "string"
 
@@ -215,10 +215,17 @@ class TestIssueList:
         from cli.main import client
         client.get_issues = MagicMock(return_value=[mock_issue])
         result = mcp_mod.issue_list()
-        assert result == {"issues": [mock_issue]}
+        # Compact rows by default (CHT-1370): the projection, plus count/truncated.
+        assert result == {
+            "issues": [mcp_mod._compact(mock_issue, mcp_mod.COMPACT_ISSUE_FIELDS)],
+            "count": 1, "truncated": False,
+        }
+        assert "description" not in result["issues"][0]
         _, kwargs = client.get_issues.call_args
         assert kwargs["project_id"] == "test-project-123"
         assert kwargs["team_id"] is None
+        # limit+1 is the truncation probe.
+        assert kwargs["limit"] == 51
         # Deliberate agent-friendly default (CLI defaults to "random").
         assert kwargs["sort_by"] == "updated"
         assert kwargs["order"] == "desc"
@@ -227,7 +234,7 @@ class TestIssueList:
         from cli.main import client
         client.get_issues = MagicMock(return_value=[mock_issue])
         result = mcp_mod.issue_list(all_projects=True)
-        assert result == {"issues": [mock_issue]}
+        assert result["issues"] == [mcp_mod._compact(mock_issue, mcp_mod.COMPACT_ISSUE_FIELDS)]
         _, kwargs = client.get_issues.call_args
         assert kwargs["project_id"] is None
         assert kwargs["team_id"] == "test-team-123"
@@ -259,7 +266,51 @@ class TestIssueList:
     def test_empty_result(self, mcp_mod):
         from cli.main import client
         client.get_issues = MagicMock(return_value=[])
-        assert mcp_mod.issue_list() == {"issues": []}
+        assert mcp_mod.issue_list() == {"issues": [], "count": 0, "truncated": False}
+
+    def test_detail_returns_full_rows(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issues = MagicMock(return_value=[mock_issue])
+        result = mcp_mod.issue_list(detail=True)
+        assert result["issues"] == [mock_issue]
+        assert result["issues"][0]["description"] == "Broken widget."
+
+    def test_truncated_when_limit_cuts_the_list(self, mcp_mod, mock_issue):
+        """limit+1 rows come back -> truncated=true and exactly `limit` rows."""
+        from cli.main import client
+        rows = [dict(mock_issue, identifier=f"CHT-{i}") for i in range(3)]
+        client.get_issues = MagicMock(return_value=rows)
+        result = mcp_mod.issue_list(limit=2)
+        assert result["count"] == 2
+        assert result["truncated"] is True
+        assert [r["identifier"] for r in result["issues"]] == ["CHT-0", "CHT-1"]
+
+    def test_priority_sort_probes_by_offset_not_overfetch(self, mcp_mod, mock_issue):
+        """For sort keys the service re-sorts in Python after a SQL LIMIT
+        (priority, status), over-fetching limit+1 would let the re-sort drop
+        the wrong row. So: fetch exactly `limit`, and probe offset=limit."""
+        from cli.main import client
+        rows = [dict(mock_issue, identifier=f"CHT-{i}") for i in range(2)]
+        client.get_issues = MagicMock(side_effect=[rows, [dict(mock_issue, identifier="CHT-9")]])
+        result = mcp_mod.issue_list(limit=2, sort_by="priority")
+        assert [r["identifier"] for r in result["issues"]] == ["CHT-0", "CHT-1"]
+        assert result["count"] == 2 and result["truncated"] is True
+        first, probe = client.get_issues.call_args_list
+        assert first.kwargs["limit"] == 2 and first.kwargs["sort_by"] == "priority"
+        assert probe.kwargs["skip"] == 2 and probe.kwargs["limit"] == 1
+        assert probe.kwargs["project_id"] == first.kwargs["project_id"]
+
+    def test_priority_sort_not_truncated_when_probe_is_empty(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issues = MagicMock(side_effect=[[mock_issue], []])
+        result = mcp_mod.issue_list(limit=2, sort_by="status")
+        assert result["count"] == 1 and result["truncated"] is False
+
+    def test_compact_row_flattens_labels_to_names(self, mcp_mod, mock_issue):
+        from cli.main import client
+        row = dict(mock_issue, labels=[{"id": "l1", "name": "bug", "color": "#f00", "team_id": "t"}])
+        client.get_issues = MagicMock(return_value=[row])
+        assert mcp_mod.issue_list()["issues"][0]["labels"] == ["bug"]
 
     def test_sprint_with_all_projects_is_rejected(self, mcp_mod):
         """Sprints are project-scoped; the CLI rejects --sprint with
@@ -307,13 +358,34 @@ class TestIssueView:
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
         client.get_comments = MagicMock(return_value=[{"id": "c1", "content": "hi"}])
-        client.get_sub_issues = MagicMock(return_value=[{"id": "sub-1"}])
+        client.get_sub_issues = MagicMock(return_value=[{"id": "sub-1", "identifier": "CHT-101"}])
 
         result = mcp_mod.issue_view(identifier="CHT-100")
 
         assert result["identifier"] == "CHT-100"
         assert result["comments"] == [{"id": "c1", "content": "hi"}]
-        assert result["sub_issues"] == [{"id": "sub-1"}]
+        assert result["comment_count"] == 1
+        assert result["sub_issue_count"] == 1
+        # Fetched with an explicit large limit so the counts are real, not
+        # the REST default of 100 oldest-first.
+        client.get_comments.assert_called_once_with("issue-uuid-1", limit=mcp_mod.ISSUE_VIEW_FETCH_LIMIT)
+        client.get_sub_issues.assert_called_once_with("issue-uuid-1", limit=mcp_mod.ISSUE_VIEW_FETCH_LIMIT)
+        # Sub-issues are compact rows (CHT-1370), not full records.
+        assert result["sub_issues"] == [
+            mcp_mod._compact({"id": "sub-1", "identifier": "CHT-101"}, mcp_mod.COMPACT_ISSUE_FIELDS)
+        ]
+        assert result["sub_issues"][0]["identifier"] == "CHT-101"
+
+    def test_view_caps_comments_to_newest(self, mcp_mod, mock_issue):
+        from cli.main import client
+        client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
+        comments = [{"id": f"c{i}"} for i in range(25)]  # oldest first, as the API returns them
+        client.get_comments = MagicMock(return_value=comments)
+        client.get_sub_issues = MagicMock(return_value=[])
+        result = mcp_mod.issue_view(identifier="CHT-100")
+        assert result["comment_count"] == 25
+        assert len(result["comments"]) == mcp_mod.ISSUE_VIEW_COMMENT_CAP == 20
+        assert result["comments"][-1] == {"id": "c24"}
 
     def test_sub_issues_api_error_degrades_to_empty_list(self, mcp_mod, mock_issue):
         from cli.main import client
@@ -868,20 +940,23 @@ class TestDocs:
         client.get_documents = MagicMock(return_value=[mock_document])
 
         result = mcp_mod.doc_list()
-
-        assert result == {"documents": [mock_document]}
+        assert result == {
+            "documents": [mcp_mod._compact(mock_document, mcp_mod.COMPACT_DOCUMENT_FIELDS)],
+            "count": 1, "truncated": False,
+        }
+        assert "content" not in result["documents"][0]
         client.get_documents.assert_called_once_with(
-            "test-team-123", project_id="test-project-123", search=None, limit=50,
+            "test-team-123", project_id="test-project-123", search=None, limit=51,
         )
+        assert mcp_mod.doc_list(detail=True)["documents"] == [mock_document]
 
     def test_doc_list_all_projects(self, mcp_mod, mock_document):
         from cli.main import client
         client.get_documents = MagicMock(return_value=[mock_document])
 
         mcp_mod.doc_list(all_projects=True)
-
         client.get_documents.assert_called_once_with(
-            "test-team-123", project_id=None, search=None, limit=50,
+            "test-team-123", project_id=None, search=None, limit=51,
         )
 
     def test_doc_list_custom_limit(self, mcp_mod, mock_document):
@@ -889,14 +964,13 @@ class TestDocs:
         client.get_documents = MagicMock(return_value=[mock_document])
 
         mcp_mod.doc_list(limit=5)
-
         _, kwargs = client.get_documents.call_args
-        assert kwargs["limit"] == 5
+        assert kwargs["limit"] == 6  # limit+1 truncation probe
 
     def test_doc_list_empty_returns_empty_list(self, mcp_mod):
         from cli.main import client
         client.get_documents = MagicMock(return_value=None)
-        assert mcp_mod.doc_list() == {"documents": []}
+        assert mcp_mod.doc_list() == {"documents": [], "count": 0, "truncated": False}
 
     def test_doc_view(self, mcp_mod, mock_document):
         from cli.main import client
@@ -930,9 +1004,12 @@ class TestDocs:
         client.get_ready_issues = MagicMock(return_value=[mock_issue])
 
         result = mcp_mod.issue_ready()
-
-        assert result == {"issues": [mock_issue]}
+        assert result == {
+            "issues": [mcp_mod._compact(mock_issue, mcp_mod.COMPACT_ISSUE_FIELDS)],
+            "count": 1, "truncated": False,
+        }
         _, kwargs = client.get_ready_issues.call_args
+        assert kwargs["limit"] == 21
         assert kwargs["project_id"] == "test-project-123"
         assert kwargs["team_id"] is None
         assert kwargs["mine"] is False
@@ -973,7 +1050,7 @@ class TestDocs:
     def test_issue_ready_empty_returns_empty_list(self, mcp_mod):
         from cli.main import client
         client.get_ready_issues = MagicMock(return_value=None)
-        assert mcp_mod.issue_ready() == {"issues": []}
+        assert mcp_mod.issue_ready() == {"issues": [], "count": 0, "truncated": False}
 
 
     def test_doc_create_global(self, mcp_mod, mock_document):
@@ -1341,11 +1418,36 @@ class TestActivityRecent:
         client.get_team_activities = MagicMock(return_value=activities)
 
         result = mcp_mod.activity_recent()
-
-        assert result == {"activities": activities}
+        assert result == {
+            "activities": [{"id": "a1", "activity_type": "status_changed",
+                            "old_value": None, "new_value": None}],
+            "count": 1, "truncated": False,
+        }
         client.get_team_activities.assert_called_once_with(
-            "test-team-123", limit=20, project_id=None,
+            "test-team-123", limit=21, project_id=None,
         )
+
+    def test_long_values_are_previewed(self, mcp_mod):
+        """An edited description used to ship two full bodies per row (CHT-1370)."""
+        from cli.main import client
+        body = "x" * 1000
+        client.get_team_activities = MagicMock(return_value=[
+            {"id": "a1", "activity_type": "updated", "field_name": "description",
+             "old_value": body, "new_value": "short"},
+        ])
+        row = mcp_mod.activity_recent()["activities"][0]
+        assert row["old_value"] == "x" * 200 + "...(+800 chars)"
+        assert row["new_value"] == "short"
+
+    def test_limit_probe_at_the_tool_maximum(self, mcp_mod):
+        """The activities route has no `le` cap, so the +1 probe applies at
+        the tool's own maximum too (review of CHT-1370 caught a bogus clamp)."""
+        from cli.main import client
+        client.get_team_activities = MagicMock(return_value=[{"id": f"a{i}"} for i in range(201)])
+        result = mcp_mod.activity_recent(limit=200)
+        _, kwargs = client.get_team_activities.call_args
+        assert kwargs["limit"] == 201
+        assert result["count"] == 200 and result["truncated"] is True
 
     def test_project_scoped(self, mcp_mod):
         from cli.main import client
@@ -1353,15 +1455,14 @@ class TestActivityRecent:
         client.get_team_activities = MagicMock(return_value=[])
 
         mcp_mod.activity_recent(project="CHT", limit=5)
-
         client.get_team_activities.assert_called_once_with(
-            "test-team-123", limit=5, project_id="p1",
+            "test-team-123", limit=6, project_id="p1",
         )
 
     def test_empty(self, mcp_mod):
         from cli.main import client
         client.get_team_activities = MagicMock(return_value=None)
-        assert mcp_mod.activity_recent() == {"activities": []}
+        assert mcp_mod.activity_recent() == {"activities": [], "count": 0, "truncated": False}
 
 
 # ---------------------------------------------------------------------------
@@ -1376,17 +1477,29 @@ class TestProjectList:
             {"id": "p2", "key": "OPS", "name": "Ops", "issue_count": 3},
         ]
         client.get_projects = MagicMock(return_value=projects)
-
         result = mcp_mod.project_list()
+        assert result == {
+            "projects": [mcp_mod._compact(p, mcp_mod.COMPACT_PROJECT_FIELDS) for p in projects],
+            "count": 2, "truncated": False,
+        }
+        assert result["projects"][0]["key"] == "CHT"
+        # 1000-row cap kept in parity with the HTTP transport; +1 probes truncation.
+        client.get_projects.assert_called_once_with("test-team-123", limit=1001)
 
-        assert result == {"projects": projects}
-        # limit=1000 keeps stdio in parity with the HTTP transport's cap.
-        client.get_projects.assert_called_once_with("test-team-123", limit=1000)
+    def test_description_is_previewed(self, mcp_mod):
+        from cli.main import client
+        client.get_projects = MagicMock(return_value=[
+            {"id": "p1", "key": "CHT", "name": "Chaotic", "description": "d" * 500},
+        ])
+        row = mcp_mod.project_list()["projects"][0]
+        assert row["description"] == "d" * 200 + "...(+300 chars)"
+        full = mcp_mod.project_list(detail=True)["projects"][0]
+        assert full["description"] == "d" * 500
 
     def test_empty_returns_empty_list(self, mcp_mod):
         from cli.main import client
         client.get_projects = MagicMock(return_value=None)
-        assert mcp_mod.project_list() == {"projects": []}
+        assert mcp_mod.project_list() == {"projects": [], "count": 0, "truncated": False}
 
     def test_no_team_selected_is_clean_error(self, mcp_mod, monkeypatch):
         # Team-scoped like activity_recent: no team -> {"error": ...}, never a crash.
@@ -1394,13 +1507,14 @@ class TestProjectList:
         result = mcp_mod.project_list()
         assert "No team selected" in result["error"]
 
-    def test_takes_no_parameters(self, mcp_mod):
-        # The stdio tool is param-less (the HTTP transport adds `team`);
-        # guards the snapshot-parity contract at the source.
+    def test_takes_only_detail(self, mcp_mod):
+        # The stdio tool has no scoping parameters (the HTTP transport adds
+        # `team`); `detail` is the shared compact/full switch (CHT-1370).
+        # Guards the snapshot-parity contract at the source.
         server = mcp_mod.build_server()
         tools = asyncio.run(server.list_tools())
         by_name = {t.name: t for t in tools}
-        assert by_name["project_list"].inputSchema.get("properties", {}) == {}
+        assert set(by_name["project_list"].inputSchema.get("properties", {})) == {"detail"}
 
 
 # ---------------------------------------------------------------------------
@@ -1442,7 +1556,10 @@ class TestMCPProtocolLoop:
         assert result.isError is not True
         text = next(c.text for c in result.content if c.type == "text")
         payload = json.loads(text)
-        assert payload == {"issues": [mock_issue]}
+        assert payload == {
+            "issues": [mcp_mod._compact(mock_issue, mcp_mod.COMPACT_ISSUE_FIELDS)],
+            "count": 1, "truncated": False,
+        }
 
     def test_call_tool_over_protocol_error_envelope(self, mcp_mod):
         from cli.main import client

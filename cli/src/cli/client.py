@@ -368,8 +368,11 @@ class Client:
         return self._request("GET", f"/issues/{issue_id}/description-revisions/{version}")
 
     # Sub-issues
-    def get_sub_issues(self, issue_id: str) -> list:
-        return self._request("GET", f"/issues/{issue_id}/sub-issues")
+    def get_sub_issues(self, issue_id: str, limit: int | None = None) -> list:
+        path = f"/issues/{issue_id}/sub-issues"
+        if limit is not None:
+            path = f"{path}?{urlencode({'limit': limit})}"
+        return self._request("GET", path)
 
     # Relations
     def get_relations(self, issue_id: str) -> list:
@@ -388,8 +391,11 @@ class Client:
     def create_comment(self, issue_id: str, content: str) -> dict:
         return self._request("POST", f"/issues/{issue_id}/comments", {"content": content})
 
-    def get_comments(self, issue_id: str) -> list:
-        return self._request("GET", f"/issues/{issue_id}/comments")
+    def get_comments(self, issue_id: str, limit: int | None = None) -> list:
+        path = f"/issues/{issue_id}/comments"
+        if limit is not None:
+            path = f"{path}?{urlencode({'limit': limit})}"
+        return self._request("GET", path)
 
     def update_comment(self, issue_id: str, comment_id: str, content: str) -> dict:
         return self._request("PATCH", f"/issues/{issue_id}/comments/{comment_id}", {"content": content})

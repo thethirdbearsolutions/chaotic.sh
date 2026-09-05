@@ -215,6 +215,116 @@ def _apply_ticket_attestations(iss: dict, identifier: str, attest: dict[str, str
 # Issues
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Response shapes (CHT-1370)
+# ---------------------------------------------------------------------------
+# List tools return a COMPACT projection of each row by default. The full
+# response schema is what a row IS (ADR-0005); a list is what a model needs
+# to SEE to pick the next call, and those differ: `issue_list` at limit=200
+# was ~500 KB of descriptions and UUIDs. `detail=true` opts back into full
+# rows. These constants are the contract for that projection --
+# cli/scripts/gen_mcp_toolset_schema.py writes them into
+# docs/mcp-toolset-schema.json under `_meta.response_shapes`, and both
+# transports' test_mcp_toolset_sync.py assert their live copy matches, so
+# the stdio and HTTP servers cannot drift on what a compact row contains.
+
+COMPACT_ISSUE_FIELDS = (
+    "identifier", "title", "status", "priority", "issue_type", "estimate",
+    "assignee_id", "sprint_id", "parent_id", "labels", "updated_at",
+)
+COMPACT_DOCUMENT_FIELDS = (
+    "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
+)
+COMPACT_PROJECT_FIELDS = (
+    "id", "key", "name", "description", "issue_count", "estimate_scale",
+    "unestimated_handling", "default_sprint_budget", "require_estimate_on_claim",
+    "human_rituals_required",
+)
+# Long free text in list/feed rows is cut to this many chars with an
+# explicit `...(+N chars)` marker: project descriptions in project_list,
+# old_value/new_value in activity_recent (an issue-description edit
+# otherwise ships two full bodies per row).
+TEXT_PREVIEW_CHARS = 200
+# issue_view returns the newest N comments plus `comment_count`.
+ISSUE_VIEW_COMMENT_CAP = 20
+# issue_view fetches comments/sub-issues with this limit so the counts it
+# reports are real: the REST defaults are 100, oldest-first, which would
+# make "newest 20 of comment_count" silently wrong past 100 comments.
+ISSUE_VIEW_FETCH_LIMIT = 10_000
+# issue_list sort keys the service orders in Python AFTER a SQL
+# `LIMIT ... ORDER BY created_at DESC` (IssueService._SORT_PYTHON_KEYS).
+# Over-fetching limit+1 for these would let the re-sort drop the wrong
+# row, so the truncation probe is a second query at offset=limit instead.
+OFFSET_PROBE_SORT_KEYS = ("priority", "status")
+
+RESPONSE_SHAPES = {
+    "compact_issue_fields": list(COMPACT_ISSUE_FIELDS),
+    "compact_document_fields": list(COMPACT_DOCUMENT_FIELDS),
+    "compact_project_fields": list(COMPACT_PROJECT_FIELDS),
+    "text_preview_chars": TEXT_PREVIEW_CHARS,
+    "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
+    "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,
+    "offset_probe_sort_keys": list(OFFSET_PROBE_SORT_KEYS),
+}
+
+
+def _fields_prose(fields) -> str:
+    return ", ".join("labels (names)" if f == "labels" else f for f in fields)
+
+
+# Built from the tuples so the prose cannot drift from the projection.
+_DETAIL_ISSUE_DESC = (
+    "Return every field of each issue (including description) instead of the "
+    f"compact row. Compact rows carry: {_fields_prose(COMPACT_ISSUE_FIELDS)}. "
+    "Use issue_view for one issue's full detail."
+)
+_DETAIL_DOC_DESC = (
+    "Return every field of each document (including content) instead of the "
+    f"compact row. Compact rows carry: {_fields_prose(COMPACT_DOCUMENT_FIELDS)}. "
+    "Use doc_view for one document."
+)
+_DETAIL_PROJECT_DESC = (
+    "Return every field of each project instead of the compact row. Compact rows "
+    f"carry: {_fields_prose(COMPACT_PROJECT_FIELDS)} (description is a "
+    f"{TEXT_PREVIEW_CHARS}-char preview)."
+)
+
+
+def _preview(text, limit: int = TEXT_PREVIEW_CHARS):
+    """Cut long free text to `limit` chars with a marker that says how much
+    was dropped, so a model knows to fetch the full record if it matters."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return f"{text[:limit]}...(+{len(text) - limit} chars)"
+
+
+def _compact(row: dict, fields) -> dict:
+    """Project a full response-schema row down to `fields`. Labels become
+    their names; a `description` becomes a preview."""
+    out = {}
+    for key in fields:
+        value = row.get(key)
+        if key == "labels" and isinstance(value, list):
+            value = [lab["name"] if isinstance(lab, dict) else lab for lab in value]
+        elif key == "description":
+            value = _preview(value)
+        out[key] = value
+    return out
+
+
+def _listing(key: str, rows, limit: int, fields, detail: bool) -> dict:
+    """Standard list envelope: `{key: rows, count, truncated}`.
+
+    Callers fetch `limit + 1` rows; the extra one is how `truncated` is
+    known without a COUNT query. A model that sees truncated=true should
+    narrow its filter rather than assume it saw everything.
+    """
+    rows = list(rows or [])
+    page = rows[:limit]
+    items = page if detail else [_compact(r, fields) for r in page]
+    return {key: items, "count": len(items), "truncated": len(rows) > limit}
+
+
 @_boundary
 def issue_list(
     status: Annotated[
@@ -255,8 +365,14 @@ def issue_list(
     limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 50,
     sort_by: Annotated[SORT_FIELDS, Field(description="Sort field.")] = "updated",
     order: Annotated[SORT_ORDER, Field(description="Sort direction.")] = "desc",
+    detail: Annotated[bool, Field(description=_DETAIL_ISSUE_DESC)] = False,
 ) -> dict:
-    """List issues in a project (or team-wide with all_projects=true), with filters."""
+    """List issues in a project (or team-wide with all_projects=true), with filters.
+
+    Returns compact rows plus `count` and `truncated`; truncated=true means
+    `limit` cut the list -- narrow the filter rather than assume you saw
+    everything. Pass detail=true for full rows.
+    """
     m = _main()
     team_id = None
     project_id = None
@@ -297,25 +413,46 @@ def issue_list(
         search=search,
         sprint_id=sprint_id,
         parent_id=parent_id,
-        limit=limit,
+        limit=limit if sort_by in OFFSET_PROBE_SORT_KEYS else limit + 1,
         sort_by=sort_by,
         order=order,
     )
-    return {"issues": issues}
+    if sort_by in OFFSET_PROBE_SORT_KEYS:
+        # See OFFSET_PROBE_SORT_KEYS: probe for a row past `limit` with the
+        # same filters instead of over-fetching, which would perturb the
+        # page after the service's Python re-sort.
+        more = _client().get_issues(
+            project_id=project_id, team_id=team_id,
+            status=",".join(status) if status else None,
+            priority=",".join(priority) if priority else None,
+            assignee_id=assignee_id, label=label, search=search,
+            sprint_id=sprint_id, parent_id=parent_id,
+            skip=limit, limit=1, sort_by="created", order="desc",
+        )
+        result = _listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
+        result["truncated"] = bool(more)
+        return result
+    return _listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
 @_boundary
 def issue_view(
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
 ) -> dict:
-    """Show full issue detail: fields, description, comments, and sub-issues."""
+    """Show full issue detail: fields, description, the newest comments
+    (up to 20, with `comment_count`), and compact rows for its sub-issues
+    (with `sub_issue_count`)."""
     _require_auth()
     iss = _client().get_issue_by_identifier(identifier)
-    iss["comments"] = _client().get_comments(iss["id"])
+    comments = _client().get_comments(iss["id"], limit=ISSUE_VIEW_FETCH_LIMIT) or []
+    iss["comment_count"] = len(comments)
+    iss["comments"] = comments[-ISSUE_VIEW_COMMENT_CAP:]
     try:
-        iss["sub_issues"] = _client().get_sub_issues(iss["id"])
+        subs = _client().get_sub_issues(iss["id"], limit=ISSUE_VIEW_FETCH_LIMIT) or []
     except APIError:
-        iss["sub_issues"] = []
+        subs = []
+    iss["sub_issue_count"] = len(subs)
+    iss["sub_issues"] = [_compact(s, COMPACT_ISSUE_FIELDS) for s in subs]
     return iss
 
 
@@ -493,6 +630,7 @@ def issue_ready(
         Field(description="Query across every project in the team instead of just the current/given one.")
     ] = False,
     limit: Annotated[int, Field(description="Maximum number of issues to return.", ge=1, le=500)] = 20,
+    detail: Annotated[bool, Field(description=_DETAIL_ISSUE_DESC)] = False,
 ) -> dict:
     """List issues that are open, unblocked, and unclaimed -- what you can start right now.
 
@@ -524,9 +662,9 @@ def issue_ready(
         team_id=None if project_id else team_id,
         mine=mine,
         include_assigned=include_assigned,
-        limit=limit,
+        limit=limit + 1,
     )
-    return {"issues": issues or []}
+    return _listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
 RELATION_TYPES = Literal["blocks", "relates_to", "duplicates"]
@@ -721,8 +859,12 @@ def doc_list(
         Field(description="List every document in the team instead of just the current/given project.")
     ] = False,
     limit: Annotated[int, Field(description="Maximum number of documents to return.", ge=1, le=500)] = 50,
+    detail: Annotated[bool, Field(description=_DETAIL_DOC_DESC)] = False,
 ) -> dict:
-    """List documents (project-scoped by default, team-wide with all_projects=true)."""
+    """List documents (project-scoped by default, team-wide with all_projects=true).
+
+    Compact rows plus `count` and `truncated`; detail=true for full rows.
+    """
     team_id = _require_team()
     m = _main()
     project_id = None
@@ -730,8 +872,8 @@ def doc_list(
         project_id = m.resolve_project_id(project)
     elif not all_projects:
         project_id = m.get_current_project()
-    documents = _client().get_documents(team_id, project_id=project_id, search=search, limit=limit)
-    return {"documents": documents or []}
+    documents = _client().get_documents(team_id, project_id=project_id, search=search, limit=limit + 1)
+    return _listing("documents", documents, limit, COMPACT_DOCUMENT_FIELDS, detail)
 
 
 @_boundary
@@ -1329,8 +1471,11 @@ def ritual_complete(
 # ---------------------------------------------------------------------------
 
 @_boundary
-def project_list() -> dict:
-    """List the projects in your team: id, key, name, and issue count.
+def project_list(
+    detail: Annotated[bool, Field(description=_DETAIL_PROJECT_DESC)] = False,
+) -> dict:
+    """List the projects in your team: key, name, issue count, and the
+    budget/ritual settings that govern work in each.
 
     The one call that answers "what projects exist" -- every other tool
     takes a `project` filter but none enumerate them. Scoped to the
@@ -1342,8 +1487,8 @@ def project_list() -> dict:
     # project_list (backend/app/mcp_server/tools.py), which lists at the
     # same cap -- without it, get_projects would fall to the REST
     # endpoint's default of 100 and silently truncate large teams.
-    projects = _client().get_projects(team_id, limit=1000)
-    return {"projects": projects or []}
+    projects = _client().get_projects(team_id, limit=1001)
+    return _listing("projects", projects, 1000, COMPACT_PROJECT_FIELDS, detail)
 
 
 # ---------------------------------------------------------------------------
@@ -1358,11 +1503,20 @@ def activity_recent(
         Field(description="Restrict to one project (id, key, or name). Omit for team-wide activity.")
     ] = None,
 ) -> dict:
-    """Show recent team activity: comments, status changes, assignments, etc."""
+    """Show recent team activity: comments, status changes, assignments, etc.
+
+    `old_value`/`new_value` are cut to a 200-char preview (an edited
+    description would otherwise ship two full bodies per row); use
+    issue_view for the current text. Includes `count` and `truncated`.
+    """
     team_id = _require_team()
     project_id = _main().resolve_project_id(project) if project else None
-    activities = _client().get_team_activities(team_id, limit=limit, project_id=project_id)
-    return {"activities": activities or []}
+    activities = _client().get_team_activities(team_id, limit=limit + 1, project_id=project_id) or []
+    page = activities[:limit]
+    for a in page:
+        a["old_value"] = _preview(a.get("old_value"))
+        a["new_value"] = _preview(a.get("new_value"))
+    return {"activities": page, "count": len(page), "truncated": len(activities) > limit}
 
 
 # ---------------------------------------------------------------------------
