@@ -111,8 +111,9 @@ def get_fastmcp() -> FastMCP:
                     'used to authenticate this connection. If a call reports '
                     'multiple accessible teams/projects, pass `team` and/or '
                     '`project` explicitly to disambiguate. Every tool returns a '
-                    'JSON object; failures come back as {"error": "..."} rather '
-                    'than a protocol error.'
+                    'JSON object; failures come back as {"error": {"message": "...", '
+                    '"error_code": "..."}} rather than a protocol error -- switch on '
+                    'error_code, read message.'
                 ),
                 json_response=True,
                 stateless_http=True,

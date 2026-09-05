@@ -430,7 +430,7 @@ class TestToolsCall:
         resp = await _tool_call(client, bearer_headers, "activity_recent")
         payload = json.loads(resp.json()["result"]["content"][0]["text"])
         assert "error" in payload
-        assert "team" in payload["error"].lower()
+        assert "team" in payload["error"]["message"].lower()
 
     async def test_team_param_disambiguates(self, client, bearer_headers, test_user, test_team, test_project):
         from app.oxyde_models.team import OxydeTeam, OxydeTeamMember

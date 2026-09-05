@@ -20,9 +20,9 @@
         "priority",
         "issue_type",
         "estimate",
-        "assignee_id",
-        "sprint_id",
-        "parent_id",
+        "assignee_name",
+        "sprint_name",
+        "parent_identifier",
         "labels",
         "updated_at"
       ],
@@ -38,6 +38,15 @@
         "require_estimate_on_claim",
         "human_rituals_required"
       ],
+      "error_envelope": {
+        "always": [
+          "message"
+        ],
+        "when_known": [
+          "error_code",
+          "http_status"
+        ]
+      },
       "issue_view_comment_cap": 20,
       "issue_view_fetch_limit": 10000,
       "offset_probe_sort_keys": [
@@ -579,7 +588,7 @@
           },
           "detail": {
             "default": false,
-            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
             "title": "Detail",
             "type": "boolean"
           },
@@ -744,7 +753,7 @@
           },
           "detail": {
             "default": false,
-            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_id, sprint_id, parent_id, labels (names), updated_at. Use issue_view for one issue's full detail.",
+            "description": "Return every field of each issue (including description) instead of the compact row. Compact rows carry: identifier, title, status, priority, issue_type, estimate, assignee_name, sprint_name, parent_identifier, labels (names), updated_at. Use issue_view for one issue's full detail.",
             "title": "Detail",
             "type": "boolean"
           },

@@ -42,6 +42,7 @@ from app.services.team_service import TeamService
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
+from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssueRelation
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import DocumentActivityType, IssueRelationType
@@ -203,6 +204,54 @@ def issue_to_response(issue: Issue) -> IssueResponse:
     )
 
 
+async def issues_to_responses(issues) -> list[IssueResponse]:
+    """Build IssueResponses with the UUID foreign keys resolved to names
+    (CHT-1371): assignee_name, sprint_name, parent_identifier, project_key.
+
+    Four batched lookups for the whole list, however long it is, so
+    list_issues at limit=500 costs the same as one issue. Every tool
+    input on the MCP surface addresses assignees, sprints, parents and
+    projects by name/identifier, so this is what makes a row's output
+    usable as the next call's input.
+    """
+    issues = list(issues or [])
+    if not issues:
+        return []
+
+    async def _lookup(model, ids, attr):
+        ids = [i for i in ids if i]
+        if not ids:
+            return {}
+        # Two columns, not whole rows: the parent lookup would otherwise
+        # load every parent's description to read one identifier.
+        rows = await model.objects.filter(id__in=list(set(ids))).values("id", attr).all()
+        return {
+            (row["id"] if isinstance(row, dict) else row.id):
+            (row[attr] if isinstance(row, dict) else getattr(row, attr))
+            for row in rows
+        }
+
+    assignees = await _lookup(OxydeUser, {i.assignee_id for i in issues}, "name")
+    sprints = await _lookup(OxydeSprint, {i.sprint_id for i in issues}, "name")
+    parents = await _lookup(Issue, {i.parent_id for i in issues}, "identifier")
+    projects = await _lookup(OxydeProject, {i.project_id for i in issues}, "key")
+
+    return [
+        issue_to_response(issue).model_copy(update={
+            "assignee_name": assignees.get(issue.assignee_id),
+            "sprint_name": sprints.get(issue.sprint_id),
+            "parent_identifier": parents.get(issue.parent_id),
+            "project_key": projects.get(issue.project_id),
+        })
+        for issue in issues
+    ]
+
+
+async def issue_response(issue: Issue) -> IssueResponse:
+    """One issue, with companions resolved -- see issues_to_responses."""
+    return (await issues_to_responses([issue]))[0]
+
+
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
@@ -317,7 +366,7 @@ async def create_issue(
             },
         )
 
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
 
     # Auto-link cross-referenced issues (CHT-133)
     try:
@@ -382,7 +431,7 @@ async def list_ready_issues(
         project_id=project_id, team_id=team_id,
         assignee_id=assignee_filter, limit=limit,
     )
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.get("", response_model=list[IssueResponse])
@@ -540,7 +589,7 @@ async def list_issues(
             detail="Must provide project_id, team_id, sprint_id, or assignee_id",
         )
 
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.get("/search", response_model=list[IssueResponse])
@@ -578,7 +627,7 @@ async def search_issues(
             )
 
     issues = await issue_service.search(team_id, q, skip, limit, project_id=project_id, status=issue_status.name if issue_status else None)
-    return [issue_to_response(issue) for issue in issues]
+    return await issues_to_responses(issues)
 
 
 @router.post("/batch-update", response_model=list[IssueResponse])
@@ -650,7 +699,7 @@ async def batch_update_issues(
             detail=str(e),
         )
 
-    responses = [issue_to_response(issue) for issue in updated]
+    responses = await issues_to_responses(updated)
     for resp in responses:
         await broadcast_issue_event(team_id, "updated", resp.model_dump(mode="json"))
         await broadcast_activity_event(team_id, "created", {"issue_id": resp.id})
@@ -863,7 +912,7 @@ async def get_issue_by_identifier(
     # crashed agent's stale claim.
     issue = await issue_service.release_lease_if_expired(issue)
 
-    return issue_to_response(issue)
+    return await issue_response(issue)
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
@@ -890,7 +939,7 @@ async def get_issue(issue_id: str, current_user: CurrentUser) -> IssueResponse:
     # Lazy auto-release of an expired claim lease (CHT-1246).
     issue = await issue_service.release_lease_if_expired(issue)
 
-    return issue_to_response(issue)
+    return await issue_response(issue)
 
 
 @router.patch("/{issue_id}", response_model=IssueResponse)
@@ -1011,7 +1060,7 @@ async def update_issue(
             },
         )
 
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
 
     # Auto-link cross-referenced issues when description changes (CHT-133)
     if issue_in.description is not None:
@@ -1093,7 +1142,7 @@ async def add_label_to_issue(
         )
 
     issue = await issue_service.add_label_to_issue(issue, label)
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
     return response
 
@@ -1136,7 +1185,7 @@ async def remove_label_from_issue(
         )
 
     issue = await issue_service.remove_label_from_issue(issue, label)
-    response = issue_to_response(issue)
+    response = await issue_response(issue)
     await broadcast_issue_event(project.team_id, "updated", response.model_dump(mode="json"))
     return response
 
@@ -1325,7 +1374,7 @@ async def list_sub_issues(
         )
 
     sub_issues = await issue_service.list_sub_issues(issue_id, skip, limit)
-    return [issue_to_response(issue) for issue in sub_issues]
+    return await issues_to_responses(sub_issues)
 
 
 # Comments

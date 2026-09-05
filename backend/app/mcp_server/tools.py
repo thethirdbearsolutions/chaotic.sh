@@ -158,11 +158,69 @@ async def _resolve_document_id(user, document_id: str) -> str:
     raise ToolContextError(f"Multiple documents match '{document_id}'; pass the exact document id.")
 
 
+def _error(message: str, error_code: str | None = None, **extra) -> dict:
+    """The one error envelope (CHT-1350, ADR-0006): ``{"error": {"message":
+    str, "error_code"?: str, ...}}``. `message` is always a human/agent
+    readable sentence; everything else is additive structure a caller can
+    switch on without parsing prose. Identical on the stdio transport."""
+    payload = {"message": message}
+    if error_code:
+        payload["error_code"] = error_code
+    payload.update(extra)  # verbatim, like the detail-dict builders below
+    return {"error": payload}
+
+
+
+
+def _validation_payload(errors: list) -> dict:
+    """Inner dict for a validation failure, identical on both transports:
+    `errors` is loc/msg only (never the submitted value -- the REST 422
+    handler and the CLI's formatter are value-blind on purpose, so this
+    is too), `message` is `<field>: <msg>` per line, and it reports the
+    422 a REST caller would have seen."""
+    cleaned, lines = [], []
+    for err in errors:
+        if not isinstance(err, dict) or "msg" not in err:
+            cleaned.append({"loc": [], "msg": str(err)})
+            lines.append(str(err))
+            continue
+        loc = [str(part) for part in err.get("loc", [])]
+        cleaned.append({"loc": loc, "msg": err["msg"]})
+        field = ".".join(p for p in loc if p not in ("body", "query", "path", "header")) or ".".join(loc)
+        lines.append(f"{field}: {err['msg']}" if field else str(err["msg"]))
+    return {
+        "message": "\n".join(lines) or "Validation error.",
+        "error_code": "validation_error",
+        "errors": cleaned,
+        "http_status": 422,
+    }
+
+
+def _http_error_payload(e: HTTPException) -> dict:
+    """Turn an HTTPException into the envelope's inner dict. Governance
+    409s already carry a structured dict with `error_code` and `message`
+    (see app.main's exception-shape docstring; tests/test_mcp_tools_direct
+    pins that every such dict has both); string details become
+    `message`; validation lists go through _validation_payload."""
+    detail = e.detail
+    if isinstance(detail, dict):
+        payload = dict(detail)
+        payload.setdefault("message", f"Request failed ({payload.get('error_code') or f'HTTP {e.status_code}'}).")
+    elif isinstance(detail, list):
+        payload = _validation_payload(detail)
+    else:
+        payload = {"message": str(detail)}
+    payload.setdefault("http_status", e.status_code)
+    return payload
+
+
 def _boundary(fn):
     """Wrap a tool body so it NEVER raises -- mirrors the stdio server's
     ``_boundary`` (cli/src/cli/mcp_server.py) contract exactly: every
-    failure mode comes back as ``{"error": "<message>"}``, never a
-    protocol-level exception, and the server keeps serving other calls.
+    failure mode comes back as ``{"error": {"message": ..., ...}}``
+    (CHT-1350, ADR-0006), never a protocol-level exception, and the
+    server keeps serving other calls. ``RESPONSE_SHAPES["error_envelope"]``
+    pins the shape on both transports.
     Async (the stdio version's isn't) because every tool body here does
     real I/O. ``functools.wraps`` still matters for the same reason it
     does there: FastMCP derives each tool's JSON schema from the
@@ -174,17 +232,17 @@ def _boundary(fn):
         try:
             return await fn(*args, **kwargs)
         except ToolContextError as e:
-            return {"error": str(e)}
+            return _error(str(e), "tool_input")
         except HTTPException as e:
-            # e.detail may be a plain string or a structured dict
-            # (ritual/limbo/arrears 409s, see app.main's exception-shape
-            # docstring) -- pass it through as-is, JSON-serializable
-            # either way.
-            return {"error": e.detail}
+            return {"error": _http_error_payload(e)}
         except PydanticValidationError as e:
-            return {"error": str(e)}
+            # In-process there is no 422 handler to strip `input`; build
+            # the same value-blind payload the stdio side gets over REST.
+            return {"error": _validation_payload(
+                [{"loc": list(err.get("loc", ())), "msg": err.get("msg", "")} for err in e.errors()]
+            )}
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
-            return {"error": f"Unexpected error ({type(e).__name__}): {e}"}
+            return _error(f"Unexpected error ({type(e).__name__}): {e}", "unexpected")
     return wrapper
 
 
@@ -255,7 +313,7 @@ async def _apply_ticket_attestations(user, iss, identifier: str, attest: dict[st
 
 COMPACT_ISSUE_FIELDS = (
     "identifier", "title", "status", "priority", "issue_type", "estimate",
-    "assignee_id", "sprint_id", "parent_id", "labels", "updated_at",
+    "assignee_name", "sprint_name", "parent_identifier", "labels", "updated_at",
 )
 COMPACT_DOCUMENT_FIELDS = (
     "id", "title", "icon", "project_id", "sprint_id", "author_name", "labels", "updated_at",
@@ -290,6 +348,8 @@ RESPONSE_SHAPES = {
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
     "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,
     "offset_probe_sort_keys": list(OFFSET_PROBE_SORT_KEYS),
+    # Every failure is {"error": {...}} with at least these keys (CHT-1350).
+    "error_envelope": {"always": ["message"], "when_known": ["error_code", "http_status"]},
 }
 
 
@@ -323,12 +383,25 @@ def _preview(text, limit: int = TEXT_PREVIEW_CHARS):
     return f"{text[:limit]}...(+{len(text) - limit} chars)"
 
 
+# When a compact field is a resolved name the row does not carry at all
+# (a backend older than CHT-1371 behind the stdio server), fall back to
+# the UUID rather than silently reporting "unassigned/unparented".
+_COMPACT_FALLBACKS = {
+    "assignee_name": "assignee_id",
+    "sprint_name": "sprint_id",
+    "parent_identifier": "parent_id",
+}
+
+
 def _compact(row: dict, fields) -> dict:
     """Project a full response-schema row down to `fields`. Labels become
     their names; a `description` becomes a preview."""
     out = {}
     for key in fields:
-        value = row.get(key)
+        if key not in row and key in _COMPACT_FALLBACKS:
+            value = row.get(_COMPACT_FALLBACKS[key])
+        else:
+            value = row.get(key)
         if key == "labels" and isinstance(value, list):
             value = [lab["name"] if isinstance(lab, dict) else lab for lab in value]
         elif key == "description":
@@ -1367,8 +1440,18 @@ async def _set_sprint_on_issues(user, identifiers: list[str], sprint_id: str | N
             )
             updated.append(identifier)
         except HTTPException as e:
-            failed.append({"identifier": identifier, "error": e.detail})
-    return {"updated": updated, "failed": failed, "sprint_id": sprint_id}
+            failed.append({"identifier": identifier, "error": _http_error_payload(e)})
+    # Name the target sprint, not just its UUID (CHT-1371); None on remove.
+    sprint = None
+    if sprint_id:
+        # The writes above already happened; a failed name lookup must not
+        # turn a successful batch into {"error": ...} (PR #268 review).
+        try:
+            s = await sprints_api.get_sprint(sprint_id=sprint_id, current_user=user)
+            sprint = {"id": s.id, "name": s.name}
+        except HTTPException:
+            sprint = {"id": sprint_id, "name": None}
+    return {"updated": updated, "failed": failed, "sprint_id": sprint_id, "sprint": sprint}
 
 
 @_boundary
@@ -1794,8 +1877,9 @@ def build_server() -> FastMCP:
             'used to authenticate this connection. If a call reports '
             'multiple accessible teams/projects, pass `team` and/or '
             '`project` explicitly to disambiguate. Every tool returns a '
-            'JSON object; failures come back as {"error": "..."} rather '
-            'than a protocol error.'
+            'JSON object; failures come back as {"error": {"message": "...", '
+            '"error_code": "..."}} rather than a protocol error -- switch on '
+            'error_code, read message.'
         ),
     )
     for tool_fn in ALL_TOOLS:

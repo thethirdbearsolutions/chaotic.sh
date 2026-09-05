@@ -195,16 +195,27 @@ Eleven tools, curated for quality over coverage:
   filters by project, this one tells you which projects exist)
 
 Every tool returns a JSON object. Failures come back as
-`{"error": "..."}` -- the same shape as the CLI's `--json` error
-contract -- rather than an MCP protocol-level error; a bad identifier
-or missing team/project context is something the agent reads and
-reacts to, not a crash.
+`{"error": {"message": "...", "error_code": "...", ...}}` rather than an
+MCP protocol-level error (ADR-0006): `message` is always a sentence you
+can show or reason over, `error_code` is present whenever the failure has
+a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
+`tool_input`, `validation_error`, `unexpected`, ...), and governance
+errors keep their structure (`pending_rituals`, `arrears_by`, `override`
+hints) so you can act on them without parsing prose. Both transports
+produce the identical envelope. (The CLI's own `--json` mode keeps its
+flat `{"error": "..."}` string -- that contract is for shells and exit
+codes, this one is for models.)
 
 **List tools return compact rows.** `issue_list`, `issue_ready`, `doc_list`
 and `project_list` return a projection of each row (for issues:
-identifier, title, status, priority, issue_type, estimate, assignee_id,
-sprint_id, parent_id, labels as names, updated_at), plus `count` and
-`truncated`. `truncated: true` means `limit` cut the list -- narrow the
+identifier, title, status, priority, issue_type, estimate, assignee_name,
+sprint_name, parent_identifier, labels as names, updated_at), plus `count`
+and `truncated`. Foreign keys travel as names an agent can pass straight
+back into another tool; the UUIDs are still on the full rows
+(`detail: true`, `issue_view`) alongside `assignee_name`, `sprint_name`,
+`parent_identifier` and `project_key`. Against a backend older than
+those fields, the stdio server falls back to the UUIDs in the same
+compact slots rather than reporting everything as unassigned. `truncated: true` means `limit` cut the list -- narrow the
 filter rather than assume you saw everything. Pass `detail: true` for the
 full response-schema rows; use `issue_view`/`doc_view` for one record.
 `activity_recent` cuts `old_value`/`new_value` to a 200-character preview
@@ -311,7 +322,8 @@ there's no local profile to fall back on the way the stdio server has:
 - If the key's user belongs to more than one team, or a team has more
   than one project, pass `team` and/or `project` explicitly (id, key,
   or name all work) -- the tool call returns a clear
-  `{"error": "..."}` listing the options if you don't.
+  `{"error": {"message": "...", "error_code": "tool_input"}}` listing the
+  options if you don't.
 - An agent-scoped API key (`chaotic agent create`) is confined to its
   own project/team exactly like it is over REST; passing a `team`/
   `project` that doesn't match its scope is rejected the same way.

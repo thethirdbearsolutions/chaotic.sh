@@ -4261,3 +4261,30 @@ async def test_create_issue_with_refactor_type(client, auth_headers, test_projec
     r2 = await client.get(f"/api/issues/{iid}", headers=auth_headers)
     assert r2.status_code == 200
     assert r2.json()["issue_type"] == "refactor"
+
+
+async def test_issue_response_resolves_foreign_key_names(client, auth_headers, test_project, test_user, test_sprint, db):
+    """IssueResponse carries assignee_name / sprint_name / parent_identifier /
+    project_key alongside the UUIDs (CHT-1371), on single and list routes."""
+    parent = (await client.post(
+        f"/api/projects/{test_project.id}/issues", json={"title": "Parent"}, headers=auth_headers,
+    )).json()
+    created = (await client.post(
+        f"/api/projects/{test_project.id}/issues",
+        json={"title": "Child", "parent_id": parent["id"], "assignee_id": test_user.id,
+              "sprint_id": test_sprint.id},
+        headers=auth_headers,
+    )).json()
+    assert created["assignee_name"] == test_user.name
+    assert created["sprint_name"] == test_sprint.name
+    assert created["parent_identifier"] == parent["identifier"]
+    assert created["project_key"] == test_project.key
+    # Unset keys resolve to None, not an error.
+    assert parent["assignee_name"] is None and parent["parent_identifier"] is None
+
+    fetched = (await client.get(f"/api/issues/identifier/{created['identifier']}", headers=auth_headers)).json()
+    assert fetched["parent_identifier"] == parent["identifier"]
+    listed = (await client.get(f"/api/issues?project_id={test_project.id}", headers=auth_headers)).json()
+    row = next(i for i in listed if i["id"] == created["id"])
+    assert row["assignee_name"] == test_user.name and row["project_key"] == test_project.key
+

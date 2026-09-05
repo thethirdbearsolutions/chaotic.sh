@@ -42,12 +42,15 @@ class TestIssueListBranches:
         await tools.issue_update((await tools.issue_list())["issues"][0]["identifier"], assignee="me")
         result = await tools.issue_list(assignee="me")
         assert "error" not in result
-        assert all(i["assignee_id"] == test_user.id for i in result["issues"])
+        # Compact rows carry the resolved name, not the UUID (CHT-1371).
+        assert all(i["assignee_name"] == test_user.name for i in result["issues"])
+        full = await tools.issue_list(assignee="me", detail=True)
+        assert all(i["assignee_id"] == test_user.id for i in full["issues"])
 
     async def test_sprint_and_all_projects_conflict(self, test_project):
         result = await tools.issue_list(all_projects=True, sprint="current")
         assert "error" in result
-        assert "sprint" in result["error"].lower()
+        assert "sprint" in result["error"]["message"].lower()
 
     async def test_all_projects_without_sprint(self, test_project):
         created = await tools.issue_create(title="Team-wide")
@@ -111,7 +114,7 @@ class TestIssueUpdateBranches:
     async def test_update_no_fields_is_error(self, test_issue):
         result = await tools.issue_update(test_issue.identifier)
         assert "error" in result
-        assert "No fields" in result["error"]
+        assert "No fields" in result["error"]["message"]
 
 
 class TestIssueUpdateAttest:
@@ -154,7 +157,7 @@ class TestIssueUpdateAttest:
             test_issue.identifier, status="done", attest={"bogus": "note"},
         )
         assert "error" in result
-        assert "not a pending ticket ritual" in result["error"]
+        assert "not a pending ticket ritual" in result["error"]["message"]
 
     async def test_attest_only_call_is_allowed(self, test_issue, make_ritual):
         from app.enums import ApprovalMode, RitualTrigger
@@ -185,7 +188,7 @@ class TestIssueUpdateAttest:
             test_issue.identifier, status="done", attest={"close-gate": "  "},
         )
         assert "error" in result
-        assert "non-empty" in result["error"]
+        assert "non-empty" in result["error"]["message"]
 
 
 class TestIssueCommentAssignTo:
@@ -688,7 +691,11 @@ class TestSprintTools:
         added = await tools.sprint_add(identifiers=[a["identifier"], b["identifier"]])
         assert added["updated"] == [a["identifier"], b["identifier"]]
         assert added["failed"] == []
-        assert (await tools.issue_view(a["identifier"]))["sprint_id"] == added["sprint_id"]
+        view = await tools.issue_view(a["identifier"])
+        assert view["sprint_id"] == added["sprint_id"]
+        # The target sprint is named, and the issue row carries the name too (CHT-1371).
+        assert added["sprint"] == {"id": added["sprint_id"], "name": (await tools.sprint_current())["name"]}
+        assert view["sprint_name"] == added["sprint"]["name"]
 
         removed = await tools.sprint_remove(identifiers=[a["identifier"]])
         assert removed["updated"] == [a["identifier"]]
@@ -768,13 +775,13 @@ class TestRitualTools:
         result = await tools.ritual_attest(ritual="gate")
 
         assert "error" in result
-        assert "Is the ADR written?" in result["error"]
+        assert "Is the ADR written?" in result["error"]["message"]
 
     async def test_attest_unknown_ritual_lists_the_real_ones(self, test_project):
         await self._make_ritual(test_project.id, "retro")
         result = await tools.ritual_attest(ritual="no-such-ritual", note="x")
         assert "error" in result
-        assert "retro" in result["error"]
+        assert "retro" in result["error"]["message"]
 
     async def test_ritual_name_match_is_case_insensitive(self, test_project):
         await self._make_ritual(test_project.id, "Retro")
@@ -815,7 +822,7 @@ class TestRitualTools:
         )
         result = await tools.ritual_attest(ritual="claim-gate", note="x")
         assert "error" in result
-        assert "identifier" in result["error"]
+        assert "identifier" in result["error"]["message"]
 
 
 
@@ -960,6 +967,7 @@ class TestNoLeakedEnumNames:
     # Fields whose values are legitimately SHOUTY (keys, uuids, identifiers).
     IGNORE = {
         "key", "identifier", "id", "team_id", "project_id", "sprint_id",
+        "project_key", "parent_identifier",  # resolved companions (CHT-1371)
         "parent_id", "assignee_id", "creator_id", "author_id", "document_id",
         "issue_id", "related_issue_id", "label_id", "ritual_id",
         # activity old_value/new_value store the raw written string and
@@ -1456,7 +1464,7 @@ class TestProjectList:
         try:
             result = await tools.project_list()
             assert "error" in result
-            assert "scoped to a single project" in result["error"]
+            assert "scoped to a single project" in result["error"]["message"]
         finally:
             context.current_mcp_user.reset(token)
 
@@ -1487,7 +1495,7 @@ class TestDocViewFuzzyMatch:
         await tools.doc_create(title="Dup Title Doc", is_global=True)
         result = await tools.doc_view("Dup Title Doc")
         assert "error" in result
-        assert "Multiple documents" in result["error"]
+        assert "Multiple documents" in result["error"]["message"]
 
 
 class TestIssueTypeAliases:
@@ -1563,7 +1571,7 @@ class TestBoundaryUnexpectedException:
         monkeypatch.setattr(tools.issues_api, "list_issues", _boom)
         result = await tools.issue_list()
         assert "error" in result
-        assert "kaboom" in result["error"]
+        assert "kaboom" in result["error"]["message"]
 
 
 class TestCompactListing:
@@ -1670,7 +1678,8 @@ class TestCompactListing:
         # The page is the newest two by created_at (B, C) re-sorted by
         # priority -- exactly what it was before the probe existed. An
         # over-fetch of 3 would have let the re-sort push A onto the page.
-        assert {r["identifier"] for r in result["issues"]} == {b["identifier"], c["identifier"]}
+        page = {r["identifier"] for r in result["issues"]}
+        assert page == {b["identifier"], c["identifier"]} and a["identifier"] not in page
         assert result["truncated"] is True
         full = await tools.issue_list(limit=3, sort_by="priority")
         assert full["count"] == 3 and full["truncated"] is False
@@ -1693,4 +1702,156 @@ class TestCompactListing:
         full = json.dumps(await tools.issue_list(limit=50, detail=True))
         assert len(compact) < 40_000, len(compact)
         assert len(full) > 250_000, len(full)
+
+
+class TestResolvedCompanions:
+    """UUID foreign keys travel with resolved names (CHT-1371), so a row's
+    output is usable as the next call's input on this surface, where every
+    tool addresses assignees/sprints/parents/projects by name or identifier."""
+
+    async def test_compact_rows_carry_names_not_uuids(self, test_project, test_user):
+        await tools.sprint_current()
+        parent = await tools.issue_create(title="Epic-ish", issue_type="epic")
+        child = await tools.issue_create(title="Child", parent=parent["identifier"])
+        await tools.issue_update(child["identifier"], assignee="me")
+        await tools.sprint_add(identifiers=[child["identifier"]])
+
+        row = next(r for r in (await tools.issue_list())["issues"] if r["identifier"] == child["identifier"])
+        assert row["assignee_name"] == test_user.name
+        assert row["parent_identifier"] == parent["identifier"]
+        assert row["sprint_name"] == (await tools.sprint_current())["name"]
+        assert "assignee_id" not in row and "parent_id" not in row and "sprint_id" not in row
+
+    async def test_detail_rows_carry_both(self, test_project, test_user):
+        parent = await tools.issue_create(title="P")
+        child = await tools.issue_create(title="C", parent=parent["identifier"])
+        full = await tools.issue_view(child["identifier"])
+        assert full["parent_id"] == parent["id"]
+        assert full["parent_identifier"] == parent["identifier"]
+        assert full["project_key"] == test_project.key
+        assert full["assignee_name"] is None and full["sprint_name"] is None
+
+    async def test_doc_view_linked_issues_carry_companions(self, test_project, test_user):
+        """get_document_issues built IssueResponse by hand and missed the
+        companions (PR #268 review); now it uses the shared builder."""
+        parent = await tools.issue_create(title="P3")
+        child = await tools.issue_create(title="C3", parent=parent["identifier"])
+        await tools.issue_update(child["identifier"], assignee="me")
+        doc = await tools.doc_create(title="Linked", content="x")
+        await tools.doc_link(document_id=doc["id"], identifier=child["identifier"])
+        linked = (await tools.doc_view(document_id=doc["id"]))["linked_issues"]
+        assert linked[0]["parent_identifier"] == parent["identifier"]
+        assert linked[0]["assignee_name"] == test_user.name
+        assert linked[0]["project_key"] == test_project.key
+        assert "lease_expires_at" in linked[0]  # the hand-rolled copy had dropped it
+
+    # No dangling-FK test: issues.assignee_id/sprint_id/parent_id are real
+    # FOREIGN KEY constraints (a write with an unknown id fails at the DB),
+    # so the `.get()` -> None path in issues_to_responses is unreachable.
+
+    async def test_sub_issue_rows_name_their_parent(self, test_project):
+        parent = await tools.issue_create(title="P2")
+        await tools.issue_create(title="C2", parent=parent["identifier"])
+        view = await tools.issue_view(parent["identifier"])
+        assert view["sub_issues"][0]["parent_identifier"] == parent["identifier"]
+
+
+class TestErrorEnvelope:
+    """One error shape on both transports (CHT-1350, ADR-0006):
+    ``{"error": {"message": str, "error_code"?: str, ...}}``. The stdio
+    server's tests pin the same contract from its side."""
+
+    def _check(self, result):
+        assert set(result) == {"error"}, result
+        err = result["error"]
+        assert isinstance(err, dict) and isinstance(err["message"], str) and err["message"]
+        return err
+
+    async def test_tool_input_errors(self, test_project):
+        err = self._check(await tools.issue_list(all_projects=True, sprint="current"))
+        assert err["error_code"] == "tool_input"
+
+    async def test_string_http_detail_gets_message_and_status(self, test_project):
+        err = self._check(await tools.issue_view("NOPE-1"))
+        assert err["http_status"] == 404
+        assert "not found" in err["message"].lower()
+
+    async def test_governance_409_keeps_its_structure(self, test_project):
+        from app.oxyde_models.sprint import OxydeSprint
+        sprint = await tools.sprint_current()
+        row = await OxydeSprint.objects.get(id=sprint["id"])
+        row.budget = 1
+        await row.save(update_fields={"budget"})
+        for title in ("A", "B"):
+            iss = await tools.issue_create(title=title, estimate=1)
+            await tools.issue_update(iss["identifier"], status="done")
+        blocked = await tools.issue_create(title="C")
+        err = self._check(await tools.issue_update(blocked["identifier"], status="in_progress"))
+        assert err["error_code"] == "sprint_in_arrears"
+        assert err["arrears_by"] == 1
+        assert err["http_status"] == 409
+
+    async def test_unexpected_exception(self, test_project, monkeypatch):
+        async def boom(*a, **k):
+            raise RuntimeError("kaboom")
+        monkeypatch.setattr(tools.issues_api, "get_issue_by_identifier", boom)
+        err = self._check(await tools.issue_view("CHT-1"))
+        assert err["error_code"] == "unexpected"
+
+    async def test_batch_failures_use_the_same_inner_shape(self, test_project):
+        await tools.sprint_current()
+        result = await tools.sprint_add(identifiers=["NOPE-999"])
+        failed = result["failed"][0]
+        assert failed["identifier"] == "NOPE-999"
+        assert isinstance(failed["error"], dict) and isinstance(failed["error"]["message"], str)
+        assert failed["error"]["http_status"] == 404
+
+    async def test_validation_error_matches_the_rest_422_shape(self, test_project):
+        """In-process pydantic errors must look exactly like the stdio side's
+        rendering of a REST 422: loc/msg only (never the submitted value),
+        `<field>: <msg>` message, http_status 422 (PR #268 review)."""
+        err = self._check(await tools.issue_create(title="Too big", estimate=99999))
+        assert err["error_code"] == "validation_error"
+        assert err["http_status"] == 422
+        assert err["errors"] == [{"loc": ["estimate"], "msg": "Input should be less than or equal to 100"}]
+        assert err["message"] == "estimate: Input should be less than or equal to 100"
+        assert "input_value" not in err["message"] and "99999" not in str(err)
+
+    def test_http_list_detail_and_pydantic_agree(self):
+        from fastapi import HTTPException
+        detail = [{"loc": ["body", "title"], "msg": "field required"}]
+        payload = tools._http_error_payload(HTTPException(status_code=422, detail=detail))
+        assert payload == {
+            "message": "title: field required",
+            "error_code": "validation_error",
+            "errors": [{"loc": ["body", "title"], "msg": "field required"}],
+            "http_status": 422,
+        }
+
+    def test_dict_detail_without_message_gets_a_sentence(self):
+        from fastapi import HTTPException
+        payload = tools._http_error_payload(HTTPException(status_code=409, detail={"arrears_by": 3}))
+        assert payload["message"] == "Request failed (HTTP 409)." and payload["arrears_by"] == 3
+        coded = tools._http_error_payload(HTTPException(status_code=409, detail={"error_code": "x_y"}))
+        assert coded["message"] == "Request failed (x_y)."
+
+    def test_every_structured_api_error_carries_message_and_code(self):
+        """The two transports only say the same thing for a governance error
+        because the server's detail dict carries its own `message`. Pin that
+        every HTTPException(detail={... "error_code": ...}) in app/api does,
+        so the fallback sentence above never becomes the live path."""
+        import ast, pathlib
+        import app.api as api_pkg
+        missing = []
+        for path in pathlib.Path(api_pkg.__file__).parent.glob("*.py"):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "HTTPException"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == "detail" and isinstance(kw.value, ast.Dict):
+                        keys = {k.value for k in kw.value.keys if isinstance(k, ast.Constant)}
+                        if "error_code" in keys and "message" not in keys:
+                            missing.append(f"{path.name}:{node.lineno}")
+        assert not missing, f"structured HTTPException details without a message: {missing}"
 

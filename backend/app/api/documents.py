@@ -1,7 +1,7 @@
 """Document API routes."""
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access, check_user_project_access
-from app.api.issues import ensure_utc
+from app.api.issues import ensure_utc, issues_to_responses
 from app.schemas.document import (
     DocumentCreate,
     DocumentUpdate,
@@ -344,31 +344,10 @@ async def get_document_issues(document_id: str, current_user: CurrentUser) -> li
             )
 
     issues = await document_service.get_linked_issues(document_id)
-    return [
-        IssueResponse(
-            id=issue.id,
-            project_id=issue.project_id,
-            identifier=issue.identifier,
-            number=issue.number,
-            title=issue.title,
-            description=issue.description,
-            status=issue.status,
-            priority=issue.priority,
-            issue_type=issue.issue_type,
-            estimate=issue.estimate,
-            assignee_id=issue.assignee_id,
-            creator_id=issue.creator_id,
-            creator_name=issue.creator.name if issue.creator else None,
-            sprint_id=issue.sprint_id,
-            parent_id=issue.parent_id,
-            due_date=ensure_utc(issue.due_date),
-            completed_at=ensure_utc(issue.completed_at),
-            created_at=ensure_utc(issue.created_at),
-            updated_at=ensure_utc(issue.updated_at),
-            labels=[LabelResponse(id=l.id, team_id=l.team_id, name=l.name, color=l.color, description=l.description, created_at=l.created_at) for l in issue.labels],
-        )
-        for issue in issues
-    ]
+    # Through the shared builder (CHT-1371): a hand-rolled IssueResponse
+    # here had already drifted (no lease_expires_at) and missed the
+    # resolved companions.
+    return await issues_to_responses(issues)
 
 
 @router.post("/{document_id}/issues/{issue_id}", response_model=DocumentLinkedResponse, status_code=status.HTTP_201_CREATED)

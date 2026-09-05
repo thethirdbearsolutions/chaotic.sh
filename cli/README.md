@@ -623,10 +623,12 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |
 
-Every tool returns a JSON object. Failures come back as `{"error": "..."}`
-(the same shape as this CLI's `--json` error contract) rather than an
-MCP protocol-level error -- a bad identifier or missing team/project
-context is data for the caller to read, not a crash.
+Every tool returns a JSON object. Failures come back as
+`{"error": {"message": "...", "error_code": "...", ...}}` (ADR-0006) rather
+than an MCP protocol-level error -- a bad identifier or missing team/project
+context is data for the caller to read, not a crash. `message` is always a
+sentence; `error_code` names the failure when it has a stable name. (This
+CLI's own `--json` mode keeps its flat `{"error": "..."}` string.)
 
 No destructive tools (delete) are exposed in v1 -- those need a human
 in the loop. An `issue_ready` tool (open/unblocked/unclaimed work
