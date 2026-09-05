@@ -7161,6 +7161,51 @@ input[type="checkbox"] {
     color: var(--text-primary);
 }
 
+/* Expanded reading pane + action bar (CHT-1320) */
+.inbox-row-expanded {
+    background: var(--bg-hover, rgba(255,255,255,0.04));
+}
+
+.inbox-row-expanded-panel {
+    margin-top: 8px;
+}
+
+.inbox-expanded-source {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.inbox-expanded-body {
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 10px;
+}
+
+.inbox-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.inbox-action-btn {
+    border: 1px solid var(--border-color, rgba(255,255,255,0.15));
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+    line-height: 1;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    transition: background 0.1s, border-color 0.1s;
+}
+.inbox-action-btn:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.08));
+    border-color: var(--accent-color);
+}
+
 .badge-inbox-gate_pending {
     background: #713f12;
     color: #fcd34d;

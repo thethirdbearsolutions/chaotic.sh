@@ -88,7 +88,12 @@ vi.mock('./issues-view.js', () => ({
     showIssuesLoadingSkeleton: vi.fn(),
 }));
 vi.mock('./gate-approvals.js', () => ({ loadGateApprovals: vi.fn() }));
-vi.mock('./inbox.js', () => ({ loadInbox: vi.fn(), openInboxEntryElement: vi.fn() }));
+vi.mock('./inbox.js', () => ({
+    loadInbox: vi.fn(),
+    toggleInboxEntryElementExpand: vi.fn(),
+    collapseInboxExpand: vi.fn(),
+    archiveInboxEntryElement: vi.fn(),
+}));
 vi.mock('./epics.js', () => ({ showCreateEpicModal: vi.fn(), loadEpics: vi.fn() }));
 vi.mock('./epic-detail-view.js', () => ({ viewEpicByPath: vi.fn(), viewEpic: vi.fn() }));
 vi.mock('./keyboard.js', () => ({

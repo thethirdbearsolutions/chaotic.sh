@@ -1489,7 +1489,8 @@ describe('Inbox Navigation Handler', () => {
             getCurrentView: vi.fn().mockReturnValue('inbox'),
             getSelectedIndex: vi.fn().mockReturnValue(0),
             setSelectedIndex: vi.fn(),
-            openInboxEntry: vi.fn(),
+            toggleInboxExpand: vi.fn(),
+            collapseInboxExpand: vi.fn().mockReturnValue(false),
             archiveInboxEntry: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
@@ -1577,21 +1578,21 @@ describe('Inbox Navigation Handler', () => {
         });
     });
 
-    describe('Enter to open entry', () => {
-        it('opens the selected entry element', () => {
+    describe('Enter to expand entry (CHT-1320)', () => {
+        it('toggle-expands the selected entry element in place', () => {
             actions.getSelectedIndex.mockReturnValue(1);
             const event = makeEvent('Enter');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
-            expect(actions.openInboxEntry).toHaveBeenCalledTimes(1);
-            const openedEl = actions.openInboxEntry.mock.calls[0][0];
+            expect(actions.toggleInboxExpand).toHaveBeenCalledTimes(1);
+            const openedEl = actions.toggleInboxExpand.mock.calls[0][0];
             expect(openedEl.dataset.entryId).toBe('e2');
         });
 
         it('does nothing when no item selected (index -1)', () => {
             actions.getSelectedIndex.mockReturnValue(-1);
             handler(makeEvent('Enter'));
-            expect(actions.openInboxEntry).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
         });
     });
 
@@ -1612,8 +1613,9 @@ describe('Inbox Navigation Handler', () => {
         });
     });
 
-    describe('Escape to deselect', () => {
-        it('clears selection when an item is selected', () => {
+    describe('Escape (CHT-1320: collapse first, then deselect)', () => {
+        it('clears selection when nothing is expanded', () => {
+            actions.collapseInboxExpand.mockReturnValue(false); // nothing open
             actions.getSelectedIndex.mockReturnValue(1);
             document.querySelectorAll('.inbox-row')[1].classList.add('keyboard-selected');
             const event = makeEvent('Escape');
@@ -1622,13 +1624,22 @@ describe('Inbox Navigation Handler', () => {
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
             expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
         });
+
+        it('collapses an open row WITHOUT clearing selection', () => {
+            actions.collapseInboxExpand.mockReturnValue(true); // a row was open
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalledWith(-1);
+        });
     });
 
     describe('unrecognized keys', () => {
         it('does not act on other keys', () => {
             handler(makeEvent('x'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
-            expect(actions.openInboxEntry).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
         });
     });
 });
