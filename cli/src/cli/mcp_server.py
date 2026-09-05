@@ -146,7 +146,7 @@ def _error(message: str, error_code: str | None = None, **extra) -> dict:
     payload = {"message": message}
     if error_code:
         payload["error_code"] = error_code
-    payload.update({k: v for k, v in extra.items() if v is not None})
+    payload.update(extra)  # verbatim, like the detail-dict builders below
     return {"error": payload}
 
 
@@ -161,6 +161,9 @@ def _api_error_payload(e: APIError) -> dict:
         # transports say the same thing. Otherwise the CLI's rendering.
         payload.setdefault("message", str(e))
     elif isinstance(detail, list):
+        # The REST 422 handler already stripped each error to loc/msg and
+        # str(e) is the CLI's `<field>: <msg>` rendering, so this matches
+        # the HTTP transport's _validation_payload exactly.
         payload = {"message": str(e), "error_code": "validation_error", "errors": detail}
     else:
         payload = {"message": str(e)}

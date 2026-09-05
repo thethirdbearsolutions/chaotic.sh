@@ -322,7 +322,8 @@ there's no local profile to fall back on the way the stdio server has:
 - If the key's user belongs to more than one team, or a team has more
   than one project, pass `team` and/or `project` explicitly (id, key,
   or name all work) -- the tool call returns a clear
-  `{"error": "..."}` listing the options if you don't.
+  `{"error": {"message": "...", "error_code": "tool_input"}}` listing the
+  options if you don't.
 - An agent-scoped API key (`chaotic agent create`) is confined to its
   own project/team exactly like it is over REST; passing a `team`/
   `project` that doesn't match its scope is rejected the same way.

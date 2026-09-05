@@ -165,7 +165,7 @@ class TestErrorBoundary:
         assert err["pending_rituals"][0]["name"] == "design-review"
         assert err["http_status"] == 409
 
-    def test_string_detail_without_message_uses_cli_rendering(self, mcp_mod):
+    def test_dict_detail_without_message_uses_cli_rendering(self, mcp_mod):
         from cli.main import client
         client.get_issue_by_identifier = MagicMock(side_effect=APIError("Rendered by the CLI", status_code=400, detail={"arrears_by": 3}))
         err = mcp_mod.issue_view(identifier="CHT-1")["error"]

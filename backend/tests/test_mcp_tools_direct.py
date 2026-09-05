@@ -1678,7 +1678,8 @@ class TestCompactListing:
         # The page is the newest two by created_at (B, C) re-sorted by
         # priority -- exactly what it was before the probe existed. An
         # over-fetch of 3 would have let the re-sort push A onto the page.
-        assert {r["identifier"] for r in result["issues"]} == {b["identifier"], c["identifier"]}
+        page = {r["identifier"] for r in result["issues"]}
+        assert page == {b["identifier"], c["identifier"]} and a["identifier"] not in page
         assert result["truncated"] is True
         full = await tools.issue_list(limit=3, sort_by="priority")
         assert full["count"] == 3 and full["truncated"] is False
@@ -1805,7 +1806,52 @@ class TestErrorEnvelope:
         assert isinstance(failed["error"], dict) and isinstance(failed["error"]["message"], str)
         assert failed["error"]["http_status"] == 404
 
-    async def test_validation_error(self, test_project):
+    async def test_validation_error_matches_the_rest_422_shape(self, test_project):
+        """In-process pydantic errors must look exactly like the stdio side's
+        rendering of a REST 422: loc/msg only (never the submitted value),
+        `<field>: <msg>` message, http_status 422 (PR #268 review)."""
         err = self._check(await tools.issue_create(title="Too big", estimate=99999))
         assert err["error_code"] == "validation_error"
+        assert err["http_status"] == 422
+        assert err["errors"] == [{"loc": ["estimate"], "msg": "Input should be less than or equal to 100"}]
+        assert err["message"] == "estimate: Input should be less than or equal to 100"
+        assert "input_value" not in err["message"] and "99999" not in str(err)
+
+    def test_http_list_detail_and_pydantic_agree(self):
+        from fastapi import HTTPException
+        detail = [{"loc": ["body", "title"], "msg": "field required"}]
+        payload = tools._http_error_payload(HTTPException(status_code=422, detail=detail))
+        assert payload == {
+            "message": "title: field required",
+            "error_code": "validation_error",
+            "errors": [{"loc": ["body", "title"], "msg": "field required"}],
+            "http_status": 422,
+        }
+
+    def test_dict_detail_without_message_gets_a_sentence(self):
+        from fastapi import HTTPException
+        payload = tools._http_error_payload(HTTPException(status_code=409, detail={"arrears_by": 3}))
+        assert payload["message"] == "Request failed (HTTP 409)." and payload["arrears_by"] == 3
+        coded = tools._http_error_payload(HTTPException(status_code=409, detail={"error_code": "x_y"}))
+        assert coded["message"] == "Request failed (x_y)."
+
+    def test_every_structured_api_error_carries_message_and_code(self):
+        """The two transports only say the same thing for a governance error
+        because the server's detail dict carries its own `message`. Pin that
+        every HTTPException(detail={... "error_code": ...}) in app/api does,
+        so the fallback sentence above never becomes the live path."""
+        import ast, pathlib
+        import app.api as api_pkg
+        missing = []
+        for path in pathlib.Path(api_pkg.__file__).parent.glob("*.py"):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "HTTPException"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == "detail" and isinstance(kw.value, ast.Dict):
+                        keys = {k.value for k in kw.value.keys if isinstance(k, ast.Constant)}
+                        if "error_code" in keys and "message" not in keys:
+                            missing.append(f"{path.name}:{node.lineno}")
+        assert not missing, f"structured HTTPException details without a message: {missing}"
 

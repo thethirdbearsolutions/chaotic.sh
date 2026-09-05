@@ -36,8 +36,12 @@ structure additive).
 `{"error": {"message": <str>, "error_code"?: <str>, ...}}`.**
 
 * `message` is always present and always a sentence. It is the server's
-  own `message` when the detail carries one (governance errors), else
-  the CLI's human rendering (stdio) or the detail string (HTTP).
+  own `message` when the detail carries one (every governance error does,
+  and a test pins that), the `<field>: <msg>` rendering for validation
+  errors on both transports, the detail string for plain HTTP errors, and
+  the CLI's rendering (stdio) or a generic "Request failed (...)"
+  sentence (HTTP) for a structured detail with no `message` -- a path no
+  server error takes today.
 * `error_code` is present whenever the failure has a stable name. Server
   codes pass through unchanged (`sprint_in_arrears`, `ticket_rituals_pending`,
   `claim_rituals_pending`, `intent_in_flight`, ...). The boundaries add
@@ -46,7 +50,8 @@ structure additive).
   `timeout`, `network_error`, `unexpected`.
 * Everything else in the server's detail is carried through additively
   (`pending_rituals`, `arrears_by`, `budget`, ...), plus `http_status`
-  when the failure came from an HTTP response.
+  when the failure came from an HTTP response or would have been one
+  (in-process validation errors report 422 like their REST twin).
 * `sprint_add`/`sprint_remove` `failed[].error` uses the same inner dict.
 * The CLI's `--json` mode keeps its flat `{"error": "<str>"}`. That
   contract serves shells and exit codes; this one serves models. They are

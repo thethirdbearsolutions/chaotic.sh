@@ -166,21 +166,48 @@ def _error(message: str, error_code: str | None = None, **extra) -> dict:
     payload = {"message": message}
     if error_code:
         payload["error_code"] = error_code
-    payload.update({k: v for k, v in extra.items() if v is not None})
+    payload.update(extra)  # verbatim, like the detail-dict builders below
     return {"error": payload}
+
+
+
+
+def _validation_payload(errors: list) -> dict:
+    """Inner dict for a validation failure, identical on both transports:
+    `errors` is loc/msg only (never the submitted value -- the REST 422
+    handler and the CLI's formatter are value-blind on purpose, so this
+    is too), `message` is `<field>: <msg>` per line, and it reports the
+    422 a REST caller would have seen."""
+    cleaned, lines = [], []
+    for err in errors:
+        if not isinstance(err, dict) or "msg" not in err:
+            cleaned.append({"loc": [], "msg": str(err)})
+            lines.append(str(err))
+            continue
+        loc = [str(part) for part in err.get("loc", [])]
+        cleaned.append({"loc": loc, "msg": err["msg"]})
+        field = ".".join(p for p in loc if p not in ("body", "query", "path", "header")) or ".".join(loc)
+        lines.append(f"{field}: {err['msg']}" if field else str(err["msg"]))
+    return {
+        "message": "\n".join(lines) or "Validation error.",
+        "error_code": "validation_error",
+        "errors": cleaned,
+        "http_status": 422,
+    }
 
 
 def _http_error_payload(e: HTTPException) -> dict:
     """Turn an HTTPException into the envelope's inner dict. Governance
     409s already carry a structured dict with `error_code` and `message`
-    (see app.main's exception-shape docstring); string details become
-    `message`; FastAPI-style validation lists become `errors`."""
+    (see app.main's exception-shape docstring; tests/test_mcp_tools_direct
+    pins that every such dict has both); string details become
+    `message`; validation lists go through _validation_payload."""
     detail = e.detail
     if isinstance(detail, dict):
         payload = dict(detail)
-        payload.setdefault("message", payload.get("detail") or f"Request failed with HTTP {e.status_code}.")
+        payload.setdefault("message", f"Request failed ({payload.get('error_code') or f'HTTP {e.status_code}'}).")
     elif isinstance(detail, list):
-        payload = {"message": "Validation failed.", "error_code": "validation_error", "errors": detail}
+        payload = _validation_payload(detail)
     else:
         payload = {"message": str(detail)}
     payload.setdefault("http_status", e.status_code)
@@ -209,7 +236,11 @@ def _boundary(fn):
         except HTTPException as e:
             return {"error": _http_error_payload(e)}
         except PydanticValidationError as e:
-            return _error(str(e), "validation_error")
+            # In-process there is no 422 handler to strip `input`; build
+            # the same value-blind payload the stdio side gets over REST.
+            return {"error": _validation_payload(
+                [{"loc": list(err.get("loc", ())), "msg": err.get("msg", "")} for err in e.errors()]
+            )}
         except Exception as e:  # noqa: BLE001 - last-resort, never crash the server
             return _error(f"Unexpected error ({type(e).__name__}): {e}", "unexpected")
     return wrapper
