@@ -27,6 +27,7 @@ PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 # Canonical issue types and aliases
 # One copy, shared with both MCP servers (CHT-1374).
 from chaotic_mcp_tools import ISSUE_TYPE_ALIASES, ISSUE_TYPES  # noqa: E402
+from chaotic_mcp_tools.estimates import off_scale_warning
 
 
 class IssueTypeChoice(click.ParamType):
@@ -53,6 +54,21 @@ class IssueTypeChoice(click.ParamType):
             f"  Aliases: {aliases_str}",
             param, ctx,
         )
+
+
+def _warn_off_scale_estimate(project_id, estimate):
+    """Print (to stderr, so --json stays clean) when an estimate is off the
+    project's declared estimate_scale (CHT-1365). Advisory: the write has
+    already happened, and a failed lookup must not turn it into an error."""
+    if estimate is None or not project_id:
+        return
+    try:
+        scale = _client().get_project(project_id).get("estimate_scale")
+    except Exception:  # noqa: BLE001 -- advisory only
+        return
+    warning = off_scale_warning(estimate, scale)
+    if warning:
+        click.echo(click.style(f"Warning: {warning}", fg="yellow"), err=True)
 
 
 def register(cli):
@@ -498,6 +514,7 @@ def register(cli):
             else:
                 data["sprint_id"] = m.resolve_sprint_id(sprint, project_id)
         result = _client().create_issue(project_id, title, **data)
+        _warn_off_scale_estimate(project_id, data.get("estimate"))
 
         if parent:
             console.print(f"[green]Sub-issue created: {result['identifier']} - {result['title']} (parent: {parent})[/green]")
@@ -871,6 +888,7 @@ def register(cli):
 
         if data:
             _client().update_issue(iss["id"], **data)
+            _warn_off_scale_estimate(iss.get("project_id"), data.get("estimate"))
         if m.is_json_output():
             updated = _client().get_issue_by_identifier(identifier)
             m.output_json(updated)

@@ -231,7 +231,10 @@ three name lists -- `unattested` (attest these), `awaiting_approval`
 gate ritual is refused) -- and its message says which you are looking at.
 Re-attesting something that is only waiting on a human is never the right
 move (CHT-1360). Both transports
-produce the identical envelope. (The CLI's own `--json` mode keeps its
+produce the identical envelope. Successful writes can carry advisory
+`warnings` (a list of sentences) next to the result: today `issue_create`
+and `issue_update` add one when the estimate is not on the project's
+declared `estimate_scale` (CHT-1365); the write still happened as given. (The CLI's own `--json` mode keeps its
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
 

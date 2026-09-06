@@ -294,6 +294,9 @@ class RestBackend:
     async def list_projects(self, team_id: str, limit: int) -> list:
         return await self._call(self._client().get_projects, team_id, limit=limit)
 
+    async def get_project(self, project_id: str) -> dict:
+        return await self._call(self._client().get_project, project_id)
+
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         return await self._call(
             self._client().get_team_activities, team_id, limit=limit, project_id=project_id,

@@ -433,7 +433,7 @@
       }
     },
     "issue_create": {
-      "description": "Create a new issue (optionally as a sub-issue of `parent`).",
+      "description": "Create a new issue (optionally as a sub-issue of `parent`).\n\n    An `estimate` off the project's declared estimate_scale is stored as\n    given and reported back in `warnings` (absent otherwise).\n    ",
       "inputSchema": {
         "properties": {
           "description": {
@@ -923,7 +923,7 @@
       }
     },
     "issue_update": {
-      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    Pass `attest` to satisfy pending close/claim rituals in the same call.\n    ",
+      "description": "Update an issue's status, priority, estimate, assignee, title, and/or description.\n\n    An `estimate` off the project's declared estimate_scale is stored as\n    given and reported back in `warnings` (absent otherwise).\n\n    Only fields explicitly passed are changed. Returns the updated issue.\n    Pass `attest` to satisfy pending close/claim rituals in the same call.\n    ",
       "inputSchema": {
         "properties": {
           "assignee": {
