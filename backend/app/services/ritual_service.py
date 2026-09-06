@@ -507,6 +507,24 @@ class RitualService:
             return True
         return False
 
+    async def record_sprint_rotation(self, project_id: str, sprint_id: str) -> None:
+        """Advance every ROUND_ROBIN sprint group past the ritual that gated
+        `sprint_id`, so the next sprint's close selects its sibling
+        (CHT-1280).
+
+        Selection is pure while a sprint is open: get_pending_rituals
+        computes "the ritual after last_selected" without writing, so the
+        same ritual is offered by every listing, attestation and validation
+        until the sprint rotates. The pointer moves exactly once, here, when
+        the rotation actually happens (close_sprint's no-limbo path and
+        complete_limbo's winner), and lands on the ritual this sprint was
+        gated on, which is what the next selection advances from. Nothing
+        else may advance it, or listing and validation drift apart.
+        """
+        rituals = await self.list_by_project(project_id)
+        sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
+        await self._apply_group_selection(sprint_rituals, sprint_id, advance_round_robin=True)
+
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str
     ) -> list[OxydeRitual]:
