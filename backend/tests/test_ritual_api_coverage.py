@@ -963,46 +963,42 @@ async def test_pending_claim_rituals_issue_not_found(db, test_project):
 
 @pytest.mark.asyncio
 async def test_select_random_one_no_seed(db, test_project):
-    """_select_random_one works without seed (covers L350)."""
-    from app.services.ritual_service import RitualService
+    """select_random_one works without a seed (falls back to the module RNG)."""
+    from app.services.ritual_selection import select_random_one
 
     r1 = await OxydeRitual.objects.create(project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
     r2 = await OxydeRitual.objects.create(project_id=test_project.id, name="b", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, weight=1.0)
 
-    service = RitualService()
-    result = service._select_random_one([r1, r2], seed=None)
-    assert result in [r1, r2]
+    assert select_random_one([r1, r2], seed=None) in [r1, r2]
 
 
 @pytest.mark.asyncio
 async def test_select_round_robin_empty(db, test_project):
-    """_select_round_robin returns None for empty list (covers L368)."""
-    from app.services.ritual_service import RitualService
+    """select_round_robin returns None for an empty list."""
+    from app.services.ritual_selection import select_round_robin
     from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
 
     group = await OxydeRitualGroup.objects.create(project_id=test_project.id, name="rr", selection_mode=SelectionMode.ROUND_ROBIN)
 
-    service = RitualService()
-    result = await service._select_round_robin(group, [], sprint_id="s1")
-    assert result is None
+    assert select_round_robin(group, []) is None
 
 
 @pytest.mark.asyncio
 async def test_select_percentage_no_seed(db, test_project):
-    """_select_by_percentage works without seed (covers L410-411)."""
-    from app.services.ritual_service import RitualService
+    """select_by_percentage works without a seed."""
+    from app.services.ritual_selection import select_by_percentage
 
     r1 = await OxydeRitual.objects.create(project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO, percentage=100.0)
 
-    service = RitualService()
-    result = service._select_by_percentage([r1], seed=None)
-    assert r1 in result
+    assert r1 in select_by_percentage([r1], seed=None)
 
 
 @pytest.mark.asyncio
-async def test_apply_group_selection_deleted_group(db, test_project):
-    """_apply_group_selection includes all rituals when group is deleted (covers L305-306)."""
+async def test_selection_includes_orphans_of_a_deleted_group(db, test_project):
+    """A ritual whose group row is gone counts as ungrouped: the service's
+    one-query group load finds nothing for it and select() passes it
+    through."""
     from app.services.ritual_service import RitualService
     from oxyde import execute_raw
 
@@ -1010,28 +1006,23 @@ async def test_apply_group_selection_deleted_group(db, test_project):
     import uuid
     ritual_id = str(uuid.uuid4())
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    await execute_raw(
-        "PRAGMA foreign_keys = OFF", []
-    )
+    await execute_raw("PRAGMA foreign_keys = OFF", [])
     await execute_raw(
         "INSERT INTO rituals (id, project_id, name, prompt, \"trigger\", approval_mode, group_id, is_active, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [ritual_id, test_project.id, "orphan", "p", "EVERY_SPRINT", "AUTO", "00000000-0000-0000-0000-000000000002", True, 1.0, now, now],
     )
-    await execute_raw(
-        "PRAGMA foreign_keys = ON", []
-    )
+    await execute_raw("PRAGMA foreign_keys = ON", [])
 
     r1 = await OxydeRitual.objects.get(id=ritual_id)
 
     service = RitualService()
-    result = await service._apply_group_selection([r1], sprint_id="s1")
-    # Orphaned rituals from deleted groups should be included
-    assert r1 in result
+    assert await service._load_groups([r1]) == {}
+    assert r1 in (await service._select([r1], "s1")).chosen
 
 
 @pytest.mark.asyncio
-async def test_apply_group_selection_no_active_rituals(db, test_project):
-    """_apply_group_selection skips groups where all rituals are inactive (covers L311)."""
+async def test_selection_skips_a_group_with_no_active_rituals(db, test_project):
+    """A group whose members are all inactive offers nothing."""
     from app.services.ritual_service import RitualService
     from app.oxyde_models.ritual import OxydeRitualGroup
     from app.enums import SelectionMode
@@ -1040,7 +1031,6 @@ async def test_apply_group_selection_no_active_rituals(db, test_project):
         id="g-inactive", project_id=test_project.id, name="inactive-group",
         selection_mode=SelectionMode.RANDOM_ONE,
     )
-
     r1 = await OxydeRitual.objects.create(
         id="r-inactive", project_id=test_project.id, name="inactive", prompt="p",
         trigger=RitualTrigger.EVERY_SPRINT, approval_mode=ApprovalMode.AUTO,
@@ -1048,9 +1038,8 @@ async def test_apply_group_selection_no_active_rituals(db, test_project):
     )
 
     service = RitualService()
-    result = await service._apply_group_selection([r1], sprint_id="s1")
-    # Inactive rituals should be skipped, result should be empty
-    assert result == []
+    assert list((await service._load_groups([r1])).keys()) == [group.id]  # one query, keyed by id
+    assert (await service._select([r1], "s1")).chosen == []
 
 
 @pytest.mark.asyncio
@@ -1078,8 +1067,8 @@ async def test_evaluate_conditions_malformed_json(db, test_project, test_user):
 
 @pytest.mark.asyncio
 async def test_select_percentage_zero_excludes(db, test_project):
-    """_select_by_percentage excludes rituals with 0% chance (strengthens L410-411 test)."""
-    from app.services.ritual_service import RitualService
+    """select_by_percentage excludes rituals with 0% chance."""
+    from app.services.ritual_selection import select_by_percentage
 
     r1 = await OxydeRitual.objects.create(
         project_id=test_project.id, name="zero-pct", prompt="p",
@@ -1087,6 +1076,4 @@ async def test_select_percentage_zero_excludes(db, test_project):
         percentage=0.0,
     )
 
-    service = RitualService()
-    result = service._select_by_percentage([r1], seed=None)
-    assert r1 not in result
+    assert r1 not in select_by_percentage([r1], seed=None)
