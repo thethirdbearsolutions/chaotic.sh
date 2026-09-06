@@ -87,7 +87,15 @@ def report_renames(ctx, echo=print):
 
     Split out from upgrade() so tests can drive it directly; `echo` is
     injectable for the same reason.
+
+    Oxyde runs every upgrade() twice: once to execute, and once more in
+    a "collect" context that records operations for replay and has no
+    connection at all. There is nothing to scan on that pass, so it
+    stays silent instead of printing the cannot-pre-scan caveat after
+    the real pass already reported (CHT-1402).
     """
+    if getattr(ctx, "_mode", "execute") == "collect":
+        return
     conn = _open_readonly_sqlite(ctx)
     if conn is None:
         echo(
