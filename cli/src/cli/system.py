@@ -1250,6 +1250,17 @@ def system_status():
     except subprocess.CalledProcessError:
         pass
 
+    # What the running process actually is (CHT-1401): the clone's git
+    # describe above says what is checked out, not what is serving.
+    remote = get_remote_version(port, host=host)
+    if remote:
+        sha = remote.get("git_sha_short") or remote.get("git_sha") or "unknown"
+        dirty = " (dirty)" if remote.get("git_dirty") else ""
+        console.print(f"  Commit:   {sha}{dirty}")
+        count = remote.get("mcp_tool_count")
+        if count is not None:
+            console.print(f"  MCP:      {count} tools served (fingerprint {(remote.get('mcp_toolset_fingerprint') or 'unknown')[:12]})")
+
     # Show database info
     if DATABASE_PATH.exists():
         size_mb = DATABASE_PATH.stat().st_size / (1024 * 1024)

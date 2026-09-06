@@ -427,6 +427,17 @@ class InProcessBackend:
     # -- projects / activity ----------------------------------------------------
 
     @_translated
+    async def server_info(self) -> dict:
+        # The /api/version handler is the one place that assembles this
+        # payload (it needs the MCP toolset fingerprint, which lives in
+        # app.mcp_server.tools). The chain app.main -> mcp_server.asgi ->
+        # mcp_server.tools -> this module makes a module-level import a
+        # cycle, so it is deferred to call time; in the server process
+        # app.main is already loaded and this is a dict lookup.
+        from app.main import version_info
+        return await version_info()
+
+    @_translated
     async def list_projects(self, team_id: str, limit: int) -> list:
         return _dump_list(await projects_api.list_projects(team_id=team_id, current_user=self._user, limit=limit))
 

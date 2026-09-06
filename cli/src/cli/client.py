@@ -275,6 +275,11 @@ class Client:
     def get_project(self, project_id: str) -> dict:
         return self._request("GET", f"/projects/{project_id}")
 
+    def get_version(self) -> dict:
+        """GET /api/version: git sha, app version, MCP toolset fingerprint
+        and tool count (unauthenticated deploy metadata, CHT-1294)."""
+        return self._request("GET", "/version")
+
     def update_project(self, project_id: str, **kwargs) -> dict:
         return self._request("PATCH", f"/projects/{project_id}", kwargs)
 

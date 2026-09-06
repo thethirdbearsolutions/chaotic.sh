@@ -489,6 +489,22 @@ class TestToolsCall:
         me = next(p for p in payload["projects"] if p["id"] == test_project.id)
         assert me["key"] == test_project.key and "issue_count" in me
 
+    async def test_server_info_reports_this_deploy(self, client, bearer_headers):
+        """server_info (CHT-1401) over the in-process adapter is the live
+        /api/version payload minus the asset hashes: the git sha this
+        process runs, and the toolset fingerprint and count it serves."""
+        from app.main import version_info
+        from chaotic_mcp_tools.tools import ALL_TOOLS
+
+        resp = await _tool_call(client, bearer_headers, "server_info")
+        assert resp.status_code == 200
+        payload = json.loads(resp.json()["result"]["content"][0]["text"])
+        live = await version_info()
+        assert payload["git_sha"] == live["git_sha"]
+        assert payload["mcp_toolset_fingerprint"] == live["mcp_toolset_fingerprint"]
+        assert payload["mcp_tool_count"] == len(ALL_TOOLS)
+        assert "bundle_hash" not in payload and "css_hash" not in payload
+
     async def test_multiple_teams_requires_disambiguation(self, client, bearer_headers, test_user, test_team):
         """A user on more than one team gets a clear error, not a silent
         wrong-team default (CHT-1266 scoping rules -- see scope.py).

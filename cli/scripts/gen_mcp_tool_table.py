@@ -72,6 +72,7 @@ CLI_EQUIVALENTS: dict[str, str] = {
     "label_list": "`label list`",
     "activity_recent": "`activity`",
     "project_list": "`project list`",
+    "server_info": "`system status` (Commit / MCP lines, from `GET /api/version`)",
 }
 
 class ToolTableError(ValueError):

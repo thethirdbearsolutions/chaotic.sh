@@ -30,6 +30,43 @@ async def project_list(
     return listing("projects", projects, 1000, COMPACT_PROJECT_FIELDS, detail)
 
 
+async def server_info(backend: Backend) -> dict:
+    """Which server this surface is talking to: git commit, app version,
+    MCP toolset fingerprint and tool count, beside this client's own.
+
+    Call it when a field looks stale or a tool is missing. The check
+    that needs no checkout: compare `mcp_tool_count` with
+    `client_tool_count` (the tools this client was built with) and with
+    the number of Chaotic tools you were actually given; a mismatch
+    means a client cached an older toolset and must reconnect
+    (CHT-1364). With a checkout, compare `git_sha` against the branch
+    you deploy from (`git rev-parse origin/main` by default); `git_dirty`
+    true means the deployed tree has uncommitted edits. The fingerprint
+    changes whenever the toolset's shape does, so it also catches
+    same-count schema changes. A null field means the server predates it
+    or could not compute it (CHT-1401).
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from . import ALL_TOOLS  # the package that registered this body
+
+    info = await backend.server_info()
+    result = {
+        key: info.get(key)
+        for key in (
+            "git_sha", "git_sha_short", "git_commit_time", "git_dirty",
+            "app_version", "start_time", "mcp_toolset_fingerprint", "mcp_tool_count",
+        )
+    }
+    try:
+        client_version = version("chaotic-cli")
+    except PackageNotFoundError:
+        client_version = None
+    result["client_tool_count"] = len(ALL_TOOLS)
+    result["client_version"] = client_version
+    return result
+
+
 async def activity_recent(
     backend: Backend,
     limit: Annotated[int, Field(description="Maximum number of activity entries to return.", ge=1, le=200)] = 20,

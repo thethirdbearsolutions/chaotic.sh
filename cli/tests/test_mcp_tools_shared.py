@@ -308,6 +308,14 @@ class FakeBackend:
         self._rec("list_activities", team_id, **kw)
         return list(self.list_result)
 
+    async def server_info(self):
+        self._rec("server_info")
+        return {
+            "git_sha": "abc123def456", "git_sha_short": "abc123d", "git_commit_time": "2026-09-06T00:00:00+00:00",
+            "git_dirty": False, "app_version": "1.0.0", "start_time": "2026-09-06T01:00:00+00:00",
+            "mcp_toolset_fingerprint": "fp", "mcp_tool_count": 38, "bundle_hash": "not-for-agents",
+        }
+
 
 @pytest.fixture
 def fake():
@@ -1006,3 +1014,18 @@ class TestProjectAndActivityBody:
         assert result["activities"][0]["old_value"].endswith("...(+50 chars)")
         assert result["activities"][0]["new_value"] is None
         assert result["truncated"] is False
+
+
+async def test_server_info_reports_the_deploy_not_the_asset_hashes(fake):
+    """server_info (CHT-1401) is the stale-deploy check: it passes the
+    commit / version / toolset fields through and drops the frontend
+    cache-busters, which say nothing an agent can act on."""
+    result = await _tools(fake)["server_info"]()
+    assert result["git_sha"] == "abc123def456" and result["mcp_tool_count"] == 38
+    assert result["mcp_toolset_fingerprint"] == "fp" and result["app_version"] == "1.0.0"
+    assert "bundle_hash" not in result
+    # The client side rides along, so a stdio caller can see CLI-vs-server
+    # skew in one call without a checkout.
+    assert result["client_tool_count"] == len(ALL_TOOLS)
+    assert "client_version" in result
+    assert fake.calls_to("server_info") == [((), {})]

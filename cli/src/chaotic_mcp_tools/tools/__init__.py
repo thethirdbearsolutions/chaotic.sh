@@ -54,7 +54,7 @@ from .issues import (
     issue_view,
     label_list,
 )
-from .misc import activity_recent, project_list
+from .misc import activity_recent, project_list, server_info
 from .rituals import ritual_attest, ritual_complete, ritual_list, ritual_pending
 from .sprints import (
     sprint_add,
@@ -75,7 +75,7 @@ ALL_TOOLS = (
     sprint_add, sprint_remove,
     ritual_pending, ritual_list, ritual_attest, ritual_complete,
     inbox_list, inbox_mark_read, inbox_mark_all_read,
-    activity_recent, project_list,
+    activity_recent, project_list, server_info,
 )
 
 __all__ = ["ALL_TOOLS"] + [t.__name__ for t in ALL_TOOLS]

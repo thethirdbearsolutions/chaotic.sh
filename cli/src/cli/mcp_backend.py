@@ -294,6 +294,13 @@ class RestBackend:
     async def list_projects(self, team_id: str, limit: int) -> list:
         return await self._call(self._client().get_projects, team_id, limit=limit)
 
+    async def server_info(self) -> dict:
+        # /api/version needs no credential, but this goes through _call
+        # like every other tool so an unconfigured profile fails the same
+        # way everywhere (one error shape, CHT-1401); `chaotic system
+        # status` is the credential-free way to ask the same question.
+        return await self._call(self._client().get_version)
+
     async def get_project(self, project_id: str) -> dict:
         return await self._call(self._client().get_project, project_id)
 

@@ -671,6 +671,7 @@ registers them; the canonical descriptions and schemas are in
 | `label_list` | `label list` |
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |
+| `server_info` | `system status` (Commit / MCP lines, from `GET /api/version`) |
 
 <!-- /mcp-tool-table -->
 

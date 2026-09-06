@@ -52,7 +52,6 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     ("GET", "/{full_path}"): "SPA catch-all (frontend)",
     ("GET", "/health"): "operator health probe; `chaotic system` hits it with raw httpx, not Client",
     ("GET", "/cli-auth"): "browser login page the CLI opens with webbrowser, not an API call",
-    ("GET", "/api/version"): "frontend about panel; `chaotic system upgrade` compares versions via git",
 }
 
 # Routes that exist server-side but have no Client method yet (CHT-1383).

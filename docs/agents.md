@@ -208,7 +208,9 @@ one of them (there is deliberately no count here to rot, CHT-1395):
   an admin -- the human-to-agent handoff channel, CHT-1338)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
-  tells you which projects exist)
+  tells you which projects exist), `server_info` (which commit, version
+  and toolset the server is running -- the check to make when a field
+  looks stale or a tool is missing, CHT-1401)
 
 The sprint and ritual groups exist because governance state can block
 the rest of this surface: arrears stops ticket transitions project-wide
@@ -303,8 +305,10 @@ over which the server could send `notifications/tools/list_changed`
 connector still showed 11). After `chaotic system upgrade`, remove and
 re-add the connector (or restart the Claude Code session); the upgrade
 command reads `/api/version` before and after and says whether that is
-needed. To check a running server without reconnecting: `GET
-/api/version` reports `mcp_tool_count` and `mcp_toolset_fingerprint`. The
+needed. To check a running server without reconnecting: call the
+`server_info` tool (or `GET /api/version` outside MCP), which reports
+`mcp_tool_count` and `mcp_toolset_fingerprint` beside the client's own
+count. The
 count is the one thing you can compare against a client's tool list; the
 fingerprint (SHA-256 over every tool definition as served on `/mcp`,
 `team` parameters included, so not the hash of the stdio snapshot
