@@ -462,14 +462,19 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
-def _health_url(port: int, host: str = "localhost") -> str:
-    """Build the /health URL, normalizing wildcard binds and IPv6 hosts."""
+def _server_url(port: int, host: str = "localhost", path: str = "/health") -> str:
+    """Build a URL on the local server, normalizing wildcard binds and IPv6 hosts."""
     # Use localhost for wildcard binds (0.0.0.0/::) since they accept loopback
     check_host = "localhost" if host in ("0.0.0.0", "::") else host
     # Bracket IPv6 addresses for URL formatting
     if ":" in check_host and not check_host.startswith("["):
         check_host = f"[{check_host}]"
-    return f"http://{check_host}:{port}/health"
+    return f"http://{check_host}:{port}{path}"
+
+
+def _health_url(port: int, host: str = "localhost") -> str:
+    """Build the /health URL."""
+    return _server_url(port, host, "/health")
 
 
 def health_check(port: int, timeout: int = 30, host: str = "localhost") -> bool:
@@ -500,11 +505,23 @@ def get_health(port: int, host: str = "localhost", timeout: int = 3) -> dict | N
     Used by `chaotic system status` to distinguish process-alive (which
     is_service_running() already checks) from app-actually-works.
     """
+
+    return _get_json(_health_url(port, host), timeout)
+
+
+def get_remote_version(port: int, host: str = "localhost", timeout: int = 3) -> dict | None:
+    """Single GET against /api/version (git sha, mcp_toolset_fingerprint,
+    mcp_tool_count, ...), or None if the server didn't answer. Used by
+    `system upgrade` to compare the MCP toolset before and after (CHT-1364).
+    """
+    return _get_json(_server_url(port, host, "/api/version"), timeout)
+
+
+def _get_json(url: str, timeout: int) -> dict | None:
     import json
     import urllib.request
     import urllib.error
 
-    url = _health_url(port, host)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             if response.status == 200:
@@ -512,6 +529,33 @@ def get_health(port: int, host: str = "localhost", timeout: int = 3) -> dict | N
     except (urllib.error.URLError, TimeoutError, ConnectionRefusedError, ValueError):
         pass
     return None
+
+
+def _mcp_reconnect_note(before: dict | None, after: dict | None) -> str:
+    """What to tell the operator about MCP clients after an upgrade (CHT-1364).
+
+    MCP clients cache tools/list at connect time and the stateless /mcp
+    transport hides a restart from them, so a changed toolset needs a
+    reconnect. With /api/version from both before and after the upgrade
+    this is a definite answer; without (server wasn't running, or an
+    older server without the field) it can only be the general reminder.
+    """
+    before_fp = (before or {}).get("mcp_toolset_fingerprint")
+    after_fp = (after or {}).get("mcp_toolset_fingerprint")
+    if before_fp and after_fp:
+        if before_fp == after_fp:
+            return "[dim]MCP toolset unchanged; connected MCP clients need no action.[/dim]"
+        return (
+            f"[yellow]MCP toolset changed ({before.get('mcp_tool_count')} -> "
+            f"{after.get('mcp_tool_count')} tools). MCP clients cache the toolset at connect "
+            "time: remove and re-add connectors, or restart Claude Code sessions, so they "
+            "see the new tools (docs/agents.md).[/yellow]"
+        )
+    return (
+        "[dim]MCP clients cache the toolset at connect time. If this upgrade changed any "
+        "tool, reconnect them (/api/version reports mcp_toolset_fingerprint; see "
+        "docs/agents.md).[/dim]"
+    )
 
 
 def get_backup_path(timestamp: str | None = None) -> Path:
@@ -1319,6 +1363,13 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
 
     # Stop server FIRST (before backup to ensure consistent db state)
     was_running = is_service_running()
+    server_info = load_server_json()
+    port = server_info.get("port", DEFAULT_PORT)
+    host = server_info.get("host", "127.0.0.1")
+    # CHT-1364: what MCP toolset the running server serves, so the success
+    # message can say definitively whether MCP clients must reconnect.
+    version_before = get_remote_version(port, host=host) if was_running else None
+    version_after = None
     if was_running:
         console.print("Stopping server...")
         if not stop_service():
@@ -1409,12 +1460,10 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
             raise SystemExit(1)
 
         # Health check
-        server_info = load_server_json()
-        port = server_info.get("port", DEFAULT_PORT)
-        host = server_info.get("host", "127.0.0.1")
         console.print("Waiting for health check...", end=" ")
         if health_check(port, host=host):
             console.print("[green]OK[/green]")
+            version_after = get_remote_version(port, host=host)
         else:
             console.print("[red]FAILED[/red]")
             console.print("\nHealth check failed. Rolling back...")
@@ -1433,11 +1482,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
     new_version = get_current_version()
     console.print()
     console.print(f"[bold green]Upgraded to {new_version}[/bold green]")
-    console.print(
-        "[dim]MCP clients cache the toolset at connect time. If this upgrade changed any "
-        "tool, reconnect them (compare mcp_toolset_fingerprint from /api/version before and "
-        "after; see docs/agents.md).[/dim]"
-    )
+    console.print(_mcp_reconnect_note(version_before, version_after))
 
 
 @system.command("backup")

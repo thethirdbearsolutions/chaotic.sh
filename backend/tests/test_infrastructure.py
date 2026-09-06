@@ -158,23 +158,64 @@ class TestVersionEndpoint:
     @pytest.mark.asyncio
     async def test_version_reports_the_mcp_toolset_fingerprint(self, client):
         """CHT-1364: the surface a connector may have cached is identifiable
-        in one unauthenticated request. Stable across calls, and equal to
-        an independent hash of the live toolset."""
-        import hashlib, json
+        in one unauthenticated request, and stable across calls."""
+        import re
 
-        from app.mcp_server.tools import ALL_TOOLS, build_server
+        from app.mcp_server.tools import ALL_TOOLS
 
         first = (await client.get("/api/version")).json()
         second = (await client.get("/api/version")).json()
         fp = first["mcp_toolset_fingerprint"]
-        assert len(fp) == 64 and int(fp, 16) >= 0
+        assert re.fullmatch(r"[0-9a-f]{64}", fp)
         assert second["mcp_toolset_fingerprint"] == fp
-        assert first["mcp_tool_count"] == len(ALL_TOOLS) == 30
+        assert first["mcp_tool_count"] == len(ALL_TOOLS)
 
-        tools = await build_server().list_tools()
-        surface = {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
-        expected = hashlib.sha256(json.dumps(surface, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        assert fp == expected
+    @pytest.mark.asyncio
+    async def test_fingerprint_tracks_the_served_toolset(self, client, monkeypatch):
+        """Not just stable: a different toolset must hash differently, or the
+        field cannot tell a stale client from a current one."""
+        from app.mcp_server import asgi, tools
+
+        baseline = (await client.get("/api/version")).json()["mcp_toolset_fingerprint"]
+        smaller = tools.build_server()
+        smaller.remove_tool("issue_view")
+        monkeypatch.setattr(asgi, "get_fastmcp", lambda: smaller)
+        monkeypatch.setattr(tools, "_fingerprint", None)  # restored to the cached value on teardown
+        changed = (await client.get("/api/version")).json()["mcp_toolset_fingerprint"]
+        assert changed != baseline
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_does_not_touch_the_root_logger(self, client, monkeypatch):
+        """PR #276 review: the first version built an unguarded MCPServer on
+        the first GET /api/version, and MCPServer.__init__ basicConfig()s a
+        RichHandler onto the root logger at INFO. Neither the fingerprint
+        nor the throwaway build_server() may leave a mark on root."""
+        import logging
+
+        from app.mcp_server import tools
+
+        root = logging.getLogger()
+        handlers, level = root.handlers[:], root.level
+        monkeypatch.setattr(tools, "_fingerprint", None)
+        await client.get("/api/version")
+        tools.build_server()
+        assert root.handlers == handlers and root.level == level
+
+    @pytest.mark.asyncio
+    async def test_version_stays_200_when_the_fingerprint_fails(self, client, monkeypatch):
+        """/api/version promises never to 500; the fingerprint is fail-soft
+        like every other field (None, logged), so an mcp SDK change cannot
+        break the endpoint that diagnoses deploys."""
+        import app.main as main_module
+
+        async def boom():
+            raise RuntimeError("sdk renamed something")
+
+        monkeypatch.setattr(main_module, "toolset_fingerprint", boom)
+        response = await client.get("/api/version")
+        assert response.status_code == 200
+        assert response.json()["mcp_toolset_fingerprint"] is None
+        assert response.json()["mcp_tool_count"] > 0
 
     async def test_version_is_unauthenticated(self, client):
         # Deploy metadata, not secrets -- must not require a token.

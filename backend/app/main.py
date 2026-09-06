@@ -18,6 +18,7 @@ from app.utils.security import decode_token
 from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
+from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
 from app.version import get_version_info
 
 settings = get_settings()
@@ -57,6 +58,9 @@ async def lifespan(app: FastAPI):
     # this is a pure dict read off the lru_cache, never touching the event
     # loop with a subprocess. Fail-soft, so a git-less deploy still boots.
     get_version_info(REPO_ROOT, FRONTEND_DIR)
+    # Same reasoning for the MCP toolset fingerprint (CHT-1364): compute it
+    # here, once, rather than on the first /api/version after a restart.
+    await _mcp_toolset_fingerprint()
     # CHT-1266: the MCP session manager owns a task group that must run
     # for the app's whole lifetime -- Starlette doesn't cascade a mounted
     # sub-app's own lifespan, so it's entered explicitly here (the mcp
@@ -193,19 +197,29 @@ async def version_info():
     stamped onto the JS/CSS. Unauthenticated on purpose -- it's deploy
     metadata, not secrets -- and fail-soft (unknown/missing, never 500).
     """
-    from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
-
     return {
         **_version_info(),
         "app_version": app.version,
         # The MCP surface this process serves (CHT-1364). MCP clients cache
-        # the toolset at connect time and this transport is stateless (no
-        # session to send tools/list_changed over), so after an upgrade a
-        # connector may still advertise the old tools until it reconnects;
-        # comparing this against what the client shows says whether it must.
-        "mcp_toolset_fingerprint": await toolset_fingerprint(),
+        # the toolset at connect time and the stateless transport hides a
+        # restart from them, so after an upgrade a connector may still
+        # advertise the old tools until it reconnects; `chaotic system
+        # upgrade` compares this before and after to say whether it must.
+        "mcp_toolset_fingerprint": await _mcp_toolset_fingerprint(),
         "mcp_tool_count": len(ALL_TOOLS),
     }
+
+
+async def _mcp_toolset_fingerprint() -> str | None:
+    """toolset_fingerprint(), but fail-soft like the rest of /api/version:
+    an mcp SDK change that breaks the hash must not take down the endpoint
+    that exists to diagnose deploys (and that the upgrade health check
+    does not cover). None means "unavailable", logged once at WARNING."""
+    try:
+        return await toolset_fingerprint()
+    except Exception:  # noqa: BLE001 -- fail-soft by contract
+        logger.warning("MCP toolset fingerprint unavailable", exc_info=True)
+        return None
 
 
 @app.get("/health")
