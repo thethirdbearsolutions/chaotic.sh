@@ -1,4 +1,4 @@
-"""The 37 tool bodies, grouped by subject. Each is
+"""The tool bodies, grouped by subject. Each is
 ``async def name(backend: Backend, ...params) -> dict`` and is registered
 through ``registry.bind`` -- never directly.
 

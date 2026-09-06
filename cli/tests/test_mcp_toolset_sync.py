@@ -21,6 +21,8 @@ than let the two transports silently diverge.
 """
 import asyncio
 import json
+
+import pytest
 import re
 from pathlib import Path
 
@@ -125,8 +127,9 @@ def test_agents_doc_toolset_section_names_every_tool():
     section = text.split("### Toolset\n", 1)[1].split("\n## ", 1)[0]
     names = _snapshot_tool_names()
 
-    stated = re.search(r"\b(\d+) tools\b", section)
-    assert stated and int(stated.group(1)) == len(names), "tool count in docs/agents.md § Toolset is stale"
+    # No literal count: it rotted once ("Eleven" at 34) and its only job
+    # was to be kept in step with this test (CHT-1395).
+    assert not re.search(r"\b\d+ tools\b", section), "docs/agents.md § Toolset states a tool count; drop it"
 
     # Only the grouped bullet list counts: prose elsewhere in the section
     # already mentions a dozen tools, so a name dropped from its group must
@@ -140,10 +143,45 @@ def test_agents_doc_toolset_section_names_every_tool():
     )
 
 
-def test_cli_readme_tools_table_matches_the_snapshot():
-    """cli/README.md § Tools maps each MCP tool to its CLI equivalent; it
-    must list exactly the snapshot's tools -- no stale rows, none missing."""
+def _tool_table_generator():
+    import importlib.util
+
+    path = _REPO / "cli" / "scripts" / "gen_mcp_tool_table.py"
+    spec = importlib.util.spec_from_file_location("gen_mcp_tool_table", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cli_readme_tools_table_is_the_generated_one():
+    """cli/README.md § Tools is generated from ALL_TOOLS by
+    scripts/gen_mcp_tool_table.py (CHT-1395); the block between its
+    markers must be byte-for-byte what the generator renders now, so a
+    tool added without rerunning it (or without a CLI_EQUIVALENTS entry)
+    fails here by name."""
+    gen = _tool_table_generator()
     text = (_REPO / "cli" / "README.md").read_text()
+    start = text.index(gen.START)
+    end = text.index(gen.END, start) + len(gen.END)
+    assert text[start:end] == gen.render_table(), (
+        "cli/README.md tool table is stale -- regenerate with "
+        "`cd cli && uv run python scripts/gen_mcp_tool_table.py --write`"
+    )
     section = text.split("### Tools\n", 1)[1].split("\n## ", 1)[0]
-    rows = set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M))
-    assert rows == _snapshot_tool_names()
+    assert set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M)) == _snapshot_tool_names()
+    assert not re.search(r"\b\d+ tools\b", section), "cli/README.md § Tools states a tool count; drop it"
+
+
+def test_tool_table_generator_refuses_an_unmapped_tool():
+    """Forgetting the CLI_EQUIVALENTS entry for a new tool must fail loudly,
+    naming the tool, not render a row with a blank column."""
+    gen = _tool_table_generator()
+
+    def newcomer():
+        ...
+    newcomer.__name__ = "issue_newcomer"
+
+    with pytest.raises(SystemExit, match="no entry for \\['issue_newcomer'\\]"):
+        gen.render_table(tools=(*gen.ALL_TOOLS, newcomer))
+    with pytest.raises(SystemExit, match="unknown tools \\['gone_tool'\\]"):
+        gen.render_table(equivalents={**gen.CLI_EQUIVALENTS, "gone_tool": "x"})
