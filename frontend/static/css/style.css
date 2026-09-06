@@ -5938,6 +5938,12 @@ input[type="checkbox"] {
     font-size: var(--font-xs);
 }
 
+.badge-artifact {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: var(--font-xs);
+}
+
 /* Rituals settings list */
 .rituals-list {
     display: flex;

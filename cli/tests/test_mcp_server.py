@@ -619,8 +619,8 @@ class TestIssueUpdate:
         )
 
         assert "error" not in result
-        client.attest_ritual_for_issue.assert_any_call("rit-1", "issue-uuid-1", "ADR written")
-        client.attest_ritual_for_issue.assert_any_call("rit-2", "issue-uuid-1", "README updated")
+        client.attest_ritual_for_issue.assert_any_call("rit-1", "issue-uuid-1", "ADR written", document_id=None, url=None)
+        client.attest_ritual_for_issue.assert_any_call("rit-2", "issue-uuid-1", "README updated", document_id=None, url=None)
         client.update_issue.assert_called_once_with("issue-uuid-1", status="done")
 
     async def test_update_attest_unknown_ritual_is_an_error(self, mcp_mod, mock_issue):
@@ -660,7 +660,7 @@ class TestIssueUpdate:
         )
 
         assert "error" not in result
-        client.attest_ritual_for_issue.assert_called_once_with("rit-1", "issue-uuid-1", "note")
+        client.attest_ritual_for_issue.assert_called_once_with("rit-1", "issue-uuid-1", "note", document_id=None, url=None)
         client.update_issue.assert_not_called()
 
     async def test_update_attest_gate_routes_to_gate_completion(self, mcp_mod, mock_issue):
@@ -682,7 +682,7 @@ class TestIssueUpdate:
 
         assert "error" not in result
         client.complete_gate_ritual_for_issue.assert_called_once_with(
-            "rit-g", "issue-uuid-1", "verified")
+            "rit-g", "issue-uuid-1", "verified", document_id=None, url=None)
         client.attest_ritual_for_issue.assert_not_called()
 
 
@@ -754,7 +754,7 @@ class TestIssueStartClaimParity:
         await mcp_mod.issue_start(identifier="CHT-100", attest={"claim-gate": "branch cut"})
 
         client.attest_ritual_for_issue.assert_called_once_with(
-            "r-1", "issue-uuid-1", "branch cut")
+            "r-1", "issue-uuid-1", "branch cut", document_id=None, url=None)
         # Attestation happens before the claim, not after.
         assert client.update_issue.called
 
@@ -1430,7 +1430,7 @@ class TestRitualTools:
         assert result["scope"] == "sprint"
         assert result["approved"] is True
         assert result["still_in_limbo"] is False
-        client.attest_ritual.assert_called_once_with("r-1", "test-project-123", "Done it.")
+        client.attest_ritual.assert_called_once_with("r-1", "test-project-123", "Done it.", document_id=None, url=None)
 
     async def test_attest_dispatches_ticket_ritual(self, mcp_mod, mock_issue):
         """Dispatch is on the ritual's own trigger, not on the caller."""
@@ -1443,7 +1443,7 @@ class TestRitualTools:
             ritual="close-gate", note="abc123", identifier="CHT-100")
 
         assert result["scope"] == "ticket"
-        client.attest_ritual_for_issue.assert_called_once_with("r-2", "issue-uuid-1", "abc123")
+        client.attest_ritual_for_issue.assert_called_once_with("r-2", "issue-uuid-1", "abc123", document_id=None, url=None)
 
     async def test_attest_trigger_match_is_case_insensitive(self, mcp_mod, mock_issue):
         """The trigger can arrive as the stored enum NAME; dispatching
@@ -1515,7 +1515,7 @@ class TestRitualTools:
         result = await mcp_mod.ritual_complete(ritual="retro", note="signed off")
 
         assert result["still_in_limbo"] is False
-        client.complete_gate_ritual.assert_called_once_with("r-1", "test-project-123", "signed off")
+        client.complete_gate_ritual.assert_called_once_with("r-1", "test-project-123", "signed off", document_id=None, url=None)
 
 
 # ---------------------------------------------------------------------------

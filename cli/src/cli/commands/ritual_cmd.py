@@ -288,14 +288,18 @@ def register(cli):
     @click.argument("ritual_name")
     @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
+    @click.option("--document", "document_id", help="For a ritual whose artifact is a document: the id of the document you wrote for it")
+    @click.option("--url", help="For a ritual whose artifact is a URL: the link to it (a PR review comment, a report)")
     @_main().require_project
     @_main().handle_error
-    def ritual_attest(ritual_name, note, ticket_id):
+    def ritual_attest(ritual_name, note, ticket_id, document_id, url):
         """Attest to a ritual (confirm you did it).
 
         RITUAL_NAME is the name of the ritual to attest.
 
         For ticket-level rituals (close or claim), use --ticket to specify the issue.
+        A ritual that declares an artifact needs --document or --url as well;
+        the server checks a document is yours and written for this sprint or ticket.
         """
         m = _main()
         project_id = m.get_current_project()
@@ -330,7 +334,9 @@ def register(cli):
 
             # Get the issue to get its ID
             issue = _client().get_issue_by_identifier(ticket_id)
-            result = _client().attest_ritual_for_issue(rit["id"], issue["id"], note)
+            result = _client().attest_ritual_for_issue(
+                rit["id"], issue["id"], note, document_id=document_id, url=url,
+            )
 
             if result.get("approved_at"):
                 console.print(f"[green]Ritual '{ritual_name}' cleared for {ticket_id}.[/green]")
@@ -341,7 +347,7 @@ def register(cli):
             if ticket_id:
                 console.print(f"[yellow]Note: --ticket ignored for sprint rituals.[/yellow]")
 
-            result = _client().attest_ritual(rit["id"], project_id, note)
+            result = _client().attest_ritual(rit["id"], project_id, note, document_id=document_id, url=url)
 
             if result.get("approved_at"):
                 # Check if limbo cleared
@@ -680,9 +686,11 @@ def register(cli):
     @click.argument("ritual_name")
     @click.option("--note", help="Optional note about completion", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
+    @click.option("--document", "document_id", help="For a ritual whose artifact is a document: the id of the document you wrote for it")
+    @click.option("--url", help="For a ritual whose artifact is a URL: the link to it")
     @_main().require_project
     @_main().handle_error
-    def ritual_complete(ritual_name, note, ticket_id):
+    def ritual_complete(ritual_name, note, ticket_id, document_id, url):
         """Complete a GATE mode ritual (human-only, admin only).
 
         For ticket-level rituals (close or claim), use --ticket to specify the issue.
@@ -708,14 +716,16 @@ def register(cli):
 
             # Get the issue to get its ID
             issue = _client().get_issue_by_identifier(ticket_id)
-            _client().complete_gate_ritual_for_issue(rit["id"], issue["id"], note)
+            _client().complete_gate_ritual_for_issue(
+                rit["id"], issue["id"], note, document_id=document_id, url=url,
+            )
             console.print(f"[green]Ritual '{ritual_name}' completed for {ticket_id}.[/green]")
         else:
             # Sprint ritual
             if ticket_id:
                 console.print(f"[yellow]Note: --ticket ignored for sprint rituals.[/yellow]")
 
-            _client().complete_gate_ritual(rit["id"], project_id, note)
+            _client().complete_gate_ritual(rit["id"], project_id, note, document_id=document_id, url=url)
 
             # Check if limbo cleared
             status = _client().get_limbo_status(project_id)

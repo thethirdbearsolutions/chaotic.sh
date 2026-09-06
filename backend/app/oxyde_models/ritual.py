@@ -9,7 +9,7 @@ from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
-from app.enums import RitualTrigger, ApprovalMode, SelectionMode
+from app.enums import RitualTrigger, ApprovalMode, RitualArtifact, SelectionMode
 from app.oxyde_models.enums import DbEnum
 
 
@@ -47,6 +47,9 @@ class OxydeRitual(Model):
     trigger: DbEnum(RitualTrigger) = Field(default=RitualTrigger.EVERY_SPRINT)
     approval_mode: DbEnum(ApprovalMode) = Field(default=ApprovalMode.AUTO)
     note_required: bool = Field(default=True)
+    # The artifact an attestation has to carry, verified at attest time
+    # (CHT-1359); None means a note is the whole attestation.
+    artifact: DbEnum(RitualArtifact) | None = Field(default=None)
     conditions: str | None = Field(default=None)
     group: OxydeRitualGroup | None = Field(default=None, db_on_delete="SET NULL")
     weight: float = Field(default=1.0)
@@ -75,6 +78,9 @@ class OxydeRitualAttestation(Model):
     attested_by: str | None = Field(default=None)
     attested_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     note: str | None = Field(default=None)
+    # The verified artifact: a document id or a URL, per the ritual's
+    # `artifact` (CHT-1359).
+    artifact_ref: str | None = Field(default=None)
     approved_by: str | None = Field(default=None)
     approved_at: DateTimeUTC | None = Field(default=None)
 

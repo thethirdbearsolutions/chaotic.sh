@@ -6648,3 +6648,180 @@ class TestRoundRobinContinuity:
         )
         assert claimed.status == IssueStatus.IN_PROGRESS
         assert await self._pointer(group) is None
+
+
+@pytest.mark.asyncio
+class TestArtifactBinding:
+    """CHT-1359: a ritual with `artifact` set binds its attestation to a
+    real, verified artifact. Before this, "wrote the retro" cleared the
+    ritual whether or not a retro existed."""
+
+    async def _ritual(self, project_id, trigger, artifact, name="bound"):
+        from app.enums import RitualArtifact  # noqa: F401 - documents the member type
+        return await OxydeRitual.objects.create(
+            project_id=project_id, name=name, prompt="p", trigger=trigger,
+            approval_mode=ApprovalMode.AUTO, note_required=False, artifact=artifact,
+        )
+
+    async def _document(self, team_id, author_id, created_at=None, title="retro"):
+        from app.oxyde_models.document import OxydeDocument
+        doc = await OxydeDocument.objects.create(team_id=team_id, author_id=author_id, title=title, content="c")
+        if created_at is not None:
+            doc.created_at = created_at
+            await doc.save(update_fields={"created_at"})
+        return doc
+
+    async def _activated(self, sprint, when):
+        sprint.activated_at = when
+        await sprint.save(update_fields={"activated_at"})
+        return sprint
+
+    async def test_a_document_ritual_needs_the_attesters_document_from_this_sprint(
+        self, db, test_project, test_team, test_user, test_user2, test_sprint,
+    ):
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        now = datetime.now(timezone.utc)
+        await self._activated(test_sprint, now - timedelta(hours=1))
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        service = RitualService()
+
+        with pytest.raises(ValueError, match="requires a document"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="wrote it")
+        with pytest.raises(ValueError, match="not found"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id="no-such-doc")
+        theirs = await self._document(test_team.id, test_user2.id)
+        with pytest.raises(ValueError, match="is not yours"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=theirs.id)
+        old = await self._document(test_team.id, test_user.id, created_at=now - timedelta(days=3), title="last sprint's")
+        with pytest.raises(ValueError, match="predates the sprint's activation"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=old.id)
+        assert await service.get_attestation(ritual.id, test_sprint.id) is None
+
+        mine = await self._document(test_team.id, test_user.id)
+        attestation = await service.attest(ritual, test_sprint.id, test_user.id, note="n", document_id=mine.id)
+        assert attestation.artifact_ref == mine.id
+        assert attestation.approved_at is not None
+
+    async def test_a_sprint_without_an_activation_time_only_checks_authorship(
+        self, db, test_project, test_team, test_user, test_sprint,
+    ):
+        """Sprints from before CHT-1366 carry no activated_at; the document
+        still has to be the attester's own."""
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        assert test_sprint.activated_at is None
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        old = await self._document(
+            test_team.id, test_user.id, created_at=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        attestation = await RitualService().attest(ritual, test_sprint.id, test_user.id, document_id=old.id)
+        assert attestation.artifact_ref == old.id
+
+    async def test_a_url_ritual_needs_a_url(self, db, test_project, test_user, test_sprint):
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.URL)
+        service = RitualService()
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="see PR")
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.attest(ritual, test_sprint.id, test_user.id, note="see PR", url="github.com/x/pull/1")
+        attestation = await service.attest(
+            ritual, test_sprint.id, test_user.id, note="see PR", url=" https://github.com/x/pull/1#issuecomment-2 ",
+        )
+        assert attestation.artifact_ref == "https://github.com/x/pull/1#issuecomment-2"
+
+    async def test_a_ticket_ritual_needs_a_document_written_after_the_ticket(
+        self, db, test_project, test_team, test_user, test_issue,
+    ):
+        from datetime import timedelta
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        service = RitualService()
+        before = await self._document(
+            test_team.id, test_user.id, created_at=test_issue.created_at - timedelta(minutes=1),
+        )
+        with pytest.raises(ValueError, match="predates the ticket"):
+            await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=before.id)
+        after = await self._document(test_team.id, test_user.id)
+        attestation = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=after.id)
+        assert attestation.artifact_ref == after.id
+
+    async def test_gate_completion_is_bound_the_same_way(
+        self, db, test_project, test_team, test_user, test_issue, test_sprint,
+    ):
+        from app.enums import RitualArtifact
+
+        ticket = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.URL, name="ticket-gate")
+        ticket.approval_mode = ApprovalMode.GATE
+        await ticket.save(update_fields={"approval_mode"})
+        sprint = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT, name="sprint-gate")
+        sprint.approval_mode = ApprovalMode.GATE
+        await sprint.save(update_fields={"approval_mode"})
+        service = RitualService()
+
+        with pytest.raises(ValueError, match="requires a URL"):
+            await service.complete_gate_ritual_for_issue(ticket, test_issue.id, test_user.id, note="ok")
+        done = await service.complete_gate_ritual_for_issue(
+            ticket, test_issue.id, test_user.id, note="ok", url="https://example.com/review",
+        )
+        assert done.artifact_ref == "https://example.com/review"
+
+        with pytest.raises(ValueError, match="requires a document"):
+            await service.complete_gate_ritual(sprint, test_sprint.id, test_user.id, note="ok")
+        mine = await self._document(test_team.id, test_user.id)
+        done = await service.complete_gate_ritual(sprint, test_sprint.id, test_user.id, note="ok", document_id=mine.id)
+        assert done.artifact_ref == mine.id
+
+    async def test_an_unbound_ritual_keeps_an_offered_reference_unverified(
+        self, db, test_project, test_user, test_sprint,
+    ):
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, None)
+        attestation = await RitualService().attest(ritual, test_sprint.id, test_user.id, note="n", url="https://x/y")
+        assert attestation.artifact_ref == "https://x/y"
+        plain = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, None, name="plain")
+        assert (await RitualService().attest(plain, test_sprint.id, test_user.id, note="n")).artifact_ref is None
+
+    async def test_the_api_carries_the_artifact_both_ways(
+        self, client, auth_headers, db, test_project, test_team, test_user, test_issue,
+    ):
+        """document_id in the request body reaches the service; artifact on
+        the ritual and artifact_ref on the attestation come back out."""
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        listed = await client.get(f"/api/projects/{test_project.id}/rituals", headers=auth_headers)
+        assert [r["artifact"] for r in listed.json() if r["id"] == ritual.id] == ["document"]
+
+        refused = await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}", headers=auth_headers, json={"note": "n"},
+        )
+        assert refused.status_code == 400
+        assert "requires a document" in refused.json()["detail"]
+
+        mine = await self._document(test_team.id, test_user.id)
+        ok = await client.post(
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}", headers=auth_headers,
+            json={"note": "n", "document_id": mine.id},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["artifact_ref"] == mine.id
+
+    async def test_a_ritual_can_declare_its_artifact_through_the_api(
+        self, client, auth_headers, db, test_project,
+    ):
+        created = await client.post(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+            json={"name": "retro", "prompt": "write it", "artifact": "document"},
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["artifact"] == "document"
+        updated = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"artifact": "url"},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["artifact"] == "url"

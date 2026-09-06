@@ -1253,9 +1253,22 @@
       }
     },
     "ritual_attest": {
-      "description": "Attest a ritual -- confirm you did the thing it asks about.\n\n    Dispatches on the ritual's own trigger, so you don't have to know\n    whether it's sprint-scoped or ticket-scoped: pass `identifier` when\n    attesting a ticket's close/claim gate, omit it for a sprint ritual.\n\n    If the ritual's approval_mode is `auto` this clears it outright.\n    Under `review` it records the attestation and leaves it pending a\n    human; `approved` in the result says which happened.\n\n    Under `gate` this is REFUSED -- gate rituals are human-completion\n    only and the server rejects an attestation outright rather than\n    recording one. Use ritual_complete for those, and ritual_list to see\n    each ritual's approval_mode before choosing.\n    ",
+      "description": "Attest a ritual -- confirm you did the thing it asks about.\n\n    Dispatches on the ritual's own trigger, so you don't have to know\n    whether it's sprint-scoped or ticket-scoped: pass `identifier` when\n    attesting a ticket's close/claim gate, omit it for a sprint ritual.\n\n    If the ritual's approval_mode is `auto` this clears it outright.\n    Under `review` it records the attestation and leaves it pending a\n    human; `approved` in the result says which happened.\n\n    Under `gate` this is REFUSED -- gate rituals are human-completion\n    only and the server rejects an attestation outright rather than\n    recording one. Use ritual_complete for those, and ritual_list to see\n    each ritual's approval_mode before choosing.\n\n    A ritual with an `artifact` (see ritual_list) binds the attestation\n    to it: pass `document` (a document you wrote for it) or `url`. The\n    server verifies a document is yours and written for this sprint or\n    ticket; a note alone no longer clears such a ritual (CHT-1359).\n    ",
       "inputSchema": {
         "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a ritual whose artifact is `document`: the document you wrote for it (id, id prefix, or exact title). The server checks it is yours and written for this sprint/ticket.",
+            "title": "Document"
+          },
           "identifier": {
             "anyOf": [
               {
@@ -1299,6 +1312,19 @@
             "description": "Ritual name (or id), from ritual_pending/ritual_list.",
             "title": "Ritual",
             "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a ritual whose artifact is `url`: the link to the artifact (a PR review comment, a report).",
+            "title": "Url"
           }
         },
         "required": [
@@ -1312,6 +1338,19 @@
       "description": "Complete a GATE-mode ritual.\n\n    Distinct from ritual_attest: gate rituals are the ones a human is\n    supposed to sign off, and the server enforces that -- expect a\n    permission error rather than success if the calling identity isn't\n    allowed to. Attesting is the normal path; this is for the rare case\n    where you legitimately hold that role.\n    ",
       "inputSchema": {
         "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a ritual whose artifact is `document`: the document you wrote for it (id, id prefix, or exact title). The server checks it is yours and written for this sprint/ticket.",
+            "title": "Document"
+          },
           "identifier": {
             "anyOf": [
               {
@@ -1355,6 +1394,19 @@
             "description": "Ritual name (or id), from ritual_pending/ritual_list.",
             "title": "Ritual",
             "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a ritual whose artifact is `url`: the link to the artifact (a PR review comment, a report).",
+            "title": "Url"
           }
         },
         "required": [

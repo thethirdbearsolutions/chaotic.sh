@@ -274,20 +274,41 @@ class RestBackend:
     async def get_limbo_status(self, project_id: str) -> dict:
         return await self._call(self._client().get_limbo_status, project_id)
 
-    async def attest_ritual(self, ritual_id: str, project_id: str, note: str | None) -> dict:
-        return await self._call(self._client().attest_ritual, ritual_id, project_id, note)
+    async def attest_ritual(
+        self, ritual_id: str, project_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return await self._call(
+            self._client().attest_ritual, ritual_id, project_id, note, document_id=document_id, url=url,
+        )
 
-    async def complete_gate_ritual(self, ritual_id: str, project_id: str, note: str | None) -> dict:
-        return await self._call(self._client().complete_gate_ritual, ritual_id, project_id, note)
+    async def complete_gate_ritual(
+        self, ritual_id: str, project_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return await self._call(
+            self._client().complete_gate_ritual, ritual_id, project_id, note, document_id=document_id, url=url,
+        )
 
     async def get_pending_issue_rituals(self, issue_id: str) -> dict:
         return await self._call(self._client().get_pending_issue_rituals, issue_id)
 
-    async def attest_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str | None) -> dict:
-        return await self._call(self._client().attest_ritual_for_issue, ritual_id, issue_id, note)
+    async def attest_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return await self._call(
+            self._client().attest_ritual_for_issue, ritual_id, issue_id, note, document_id=document_id, url=url,
+        )
 
-    async def complete_gate_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str | None) -> dict:
-        return await self._call(self._client().complete_gate_ritual_for_issue, ritual_id, issue_id, note)
+    async def complete_gate_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return await self._call(
+            self._client().complete_gate_ritual_for_issue, ritual_id, issue_id, note,
+            document_id=document_id, url=url,
+        )
 
     # -- projects / activity ----------------------------------------------------
 

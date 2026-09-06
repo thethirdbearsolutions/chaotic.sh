@@ -47,7 +47,13 @@ def _enum_fields():
             base = typing.get_args(pt)[0] if hasattr(pt, "__metadata__") else pt
             if isinstance(base, type) and issubclass(base, enum.Enum):
                 field = cls.model_fields[fname]
-                annotated = typing.Annotated[tuple([field.annotation, *field.metadata])]
+                # A nullable column (`DbEnum(X) | None`, first one CHT-1359)
+                # keeps the DbEnum Annotated inside the Optional, with no
+                # outer metadata; the annotation is already the whole type.
+                if field.metadata:
+                    annotated = typing.Annotated[tuple([field.annotation, *field.metadata])]
+                else:
+                    annotated = field.annotation
                 found.append((cls, fname, base, annotated))
     return found
 

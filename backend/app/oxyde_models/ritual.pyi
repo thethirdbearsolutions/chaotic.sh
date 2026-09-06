@@ -16,7 +16,7 @@ from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.issue import OxydeIssue
 from app.oxyde_models.sprint import OxydeSprint
-from app.enums import RitualTrigger, ApprovalMode, SelectionMode
+from app.enums import RitualTrigger, ApprovalMode, RitualArtifact, SelectionMode
 from app.oxyde_models.enums import DbEnum
 
 class OxydeRitualGroup(Model):
@@ -663,6 +663,7 @@ class OxydeRitual(Model):
     trigger: RitualTrigger
     approval_mode: ApprovalMode
     note_required: bool
+    artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None
     conditions: str | None
     group: OxydeRitualGroup | None
     weight: float
@@ -688,6 +689,9 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         approval_mode: ApprovalMode | None = None,
         approval_mode__in: list[ApprovalMode] | None = None,
         approval_mode__isnull: bool | None = None,
+        artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        artifact__in: list[Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        artifact__isnull: bool | None = None,
         conditions: str | None = None,
         conditions__contains: str | None = None,
         conditions__icontains: str | None = None,
@@ -812,6 +816,9 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         approval_mode: ApprovalMode | None = None,
         approval_mode__in: list[ApprovalMode] | None = None,
         approval_mode__isnull: bool | None = None,
+        artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        artifact__in: list[Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        artifact__isnull: bool | None = None,
         conditions: str | None = None,
         conditions__contains: str | None = None,
         conditions__icontains: str | None = None,
@@ -930,7 +937,7 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["approval_mode", "-approval_mode", "conditions", "-conditions", "created_at", "-created_at", "group", "-group", "group_id", "-group_id", "id", "-id", "is_active", "-is_active", "name", "-name", "note_required", "-note_required", "percentage", "-percentage", "project_id", "-project_id", "prompt", "-prompt", "trigger", "-trigger", "updated_at", "-updated_at", "weight", "-weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["approval_mode", "-approval_mode", "artifact", "-artifact", "conditions", "-conditions", "created_at", "-created_at", "group", "-group", "group_id", "-group_id", "id", "-id", "is_active", "-is_active", "name", "-name", "note_required", "-note_required", "percentage", "-percentage", "project_id", "-project_id", "prompt", "-prompt", "trigger", "-trigger", "updated_at", "-updated_at", "weight", "-weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -946,7 +953,7 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -970,7 +977,7 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -978,11 +985,11 @@ class OxydeRitualQuery(Query[OxydeRitual]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> "OxydeRitualQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"], flat: bool = False) -> "OxydeRitualQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"], flat: bool = False) -> "OxydeRitualQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1109,6 +1116,9 @@ class OxydeRitualManager(QueryManager[OxydeRitual]):
         approval_mode: ApprovalMode | None = None,
         approval_mode__in: list[ApprovalMode] | None = None,
         approval_mode__isnull: bool | None = None,
+        artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        artifact__in: list[Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        artifact__isnull: bool | None = None,
         conditions: str | None = None,
         conditions__contains: str | None = None,
         conditions__icontains: str | None = None,
@@ -1233,6 +1243,9 @@ class OxydeRitualManager(QueryManager[OxydeRitual]):
         approval_mode: ApprovalMode | None = None,
         approval_mode__in: list[ApprovalMode] | None = None,
         approval_mode__isnull: bool | None = None,
+        artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        artifact__in: list[Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        artifact__isnull: bool | None = None,
         conditions: str | None = None,
         conditions__contains: str | None = None,
         conditions__icontains: str | None = None,
@@ -1351,11 +1364,11 @@ class OxydeRitualManager(QueryManager[OxydeRitual]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> OxydeRitualQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"]) -> OxydeRitualQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["approval_mode", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"], flat: bool = False) -> OxydeRitualQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["approval_mode", "artifact", "conditions", "created_at", "group", "group_id", "id", "is_active", "name", "note_required", "percentage", "project_id", "prompt", "trigger", "updated_at", "weight"], flat: bool = False) -> OxydeRitualQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1507,6 +1520,7 @@ class OxydeRitualManager(QueryManager[OxydeRitual]):
         client: Any | None = None,
         using: str | None = None,
         approval_mode: ApprovalMode | None = None,
+        artifact: Annotated[app.enums.RitualArtifact, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f2b15db82c0>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f2b15db8360>, return_type=PydanticUndefined, when_used='always')] | None = None,
         conditions: str | None = None,
         created_at: datetime | None = None,
         group: OxydeRitualGroup | None = None,
@@ -1559,8 +1573,9 @@ class OxydeRitualAttestation(Model):
     attested_by: str | None
     attested_at: datetime
     note: str | None
+    artifact_ref: str | None
     approved_by: str | None
-    approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
+    approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None
     ritual_id: str | None
     sprint_id: str | None
     issue_id: str | None
@@ -1587,8 +1602,8 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
     def filter(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -1600,6 +1615,16 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         approved_by__iexact: str | None = None,
         approved_by__in: list[str] | None = None,
         approved_by__isnull: bool | None = None,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
         attested_at: datetime | None = None,
         attested_at__gt: datetime | None = None,
         attested_at__gte: datetime | None = None,
@@ -1688,8 +1713,8 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
     def exclude(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -1701,6 +1726,16 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         approved_by__iexact: str | None = None,
         approved_by__in: list[str] | None = None,
         approved_by__isnull: bool | None = None,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
         attested_at: datetime | None = None,
         attested_at__gt: datetime | None = None,
         attested_at__gte: datetime | None = None,
@@ -1786,7 +1821,7 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["approved_at", "-approved_at", "approved_by", "-approved_by", "attested_at", "-attested_at", "attested_by", "-attested_by", "id", "-id", "issue", "-issue", "issue_id", "-issue_id", "note", "-note", "ritual", "-ritual", "ritual_id", "-ritual_id", "sprint", "-sprint", "sprint_id", "-sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["approved_at", "-approved_at", "approved_by", "-approved_by", "artifact_ref", "-artifact_ref", "attested_at", "-attested_at", "attested_by", "-attested_by", "id", "-id", "issue", "-issue", "issue_id", "-issue_id", "note", "-note", "ritual", "-ritual", "ritual_id", "-ritual_id", "sprint", "-sprint", "sprint_id", "-sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -1802,7 +1837,7 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -1826,7 +1861,7 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -1834,11 +1869,11 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"], flat: bool = False) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"], flat: bool = False) -> "OxydeRitualAttestationQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1962,8 +1997,8 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
     def filter(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -1975,6 +2010,16 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         approved_by__iexact: str | None = None,
         approved_by__in: list[str] | None = None,
         approved_by__isnull: bool | None = None,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
         attested_at: datetime | None = None,
         attested_at__gt: datetime | None = None,
         attested_at__gte: datetime | None = None,
@@ -2063,8 +2108,8 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
     def exclude(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -2076,6 +2121,16 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         approved_by__iexact: str | None = None,
         approved_by__in: list[str] | None = None,
         approved_by__isnull: bool | None = None,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
         attested_at: datetime | None = None,
         attested_at__gt: datetime | None = None,
         attested_at__gte: datetime | None = None,
@@ -2161,11 +2216,11 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> OxydeRitualAttestationQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"]) -> OxydeRitualAttestationQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["approved_at", "approved_by", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"], flat: bool = False) -> OxydeRitualAttestationQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["approved_at", "approved_by", "artifact_ref", "attested_at", "attested_by", "id", "issue", "issue_id", "note", "ritual", "ritual_id", "sprint", "sprint_id"], flat: bool = False) -> OxydeRitualAttestationQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -2316,8 +2371,9 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         instance: OxydeRitualAttestation | None = None,
         client: Any | None = None,
         using: str | None = None,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         approved_by: str | None = None,
+        artifact_ref: str | None = None,
         attested_at: datetime | None = None,
         attested_by: str | None = None,
         id: str | None = None,

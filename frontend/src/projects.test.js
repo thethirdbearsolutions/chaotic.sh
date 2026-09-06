@@ -919,6 +919,7 @@ describe('handleCreateProjectRitual', () => {
       trigger: 'every_sprint',
       approval_mode: 'auto',
       note_required: true,
+      artifact: null,
       conditions: null,
     });
   });

@@ -64,7 +64,7 @@ class TestRitualAttestSprint:
         assert result.exit_code == 0
         assert 'cleared' in result.output.lower()
         client.attest_ritual.assert_called_once_with(
-            'ritual-uuid-123', 'test-project-123', 'Report written.',
+            'ritual-uuid-123', 'test-project-123', 'Report written.', document_id=None, url=None,
         )
 
     def test_attest_sprint_ritual_pending_approval(self, cli_runner, mock_ritual):
@@ -182,7 +182,7 @@ class TestRitualAttestTicket:
         assert 'cleared' in result.output.lower()
         assert 'CHT-100' in result.output
         client.attest_ritual_for_issue.assert_called_once_with(
-            'ritual-uuid-456', 'issue-uuid-123', 'All tests pass.',
+            'ritual-uuid-456', 'issue-uuid-123', 'All tests pass.', document_id=None, url=None,
         )
 
     def test_attest_ticket_ritual_missing_ticket_flag(self, cli_runner, mock_ticket_ritual):

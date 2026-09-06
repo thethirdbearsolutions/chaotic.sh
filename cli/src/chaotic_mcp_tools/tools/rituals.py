@@ -52,6 +52,28 @@ async def _find_ritual(backend: Backend, project_id: str, name: str) -> dict:
     raise ToolInputError(f"No ritual named '{name}'. This project's rituals: {known}.")
 
 
+async def _artifact_of(backend: Backend, rit: dict, document: str | None, url: str | None) -> tuple[str | None, str | None]:
+    """(document_id, url) for the attestation request. A ritual that
+    declares an artifact is refused here, with its prompt, when the
+    matching argument is missing -- the server would refuse it too, but
+    the caller has no other way to see what is asked. A `document` is
+    resolved like every other document argument (id, prefix, or title).
+    """
+    kind = rit.get("artifact")
+    if kind == "document" and not document:
+        raise ToolInputError(
+            f"Ritual '{rit['name']}' requires a document you wrote for it: pass `document` "
+            f"(id or title). It asks: \"{rit.get('prompt')}\"."
+        )
+    if kind == "url" and not (url and url.strip()):
+        raise ToolInputError(
+            f"Ritual '{rit['name']}' requires a URL to the artifact: pass `url`. "
+            f"It asks: \"{rit.get('prompt')}\"."
+        )
+    document_id = await backend.resolve_document(document) if document else None
+    return document_id, (url.strip() if url else None)
+
+
 def _require_note(rit: dict, note: str | None) -> None:
     """Reject a missing note the way the CLI does -- quoting the ritual's
     own prompt, because that prompt is the question the note has to
@@ -159,6 +181,17 @@ async def ritual_attest(
         Field(description="Issue identifier, for ticket-level rituals. Looked up "
                           "automatically when the ritual is ticket-scoped.")
     ] = None,
+    document: Annotated[
+        str | None,
+        Field(description="For a ritual whose artifact is `document`: the document you wrote "
+                          "for it (id, id prefix, or exact title). The server checks it is "
+                          "yours and written for this sprint/ticket.")
+    ] = None,
+    url: Annotated[
+        str | None,
+        Field(description="For a ritual whose artifact is `url`: the link to the artifact "
+                          "(a PR review comment, a report).")
+    ] = None,
     project: Annotated[
         str | None,
         Field(description="Project id, key, or name. Defaults to the current project.")
@@ -179,15 +212,23 @@ async def ritual_attest(
     only and the server rejects an attestation outright rather than
     recording one. Use ritual_complete for those, and ritual_list to see
     each ritual's approval_mode before choosing.
+
+    A ritual with an `artifact` (see ritual_list) binds the attestation
+    to it: pass `document` (a document you wrote for it) or `url`. The
+    server verifies a document is yours and written for this sprint or
+    ticket; a note alone no longer clears such a ritual (CHT-1359).
     """
     project_id, _ = await backend.resolve_project(project, team)
     rit = await _find_ritual(backend, project_id, ritual)
     _require_note(rit, note)
+    document_id, url = await _artifact_of(backend, rit, document, url)
 
     if _trigger_of(rit) in _TICKET_TRIGGERS:
         _needs_identifier(rit, identifier)
         iss = await backend.get_issue(identifier)
-        result = await backend.attest_ritual_for_issue(rit["id"], iss["id"], note)
+        result = await backend.attest_ritual_for_issue(
+            rit["id"], iss["id"], note, document_id=document_id, url=url,
+        )
         return {
             "scope": "ticket",
             "ritual": rit["name"],
@@ -196,7 +237,7 @@ async def ritual_attest(
             "attestation": result,
         }
 
-    result = await backend.attest_ritual(rit["id"], project_id, note)
+    result = await backend.attest_ritual(rit["id"], project_id, note, document_id=document_id, url=url)
     status = await backend.get_limbo_status(project_id) or {}
     return {
         "scope": "sprint",
@@ -216,6 +257,17 @@ async def ritual_complete(
         str | None,
         Field(description="Issue identifier, for ticket-level rituals.")
     ] = None,
+    document: Annotated[
+        str | None,
+        Field(description="For a ritual whose artifact is `document`: the document you wrote "
+                          "for it (id, id prefix, or exact title). The server checks it is "
+                          "yours and written for this sprint/ticket.")
+    ] = None,
+    url: Annotated[
+        str | None,
+        Field(description="For a ritual whose artifact is `url`: the link to the artifact "
+                          "(a PR review comment, a report).")
+    ] = None,
     project: Annotated[
         str | None,
         Field(description="Project id, key, or name. Defaults to the current project.")
@@ -232,15 +284,18 @@ async def ritual_complete(
     """
     project_id, _ = await backend.resolve_project(project, team)
     rit = await _find_ritual(backend, project_id, ritual)
+    document_id, url = await _artifact_of(backend, rit, document, url)
 
     if _trigger_of(rit) in _TICKET_TRIGGERS:
         _needs_identifier(rit, identifier)
         iss = await backend.get_issue(identifier)
-        result = await backend.complete_gate_ritual_for_issue(rit["id"], iss["id"], note)
+        result = await backend.complete_gate_ritual_for_issue(
+            rit["id"], iss["id"], note, document_id=document_id, url=url,
+        )
         return {"scope": "ticket", "ritual": rit["name"],
                 "identifier": identifier, "attestation": result}
 
-    result = await backend.complete_gate_ritual(rit["id"], project_id, note)
+    result = await backend.complete_gate_ritual(rit["id"], project_id, note, document_id=document_id, url=url)
     status = await backend.get_limbo_status(project_id) or {}
     return {
         "scope": "sprint",

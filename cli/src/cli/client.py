@@ -664,35 +664,60 @@ class Client:
         """Delete (deactivate) a ritual."""
         self._request("DELETE", f"/rituals/{ritual_id}")
 
-    def attest_ritual(self, ritual_id: str, project_id: str, note: str = None) -> dict:
+    @staticmethod
+    def _attestation_body(note: str | None, document_id: str | None, url: str | None) -> dict:
+        """The attestation request body: the note and, for a ritual that
+        declares an artifact, the document id or URL it binds to (CHT-1359)."""
         data = {}
         if note:
             data["note"] = note
-        return self._request("POST", f"/rituals/{ritual_id}/attest?project_id={project_id}", data)
+        if document_id:
+            data["document_id"] = document_id
+        if url:
+            data["url"] = url
+        return data
+
+    def attest_ritual(
+        self, ritual_id: str, project_id: str, note: str = None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST", f"/rituals/{ritual_id}/attest?project_id={project_id}",
+            self._attestation_body(note, document_id, url),
+        )
 
     def approve_ritual(self, ritual_id: str, project_id: str) -> dict:
         return self._request("POST", f"/rituals/{ritual_id}/approve?project_id={project_id}", {})
 
-    def complete_gate_ritual(self, ritual_id: str, project_id: str, note: str = None) -> dict:
-        data = {}
-        if note:
-            data["note"] = note
-        return self._request("POST", f"/rituals/{ritual_id}/complete?project_id={project_id}", data)
+    def complete_gate_ritual(
+        self, ritual_id: str, project_id: str, note: str = None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST", f"/rituals/{ritual_id}/complete?project_id={project_id}",
+            self._attestation_body(note, document_id, url),
+        )
 
     def get_pending_issue_rituals(self, issue_id: str) -> dict:
         return self._request("GET", f"/rituals/issue/{issue_id}/pending")
 
-    def attest_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str = None) -> dict:
-        data = {}
-        if note:
-            data["note"] = note
-        return self._request("POST", f"/rituals/{ritual_id}/attest-issue/{issue_id}", data)
+    def attest_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str = None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST", f"/rituals/{ritual_id}/attest-issue/{issue_id}",
+            self._attestation_body(note, document_id, url),
+        )
 
-    def complete_gate_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str = None) -> dict:
-        data = {}
-        if note:
-            data["note"] = note
-        return self._request("POST", f"/rituals/{ritual_id}/complete-issue/{issue_id}", data)
+    def complete_gate_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str = None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST", f"/rituals/{ritual_id}/complete-issue/{issue_id}",
+            self._attestation_body(note, document_id, url),
+        )
 
     # Ritual Groups
     def get_ritual_groups(self, project_id: str, skip: int | None = None, limit: int | None = None) -> list:

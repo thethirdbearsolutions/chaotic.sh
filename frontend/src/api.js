@@ -370,20 +370,30 @@ export class ApiClient {
         return this.request('GET', `/rituals/pending-approvals?project_id=${projectId}`);
     }
 
-    async attestRitual(ritualId, projectId, note = null) {
+    // `artifact` is the document id or URL a ritual with `artifact` set
+    // binds its attestation to: `{ document_id }` or `{ url }` (CHT-1359).
+    attestationBody(note, artifact) {
         const data = {};
         if (note) data.note = note;
-        return this.request('POST', `/rituals/${ritualId}/attest?project_id=${projectId}`, data);
+        if (artifact && artifact.document_id) data.document_id = artifact.document_id;
+        if (artifact && artifact.url) data.url = artifact.url;
+        return data;
+    }
+
+    async attestRitual(ritualId, projectId, note = null, artifact = null) {
+        return this.request(
+            'POST', `/rituals/${ritualId}/attest?project_id=${projectId}`, this.attestationBody(note, artifact),
+        );
     }
 
     async approveAttestation(ritualId, projectId) {
         return this.request('POST', `/rituals/${ritualId}/approve?project_id=${projectId}`, {});
     }
 
-    async completeGateRitual(ritualId, projectId, note = null) {
-        const data = {};
-        if (note) data.note = note;
-        return this.request('POST', `/rituals/${ritualId}/complete?project_id=${projectId}`, data);
+    async completeGateRitual(ritualId, projectId, note = null, artifact = null) {
+        return this.request(
+            'POST', `/rituals/${ritualId}/complete?project_id=${projectId}`, this.attestationBody(note, artifact),
+        );
     }
 
     // Ritual Groups
@@ -408,16 +418,16 @@ export class ApiClient {
         return this.request('GET', `/rituals/issue/${issueId}/pending`);
     }
 
-    async attestTicketRitual(ritualId, issueId, note = null) {
-        const data = {};
-        if (note) data.note = note;
-        return this.request('POST', `/rituals/${ritualId}/attest-issue/${issueId}`, data);
+    async attestTicketRitual(ritualId, issueId, note = null, artifact = null) {
+        return this.request(
+            'POST', `/rituals/${ritualId}/attest-issue/${issueId}`, this.attestationBody(note, artifact),
+        );
     }
 
-    async completeTicketGateRitual(ritualId, issueId, note = null) {
-        const data = {};
-        if (note) data.note = note;
-        return this.request('POST', `/rituals/${ritualId}/complete-issue/${issueId}`, data);
+    async completeTicketGateRitual(ritualId, issueId, note = null, artifact = null) {
+        return this.request(
+            'POST', `/rituals/${ritualId}/complete-issue/${issueId}`, this.attestationBody(note, artifact),
+        );
     }
 
     async approveTicketRitual(ritualId, issueId) {

@@ -7,6 +7,7 @@ from oxyde import IntegrityError, atomic
 
 logger = logging.getLogger(__name__)
 from app.enums import (
+    RitualArtifact,
     ApprovalMode,
     RitualTrigger,
     SelectionMode,
@@ -17,6 +18,7 @@ from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, Ri
 from app.services.ritual_selection import Selection, pointer_after_removal, select
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
+from app.oxyde_models.document import OxydeDocument
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
@@ -61,6 +63,73 @@ class RitualService:
                 f"Ritual '{ritual.name}' is GATE mode and requires a human. "
                 f"Agents cannot attest or complete GATE rituals."
             )
+
+    async def _validate_artifact(
+        self, ritual: "OxydeRitual", user_id: str, *,
+        document_id: str | None, url: str | None,
+        since: "datetime | None", since_label: str,
+    ) -> str | None:
+        """The reference an attestation records for the ritual's artifact,
+        once it is checked to be the real thing (CHT-1359).
+
+        Before this an attestation was a note: "wrote the retro" cleared
+        the ritual whether or not a retro existed. A ritual with
+        `artifact` set now binds the attestation to it: a DOCUMENT must
+        exist, be by the attester, and be created after `since` (the
+        sprint's activation, the ticket's creation), so a document from a
+        previous sprint cannot be attested twice; a URL must at least be
+        one. A ritual without `artifact` keeps whatever reference the
+        caller offered, unverified.
+        """
+        if ritual.artifact is None:
+            return document_id or url
+        if ritual.artifact == RitualArtifact.DOCUMENT:
+            if not document_id:
+                raise ValueError(
+                    f"Ritual '{ritual.name}' requires a document: pass the id of the "
+                    f"document you wrote for it. Prompt: {ritual.prompt}"
+                )
+            document = await OxydeDocument.objects.get_or_none(id=document_id)
+            if document is None:
+                raise ValueError(
+                    f"Document '{document_id}' not found; ritual '{ritual.name}' "
+                    "requires the document you wrote for it."
+                )
+            if document.author_id != user_id:
+                raise ValueError(
+                    f"Document '{document.title}' is not yours; ritual '{ritual.name}' "
+                    "requires a document written by the attester."
+                )
+            if since is not None and document.created_at < since:
+                raise ValueError(
+                    f"Document '{document.title}' predates {since_label}; ritual "
+                    f"'{ritual.name}' requires one written for it."
+                )
+            return document.id
+        if ritual.artifact == RitualArtifact.URL:
+            if not url or not url.strip().startswith(("http://", "https://")):
+                raise ValueError(
+                    f"Ritual '{ritual.name}' requires a URL (http:// or https://) to "
+                    f"the artifact. Prompt: {ritual.prompt}"
+                )
+            return url.strip()
+        raise ValueError(f"Ritual '{ritual.name}' has an unknown artifact kind")
+
+    async def _sprint_artifact(
+        self, ritual: "OxydeRitual", sprint_id: str, user_id: str,
+        document_id: str | None, url: str | None,
+    ) -> str | None:
+        """`_validate_artifact` for a sprint ritual: the artifact must
+        postdate the sprint's activation (nothing is checked for a sprint
+        that predates activated_at, CHT-1366)."""
+        since = None
+        if ritual.artifact == RitualArtifact.DOCUMENT:
+            sprint = await OxydeSprint.objects.get_or_none(id=sprint_id)
+            since = sprint.activated_at if sprint is not None else None
+        return await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=since, since_label="the sprint's activation",
+        )
 
     async def _validate_conditions_match(
         self, ritual: "OxydeRitual", issue: "OxydeIssue"
@@ -193,6 +262,7 @@ class RitualService:
                 trigger=ritual_in.trigger,
                 approval_mode=ritual_in.approval_mode,
                 note_required=ritual_in.note_required,
+                artifact=ritual_in.artifact,
                 conditions=conditions_json,
                 group_id=ritual_in.group_id,
                 weight=ritual_in.weight,
@@ -745,6 +815,9 @@ class RitualService:
         sprint_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ritual for a sprint."""
         if ritual.trigger != RitualTrigger.EVERY_SPRINT:
@@ -761,6 +834,7 @@ class RitualService:
                 "Use complete_gate_ritual to perform it."
             )
         self._validate_note(ritual, note)
+        artifact_ref = await self._sprint_artifact(ritual, sprint_id, user_id, document_id, url)
 
         ritual_id = ritual.id
 
@@ -773,6 +847,7 @@ class RitualService:
             sprint_id=sprint_id,
             attested_by=user_id,
             note=note,
+            artifact_ref=artifact_ref,
         )
 
         if ritual.approval_mode == ApprovalMode.AUTO:
@@ -834,6 +909,9 @@ class RitualService:
         issue_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Attest to a ticket ritual for an issue."""
         allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
@@ -872,6 +950,10 @@ class RitualService:
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
         await self._validate_group_selection(ritual, issue_id, issue)
+        artifact_ref = await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=issue.created_at if issue is not None else None, since_label="the ticket",
+        )
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -885,6 +967,7 @@ class RitualService:
             issue_id=issue_id,
             attested_by=user_id,
             note=note,
+            artifact_ref=artifact_ref,
         )
 
         if ritual.approval_mode == ApprovalMode.AUTO:
@@ -1117,6 +1200,9 @@ class RitualService:
         issue_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ticket ritual — human-only."""
         allowed_triggers = {RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM}
@@ -1146,6 +1232,10 @@ class RitualService:
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
         await self._validate_group_selection(ritual, issue_id, issue)
+        artifact_ref = await self._validate_artifact(
+            ritual, user_id, document_id=document_id, url=url,
+            since=issue.created_at if issue is not None else None, since_label="the ticket",
+        )
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -1164,6 +1254,7 @@ class RitualService:
                 approved_by=user_id,
                 approved_at=now,
                 note=note,
+                artifact_ref=artifact_ref,
             )
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
@@ -1539,6 +1630,9 @@ class RitualService:
         sprint_id: str,
         user_id: str,
         note: str | None = None,
+        *,
+        document_id: str | None = None,
+        url: str | None = None,
     ) -> OxydeRitualAttestation:
         """Complete a GATE mode ritual (human-only)."""
         if ritual.trigger != RitualTrigger.EVERY_SPRINT:
@@ -1554,6 +1648,7 @@ class RitualService:
             )
         await self._validate_not_agent_for_gate(ritual, user_id)
         self._validate_note(ritual, note)
+        artifact_ref = await self._sprint_artifact(ritual, sprint_id, user_id, document_id, url)
 
         ritual_id = ritual.id
 
@@ -1571,6 +1666,7 @@ class RitualService:
                 approved_by=user_id,
                 approved_at=now,
                 note=note,
+                artifact_ref=artifact_ref,
             )
         except IntegrityError:
             existing = await self.get_attestation(ritual_id, sprint_id)

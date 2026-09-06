@@ -389,17 +389,25 @@ class InProcessBackend:
         return _dump(status) if status else {}
 
     @_translated
-    async def attest_ritual(self, ritual_id: str, project_id: str, note: str | None) -> dict:
+    async def attest_ritual(
+        self, ritual_id: str, project_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
         result = await rituals_api.attest_ritual(
-            ritual_id=ritual_id, attestation_in=RitualAttestationCreate(note=note),
+            ritual_id=ritual_id,
+            attestation_in=RitualAttestationCreate(note=note, document_id=document_id, url=url),
             current_user=self._user, project_id=project_id,
         )
         return _dump(result)
 
     @_translated
-    async def complete_gate_ritual(self, ritual_id: str, project_id: str, note: str | None) -> dict:
+    async def complete_gate_ritual(
+        self, ritual_id: str, project_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
         result = await rituals_api.complete_gate_ritual(
-            ritual_id=ritual_id, attestation_in=RitualAttestationCreate(note=note),
+            ritual_id=ritual_id,
+            attestation_in=RitualAttestationCreate(note=note, document_id=document_id, url=url),
             current_user=self._user, project_id=project_id,
         )
         return _dump(result)
@@ -409,18 +417,26 @@ class InProcessBackend:
         return _dump(await rituals_api.get_pending_ticket_rituals(issue_id=issue_id, current_user=self._user))
 
     @_translated
-    async def attest_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str | None) -> dict:
+    async def attest_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
         result = await rituals_api.attest_ritual_for_issue(
             ritual_id=ritual_id, issue_id=issue_id,
-            attestation_in=RitualAttestationCreate(note=note), current_user=self._user,
+            attestation_in=RitualAttestationCreate(note=note, document_id=document_id, url=url),
+            current_user=self._user,
         )
         return _dump(result)
 
     @_translated
-    async def complete_gate_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str | None) -> dict:
+    async def complete_gate_ritual_for_issue(
+        self, ritual_id: str, issue_id: str, note: str | None,
+        document_id: str | None = None, url: str | None = None,
+    ) -> dict:
         result = await rituals_api.complete_gate_ritual_for_issue(
             ritual_id=ritual_id, issue_id=issue_id,
-            attestation_in=RitualAttestationCreate(note=note), current_user=self._user,
+            attestation_in=RitualAttestationCreate(note=note, document_id=document_id, url=url),
+            current_user=self._user,
         )
         return _dump(result)
 
