@@ -409,6 +409,39 @@ class TestIssueCreate:
         assert call_kwargs.get('issue_type') == 'bug'
         assert call_kwargs.get('estimate') == 5
 
+    def test_create_off_scale_estimate_warns_but_succeeds(self, cli_runner):
+        """CHT-1365: an estimate off the project's declared scale is stored and
+        warned about on stderr; the command still exits 0 and --json stays clean."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-200", "title": "T"})
+        client.get_project = MagicMock(return_value={"id": "proj-1", "estimate_scale": "powers_of_2"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'T', '--estimate', '5'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args[1]["estimate"] == 5
+        assert "Warning: Estimate 5 is not on this project's powers_of_2 scale" in result.output
+
+        client.get_project = MagicMock(side_effect=RuntimeError("lookup down"))
+        result = cli_runner.invoke(cli, ['issue', 'create', 'T', '--estimate', '5'])
+        assert result.exit_code == 0 and "Warning" not in result.output
+
+    def test_off_scale_warning_goes_to_stderr_so_json_stays_parseable(self, cli_runner):
+        """The warning must never land in stdout: a caller piping --json
+        output into a parser would break on it (PR #283 review)."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-200", "title": "T"})
+        client.get_project = MagicMock(return_value={"id": "proj-1", "estimate_scale": "powers_of_2"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'T', '--estimate', '5', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["identifier"] == "CHT-200"
+        assert "Warning: Estimate 5 is not on this project's powers_of_2 scale" in result.stderr
+        assert "Warning" not in result.stdout
+
     def test_create_no_title_errors(self, cli_runner):
         """issue create without title shows error."""
         from cli.main import cli

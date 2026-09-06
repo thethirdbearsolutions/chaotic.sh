@@ -430,6 +430,10 @@ class InProcessBackend:
         return _dump_list(await projects_api.list_projects(team_id=team_id, current_user=self._user, limit=limit))
 
     @_translated
+    async def get_project(self, project_id: str) -> dict:
+        return _dump(await projects_api.get_project(project_id=project_id, current_user=self._user))
+
+    @_translated
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         rows = await issues_api.list_team_activities(
             team_id=team_id, current_user=self._user, limit=limit, project_id=project_id,

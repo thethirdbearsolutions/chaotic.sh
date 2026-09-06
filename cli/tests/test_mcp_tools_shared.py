@@ -62,6 +62,7 @@ class FakeBackend:
         ]
         self.pending_issue_rituals = {"pending_rituals": [], "completed_rituals": []}
         self.limbo = {"in_limbo": False, "pending_rituals": []}
+        self.estimate_scale = "fibonacci"
         self.list_result: list = []
 
     def _rec(self, name, *args, **kwargs):
@@ -252,6 +253,10 @@ class FakeBackend:
     async def list_projects(self, team_id, limit):
         self._rec("list_projects", team_id, limit)
         return list(self.list_result)
+
+    async def get_project(self, project_id):
+        self._rec("get_project", project_id)
+        return {"id": project_id, "key": "CHT", "estimate_scale": self.estimate_scale}
 
     async def list_activities(self, team_id, **kw):
         self._rec("list_activities", team_id, **kw)
@@ -606,12 +611,55 @@ class TestIssueStartBody:
         assert kwargs["lease_seconds"] == 90
 
 
+class TestEstimateScaleWarning:
+    """issue_create / issue_update warn about an off-scale estimate in
+    `warnings`; the write itself is never blocked (CHT-1365)."""
+
+    async def test_create_off_scale_carries_a_warning(self, fake):
+        result = await _tools(fake)["issue_create"](title="T", estimate=7)
+        assert result["identifier"] == "CHT-1" or "identifier" in result
+        assert result["warnings"] == [
+            "Estimate 7 is not on this project's fibonacci scale (1, 2, 3, 5, 8, 13, 21); "
+            "nearest is 8. Stored as given."
+        ]
+        assert fake.calls_to("get_project") == [(("proj-1",), {})]
+
+    async def test_create_on_scale_has_no_warnings_key(self, fake):
+        result = await _tools(fake)["issue_create"](title="T", estimate=5)
+        assert "warnings" not in result
+
+    async def test_update_off_scale_warns_against_the_issue_project(self, fake):
+        fake.estimate_scale = "powers_of_2"
+        result = await _tools(fake)["issue_update"]("CHT-1", estimate=3)
+        assert result["warnings"][0].startswith("Estimate 3 is not on this project's powers_of_2 scale")
+
+    async def test_lookup_failure_never_fails_the_write(self):
+        fake = FakeBackend(fail_on={"get_project": BackendError("boom", 500, "boom")})
+        result = await _tools(fake)["issue_create"](title="T", estimate=7)
+        assert "error" not in result and "warnings" not in result
+
+
 class TestScopeDefaults:
-    async def test_issue_ready_without_project_uses_optional_project(self, fake):
+    async def test_issue_ready_without_project_refuses_instead_of_widening(self, fake):
+        """CHT-1355: no `project`, no current project, no `all_projects` used
+        to silently answer with the whole team's ready work on stdio (and
+        raise on HTTP). Both now refuse; the widening is opt-in."""
         fake.current_project = None
-        await _tools(fake)["issue_ready"]()
+        result = await _tools(fake)["issue_ready"]()
+        assert result["error"]["error_code"] == "tool_input"
+        assert "No project selected" in result["error"]["message"]
+        assert fake.calls_to("list_ready_issues") == []
+
+    async def test_issue_ready_all_projects_is_the_explicit_widening(self, fake):
+        fake.current_project = None
+        await _tools(fake)["issue_ready"](all_projects=True)
         (_, kwargs), = fake.calls_to("list_ready_issues")
         assert kwargs["project_id"] is None and kwargs["team_id"] == "team-1"
+
+    async def test_issue_ready_with_current_project_is_project_scoped(self, fake):
+        await _tools(fake)["issue_ready"]()
+        (_, kwargs), = fake.calls_to("list_ready_issues")
+        assert kwargs["project_id"] == "proj-1" and kwargs["team_id"] is None
 
     async def test_doc_list_all_projects_goes_team_wide(self, fake):
         await _tools(fake)["doc_list"](all_projects=True)

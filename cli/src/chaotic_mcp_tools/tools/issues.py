@@ -17,6 +17,7 @@ from ..constants import (
     TEAM_FIELD_DESC,
 )
 from ..errors import BackendError, ToolInputError
+from ..estimates import off_scale_warning
 from ..shapes import (
     COMPACT_ISSUE_FIELDS,
     DETAIL_ISSUE_DESC,
@@ -273,13 +274,17 @@ async def issue_create(
         Field(description="Parent issue identifier (e.g. CHT-12) to create this as a sub-issue.")
     ] = None,
 ) -> dict:
-    """Create a new issue (optionally as a sub-issue of `parent`)."""
+    """Create a new issue (optionally as a sub-issue of `parent`).
+
+    An `estimate` off the project's declared estimate_scale is stored as
+    given and reported back in `warnings` (absent otherwise).
+    """
     project_id, _team_id = await backend.resolve_project(project, team)
     resolved_type = _resolve_issue_type(issue_type)
     parent_id = None
     if parent:
         parent_id = (await backend.get_issue(parent))["id"]
-    return await backend.create_issue(
+    created = await backend.create_issue(
         project_id,
         title=title,
         description=description,
@@ -289,6 +294,23 @@ async def issue_create(
         estimate=estimate,
         parent_id=parent_id,
     )
+    return await _with_estimate_warning(backend, created, project_id, estimate)
+
+
+async def _with_estimate_warning(backend: Backend, result: dict, project_id: str | None, estimate: int | None) -> dict:
+    """Attach `warnings: [...]` when `estimate` is off the project's declared
+    scale (CHT-1365). Warn, never block -- and never let the lookup that
+    produces the warning fail a write that already succeeded."""
+    if estimate is None or not project_id:
+        return result
+    try:
+        scale = (await backend.get_project(project_id)).get("estimate_scale")
+    except Exception:  # noqa: BLE001 -- advisory only
+        return result
+    warning = off_scale_warning(estimate, scale)
+    if not warning:
+        return result
+    return {**result, "warnings": [*result.get("warnings", []), warning]}
 
 
 async def issue_update(
@@ -316,6 +338,9 @@ async def issue_update(
     ] = None,
 ) -> dict:
     """Update an issue's status, priority, estimate, assignee, title, and/or description.
+
+    An `estimate` off the project's declared estimate_scale is stored as
+    given and reported back in `warnings` (absent otherwise).
 
     Only fields explicitly passed are changed. Returns the updated issue.
     Pass `attest` to satisfy pending close/claim rituals in the same call.
@@ -354,7 +379,8 @@ async def issue_update(
     if not fields:
         return await backend.get_issue(identifier)
 
-    return await backend.update_issue(iss["id"], **fields)
+    updated = await backend.update_issue(iss["id"], **fields)
+    return await _with_estimate_warning(backend, updated, iss.get("project_id"), estimate)
 
 
 async def issue_comment(
@@ -445,6 +471,10 @@ async def issue_ready(
     Prefer this over issue_list when the question is "what should I pick
     up"; issue_list can filter by status and assignee but cannot express
     "has no unresolved blocker".
+
+    Scope is never widened silently: with no `project` and no current
+    project this refuses and says so, rather than answering with the
+    whole team's work. Pass `all_projects=true` to ask for that.
     """
     if mine and include_assigned:
         raise ToolInputError("Pass either `mine` or `include_assigned`, not both.")
@@ -453,7 +483,12 @@ async def issue_ready(
         project_id = None
         team_id = await backend.resolve_team(team)
     else:
-        project_id, team_id = await backend.optional_project(project, team)
+        # resolve_project, not optional_project (CHT-1355): a missing
+        # current project must be an error the caller sees, not a query
+        # that quietly becomes team-wide -- this is the tool an agent uses
+        # to choose its own next work, so a wrong scope means work started
+        # in a project it was never pointed at.
+        project_id, team_id = await backend.resolve_project(project, team)
 
     issues = await backend.list_ready_issues(
         project_id=project_id,
