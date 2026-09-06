@@ -497,7 +497,7 @@ async def list_issues(
     parent_id: str | None = None,
     # Query metadata lives in Annotated so the Python default is a real
     # value: this function is also called in-process (the MCP tools,
-    # ADR-0005) where a bare `= Query(None)` default would be a live,
+    # ADR-0005) where a bare Query(None) default would be a live,
     # truthy Query object instead of None (CHT-1375).
     statuses: Annotated[list[IssueStatus] | None, Query(alias="status")] = None,
     priorities: Annotated[list[IssuePriority] | None, Query(alias="priority")] = None,
@@ -652,7 +652,7 @@ async def list_issues(
 @router.get("/search", response_model=list[IssueResponse])
 async def search_issues(
     team_id: str,
-    q: str = Query(..., min_length=1, max_length=200),
+    q: Annotated[str, Query(min_length=1, max_length=200)],
     current_user: CurrentUser = None,
     project_id: str | None = None,
     issue_status: IssueStatus | None = None,
@@ -878,8 +878,8 @@ async def list_team_activities(
 async def list_team_comments(
     team_id: str,
     current_user: CurrentUser,
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
     """List recent comments for a team (both issue and document comments)."""
     issue_service = IssueService()

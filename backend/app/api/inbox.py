@@ -1,4 +1,6 @@
 """Inbox API routes (CHT-1250)."""
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser
@@ -56,8 +58,8 @@ async def list_inbox(
     current_user: CurrentUser,
     team_id: str | None = None,
     unread: bool = False,
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
     """List the current user's inbox entries, newest first."""
     entries = await InboxService().list_for_user(
