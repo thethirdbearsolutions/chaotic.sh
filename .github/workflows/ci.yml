@@ -83,6 +83,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Lint
+        run: uv run ruff check .
+
       - name: Run e2e contract tests
         run: uv run pytest -v
 

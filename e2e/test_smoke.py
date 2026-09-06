@@ -1,6 +1,6 @@
 """Smoke test to verify the e2e harness works."""
 import httpx
-from cli.client import Client, APIError
+from cli.client import APIError
 import pytest
 
 

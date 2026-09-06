@@ -35,7 +35,7 @@ repos:
 
       # Pyflakes-equivalent rules only (CHT-1362): undefined names, unused
       # imports/variables, shadowed redefinitions. Same config CI runs
-      # (`ruff check .` in backend/ and cli/, from each pyproject).
+      # (`ruff check .` in backend/, cli/ and e2e/, from each pyproject).
       - id: ruff-backend
         name: ruff (backend, F-rules)
         entry: backend/.venv/bin/ruff check backend
@@ -48,3 +48,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^cli/(.*\.py|pyproject\.toml)$
+      - id: ruff-e2e
+        name: ruff (e2e, F-rules)
+        entry: e2e/.venv/bin/ruff check e2e
+        language: system
+        pass_filenames: false
+        files: ^e2e/(.*\.py|pyproject\.toml)$

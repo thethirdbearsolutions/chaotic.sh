@@ -38,7 +38,7 @@ import uvicorn
 from app.main import app
 from app.utils.security import get_password_hash, create_access_token
 from app.oxyde_models.user import OxydeUser
-from cli.client import Client, APIError
+from cli.client import Client
 
 
 # --- Async helper ---
