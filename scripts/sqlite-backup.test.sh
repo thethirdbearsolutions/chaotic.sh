@@ -51,12 +51,17 @@ assert_slots "minute 1 writes only the 1min slot (others already exist)" \
     backup.10min.db backup.1hr.db backup.1min.db backup.6hr.db \
     backup.daily.20260907.db backup.weekly.2026W37.db
 
-# 07:30: not a 10-minute mark, not minute 0. Same day and week.
-before=$(stat -f %m "$DIR/backup.10min.db" 2>/dev/null || stat -c %Y "$DIR/backup.10min.db")
-sleep 1
+# Change the live data, then run at 07:33: not a 10-minute mark, not minute
+# 0, same day and week. Only the 1min slot may pick up the new row; every
+# other slot must still hold the earlier state.
+sqlite3 "$DB" "insert into t values (2);"
 run_at "2026-09-07 07:33:00"
-after=$(stat -f %m "$DIR/backup.10min.db" 2>/dev/null || stat -c %Y "$DIR/backup.10min.db")
-if [ "$before" = "$after" ]; then echo "ok   07:33 leaves the 10min slot alone"; else echo "FAIL 07:33 rewrote the 10min slot"; fail=1; fi
+rows() { sqlite3 "$DIR/$1" "select count(*) from t"; }
+if [ "$(rows backup.1min.db)" = "2" ]; then echo "ok   07:33 refreshes the 1min slot"; else echo "FAIL 07:33 did not refresh the 1min slot"; fail=1; fi
+for slot in backup.10min.db backup.1hr.db backup.6hr.db backup.daily.20260907.db backup.weekly.2026W37.db; do
+    if [ "$(rows "$slot")" = "1" ]; then echo "ok   07:33 leaves $slot alone"; else echo "FAIL 07:33 rewrote $slot"; fail=1; fi
+done
+sqlite3 "$DB" "delete from t where x = 2;"
 
 # Four more days: dailies prune to the newest three.
 run_at "2026-09-08 03:15:00"
