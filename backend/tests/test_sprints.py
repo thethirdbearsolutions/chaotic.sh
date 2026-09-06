@@ -1306,25 +1306,6 @@ class TestSprintModelProperties:
         sprint = OxydeSprint(name="test", project_id="p1", budget=20, points_spent=8)
         assert sprint.remaining_budget == 12
 
-    def test_token_in_arrears_no_budget(self):
-        """Sprint with no token budget is never in arrears."""
-        sprint = OxydeSprint(name="test", project_id="p1", token_budget=None, tokens_spent=1000)
-        assert sprint.token_in_arrears is False
-
-    def test_token_in_arrears_over_budget(self):
-        """Sprint over token budget is in arrears."""
-        sprint = OxydeSprint(name="test", project_id="p1", token_budget=500, tokens_spent=1000)
-        assert sprint.token_in_arrears is True
-
-    def test_remaining_token_budget_none(self):
-        """Sprint with no token budget returns None remaining."""
-        sprint = OxydeSprint(name="test", project_id="p1", token_budget=None, tokens_spent=100)
-        assert sprint.remaining_token_budget is None
-
-    def test_remaining_token_budget_value(self):
-        """Sprint with token budget returns correct remaining."""
-        sprint = OxydeSprint(name="test", project_id="p1", token_budget=1000, tokens_spent=300)
-        assert sprint.remaining_token_budget == 700
 
 
 # --- Sprint service-level coverage tests (CHT-922) ---

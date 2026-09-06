@@ -13,7 +13,6 @@ class SprintCreate(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
     budget: int | None = Field(default=None, ge=1)  # null = use project default or unlimited
-    token_budget: int | None = Field(default=None, ge=1)  # null = unlimited
     explicit_unlimited: bool = False  # If True, ignore project default and create with unlimited budget
 
 
@@ -26,7 +25,6 @@ class SprintUpdate(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
     budget: int | None = Field(default=None, ge=1)
-    token_budget: int | None = Field(default=None, ge=1)
 
 
 class SprintResponse(BaseModel):
@@ -41,8 +39,6 @@ class SprintResponse(BaseModel):
     end_date: DateTimeUTC | None
     budget: int | None
     points_spent: int
-    token_budget: int | None
-    tokens_spent: int
     limbo: bool
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
