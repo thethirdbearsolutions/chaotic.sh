@@ -144,12 +144,61 @@ async def db(tmp_path, schema_template):
     # Restore original create
     QueryManager.create = _original_create
 
+    await _assert_revision_history_current()
+
     # disconnect_all clears the registry so the next test can register 'default'
     await disconnect_all()
 
     # Clean up env
     os.environ.pop("DATABASE_URL", None)
     get_settings.cache_clear()
+
+
+REVISION_INVARIANTS = (
+    # (what, SQL yielding one row per record whose newest revision does
+    #  not match the live row). "IS NOT" is NULL-safe in SQLite.
+    (
+        "issue description",
+        "SELECT i.identifier AS ref, r.version AS version "
+        "FROM issues i JOIN issue_description_revisions r ON r.issue_id = i.id "
+        "WHERE r.version = (SELECT MAX(version) FROM issue_description_revisions WHERE issue_id = i.id) "
+        "AND r.description IS NOT i.description",
+    ),
+    (
+        "document title/content",
+        "SELECT d.id AS ref, r.version AS version "
+        "FROM documents d JOIN document_revisions r ON r.document_id = d.id "
+        "WHERE r.version = (SELECT MAX(version) FROM document_revisions WHERE document_id = d.id) "
+        "AND (r.title IS NOT d.title OR r.content IS NOT d.content)",
+    ),
+)
+
+
+async def _assert_revision_history_current() -> None:
+    """Revision snapshot-on-edit is an invariant, not a convention
+    (CHT-1340): after every test, each issue description and document
+    body that has revision history at all must match its newest
+    revision. A write path that changes the body without appending a
+    revision leaves the live row ahead of its history, and any test
+    that exercises the path fails here with the record named. Records
+    with no revisions were created outside the services (a fixture's
+    bare `objects.create`) and are not checked: v1 is written by the
+    service create paths, so "no history" means "never went through
+    them", not "history skipped".
+    """
+    from oxyde import execute_raw
+
+    stale = []
+    for what, sql in REVISION_INVARIANTS:
+        try:
+            rows = await execute_raw(sql)
+        except Exception:  # noqa: BLE001 - a test that dropped or never had the tables
+            continue
+        stale.extend(f"{what} of {row['ref']} is ahead of revision v{row['version']}" for row in rows)
+    assert not stale, (
+        "Revision history is stale (CHT-1340): a write changed the body without "
+        "snapshotting a revision -- " + "; ".join(stale)
+    )
 
 
 @pytest_asyncio.fixture
