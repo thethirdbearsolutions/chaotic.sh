@@ -1,7 +1,7 @@
 """Ritual schemas."""
 import json
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from app.enums import RitualTrigger, ApprovalMode, SelectionMode
+from app.enums import RitualTrigger, ApprovalMode, RitualArtifact, SelectionMode
 from app.utils import DateTimeUTC
 import re
 
@@ -113,6 +113,7 @@ class RitualCreate(BaseModel):
     trigger: RitualTrigger = RitualTrigger.EVERY_SPRINT
     approval_mode: ApprovalMode = ApprovalMode.AUTO
     note_required: bool = True
+    artifact: RitualArtifact | None = None  # What an attestation must point at (CHT-1359)
     conditions: dict | None = None  # Django-style conditions e.g. {"estimate__gte": 3}
     group_id: str | None = None  # Optional group membership
     weight: float = Field(default=1.0, ge=0)  # Weight for random selection
@@ -152,6 +153,7 @@ class RitualUpdate(BaseModel):
     trigger: RitualTrigger | None = None
     approval_mode: ApprovalMode | None = None
     note_required: bool | None = None
+    artifact: RitualArtifact | None = None  # CHT-1359; an explicit null unsets it
     conditions: dict | None = None  # Django-style conditions e.g. {"estimate__gte": 3}
     group_id: str | None = None  # Optional group membership (use "" to remove from group)
     weight: float | None = Field(default=None, ge=0)  # Weight for random selection
@@ -195,6 +197,7 @@ class RitualResponse(BaseModel):
     trigger: RitualTrigger
     approval_mode: ApprovalMode
     note_required: bool
+    artifact: RitualArtifact | None = None
     conditions: dict | None = None  # Django-style conditions
     group_id: str | None = None
     group_name: str | None = None  # Populated from relationship
@@ -228,9 +231,12 @@ class RitualResponse(BaseModel):
 
 
 class RitualAttestationCreate(BaseModel):
-    """Schema for creating a ritual attestation."""
+    """Schema for creating a ritual attestation. `document_id` / `url` is
+    the artifact a ritual with `artifact` set requires (CHT-1359)."""
 
     note: str | None = None
+    document_id: str | None = None
+    url: str | None = None
 
 
 class RitualAttestationResponse(BaseModel):
@@ -244,6 +250,7 @@ class RitualAttestationResponse(BaseModel):
     attested_by_name: str | None = None  # User's display name
     attested_at: DateTimeUTC
     note: str | None
+    artifact_ref: str | None = None  # The verified document id or URL (CHT-1359)
     approved_by: str | None
     approved_by_name: str | None = None  # Approver's display name
     approved_at: DateTimeUTC | None
@@ -260,6 +267,7 @@ class PendingRitualResponse(BaseModel):
     trigger: RitualTrigger | None = None  # ticket_close or ticket_claim
     approval_mode: ApprovalMode
     note_required: bool
+    artifact: RitualArtifact | None = None  # What the attestation must carry (CHT-1359)
     conditions: dict | None = None  # Django-style conditions
     # If attested but pending approval
     attestation: RitualAttestationResponse | None = None

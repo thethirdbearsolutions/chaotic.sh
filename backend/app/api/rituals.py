@@ -48,6 +48,7 @@ async def _build_attestation_response(att) -> RitualAttestationResponse:
         attested_by_name=attester.name if attester else None,
         attested_at=att.attested_at,
         note=att.note,
+        artifact_ref=att.artifact_ref,
         approved_by=att.approved_by,
         approved_by_name=approver.name if approver else None,
         approved_at=att.approved_at,
@@ -72,6 +73,7 @@ async def pending_ritual_responses(issue_id: str | None, rituals) -> list[Pendin
             trigger=ritual.trigger,
             approval_mode=ritual.approval_mode,
             note_required=ritual.note_required,
+            artifact=ritual.artifact,
             conditions=ritual.conditions,
             attestation=(await _build_attestation_response(att)) if att else None,
         ))
@@ -233,6 +235,7 @@ async def get_limbo_status(
             trigger=ritual.trigger,
             approval_mode=ritual.approval_mode,
             note_required=ritual.note_required,
+            artifact=ritual.artifact,
             conditions=ritual.conditions,
             attestation=attestation,
         ))
@@ -610,6 +613,8 @@ async def attest_ritual_for_issue(
             issue_id=issue_id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
@@ -691,6 +696,8 @@ async def complete_gate_ritual_for_issue(
             issue_id=issue_id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
@@ -1174,6 +1181,8 @@ async def attest_ritual(
             sprint_id=limbo_sprint.id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(
@@ -1335,6 +1344,8 @@ async def complete_gate_ritual(
             sprint_id=limbo_sprint.id,
             user_id=current_user.id,
             note=attestation_in.note,
+            document_id=attestation_in.document_id,
+            url=attestation_in.url,
         )
     except ValueError as e:
         raise HTTPException(

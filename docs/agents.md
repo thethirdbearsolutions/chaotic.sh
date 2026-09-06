@@ -224,6 +224,15 @@ any attestation) and the not-yet-attested names in `unattested`, so the
 next step -- `ritual_attest`, or `ritual_complete` for gate rituals --
 needs no second lookup (CHT-1381).
 
+A ritual can declare an **artifact** (`ritual_list` shows it: `document`
+or `url`). Its attestation is bound to that artifact, not to the note:
+pass `document` (a document you wrote for it -- id, id prefix or exact
+title) or `url` (a link to the artifact, e.g. a PR review comment). The
+server verifies a document is yours and was written after the sprint
+activated or the ticket was created, so last sprint's retro cannot be
+attested again; a missing or borrowed artifact is refused with the
+ritual's prompt (CHT-1359).
+
 Every tool returns a JSON object. Failures come back as
 `{"error": {"message": "...", "error_code": "...", ...}}` rather than an
 MCP protocol-level error (ADR-0006): `message` is always a sentence you

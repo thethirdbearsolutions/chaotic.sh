@@ -903,7 +903,7 @@ function renderRitualActions(ritual, projectId) {
     if (ritual.approval_mode === 'gate') {
         return `
             <div class="ritual-actions">
-                <button class="btn btn-small btn-primary" data-action="complete-gate-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-project-id="${escapeAttr(projectId)}" data-ritual-name="${escapeAttr(ritual.name)}">Complete</button>
+                <button class="btn btn-small btn-primary" data-action="complete-gate-ritual" data-ritual-id="${escapeAttr(ritual.id)}" data-project-id="${escapeAttr(projectId)}" data-ritual-name="${escapeAttr(ritual.name)}" data-ritual-artifact="${escapeAttr(ritual.artifact || '')}">Complete</button>
             </div>
         `;
     }
@@ -1023,7 +1023,7 @@ registerActions({
         approveRitual(data.ritualId, data.projectId);
     },
     'complete-gate-ritual': (_event, data) => {
-        completeGateRitual(data.ritualId, data.projectId, data.ritualName);
+        completeGateRitual(data.ritualId, data.projectId, data.ritualName, data.ritualArtifact || '');
     },
     'navigate-sprint-issue': (event, data) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {

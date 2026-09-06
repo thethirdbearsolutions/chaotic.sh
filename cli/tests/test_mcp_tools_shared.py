@@ -240,24 +240,32 @@ class FakeBackend:
         self._rec("get_limbo_status", project_id)
         return dict(self.limbo)
 
-    async def attest_ritual(self, ritual_id, project_id, note):
-        self._rec("attest_ritual", ritual_id, project_id, note)
+    async def attest_ritual(self, ritual_id, project_id, note, **artifact):
+        # The ritual tools pass document_id/url explicitly; the issue tools
+        # pass nothing, and the recorder shows exactly what each sent.
+        self._rec("attest_ritual", ritual_id, project_id, note, **artifact)
         return {"id": "att-1", "approved_at": "now"}
 
-    async def complete_gate_ritual(self, ritual_id, project_id, note):
-        self._rec("complete_gate_ritual", ritual_id, project_id, note)
+    async def complete_gate_ritual(self, ritual_id, project_id, note, **artifact):
+        # The ritual tools pass document_id/url explicitly; the issue tools
+        # pass nothing, and the recorder shows exactly what each sent.
+        self._rec("complete_gate_ritual", ritual_id, project_id, note, **artifact)
         return {"id": "att-2"}
 
     async def get_pending_issue_rituals(self, issue_id):
         self._rec("get_pending_issue_rituals", issue_id)
         return dict(self.pending_issue_rituals)
 
-    async def attest_ritual_for_issue(self, ritual_id, issue_id, note):
-        self._rec("attest_ritual_for_issue", ritual_id, issue_id, note)
+    async def attest_ritual_for_issue(self, ritual_id, issue_id, note, **artifact):
+        # The ritual tools pass document_id/url explicitly; the issue tools
+        # pass nothing, and the recorder shows exactly what each sent.
+        self._rec("attest_ritual_for_issue", ritual_id, issue_id, note, **artifact)
         return {"id": "att-3", "approved_at": None}
 
-    async def complete_gate_ritual_for_issue(self, ritual_id, issue_id, note):
-        self._rec("complete_gate_ritual_for_issue", ritual_id, issue_id, note)
+    async def complete_gate_ritual_for_issue(self, ritual_id, issue_id, note, **artifact):
+        # The ritual tools pass document_id/url explicitly; the issue tools
+        # pass nothing, and the recorder shows exactly what each sent.
+        self._rec("complete_gate_ritual_for_issue", ritual_id, issue_id, note, **artifact)
         return {"id": "att-4"}
 
     # projects / activity
@@ -947,15 +955,18 @@ class TestSprintBody:
         assert (await _tools(fake)["sprint_remove"](identifiers=[]))["error"]["error_code"] == "tool_input"
 
 
+_NO_ARTIFACT = {"document_id": None, "url": None}
+
+
 class TestRitualBody:
     async def test_attest_dispatches_on_trigger(self, fake):
         result = await _tools(fake)["ritual_attest"](ritual="retro", note="did it")
         assert result["scope"] == "sprint" and result["approved"] is True
-        assert fake.calls_to("attest_ritual") == [(("r-sprint", "proj-1", "did it"), {})]
+        assert fake.calls_to("attest_ritual") == [(("r-sprint", "proj-1", "did it"), _NO_ARTIFACT)]
 
         result = await _tools(fake)["ritual_attest"](ritual="CLOSE-GATE", note="linked", identifier="CHT-1")
         assert result["scope"] == "ticket" and result["approved"] is False
-        assert fake.calls_to("attest_ritual_for_issue") == [(("r-ticket", "i1", "linked"), {})]
+        assert fake.calls_to("attest_ritual_for_issue") == [(("r-ticket", "i1", "linked"), _NO_ARTIFACT)]
 
     async def test_ticket_ritual_without_identifier_is_refused(self, fake):
         result = await _tools(fake)["ritual_attest"](ritual="close-gate", note="x")
@@ -972,7 +983,7 @@ class TestRitualBody:
 
     async def test_find_ritual_by_id_no_rituals_and_ambiguous(self, fake):
         result = await _tools(fake)["ritual_complete"](ritual="r-sprint")
-        assert result["scope"] == "sprint" and fake.calls_to("complete_gate_ritual") == [(("r-sprint", "proj-1", None), {})]
+        assert result["scope"] == "sprint" and fake.calls_to("complete_gate_ritual") == [(("r-sprint", "proj-1", None), _NO_ARTIFACT)]
         fake.rituals.append(dict(fake.rituals[0], id="r-dup"))
         result = await _tools(fake)["ritual_complete"](ritual="retro")
         assert "Ambiguous ritual name" in result["error"]["message"]
@@ -983,9 +994,37 @@ class TestRitualBody:
     async def test_complete_ticket_ritual(self, fake):
         result = await _tools(fake)["ritual_complete"](ritual="close-gate", identifier="CHT-1", note="ok")
         assert result == {"scope": "ticket", "ritual": "close-gate", "identifier": "CHT-1", "attestation": {"id": "att-4"}}
-        assert fake.calls_to("complete_gate_ritual_for_issue") == [(("r-ticket", "i1", "ok"), {})]
+        assert fake.calls_to("complete_gate_ritual_for_issue") == [(("r-ticket", "i1", "ok"), _NO_ARTIFACT)]
         result = await _tools(fake)["ritual_complete"](ritual="close-gate")
         assert "identifier" in result["error"]["message"]
+
+    async def test_a_document_ritual_is_refused_without_a_document_and_resolves_one(self, fake):
+        """CHT-1359: a ritual with artifact=document quotes its prompt when
+        `document` is missing, and otherwise resolves the document the way
+        every document argument is (id, prefix, title) before attesting."""
+        fake.rituals[0]["artifact"] = "document"
+        result = await _tools(fake)["ritual_attest"](ritual="retro", note="did it")
+        assert "requires a document" in result["error"]["message"]
+        assert fake.rituals[0]["prompt"] in result["error"]["message"]
+        assert fake.calls_to("attest_ritual") == []
+
+        result = await _tools(fake)["ritual_attest"](ritual="retro", note="did it", document="Sprint 9 retro")
+        assert result["scope"] == "sprint"
+        assert fake.calls_to("resolve_document") == [(("Sprint 9 retro",), {})]
+        assert fake.calls_to("attest_ritual") == [(("r-sprint", "proj-1", "did it"), {"document_id": "doc-1", "url": None})]
+
+    async def test_a_url_ritual_is_refused_without_a_url_and_passes_it_through(self, fake):
+        ticket = next(r for r in fake.rituals if r["id"] == "r-ticket")
+        ticket["artifact"] = "url"
+        result = await _tools(fake)["ritual_complete"](ritual="close-gate", identifier="CHT-1", note="ok")
+        assert "requires a URL" in result["error"]["message"]
+        result = await _tools(fake)["ritual_complete"](
+            ritual="close-gate", identifier="CHT-1", note="ok", url=" https://github.com/x/pull/1#issuecomment-9 ",
+        )
+        assert result["scope"] == "ticket"
+        assert fake.calls_to("complete_gate_ritual_for_issue") == [
+            (("r-ticket", "i1", "ok"), {"document_id": None, "url": "https://github.com/x/pull/1#issuecomment-9"}),
+        ]
 
     async def test_unknown_ritual_lists_the_known_ones(self, fake):
         result = await _tools(fake)["ritual_attest"](ritual="nope", note="x")
