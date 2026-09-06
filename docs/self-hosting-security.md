@@ -111,12 +111,18 @@ three-call sequence was three bcrypt rounds and three `last_used_at`
 writes; `last_used_at` is now written at most once per minute per key.
 
 What that does and does not do for the unauthenticated 401 path
-(`/mcp` with a wrong key, `/api/auth/*`): a wrong `ck_` key now costs the
-server a prefix lookup and a hash compare, so there is no CPU
-amplification left to abuse, and guessing a 256-bit key is not a
-practical attack at any request rate. Password login (`/api/auth/login`)
-still uses bcrypt on purpose (passwords are low-entropy) and remains the
-one endpoint where request-rate limiting matters. **Decision (CHT-1369):
+(`/mcp` with a wrong key, `/api/auth/*`): against a current row a wrong
+`ck_` key costs the server a prefix lookup and a hash compare, so there
+is no CPU amplification to abuse, and guessing a 256-bit key is not a
+practical attack at any request rate. The exception is a key created
+before CHT-1369 that its owner has not used since: until that first use
+re-hashes it, each wrong guess that carries its 11-character prefix
+still costs one bcrypt round in a worker thread. Prefixes are shown only
+to the key's owner, so this needs a leaked prefix, and it ends the moment
+the real key is used once (or the key is rotated). Password login
+(`/api/auth/login`) still uses bcrypt on purpose (passwords are
+low-entropy) and remains the one endpoint where request-rate limiting
+matters. **Decision (CHT-1369):
 the backend does not rate-limit; put that at the reverse proxy** (e.g.
 nginx `limit_req` on `/api/auth/` and `/mcp`, or Caddy's `rate_limit`),
 which sees the real client IP, survives restarts, and covers `/health`

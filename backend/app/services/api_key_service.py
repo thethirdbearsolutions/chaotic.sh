@@ -2,12 +2,11 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+import asyncio
 import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
-
-import anyio
 
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
@@ -45,8 +44,12 @@ def _sha256_key_hash(key: str) -> str:
     return SHA256_HASH_PREFIX + _prehash_key(key)
 
 
+# Modular-crypt prefix of every bcrypt variant ("$2a$", "$2b$", "$2y$").
+_BCRYPT_HASH_PREFIX = "$2"
+
+
 def _is_legacy_bcrypt_hash(key_hash: str) -> bool:
-    return not key_hash.startswith(SHA256_HASH_PREFIX)
+    return key_hash.startswith(_BCRYPT_HASH_PREFIX)
 
 
 class APIKeyService:
@@ -110,21 +113,38 @@ class APIKeyService:
             return None
 
         update_fields: set[str] = set()
-        if _is_legacy_bcrypt_hash(api_key.key_hash):
+        if api_key.key_hash.startswith(SHA256_HASH_PREFIX):
+            if not hmac.compare_digest(api_key.key_hash, _sha256_key_hash(full_key)):
+                return None
+        elif _is_legacy_bcrypt_hash(api_key.key_hash):
             # bcrypt is CPU-bound and synchronous: keep it off the event loop
             # so one legacy key's ~260 ms cannot stall every other request.
-            ok = await anyio.to_thread.run_sync(verify_password, _prehash_key(full_key), api_key.key_hash)
+            try:
+                ok = await asyncio.to_thread(verify_password, _prehash_key(full_key), api_key.key_hash)
+            except ValueError:
+                # "$2..." but not a well-formed bcrypt string ("Invalid salt"):
+                # fail closed as a bad credential rather than a 500.
+                return None
             if not ok:
                 return None
             # Opportunistic upgrade: the caller just proved they hold the key,
             # so its SHA-256 digest can be stored and bcrypt is never paid again.
             api_key.key_hash = _sha256_key_hash(full_key)
             update_fields.add("key_hash")
-        elif not hmac.compare_digest(api_key.key_hash, _sha256_key_hash(full_key)):
+        else:
+            # Neither format: a corrupted or foreign row. bcrypt would raise
+            # ("Invalid salt") and turn a bad credential into a 500; a key
+            # whose stored hash cannot be checked simply does not validate.
             return None
 
         now = datetime.now(timezone.utc)
-        if api_key.last_used_at is None or now - api_key.last_used_at >= LAST_USED_WRITE_INTERVAL:
+        # `> now` covers a stamp from a fast clock or a restored DB, which
+        # would otherwise freeze the field until wall-clock caught up.
+        if (
+            api_key.last_used_at is None
+            or api_key.last_used_at > now
+            or now - api_key.last_used_at >= LAST_USED_WRITE_INTERVAL
+        ):
             api_key.last_used_at = now
             update_fields.add("last_used_at")
         if update_fields:

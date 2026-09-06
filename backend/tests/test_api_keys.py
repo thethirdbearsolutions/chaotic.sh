@@ -274,6 +274,50 @@ class TestBcryptCompatibility:
         # ...and validates through the fast path afterwards.
         assert (await service.validate_key(full_key)).id == legacy.id
 
+    async def test_wrong_key_with_matching_prefix_is_rejected_on_the_fast_path(self, db, test_user):
+        """The constant-time compare is the security-relevant line for every
+        current row: a key that finds the row (same 11-char prefix) but
+        differs in one character must not validate, and must leave no trace
+        of use (review of PR #275, finding 1)."""
+        service = APIKeyService()
+        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="k"))
+        assert api_key.key_hash.startswith("sha256$")
+
+        wrong_same_prefix = full_key[:-1] + ("0" if full_key[-1] != "0" else "1")
+        assert await service.validate_key(wrong_same_prefix) is None
+        await api_key.refresh()
+        assert api_key.last_used_at is None
+
+    async def test_unrecognised_stored_hash_does_not_validate_and_does_not_raise(self, db, test_user):
+        """A row whose key_hash is neither "sha256$..." nor a bcrypt "$2..."
+        string (corruption, a foreign format) must fail closed as a plain
+        401, not reach bcrypt and blow up with ValueError("Invalid salt")
+        -> 500 (review of PR #275, finding 2)."""
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        service = APIKeyService()
+        for bad_hash in ("", "garbage", "$2b$notreal", "sha256X"):
+            full_key = service._generate_key()
+            await OxydeAPIKey.objects.create(
+                user_id=test_user.id, name="broken", key_prefix=service._get_prefix(full_key),
+                key_hash=bad_hash,
+            )
+            assert await service.validate_key(full_key) is None, bad_hash
+
+    async def test_last_used_at_in_the_future_is_rewritten(self, db, test_user):
+        """A stamp ahead of the wall clock (fast clock, restored DB) must not
+        freeze the field until time catches up (review of PR #275, finding 4)."""
+        from datetime import datetime, timedelta, timezone
+
+        service = APIKeyService()
+        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="k"))
+        future = datetime.now(timezone.utc) + timedelta(days=2)
+        api_key.last_used_at = future
+        await api_key.save(update_fields={"last_used_at"})
+
+        result = await service.validate_key(full_key)
+        assert result.last_used_at < future
+
     async def test_last_used_at_writes_are_coalesced(self, db, test_user):
         """last_used_at is written at most once per LAST_USED_WRITE_INTERVAL
         (CHT-1369): a burst of stateless MCP calls must not be a burst of
@@ -289,8 +333,13 @@ class TestBcryptCompatibility:
         stamp = first.last_used_at
         assert stamp is not None
 
-        second = await service.validate_key(full_key)
-        assert second.last_used_at == stamp  # within the interval: no write
+        from unittest.mock import patch
+
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        with patch.object(OxydeAPIKey, "save", autospec=True, side_effect=AssertionError("wrote")):
+            second = await service.validate_key(full_key)  # within the interval: no write
+        assert second.last_used_at == stamp
 
         api_key.last_used_at = stamp - LAST_USED_WRITE_INTERVAL - timedelta(seconds=1)
         await api_key.save(update_fields={"last_used_at"})
