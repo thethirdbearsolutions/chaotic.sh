@@ -9,6 +9,15 @@ from rich.table import Table
 from .shared import _client, console, print_sprint_panel, resolve_content_value
 
 
+# One line, printed by `sprint list` / `sprint current` / `sprint budget`
+# (CHT-1366): the moment a reader sees a sprint is the moment they assume
+# it is a calendar period. It is not.
+_SPRINT_EXPLAINER = (
+    "[dim]a spent budget ends a sprint, not a date; "
+    "activated/closed record when that happened[/dim]"
+)
+
+
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
@@ -52,7 +61,8 @@ def _print_budget_panel(result):
         f"Spent: {spent} points\n"
         f"{status_line}\n"
         f"[dim]spent = points from tickets CLOSED while this sprint is active "
-        f"(unestimated = 1pt); one active sprint at a time, close to rotate[/dim]",
+        f"(unestimated = 1pt); one active sprint at a time, close to rotate; "
+        f"a spent budget ends a sprint, not a date[/dim]",
         title="Sprint Budget"
     ))
 
@@ -111,19 +121,20 @@ def register(cli):
         table.add_column("ID", style="dim")
         table.add_column("Name")
         table.add_column("Status")
-        table.add_column("Start")
-        table.add_column("End")
+        table.add_column("Activated")
+        table.add_column("Closed")
 
         for s in sprints:
             table.add_row(
                 s["id"],
                 s["name"],
                 s["status"].title(),
-                s.get("start_date", "-")[:10] if s.get("start_date") else "-",
-                s.get("end_date", "-")[:10] if s.get("end_date") else "-"
+                s.get("activated_at", "-")[:10] if s.get("activated_at") else "-",
+                s.get("closed_at", "-")[:10] if s.get("closed_at") else "-"
             )
 
         console.print(table)
+        console.print(_SPRINT_EXPLAINER)
 
     @sprint.command("current")
     @_main().json_option
@@ -137,6 +148,7 @@ def register(cli):
             m.output_json(result)
             return
         print_sprint_panel(result, title="Current Sprint")
+        console.print(_SPRINT_EXPLAINER)
 
     @sprint.command("status")
     @_main().json_option

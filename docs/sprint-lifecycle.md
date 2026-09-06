@@ -1,5 +1,17 @@
 # Sprint lifecycle
 
+**Sprints are measured by work, not by time.** A sprint is defined by the
+work that closes in it: it begins when the previous one closes and ends
+when it is closed, which a spent point budget forces (arrears blocks
+every further close until then; an under-budget sprint can be closed
+early by hand). It has no scheduled length, no time-box, no calendar. Time is a *dependent* variable -- a sprint takes
+however long its budget takes to spend -- which is the inverse of
+calendar-boxed agile, where time is fixed and velocity is measured.
+Everything below follows from that (CHT-1366). The only dates a sprint
+carries are `activated_at` and `closed_at`, stamped when it turned out
+to run, so "how long did Sprint 91 take" is a derived fact rather than
+a plan.
+
 This doc answers "how do sprints actually work" from the code, not from
 what a plausible-sounding API might look like. It exists because
 CHT-109 deleted a test written against `start_sprint`/`complete_sprint`

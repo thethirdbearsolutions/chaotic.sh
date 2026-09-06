@@ -207,15 +207,30 @@ export function renderSprints() {
     });
 }
 
-function renderSprintBurndown(sprint) {
-    const hasDates = sprint.start_date && sprint.end_date;
+// A sprint has no scheduled dates (CHT-1366): it ends when its budget is
+// spent and it is closed, however long that takes. "Progress" is therefore
+// points spent against budget, full stop -- there is no time axis to plot
+// it against, so a burndown chart here would be a line drawn through its own
+// definition. activated_at/closed_at say when that turned out to happen.
+export function describeSprintSpan(sprint) {
+    if (!sprint.activated_at) return '';
+    const start = new Date(sprint.activated_at);
+    const end = sprint.closed_at ? new Date(sprint.closed_at) : new Date();
+    const days = Math.max(1, Math.round((end - start) / 86400000));
+    const span = sprint.closed_at
+        ? `activated ${formatDate(sprint.activated_at)}, closed ${formatDate(sprint.closed_at)} (${days} day${days === 1 ? '' : 's'})`
+        : `activated ${formatDate(sprint.activated_at)}, ${days} day${days === 1 ? '' : 's'} so far`;
+    return span;
+}
+
+export function renderSprintBurndown(sprint) {
     const hasBudget = sprint.budget !== null && sprint.budget !== undefined;
-    if (!hasDates || !hasBudget) {
+    if (!hasBudget) {
         return `
             <div class="sprint-burndown-card">
                 <div class="sprint-burndown-header">
-                    <h4>Burndown</h4>
-                    <span class="text-muted">Set sprint dates and budget to see burndown</span>
+                    <h4>Progress</h4>
+                    <span class="text-muted">Set a sprint budget to see progress; a spent budget ends a sprint, not a date</span>
                 </div>
             </div>
         `;
@@ -224,44 +239,28 @@ function renderSprintBurndown(sprint) {
     const total = sprint.budget;
     const spent = sprint.points_spent || 0;
     const remaining = Math.max(total - spent, 0);
-    const start = new Date(sprint.start_date);
-    const end = new Date(sprint.end_date);
-    const now = new Date();
-    const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
-    const progress = clamp((now - start) / (end - start), 0, 1);
-
-    const width = 360;
-    const height = 120;
-    const pad = 16;
-    const x0 = pad;
-    const x1 = width - pad;
-    const y0 = pad;
-    const y1 = height - pad;
-
-    const yFor = (value) => {
-        if (total === 0) return y1;
-        return y0 + (1 - value / total) * (y1 - y0);
-    };
-
-    const idealStartY = yFor(total);
-    const idealEndY = yFor(0);
-    const actualX = x0 + (x1 - x0) * progress;
-    const actualY = yFor(remaining);
+    const pct = Math.min(Math.round((spent / total) * 100), 100);
+    const stateClass = spent > total ? ' arrears' : (sprint.limbo ? ' limbo' : '');
+    const stateNote = spent > total
+        ? `in arrears by ${spent - total} pt${spent - total === 1 ? '' : 's'}: close the sprint to continue`
+        : (sprint.limbo ? 'closed, waiting on sprint rituals' : `${remaining} of ${total} pts remaining`);
 
     return `
         <div class="sprint-burndown-card">
             <div class="sprint-burndown-header">
-                <h4>Burndown</h4>
+                <h4>Progress</h4>
                 <div class="sprint-burndown-meta">
-                    <span>${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}</span>
-                    <span>${remaining} of ${total} pts remaining</span>
+                    <span>${escapeHtml(describeSprintSpan(sprint)) || 'not yet activated'}</span>
+                    <span>${escapeHtml(stateNote)}</span>
                 </div>
             </div>
-            <svg viewBox="0 0 ${width} ${height}" class="sprint-burndown-chart" role="img" aria-label="Sprint burndown chart">
-                <line x1="${x0}" y1="${idealStartY}" x2="${x1}" y2="${idealEndY}" class="burndown-ideal" />
-                <line x1="${x0}" y1="${idealStartY}" x2="${actualX}" y2="${actualY}" class="burndown-actual" />
-                <circle cx="${actualX}" cy="${actualY}" r="4" class="burndown-actual-point" />
-            </svg>
+            <div class="sprint-status-progress" role="progressbar" aria-label="Sprint budget spent"
+                 aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${Math.min(spent, total)}">
+                <div class="sprint-progress-bar">
+                    <div class="sprint-progress-fill${stateClass}" style="width: ${pct}%"></div>
+                </div>
+                <span class="text-muted">${spent}/${total} pts</span>
+            </div>
         </div>
     `;
 }
@@ -408,9 +407,9 @@ function renderSprintDetail() {
                 ${statusBadge}
                 ${sprint.limbo ? '<span class="badge badge-limbo">IN LIMBO</span>' : ''}
             </div>
-            ${sprint.start_date && sprint.end_date ? `
+            ${sprint.activated_at ? `
                 <div class="sprint-detail-dates">
-                    ${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}
+                    ${escapeHtml(describeSprintSpan(sprint))}
                 </div>
             ` : ''}
         </div>

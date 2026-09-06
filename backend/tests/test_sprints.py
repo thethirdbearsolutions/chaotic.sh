@@ -909,6 +909,24 @@ async def test_update_sprint_status(client, auth_headers, test_project, db):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "active"
+    # PATCH is a lifecycle transition too: it stamps the same outputs the
+    # service's own activation paths do (CHT-1366, PR #282 review).
+    assert data["activated_at"] is not None
+    assert data["closed_at"] is None
+
+    response = await client.patch(
+        f"/api/sprints/{sprint.id}", headers=auth_headers, json={"status": "completed"},
+    )
+    assert response.status_code == 200
+    closed = response.json()
+    assert closed["activated_at"] == data["activated_at"], "activation stamp is written once"
+    assert closed["closed_at"] is not None
+
+    # A non-transition PATCH (same status, or a rename) leaves both alone.
+    response = await client.patch(
+        f"/api/sprints/{sprint.id}", headers=auth_headers, json={"name": "renamed", "status": "completed"},
+    )
+    assert response.json()["closed_at"] == closed["closed_at"]
 
 
 @pytest.mark.asyncio
@@ -1379,3 +1397,49 @@ async def test_sprint_service_delete(db, test_project):
 
     result = await OxydeSprint.objects.filter(id=sprint_id).all()
     assert len(result) == 0
+
+
+# --- Sprints record when they ran; nothing schedules them (CHT-1366) ---
+
+
+@pytest.mark.asyncio
+async def test_sprint_dates_are_outputs_of_rotation(db, test_project):
+    """activated_at is stamped when a sprint becomes active and closed_at
+    when the close rotates it; neither is ever an input. A sprint ends when
+    its budget is spent, not on a date, so these are the only dates it has."""
+    from datetime import datetime, timezone
+
+    from app.services.sprint_service import SprintService
+
+    service = SprintService()
+    before = datetime.now(timezone.utc)
+    current, next_sprint = await service.ensure_sprints_exist(test_project.id)
+
+    assert current.activated_at is not None and current.activated_at >= before
+    assert current.closed_at is None
+    assert next_sprint.activated_at is None and next_sprint.closed_at is None
+
+    closed = await service.close_sprint(current)
+    assert closed.status == SprintStatus.COMPLETED
+    assert closed.closed_at is not None and closed.closed_at >= closed.activated_at
+
+    now_active = await service.get_current_sprint(test_project.id)
+    assert now_active.id == next_sprint.id
+    assert now_active.activated_at is not None and now_active.activated_at >= closed.activated_at
+    assert now_active.closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_sprint_create_and_update_ignore_dates(client, auth_headers, test_sprint):
+    """A client that still sends start_date/end_date is not rejected; the
+    fields are simply not part of the sprint any more."""
+    response = await client.patch(
+        f"/api/sprints/{test_sprint.id}",
+        json={"start_date": "2026-01-01T00:00:00Z", "end_date": "2026-01-14T00:00:00Z", "budget": 21},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["budget"] == 21
+    assert "start_date" not in body and "end_date" not in body
+    assert "activated_at" in body and "closed_at" in body
