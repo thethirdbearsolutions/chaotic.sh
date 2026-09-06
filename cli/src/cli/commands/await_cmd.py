@@ -754,7 +754,7 @@ def _await_event(
             raise SystemExit(1) from exc
         if exclude_user_id is None:
             _stderr(
-                "await: current user has no id field in /users/me. "
+                "await: current user has no id field in /auth/me. "
                 "--include-self defaults OFF but cannot be enforced without "
                 "a principal id. Pass --include-self to opt in."
             )

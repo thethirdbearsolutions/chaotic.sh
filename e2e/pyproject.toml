@@ -13,9 +13,26 @@ dependencies = [
     "pytest>=7.0",
 ]
 
+# `uv sync` installs the dev group by default, so the plain sync CI already
+# runs picks this up. Same pinned range as backend/cli (see
+# backend/pyproject.toml for why it is bounded).
+[dependency-groups]
+dev = [
+    "ruff>=0.16.6,<0.17",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["chaotic_e2e"]
 
 [tool.uv.sources]
 chaotic-cli = { path = "../cli", editable = true }
 chaotic-backend = { path = "../backend", editable = true }
+
+# Pyflakes-equivalent checks only (CHT-1382); mirrors backend/cli (CHT-1362).
+[tool.ruff.lint]
+select = ["F401", "F811", "F821", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# The e2e tests live at the top level rather than under tests/.
+"test_*.py" = ["F841"]
+"conftest.py" = ["F841"]
