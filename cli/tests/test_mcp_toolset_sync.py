@@ -21,10 +21,10 @@ than let the two transports silently diverge.
 """
 import asyncio
 import json
-
-import pytest
 import re
 from pathlib import Path
+
+import pytest
 
 from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, REGENERATE_SNAPSHOT, toolset_diff
 from cli.mcp_server import build_server
@@ -122,14 +122,38 @@ def _snapshot_tool_names() -> set[str]:
 def test_agents_doc_toolset_section_names_every_tool():
     """docs/agents.md's "### Toolset" section said "Eleven tools" and listed a
     stale subset for months after the surface grew to 30 (CHT-1378). Pin
-    it to the snapshot: the count it states and every tool it must name."""
-    text = (_REPO / "docs" / "agents.md").read_text()
+    it to the snapshot: it must name every tool, in the reviewed groups
+    and order, and state no count."""
+    from chaotic_mcp_tools.expected import GROUP_ORDER, group_of
+
+    text = (_REPO / "docs" / "agents.md").read_text(encoding="utf-8")
     section = text.split("### Toolset\n", 1)[1].split("\n## ", 1)[0]
     names = _snapshot_tool_names()
 
-    # No literal count: it rotted once ("Eleven" at 34) and its only job
-    # was to be kept in step with this test (CHT-1395).
+    # No literal count anywhere in the section: it rotted once ("Eleven"
+    # at 34) and its only job was to be kept in step with this test
+    # (CHT-1395). This deliberately also refuses per-group counts ("the 6
+    # sprint tools"): every number here is one more thing to rot.
     assert not re.search(r"\b\d+ tools\b", section), "docs/agents.md § Toolset states a tool count; drop it"
+
+    # Each `- **group:**` bullet names exactly the generator's group for
+    # that name, in registration order, so the README table and this list
+    # cannot drift apart (they are two views of one grouping).
+    gen = _tool_table_generator()
+    expected_groups = {g: [] for g in GROUP_ORDER}
+    for tool in gen.ALL_TOOLS:
+        expected_groups[group_of(tool.__name__)].append(tool.__name__)
+    # Only the grouped bullet list (a bullet and its indented continuation
+    # lines); the prose after it mentions tools by name too.
+    bullet_block = "\n".join(
+        line for line in section.splitlines() if line.startswith("- **") or line.startswith("  ")
+    )
+    bullets = re.findall(r"^- \*\*(\w+):\*\*(.*?)(?=^- \*\*|\Z)", bullet_block, re.M | re.S)
+    listed_groups = {group: re.findall(r"`([a-z_]+)`", body) for group, body in bullets}
+    assert listed_groups == expected_groups, (
+        "docs/agents.md § Toolset groups differ from the reviewed grouping "
+        f"(chaotic_mcp_tools/expected.py): {listed_groups} != {expected_groups}"
+    )
 
     # Only the grouped bullet list counts: prose elsewhere in the section
     # already mentions a dozen tools, so a name dropped from its group must
@@ -160,7 +184,8 @@ def test_cli_readme_tools_table_is_the_generated_one():
     tool added without rerunning it (or without a CLI_EQUIVALENTS entry)
     fails here by name."""
     gen = _tool_table_generator()
-    text = (_REPO / "cli" / "README.md").read_text()
+    text = (_REPO / "cli" / "README.md").read_text(encoding="utf-8")
+    assert gen.START in text and gen.END in text, "cli/README.md lost its mcp-tool-table markers"
     start = text.index(gen.START)
     end = text.index(gen.END, start) + len(gen.END)
     assert text[start:end] == gen.render_table(), (
@@ -181,7 +206,25 @@ def test_tool_table_generator_refuses_an_unmapped_tool():
         ...
     newcomer.__name__ = "issue_newcomer"
 
-    with pytest.raises(SystemExit, match="no entry for \\['issue_newcomer'\\]"):
+    with pytest.raises(ValueError, match="no entry for \\['issue_newcomer'\\].*gen_mcp_tool_table.py --write"):
         gen.render_table(tools=(*gen.ALL_TOOLS, newcomer))
-    with pytest.raises(SystemExit, match="unknown tools \\['gone_tool'\\]"):
+    with pytest.raises(ValueError, match="unknown tools \\['gone_tool'\\]"):
         gen.render_table(equivalents={**gen.CLI_EQUIVALENTS, "gone_tool": "x"})
+
+
+def test_tool_table_generator_refuses_an_ungrouped_prefix_and_a_broken_readme():
+    """A tool with a new subject prefix is a grouping decision, not a row
+    under "other"; a README with duplicated or missing markers is
+    refused rather than half-rewritten."""
+    from chaotic_mcp_tools.expected import group_of
+
+    gen = _tool_table_generator()
+    with pytest.raises(ValueError, match="'template_list' has no group"):
+        group_of("template_list")
+    assert group_of("label_list") == "other" and group_of("doc_view") == "docs"
+    block = gen.render_table()
+    with pytest.raises(ValueError, match="exactly one"):
+        gen.splice(f"{gen.START}\n{gen.END}\n{gen.START}\n{gen.END}", block)
+    with pytest.raises(ValueError, match="exactly one"):
+        gen.splice(f"{gen.END}\n{gen.START}", block)
+    assert gen.splice(f"before\n{gen.START}\nold\n{gen.END}\nafter", block) == f"before\n{block}\nafter"

@@ -61,6 +61,29 @@ EXPECTED_TOOLS: dict[str, bool] = {
 
 EXPECTED_TEAM_SCOPED: frozenset[str] = frozenset(n for n, takes_team in EXPECTED_TOOLS.items() if takes_team)
 
+# How the toolset is grouped for readers (the README table and
+# docs/agents.md's grouped list are both checked against this, CHT-1395).
+# A name whose prefix is not a group and which is not listed in
+# OTHER_TOOLS has no group: adding a new subject is a conscious decision
+# made here, not a row silently filed under "other".
+GROUP_ORDER: tuple[str, ...] = ("issues", "docs", "sprints", "rituals", "inbox", "other")
+_PREFIX_TO_GROUP = {"issue": "issues", "doc": "docs", "sprint": "sprints", "ritual": "rituals", "inbox": "inbox"}
+OTHER_TOOLS: frozenset[str] = frozenset({"label_list", "activity_recent", "project_list"})
+
+
+def group_of(name: str) -> str:
+    """The reader-facing group a tool belongs to."""
+    if name in OTHER_TOOLS:
+        return "other"
+    group = _PREFIX_TO_GROUP.get(name.split("_", 1)[0])
+    if group is None:
+        raise ValueError(
+            f"{name!r} has no group: its prefix is not one of {sorted(_PREFIX_TO_GROUP)} and it is not in "
+            "OTHER_TOOLS (chaotic_mcp_tools/expected.py)"
+        )
+    return group
+
+
 EDIT_THE_PIN = "edit chaotic_mcp_tools/expected.py if the change is intended"
 REGENERATE_SNAPSHOT = (
     "regenerate with `cd cli && uv run python scripts/gen_mcp_toolset_schema.py "

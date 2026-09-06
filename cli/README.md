@@ -647,14 +647,14 @@ registers them; the canonical descriptions and schemas are in
 | `issue_label` | `issue update --label` / `--remove-label` |
 | `issue_revisions` | `issue history` |
 | `issue_revision` | `issue history` (one version) |
-| `doc_link` | `doc link` |
-| `doc_unlink` | `doc unlink` |
-| `doc_revisions` | `doc history` |
-| `doc_revision` | `doc history` (one version) |
 | `doc_list` | `doc list` |
 | `doc_view` | `doc show` |
 | `doc_create` | `doc create` |
 | `doc_update` | `doc update` |
+| `doc_link` | `doc link` |
+| `doc_unlink` | `doc unlink` |
+| `doc_revisions` | `doc history` |
+| `doc_revision` | `doc history` (one version) |
 | `sprint_current` | `sprint current` |
 | `sprint_list` | `sprint list` |
 | `sprint_close` | `sprint close` |

@@ -2,19 +2,10 @@
 ``async def name(backend: Backend, ...params) -> dict`` and is registered
 through ``registry.bind`` -- never directly.
 
-Toolset (curated for quality over coverage -- see CHT-1247):
-    issues:    issue_list, issue_view, issue_create, issue_update,
-               issue_comment, issue_start, issue_ready, issue_relations,
-               issue_block, issue_unblock, issue_label, issue_revisions,
-               issue_revision
-    docs:      doc_list, doc_view, doc_create, doc_update, doc_link,
-               doc_unlink, doc_revisions, doc_revision
-    sprints:   sprint_current, sprint_list, sprint_close,
-               sprint_transactions, sprint_add, sprint_remove
-    rituals:   ritual_pending, ritual_list, ritual_attest,
-               ritual_complete
-    inbox:     inbox_list, inbox_mark_read, inbox_mark_all_read
-    other:     label_list, activity_recent, project_list
+The toolset is curated for quality over coverage (CHT-1247). ``ALL_TOOLS``
+below is the list; the reviewed pin is ``expected.EXPECTED_TOOLS``, and
+the README table and docs/agents.md's grouped list are checked against
+it (CHT-1395), so this docstring carries no copy of the names.
 
 The sprint and ritual groups exist because governance state can BLOCK
 the rest of this surface: arrears stops ticket transitions project-wide
@@ -78,12 +69,13 @@ ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
     label_list, issue_label, issue_revisions, issue_revision,
+    doc_list, doc_view, doc_create, doc_update,
     doc_link, doc_unlink, doc_revisions, doc_revision,
     sprint_current, sprint_list, sprint_close, sprint_transactions,
     sprint_add, sprint_remove,
     ritual_pending, ritual_list, ritual_attest, ritual_complete,
     inbox_list, inbox_mark_read, inbox_mark_all_read,
-    doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
+    activity_recent, project_list,
 )
 
 __all__ = ["ALL_TOOLS"] + [t.__name__ for t in ALL_TOOLS]
