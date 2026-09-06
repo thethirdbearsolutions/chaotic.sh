@@ -29,6 +29,17 @@ def group(id, mode, last=None):
     return SimpleNamespace(id=id, selection_mode=mode, last_selected_ritual_id=last)
 
 
+class TestFakesMatchTheModels:
+    def test_fake_attributes_exist_on_the_real_models(self):
+        """These tests use plain objects; pin that every attribute they set
+        is a field of the real model, so a rename fails here and not only
+        in the DB-backed suites."""
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
+
+        assert set(vars(ritual("x"))) <= set(OxydeRitual.model_fields) | {"group_id"}
+        assert set(vars(group("g", SelectionMode.ROUND_ROBIN))) <= set(OxydeRitualGroup.model_fields)
+
+
 class TestUngroupedAndMissingGroups:
     def test_empty_input_is_an_empty_selection(self):
         assert select([], {}, "seed") == Selection()
@@ -131,6 +142,15 @@ class TestRoundRobin:
         b.is_active = False
         g = group("g", SelectionMode.ROUND_ROBIN, last="a")
         assert select([a, b, c], {"g": g}, "s").chosen == [c]
+
+    def test_created_at_ties_are_broken_by_id_not_input_order(self):
+        """The listing loads siblings ordered by created_at; validation used
+        to load them unordered. With equal timestamps the two must still
+        agree, so the tie-break is the id."""
+        a, b = ritual("a", group_id="g", order=0), ritual("b", group_id="g", order=0)
+        g = group("g", SelectionMode.ROUND_ROBIN, last=None)
+        assert select_round_robin(g, [b, a]) is a
+        assert select_round_robin(g, [a, b]) is a
 
     def test_a_stale_pointer_restarts_at_the_oldest(self):
         """Pinned as current behaviour: a pointer naming a ritual no longer

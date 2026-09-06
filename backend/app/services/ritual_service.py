@@ -14,7 +14,7 @@ from app.enums import (
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
-from app.services.ritual_selection import Selection, select, select_random_one, select_round_robin
+from app.services.ritual_selection import Selection, select
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
@@ -80,15 +80,17 @@ class RitualService:
     async def _validate_group_selection(
         self, ritual: "OxydeRitual", issue_id: str, issue: "OxydeIssue | None" = None,
     ) -> None:
-        """For RANDOM_ONE/ROUND_ROBIN groups, only the selected ritual
+        """For RANDOM_ONE / ROUND_ROBIN groups, only the selected ritual
         may be attested.
 
-        Mirrors the listing logic in ritual_selection.select exactly:
-        same set of siblings (`group=ritual.group_id`, `is_active=True`,
-        and — for the RANDOM_ONE path — the same `_evaluate_conditions`
-        filter the listing applies). Without this mirroring, the seeded
-        random pick can diverge between listing and validate, causing
-        the service to reject the very ritual the listing offered.
+        Builds the same input the ticket listings build -- the group's
+        active siblings with this ritual's trigger, filtered by
+        `_evaluate_conditions` against the issue, in `created_at` order --
+        and runs the same `select` with the same seed, so this can only
+        ever accept what `get_pending_ticket_rituals` /
+        `get_pending_claim_rituals` offered. (An earlier version restated
+        the pointer arithmetic here over an unfiltered sibling set and
+        could reject the very ritual the listing offered.)
         """
         if not ritual.group_id:
             return
@@ -100,44 +102,25 @@ class RitualService:
             return
 
         siblings = await OxydeRitual.objects.filter(
-            group_id=group.id, is_active=True,
-        ).all()
+            group_id=group.id, is_active=True, trigger=ritual.trigger,
+        ).order_by("created_at").all()
+        if issue is None:
+            issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
+        if issue is not None:
+            siblings = [s for s in siblings if self._evaluate_conditions(s, issue)]
         if not siblings:
+            # The listing would have offered nothing from this group;
+            # nothing to validate against, so do not reject.
             return
 
-        if group.selection_mode == SelectionMode.RANDOM_ONE:
-            # Listing filters by _evaluate_conditions. To match, fetch
-            # the issue (with labels prefetched, since conditions can
-            # reference labels) and apply the same filter here.
-            if issue is None:
-                issue = await OxydeIssue.objects.prefetch("labels").filter(
-                    id=issue_id,
-                ).first()
-            if issue is not None:
-                siblings = [s for s in siblings if self._evaluate_conditions(s, issue)]
-            if not siblings:
-                # Listing would have produced nothing — nothing to
-                # validate against. Allow the attestation through to
-                # avoid false rejection on a degenerate group.
-                return
-            picked = select_random_one(siblings, seed=issue_id)
-            if picked is not None and picked.id != ritual.id:
-                raise ValueError(
-                    f"Ritual '{ritual.name}' is not the selected ritual in "
-                    f"group '{group.name}' for this issue; choose '"
-                    f"{picked.name}' instead."
-                )
+        chosen = select(siblings, {group.id: group}, issue_id).chosen
+        if any(c.id == ritual.id for c in chosen):
             return
-
-        if group.selection_mode == SelectionMode.ROUND_ROBIN:
-            # The same pure function the listing uses, so validate accepts
-            # exactly the ritual the listing offered.
-            picked = select_round_robin(group, siblings)
-            if picked.id != ritual.id:
-                raise ValueError(
-                    f"Ritual '{ritual.name}' is not the selected ritual in "
-                    f"group '{group.name}'; choose '{picked.name}' instead."
-                )
+        offered = chosen[0].name if chosen else "none"
+        raise ValueError(
+            f"Ritual '{ritual.name}' is not the selected ritual in "
+            f"group '{group.name}' for this issue; choose '{offered}' instead."
+        )
 
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
         """Create a new ritual for a project."""
@@ -730,7 +713,7 @@ class RitualService:
             )
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
-        await self._validate_group_selection(ritual, issue_id)
+        await self._validate_group_selection(ritual, issue_id, issue)
 
         ritual_id = ritual.id
         ritual_name = ritual.name
@@ -1004,7 +987,7 @@ class RitualService:
         await self._validate_not_agent_for_gate(ritual, user_id)
         self._validate_note(ritual, note)
         await self._validate_conditions_match(ritual, issue)
-        await self._validate_group_selection(ritual, issue_id)
+        await self._validate_group_selection(ritual, issue_id, issue)
 
         ritual_id = ritual.id
         ritual_name = ritual.name

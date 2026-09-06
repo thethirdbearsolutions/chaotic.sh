@@ -21,9 +21,16 @@ Semantics, per group `selection_mode`:
   `created_at` order (the first when the pointer is unset or names a
   ritual no longer in the group; CHT-1405 is about that restart).
 
-Ungrouped rituals are always chosen. A ritual whose group row is gone is
-treated as ungrouped. Inactive rituals are never chosen, and a group
-with no active member offers nothing.
+Ungrouped rituals are passed through as given (the callers list a
+project's active rituals to begin with). A ritual whose group row is gone
+is treated as ungrouped. Inactive grouped rituals are never chosen, and a
+group with no active member offers nothing.
+
+Callers must hand `select` the same rituals for the same seed: the
+service's listings filter by trigger and (for ticket rituals) by
+conditions before selecting, and the attest-time validation builds the
+identical input and calls `select` too, so it can only ever accept what
+the listing offered.
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ from dataclasses import dataclass, field
 from app.enums import SelectionMode
 
 
-@dataclass(frozen=True)
+@dataclass
 class Selection:
     """What a selection produced.
 
@@ -64,7 +71,9 @@ def select_round_robin(group, rituals: list):
     reads `group.last_selected_ritual_id`, never writes it."""
     if not rituals:
         return None
-    ordered = sorted(rituals, key=lambda r: r.created_at)
+    # `id` breaks created_at ties so the order does not depend on the
+    # order the caller happened to load the siblings in.
+    ordered = sorted(rituals, key=lambda r: (r.created_at, r.id))
     index = 0
     if group.last_selected_ritual_id:
         for i, r in enumerate(ordered):

@@ -274,6 +274,64 @@ class TestGroupSelectionEnforcedAtAttest:
         )
 
 
+    async def test_round_robin_validation_uses_the_listing_input(
+        self, db, test_issue, test_user, test_project
+    ):
+        """The listing drops siblings whose conditions do not match the
+        issue before selecting; validation must select over the same set.
+        Here `a` (oldest) never matches, so the listing offers `b`, and
+        attesting `b` must be accepted (CHT-1408 review)."""
+        import json
+
+        from app.enums import SelectionMode
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="rr", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="a", prompt="A", trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO, group_id=group.id, note_required=False,
+            conditions=json.dumps({"estimate__gte": 1000}),
+        )
+        r_b = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="b", prompt="B", trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO, group_id=group.id, note_required=False,
+        )
+        service = RitualService()
+        offered = await service.get_pending_ticket_rituals(test_project.id, test_issue.id)
+        assert [r.name for r in offered] == ["b"]
+
+        await service.attest_for_issue(r_b, test_issue.id, test_user.id, note="the offered one")
+
+    async def test_mixed_trigger_group_validation_uses_the_listing_input(
+        self, db, test_issue, test_user, test_project
+    ):
+        """A ROUND_ROBIN group holding an EVERY_SPRINT sibling and a
+        TICKET_CLOSE sibling: the ticket listing only ever sees the ticket
+        one, so validation must not compute over both (CHT-1403 is about
+        forbidding the mix; until then, listing and validation agree)."""
+        from app.enums import SelectionMode
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="mixed", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="sprint-one", prompt="S", trigger=RitualTrigger.EVERY_SPRINT,
+            approval_mode=ApprovalMode.AUTO, group_id=group.id, note_required=False,
+        )
+        r_t = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="ticket-one", prompt="T", trigger=RitualTrigger.TICKET_CLOSE,
+            approval_mode=ApprovalMode.AUTO, group_id=group.id, note_required=False,
+        )
+        service = RitualService()
+        offered = await service.get_pending_ticket_rituals(test_project.id, test_issue.id)
+        assert [r.name for r in offered] == ["ticket-one"]
+
+        await service.attest_for_issue(r_t, test_issue.id, test_user.id, note="the offered one")
+
+
 # ---------------------------------------------------------------------------
 # Sprint-level approve enforces trigger == EVERY_SPRINT
 # (Review finding #9.)
