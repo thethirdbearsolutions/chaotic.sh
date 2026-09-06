@@ -11,6 +11,7 @@ import json
 
 import pytest
 import pytest_asyncio
+from chaotic_mcp_tools.expected import toolset_diff
 
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
@@ -392,19 +393,10 @@ class TestToolsList:
         assert resp.status_code == 200
         tools = resp.json()["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert names == {
-            "activity_recent", "doc_create", "doc_link", "doc_list",
-            "doc_revision", "doc_revisions",
-            "doc_unlink", "doc_update", "doc_view", "issue_block",
-            "issue_comment", "issue_create", "issue_label", "issue_list",
-            "issue_ready", "issue_relations", "issue_revision", "issue_revisions",
-            "issue_start", "issue_unblock",
-            "issue_update", "issue_view", "inbox_list", "inbox_mark_all_read",
-            "inbox_mark_read", "label_list", "project_list",
-            "ritual_attest", "ritual_complete", "ritual_list",
-            "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
-            "sprint_list", "sprint_remove", "sprint_transactions",
-        }
+        problem = toolset_diff(
+            names, "the HTTP server's tools/list", hint="fix app.mcp_server.tools if a tool was dropped"
+        )
+        assert not problem, problem
 
 
 class TestToolsCall:

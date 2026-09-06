@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from chaotic_mcp_tools import RESPONSE_SHAPES, TEAM_SCOPED_TOOLS
+from chaotic_mcp_tools.expected import EDIT_THE_PIN, EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, REGENERATE_SNAPSHOT, toolset_diff
 
 from app.mcp_server.tools import ALL_TOOLS, BACKEND, build_server
 
@@ -69,30 +70,26 @@ def test_every_tool_is_async():
 
 
 def test_team_scoped_set_is_the_documented_one():
-    """The set is derived from the bodies; spell it out here so adding
-    `team` to a tool (or dropping it) is a visible, reviewed change."""
-    assert TEAM_SCOPED_TOOLS == {
-        "issue_list", "issue_create", "issue_ready", "doc_list", "doc_create",
-        "activity_recent", "project_list",
-        "label_list",
-        "sprint_current", "sprint_list", "sprint_close",
-        "sprint_transactions", "sprint_add", "doc_update",
-        "ritual_pending", "ritual_list", "ritual_attest", "ritual_complete",
-        "inbox_list", "inbox_mark_all_read",
-    }
-    # And the ones that need no `team`: they key off a globally-unique issue
-    # identifier, or resolve their team from the entity they were handed.
-    assert {t.__name__ for t in ALL_TOOLS} - TEAM_SCOPED_TOOLS == {
-        "issue_view", "issue_update", "issue_comment", "issue_start",
-        "doc_view", "issue_relations", "issue_block", "issue_unblock",
-        "issue_label", "doc_link", "doc_unlink", "sprint_remove",
-        "inbox_mark_read", "doc_revisions", "doc_revision", "issue_revisions", "issue_revision",
-    }
+    """TEAM_SCOPED_TOOLS is derived from the bodies; EXPECTED_TOOLS is the
+    reviewed intent. Adding `team` to a tool (or dropping it) must be a
+    visible change in chaotic_mcp_tools/expected.py, and the failure names
+    the tool."""
+    problem = toolset_diff(TEAM_SCOPED_TOOLS, "the team-scoped set", expected=EXPECTED_TEAM_SCOPED)
+    assert not problem, problem
+    non_team = {t.__name__ for t in ALL_TOOLS} - TEAM_SCOPED_TOOLS
+    problem = toolset_diff(non_team, "the non-team set", expected=set(EXPECTED_TOOLS) - EXPECTED_TEAM_SCOPED)
+    assert not problem, problem
 
 
 async def test_backend_covers_the_full_toolset(snapshot):
     live = await _live_toolset()
-    assert set(live.keys()) == set(snapshot.keys()) == {t.__name__ for t in ALL_TOOLS}
+    for where, names, hint in (
+        ("the HTTP server", list(live), "fix app.mcp_server.tools if a tool was dropped"),
+        ("the schema snapshot", list(snapshot), REGENERATE_SNAPSHOT),
+        ("ALL_TOOLS", [t.__name__ for t in ALL_TOOLS], EDIT_THE_PIN),
+    ):
+        problem = toolset_diff(names, where, hint=hint)
+        assert not problem, problem
 
 
 async def test_non_team_tools_match_snapshot_exactly(snapshot):

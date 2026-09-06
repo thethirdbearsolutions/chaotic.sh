@@ -17,7 +17,8 @@ enums as their ``.value``) whichever adapter implements it. ``registry.bind``
 turns a body into what ``MCPServer.add_tool`` wants -- the ``backend``
 parameter closed over, the shared error boundary applied, and the
 HTTP-only ``team`` parameter present or absent per the backend's
-``Capabilities`` -- so the 18 ``team``-taking tools are ONE body plus a
+``Capabilities`` -- so each ``team``-taking tool (``TEAM_SCOPED_TOOLS``;
+the reviewed list is ``expected.EXPECTED_TOOLS``) is ONE body plus a
 flag, not two copies.
 
 This package ships inside the ``chaotic-cli`` distribution (see

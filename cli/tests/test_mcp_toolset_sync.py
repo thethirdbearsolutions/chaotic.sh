@@ -8,7 +8,7 @@ against the same checked-in snapshot, docs/mcp-toolset-schema.json --
 this is the stdio half of that guard. See
 backend/tests/test_mcp_toolset_sync.py for the HTTP half, which allows
 the documented additive ``team`` parameter on the team-scoped tools
-(``_ADDITIVE_TEAM_TOOLS`` there); this file
+(``EXPECTED_TEAM_SCOPED`` in chaotic_mcp_tools/expected.py); this file
 requires an EXACT match, since the stdio toolset is the schema's source
 of truth (docs/mcp-toolset-schema.json's own ``_meta.generated_from``
 points at ``cli.mcp_server.build_server()``, and
@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, REGENERATE_SNAPSHOT, toolset_diff
 from cli.mcp_server import build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
@@ -91,19 +92,22 @@ def test_stdio_toolset_matches_snapshot_exactly():
 
 def test_snapshot_covers_the_full_toolset():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
-    assert set(snapshot.keys()) == {
-        "activity_recent", "doc_create", "doc_link", "doc_list",
-        "doc_revision", "doc_revisions",
-        "doc_unlink", "doc_update", "doc_view", "issue_block",
-        "issue_comment", "issue_create", "issue_label", "issue_list",
-        "issue_ready", "issue_relations", "issue_revision", "issue_revisions",
-        "issue_start", "issue_unblock",
-        "issue_update", "issue_view", "inbox_list", "inbox_mark_all_read",
-        "inbox_mark_read", "label_list", "project_list",
-        "ritual_attest", "ritual_complete", "ritual_list",
-        "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
-        "sprint_list", "sprint_remove", "sprint_transactions",
-    }
+    problem = toolset_diff(
+        set(snapshot), "the schema snapshot (docs/mcp-toolset-schema.json)", hint=REGENERATE_SNAPSHOT
+    )
+    assert not problem, problem
+
+
+def test_snapshot_team_scoped_list_is_the_reviewed_one():
+    """`_meta.team_scoped_tools` is the published list of which tools take
+    `team` on the HTTP transport (docs/agents.md points readers at it).
+    The stdio schemas never carry `team`, so nothing else in this file
+    would notice it going stale: pin it to the reviewed table directly."""
+    meta = json.loads(_SCHEMA_PATH.read_text())["_meta"]
+    problem = toolset_diff(
+        meta["team_scoped_tools"], "_meta.team_scoped_tools", expected=EXPECTED_TEAM_SCOPED, hint=REGENERATE_SNAPSHOT
+    )
+    assert not problem, problem
 
 
 _REPO = _SCHEMA_PATH.parents[1]

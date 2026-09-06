@@ -49,7 +49,11 @@ the one error boundary (ADR-0006), and rewrites the wrapper's
 `backend.capabilities.team_param` is set, `team`. The SDK honours
 `__signature__` before `__wrapped__`, so one body yields both schemas.
 `TEAM_SCOPED_TOOLS` is derived from the bodies' signatures, not listed
-by hand.
+by hand; the derivation is checked against the one hand-kept, reviewed
+table `chaotic_mcp_tools/expected.py::EXPECTED_TOOLS` (CHT-1394), so an
+unreviewed `team` parameter fails a test by name rather than silently
+changing the HTTP schema. Both adapters are checked against the protocol's
+method signatures by `chaotic_mcp_tools/conformance.py` (CHT-1396).
 
 Adapters own error translation: whatever their data source raises
 becomes one of `ToolInputError` (caller can fix), `BackendError`
