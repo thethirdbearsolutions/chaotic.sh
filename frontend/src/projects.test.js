@@ -136,8 +136,8 @@ describe('formatEstimate', () => {
     expect(formatEstimate(null, 'proj-1')).toBe('No estimate');
   });
 
-  it('returns "No estimate" for 0 value', () => {
-    expect(formatEstimate(0, 'proj-1')).toBe('No estimate');
+  it('formats 0 as a zero-point estimate, not as unestimated (CHT-1406)', () => {
+    expect(formatEstimate(0, 'proj-1')).toBe('0 points');
   });
 
   it('formats fibonacci estimate correctly', () => {
@@ -1151,5 +1151,15 @@ describe('ritual XSS prevention', () => {
     expect(deleteBtn).not.toBeNull();
     expect(deleteBtn.dataset.ritualId).toBe('r1');
     expect(deleteBtn.dataset.ritualName).toBe('test-ritual');
+  });
+});
+
+
+describe('isOutOfScale', () => {
+  it('never flags a zero-point estimate or an unset one (CHT-1406)', async () => {
+    const { isOutOfScale } = await import('./projects.js');
+    expect(isOutOfScale(0, 'proj-1')).toBe(false);
+    expect(isOutOfScale(null, 'proj-1')).toBe(false);
+    expect(isOutOfScale(undefined, 'proj-1')).toBe(false);
   });
 });

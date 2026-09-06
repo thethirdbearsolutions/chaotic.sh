@@ -7,6 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .shared import (
+    _warn_off_scale_estimate,
     _client,
     apply_ritual_attestations,
     console,
@@ -27,7 +28,6 @@ PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 # Canonical issue types and aliases
 # One copy, shared with both MCP servers (CHT-1374).
 from chaotic_mcp_tools import ISSUE_TYPE_ALIASES, ISSUE_TYPES  # noqa: E402
-from chaotic_mcp_tools.estimates import off_scale_warning
 
 
 class IssueTypeChoice(click.ParamType):
@@ -54,21 +54,6 @@ class IssueTypeChoice(click.ParamType):
             f"  Aliases: {aliases_str}",
             param, ctx,
         )
-
-
-def _warn_off_scale_estimate(project_id, estimate):
-    """Print (to stderr, so --json stays clean) when an estimate is off the
-    project's declared estimate_scale (CHT-1365). Advisory: the write has
-    already happened, and a failed lookup must not turn it into an error."""
-    if estimate is None or not project_id:
-        return
-    try:
-        scale = _client().get_project(project_id).get("estimate_scale")
-    except Exception:  # noqa: BLE001 -- advisory only
-        return
-    warning = off_scale_warning(estimate, scale)
-    if warning:
-        click.echo(click.style(f"Warning: {warning}", fg="yellow"), err=True)
 
 
 def register(cli):
@@ -588,7 +573,7 @@ def register(cli):
                 f"[dim]Status:[/dim] {iss['status'].replace('_', ' ').title()}",
                 f"[dim]Priority:[/dim] {iss['priority'].replace('_', ' ').title()}",
                 f"[dim]Type:[/dim] {iss.get('issue_type', 'task').replace('_', ' ').title()}",
-                f"[dim]Estimate:[/dim] {iss.get('estimate') or '-'} points",
+                f"[dim]Estimate:[/dim] {'-' if iss.get('estimate') is None else iss['estimate']} points",
             ]
 
             # Show parent info if this is a sub-issue
@@ -682,7 +667,7 @@ def register(cli):
                     iss["status"].replace("_", " ").title(),
                     iss["priority"].replace("_", " ").title(),
                     iss.get("issue_type", "task").replace("_", " ").title(),
-                    str(iss.get("estimate") or "-")
+                    "-" if iss.get("estimate") is None else str(iss["estimate"]),
                 )
             except m.APIError as e:
                 table.add_row(identifier, f"[red]Error: {e}[/red]", "-", "-", "-", "-")
@@ -996,7 +981,7 @@ def register(cli):
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
-                str(i.get("estimate") or "-")
+                "-" if i.get("estimate") is None else str(i["estimate"]),
             )
 
         console.print(table)

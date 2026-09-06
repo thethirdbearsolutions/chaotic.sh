@@ -504,7 +504,7 @@ function renderSprintIssueRow(issue) {
             <span class="sprint-issue-title">${escapeHtml(issue.title)}</span>
             <span class="sprint-issue-meta">
                 ${safePriority ? `<span class="badge ${priorityClass}">${formatPriority(safePriority)}</span>` : ''}
-                ${issue.estimate ? `<span class="badge badge-estimate">${issue.estimate}pt</span>` : ''}
+                ${issue.estimate != null ? `<span class="badge badge-estimate">${issue.estimate}pt</span>` : ''}
             </span>
         </div>
     `;
