@@ -112,6 +112,14 @@ class SprintService:
         2. Moves incomplete issues to Next sprint
         3. Next sprint becomes ACTIVE (new Current)
         4. Creates a new Next sprint
+
+        A caller holding a stale copy of the row (it read the sprint
+        ACTIVE, another close committed since) does not raise: the
+        transition is claimed with a conditional UPDATE and the loser
+        returns the row as the winner left it, having written nothing
+        (CHT-1404, the same contract as complete_limbo). The route
+        therefore broadcasts, and the CLI announces, a close the loser
+        did not perform; both are true of the database.
         """
         if sprint.status != SprintStatus.ACTIVE:
             raise ValueError("Can only close an active sprint")
@@ -129,6 +137,36 @@ class SprintService:
         has_rituals = bool(pending_rituals)
 
         async with atomic():
+            # Claim the transition first, with a conditional UPDATE ...
+            # RETURNING (the guard complete_limbo uses, CHT-1404). The
+            # ACTIVE/limbo=0 checks above ran on this caller's copy of the
+            # row, and get_pending_rituals ran outside this transaction, so
+            # a caller whose reads predate another close's commit gets here
+            # believing the sprint is still open. Only the caller whose
+            # UPDATE matched the row does any of the work below; the loser
+            # refreshes and returns the row as the winner left it, writing
+            # nothing (its next-sprint lookup would already see the
+            # post-rotation world and move spillover to the wrong sprint).
+            # Genuinely overlapping writers are a different case: SQLite
+            # serialises them and the second fails at its first write
+            # (deferred BEGIN, CHT-1411); this guard is for the
+            # serialised-but-stale interleaving, which is the realistic one.
+            if has_rituals:
+                # Enter limbo - sprint stays ACTIVE but blocked
+                won = await execute_raw(
+                    "UPDATE sprints SET limbo = 1 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [sprint.id, SprintStatus.ACTIVE.name],
+                )
+            else:
+                # Full rotation - complete and activate next sprint
+                won = await execute_raw(
+                    "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [SprintStatus.COMPLETED.name, sprint.id, SprintStatus.ACTIVE.name],
+                )
+            if not won:
+                await sprint.refresh()
+                return sprint
+
             # Get next sprint (or create if doesn't exist)
             next_sprint = await self.get_next_sprint(project_id)
             if not next_sprint:
@@ -156,37 +194,16 @@ class SprintService:
                 [next_sprint.id, sprint.id] + incomplete_statuses,
             )
 
-            # Both transitions below are claimed with a conditional UPDATE
-            # ... RETURNING, the same guard complete_limbo uses (CHT-1404):
-            # the ACTIVE/limbo=0 checks above ran on this caller's copy of
-            # the row, and two closes that both read it ACTIVE would both
-            # get here. Only the caller whose UPDATE matched the row may
-            # advance round-robin groups and activate the next sprint; a
-            # loser would otherwise move the pointer a second time (A -> B
-            # -> A, skipping a sibling) and run _activate_next_sprint twice.
-            # The loser refreshes and returns the row as the winner left it.
-            if has_rituals:
-                # Enter limbo - sprint stays ACTIVE but blocked
-                won = await execute_raw(
-                    "UPDATE sprints SET limbo = 1 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
-                    [sprint.id, SprintStatus.ACTIVE.name],
-                )
-            else:
-                # Full rotation - complete and activate next sprint
-                won = await execute_raw(
-                    "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
-                    [SprintStatus.COMPLETED.name, sprint.id, SprintStatus.ACTIVE.name],
-                )
-                if won:
-                    # closed_at rides in the same transaction as the status
-                    # flip (CHT-1366), saved through the ORM so the datetime
-                    # is stored the way every other path stores it.
-                    await sprint.refresh()
-                    sprint.closed_at = datetime.now(timezone.utc)
-                    await sprint.save(update_fields={"closed_at"})
-                    # The sprint rotated: round-robin groups move on (CHT-1280).
-                    await RitualService().record_sprint_rotation(project_id, sprint.id)
-                    await self._activate_next_sprint(next_sprint)
+            if not has_rituals:
+                # closed_at rides in the same transaction as the status
+                # flip (CHT-1366), saved through the ORM so the datetime
+                # is stored the way every other path stores it.
+                await sprint.refresh()
+                sprint.closed_at = datetime.now(timezone.utc)
+                await sprint.save(update_fields={"closed_at"})
+                # The sprint rotated: round-robin groups move on (CHT-1280).
+                await RitualService().record_sprint_rotation(project_id, sprint.id)
+                await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
         return sprint
