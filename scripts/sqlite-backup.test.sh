@@ -40,9 +40,15 @@ run_at() {
     CHAOTIC_BACKUP_NOW="$(epoch "$1")" bash "$SCRIPT"
 }
 
+# The previous layout's slots, frozen at some earlier state, are retired
+# by the first run so no stale file carries a name that promises recency.
+for legacy in backup.5min.db backup.4hr.db backup.12hr.db backup.24hr.db; do
+    printf 'stale' > "$DIR/$legacy"
+done
+
 # Monday 2026-09-07 00:00 UTC is ISO week 2026W37, day 1.
 run_at "2026-09-07 00:00:00"
-assert_slots "first run of a week writes every orbit" \
+assert_slots "first run of a week writes every orbit and retires legacy slots" \
     backup.10min.db backup.1hr.db backup.1min.db backup.6hr.db \
     backup.daily.20260907.db backup.weekly.2026W37.db
 
@@ -81,15 +87,33 @@ assert_slots "three weeklies kept, oldest pruned; dailies roll on" \
     backup.daily.20260914.db backup.daily.20260921.db backup.daily.20260928.db \
     backup.weekly.2026W38.db backup.weekly.2026W39.db backup.weekly.2026W40.db
 
-# A foreign file in the directory is never pruned.
-touch "$DIR/chaotic.db.predeploy-a19-20260906.db"
+# Foreign files in the directory are never pruned, wherever they sort:
+# one name before every backup.* file, one after. The assertion lists the
+# whole directory (minus the log and lock), so a temp file or a prefix-
+# sloppy prune shows up too.
+touch "$DIR/0-predeploy.db" "$DIR/chaotic.db.predeploy-a19-20260906.db"
 run_at "2026-10-05 09:00:00"
-if [ -f "$DIR/chaotic.db.predeploy-a19-20260906.db" ]; then
-    echo "ok   unrelated file survives pruning"
+listing=$(cd "$DIR" && ls -A | grep -v -e '^backup.log$' -e '^.backup.lock$' | tr '\n' ' ' | sed 's/ $//')
+expected="0-predeploy.db backup.10min.db backup.1hr.db backup.1min.db backup.6hr.db backup.daily.20260921.db backup.daily.20260928.db backup.daily.20261005.db backup.weekly.2026W39.db backup.weekly.2026W40.db backup.weekly.2026W41.db chaotic.db.predeploy-a19-20260906.db"
+if [ "$listing" = "$expected" ]; then
+    echo "ok   unrelated files survive pruning; no temp files left behind"
 else
-    echo "FAIL pruning removed an unrelated file"; fail=1
+    echo "FAIL directory listing after pruning"
+    echo "     expected: $expected"
+    echo "     actual:   $listing"
+    fail=1
 fi
-rm -f "$DIR/chaotic.db.predeploy-a19-20260906.db"
+rm -f "$DIR/0-predeploy.db" "$DIR/chaotic.db.predeploy-a19-20260906.db"
+
+# A keep count of 0 would delete the file just written; refuse it up front.
+if CHAOTIC_DB_PATH="$DB" CHAOTIC_BACKUP_DIR="$DIR" CHAOTIC_BACKUP_MIN_FREE_KB=0 CHAOTIC_BACKUP_KEEP_DAILY=0 \
+   CHAOTIC_BACKUP_NOW="$(epoch "2026-10-05 09:01:00")" bash "$SCRIPT" 2>/dev/null; then
+    echo "FAIL keep=0 was accepted"; fail=1
+elif grep -q "ERROR: keep counts must be positive" "$DIR/backup.log"; then
+    echo "ok   keep=0 is refused"
+else
+    echo "FAIL keep=0 refused without the expected log line"; fail=1
+fi
 
 # Disk guard: an absurd reserve makes the run refuse before touching anything.
 count_before=$(ls "$DIR"/backup.*.db | wc -l | tr -d ' ')

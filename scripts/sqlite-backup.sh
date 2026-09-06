@@ -34,18 +34,26 @@
 
 set -euo pipefail
 
+HOME="${HOME:-/root}"
 DB_PATH="${CHAOTIC_DB_PATH:-${HOME}/.chaotic/data/chaotic.db}"
 BACKUP_DIR="${CHAOTIC_BACKUP_DIR:-${HOME}/.chaotic/backups}"
 MIN_FREE_KB="${CHAOTIC_BACKUP_MIN_FREE_KB:-1048576}"
 KEEP_DAILY="${CHAOTIC_BACKUP_KEEP_DAILY:-3}"
 KEEP_WEEKLY="${CHAOTIC_BACKUP_KEEP_WEEKLY:-3}"
 LOGFILE="${BACKUP_DIR}/backup.log"
+TEMP_BACKUP="${BACKUP_DIR}/.backup.tmp.db"
 
 mkdir -p "$BACKUP_DIR"
 
 log() {
     echo "$(date -u '+%Y-%m-%d %H:%M:%S') $1" >> "$LOGFILE"
 }
+
+# set -e alone would abort a failed cp/mv silently, leaving a stale 1min
+# slot and a temp file behind with nothing in the log. Say where it broke,
+# and always clear the temp file and any half-written slot copies.
+trap 'log "ERROR: aborted at line $LINENO (exit $?)"' ERR
+trap 'rm -f "$TEMP_BACKUP" "${BACKUP_DIR}"/backup.*.db.tmp' EXIT
 
 # One run at a time. A .backup of a large database can outlast the cron
 # interval; a second copy racing the first would double the disk peak.
@@ -55,7 +63,15 @@ if command -v flock >/dev/null 2>&1; then
         log "SKIP: previous run still active."
         exit 0
     fi
+else
+    log "WARN: flock not found on PATH; running unlocked."
 fi
+
+for keep in "$KEEP_DAILY" "$KEEP_WEEKLY"; do
+    case "$keep" in
+        ''|*[!0-9]*|0) log "ERROR: keep counts must be positive integers (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY)."; exit 1 ;;
+    esac
+done
 
 # "Now", overridable so the rotation can be tested at chosen instants.
 NOW="${CHAOTIC_BACKUP_NOW:-$(date -u '+%s')}"
@@ -107,8 +123,9 @@ if [ "$free_kb" -lt "$need_kb" ]; then
     exit 1
 fi
 
-# Step 3: Create a safe online backup via sqlite3
-TEMP_BACKUP="${BACKUP_DIR}/.backup.tmp.db"
+# Step 3: Create a safe online backup via sqlite3. (The path is single-quoted
+# for sqlite3's dot-command parser, so a single quote in BACKUP_DIR would
+# break it; none of the paths this runs against contain one.)
 if ! sqlite3 "$DB_PATH" ".backup '${TEMP_BACKUP}'" 2>/dev/null; then
     log "ERROR: sqlite3 .backup command failed."
     rm -f "$TEMP_BACKUP"
@@ -178,4 +195,15 @@ fi
 # The 1-minute slot takes the temp file itself: one fewer copy per run.
 mv "$TEMP_BACKUP" "${BACKUP_DIR}/backup.1min.db"
 
-log "OK: Backup complete (min=$MINUTE hr=$HOUR wrote: $written)"
+# Slots the previous seven-slot layout wrote and this one does not. Left in
+# place they would carry names that promise recency while frozen at the day
+# this layout was deployed. They are script-owned, so the script retires them.
+rm -f "${BACKUP_DIR}/backup.5min.db" "${BACKUP_DIR}/backup.4hr.db" \
+      "${BACKUP_DIR}/backup.12hr.db" "${BACKUP_DIR}/backup.24hr.db"
+
+# One OK line per minute is ~30 MB of log a year; a heartbeat at every
+# 10-minute mark (when more than the 1min slot was written) is enough.
+# Every non-OK outcome above is always logged.
+if [ "$written" != "1min" ]; then
+    log "OK: Backup complete (min=$MINUTE hr=$HOUR wrote: $written)"
+fi
