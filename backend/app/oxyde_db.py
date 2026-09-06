@@ -1,5 +1,6 @@
 """Oxyde ORM database configuration."""
 import glob
+import logging
 import os
 import typing
 import uuid
@@ -218,6 +219,38 @@ async def init_oxyde() -> AsyncDatabase:
     return _db
 
 
+MIGRATIONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "migrations"))
+
+
+async def bootstrap_if_empty() -> list[str]:
+    """Create the schema on a brand-new database by applying the whole
+    migration chain (CHT-1195). Returns the migrations applied, [] when
+    the database already had tables.
+
+    This is the one case where applying migrations at startup is safe: an
+    empty file has no data to protect and no running-old-code hazard, so a
+    self-hoster who points uvicorn at a fresh DATABASE_URL gets a working
+    server instead of "no such table" on the first request. Every other
+    state is left to verify_migrations_current: a database that already
+    has tables and is behind the code must be migrated deliberately, by an
+    operator, before the new code serves it (the CHT-1317 incident).
+    """
+    from oxyde import execute_raw
+
+    tables = await execute_raw(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    )
+    if tables:
+        return []
+    from oxyde.migrations.executor import apply_migrations
+
+    applied = await apply_migrations(migrations_dir=MIGRATIONS_DIR)
+    logging.getLogger(__name__).info(
+        "Empty database: created the schema by applying %d migration(s) (CHT-1195)", len(applied),
+    )
+    return applied
+
+
 async def verify_migrations_current() -> None:
     """Fail loud at startup if the DB is BEHIND (or AHEAD of) the code's
     migrations (CHT-1318).
@@ -248,10 +281,9 @@ async def verify_migrations_current() -> None:
         raise
 
     applied = {r["name"] for r in rows}
-    mig_dir = os.path.join(os.path.dirname(__file__), os.pardir, "migrations")
     code = {
         os.path.splitext(os.path.basename(f))[0]
-        for f in glob.glob(os.path.join(mig_dir, "[0-9]*.py"))
+        for f in glob.glob(os.path.join(MIGRATIONS_DIR, "[0-9]*.py"))
     }
     pending = sorted(code - applied)
     ahead = sorted(applied - code)

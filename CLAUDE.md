@@ -215,9 +215,11 @@ Using SQLite with Oxyde ORM and Oxyde migrations.
    oxyde migrate
    ```
 
-### For New Installations
+### How a database comes to exist
 
-New databases are automatically created on first startup via `apply_migrations()` in the app lifespan.
+- **`chaotic system install` / `upgrade`** run `oxyde migrate` before starting the service. This is the path for a managed install and the only path that migrates an *existing* database.
+- **A brand-new, empty database** (no tables at all, e.g. uvicorn pointed at a fresh `DATABASE_URL`) gets the whole migration chain applied at startup by `bootstrap_if_empty()` in the app lifespan (CHT-1195). That is the one case where migrating at startup cannot lose anything.
+- **An existing database that is behind the code** is never migrated at startup: `verify_migrations_current()` refuses to serve it until an operator runs `oxyde migrate` (CHT-1318; the CHT-1317 incident is why). A database with tables but no `oxyde_migrations` table (hand-built, or the test harness) is served as is.
 
 ### Important Notes
 
