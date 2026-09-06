@@ -130,7 +130,17 @@ def test_column_list_covers_models_at_freeze_time():
         if cols:
             from_models[cls.get_table_name()] = cols
 
-    frozen = {t: sorted(c) for t, c in mig.DATETIME_COLUMNS.items()}
+    # Columns renamed by a LATER migration. 0006 must keep the names the
+    # columns had when it runs (a fresh DB applies 0006 before the rename),
+    # so the typo check compares through the rename instead.
+    renamed_since_freeze = {
+        ("sprints", "start_date"): "activated_at",  # 0016 (CHT-1366)
+        ("sprints", "end_date"): "closed_at",
+    }
+    frozen = {
+        t: sorted(renamed_since_freeze.get((t, c), c) for c in cols)
+        for t, cols in mig.DATETIME_COLUMNS.items()
+    }
     # Typo check: every frozen table/column is a real model datetime field.
     for table, cols in frozen.items():
         assert table in from_models, f"unknown table in migration: {table}"
