@@ -37,6 +37,26 @@ def mock_dependencies(patched_auth, patched_project):
     yield
 
 
+@pytest.fixture(autouse=True)
+def restore_client_mocks():
+    """Undo the `client.<method> = MagicMock(...)` assignments each test makes
+    on the shared `cli.main.client` singleton (CHT-1391). Those instance
+    attributes shadow the class methods and used to leak into every later
+    test in the session, so a test could pass only because an earlier one
+    had left the mock it needed behind (and fail when run alone). Snapshot
+    the instance dict before the test and put it back afterwards; class
+    attributes are untouched, so the real methods reappear.
+    """
+    from cli.main import client
+
+    before = dict(vars(client))
+    yield
+    for name in list(vars(client)):
+        if name not in before:
+            delattr(client, name)
+    vars(client).update(before)
+
+
 @pytest.fixture
 def mcp_mod():
     """Import cli.mcp_server after cli.main/client mocking is wired up."""
@@ -1287,8 +1307,12 @@ class TestSprintTools:
         client.close_sprint = MagicMock(return_value={
             "id": "sp-1", "name": "Sprint 1", "limbo": False, "budget": 5, "points_spent": 5,
         })
+        client.get_current_sprint = MagicMock(return_value={
+            "id": "sp-2", "name": "Sprint 2", "budget": 8, "points_spent": 0,
+        })
         result = await mcp_mod.sprint_close()
         assert result["entered_limbo"] is False
+        assert result["now_active"]["id"] == "sp-2" and "lookup_error" not in result
         client.close_sprint.assert_called_once_with("sp-1")
 
     async def test_sprint_close_reports_limbo(self, mcp_mod, monkeypatch):
