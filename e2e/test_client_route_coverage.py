@@ -26,8 +26,9 @@ then asserted, each against an explicit, reasoned skip-list:
 
 The skip-lists are compared for EQUALITY, not containment: covering a
 listed route or parameter fails the test until its entry is removed, so the
-lists stay an honest inventory of the gap (tracked as CHT-1383), and adding
-a route or a query parameter to the backend without teaching the client
+lists stay an honest inventory of the gap (CHT-1383 closed the original
+one: every route has a method and every list can be paged), and adding a
+route or a query parameter to the backend without teaching the client
 fails the e2e job with a table naming it.
 
 Out of scope, deliberately: request BODIES. Every `**kwargs` method sends
@@ -54,45 +55,17 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     ("GET", "/cli-auth"): "browser login page the CLI opens with webbrowser, not an API call",
 }
 
-# Routes that exist server-side but have no Client method yet (CHT-1383).
-ROUTES_WITHOUT_A_CLIENT_METHOD = {
-    ("GET", "/api/documents/{document_id}/labels"): "document labels: no `chaotic doc label` yet (CHT-1383)",
-    ("POST", "/api/documents/{document_id}/labels/{label_id}"): "document labels (CHT-1383)",
-    ("DELETE", "/api/documents/{document_id}/labels/{label_id}"): "document labels (CHT-1383)",
-    ("POST", "/api/inbox/{entry_id}/archive"): "inbox archive not exposed by the CLI (CHT-1383)",
-    ("POST", "/api/issues/batch-update"): "CLI loops per-issue instead (sprint_cmd.py) (CHT-1383)",
-    ("GET", "/api/issues/{issue_id}/activities"): "per-issue activity feed; CLI reaches only team activities (CHT-1383)",
-    ("GET", "/api/labels/{label_id}"): "single-label read (CHT-1383)",
-    ("GET", "/api/rituals/pending-gates"): "pending-gates listing (CHT-1383)",
-    ("GET", "/api/users/{user_id}"): "user profile read (CHT-1383)",
-    ("PATCH", "/api/users/me"): "profile edit not exposed by the CLI (CHT-1383)",
-    ("DELETE", "/api/users/me"): "account deletion is web-only by design (CHT-1383)",
-}
+# Routes that exist server-side but have no Client method yet. Empty since
+# CHT-1383; a new route lands here (with a reason) or gets a method.
+ROUTES_WITHOUT_A_CLIENT_METHOD: dict = {}
 
 # Query parameters a reachable route declares that the client cannot emit.
-# Keyed by (method, route template) -> {param: reason} (CHT-1383).
-_PAGING = "pagination not exposed; callers get the server's default page (CHT-1383)"
+# Keyed by (method, route template) -> {param: reason}. Pagination is no
+# longer on this list (CHT-1383): every list method takes skip/limit.
 PARAMS_NOT_EXPOSED = {
-    ("GET", "/api/api-keys"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/documents/{document_id}/comments"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/documents/{document_id}/revisions"): {"skip": _PAGING},
     ("GET", "/api/issues"): {
         "label_match": "CLI deliberately omits it (pinned by cli/tests/test_issue_list_labels.py)",
     },
-    ("GET", "/api/issues/search"): {"skip": _PAGING},
-    ("GET", "/api/issues/{issue_id}/comments"): {"skip": _PAGING},
-    ("GET", "/api/issues/{issue_id}/description-revisions"): {"skip": _PAGING},
-    ("GET", "/api/issues/{issue_id}/relations"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/issues/{issue_id}/sub-issues"): {"skip": _PAGING},
-    ("GET", "/api/projects/{project_id}/rituals"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/projects/{project_id}/sprints"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/rituals/groups"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/sprints/{sprint_id}/transactions"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/teams/{team_id}/documents"): {"skip": _PAGING},
-    ("GET", "/api/teams/{team_id}/invitations"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/teams/{team_id}/labels"): {"skip": _PAGING},
-    ("GET", "/api/teams/{team_id}/members"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/teams/{team_id}/projects"): {"skip": _PAGING},
 }
 
 # Client methods whose path depends on WHICH arguments are given: call them
