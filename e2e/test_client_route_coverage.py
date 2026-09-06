@@ -21,11 +21,19 @@ then asserted, each against an explicit, reasoned skip-list:
 3. for every reachable route, the client can emit every declared query
    parameter, except the ones in PARAMS_NOT_EXPOSED.
 
+4. every query key the client emits is one the matched route declares (a
+   misspelt key is ignored server-side, the same silent-fallback class).
+
 The skip-lists are compared for EQUALITY, not containment: covering a
 listed route or parameter fails the test until its entry is removed, so the
 lists stay an honest inventory of the gap (tracked as CHT-1383), and adding
 a route or a query parameter to the backend without teaching the client
 fails the e2e job with a table naming it.
+
+Out of scope, deliberately: request BODIES. Every `**kwargs` method sends
+its kwargs as the JSON body, which pydantic validates server-side (a 422
+names any unknown field); only query strings can be silently ignored, so
+only query strings are guarded here.
 """
 import inspect
 from urllib.parse import parse_qs, urlsplit
@@ -108,6 +116,9 @@ class _Permissive(dict):
 
 
 def _sentinel_for(param: inspect.Parameter):
+    # Substring test on the annotation text: adequate for the client's plain
+    # `str | None` / `int | None` / `bool` parameters, fragile if it ever
+    # grows a type alias whose NAME contains "int" or "bool".
     ann = str(param.annotation)
     if "bool" in ann:
         return True
@@ -121,6 +132,22 @@ def _matches(template: str, path: str) -> bool:
     return len(ts) == len(ps) and all(
         t == p or (t.startswith("{") and t.endswith("}")) for t, p in zip(ts, ps)
     )
+
+
+def _literal_segments(template: str) -> int:
+    return sum(not seg.startswith("{") for seg in template.split("/"))
+
+
+def _resolve(spec_routes, method: str, path: str) -> list:
+    """The route(s) the server would dispatch `path` to: among all templates
+    that match, only the most literal ones. Without this, `/api/sprints/
+    current` would also be credited to `/api/sprints/{sprint_id}` and hide a
+    lost method or a new parameter on the dynamic route (PR #273 review)."""
+    hits = [(m, t) for m, t, _ in spec_routes if m == method and _matches(t, path)]
+    if not hits:
+        return []
+    best = max(_literal_segments(t) for _, t in hits)
+    return [h for h in hits if _literal_segments(h[1]) == best]
 
 
 def _table(rows, headers):
@@ -142,15 +169,18 @@ def spec_routes(test_server):
                 continue
             query = [p["name"] for p in op.get("parameters", []) if p.get("in") == "query"]
             routes.append((method.upper(), path, query))
+    # 127 routes today; a partial or truncated document must not pass as
+    # "everything is covered".
     assert len(routes) > 100, "openapi.json looks truncated"
     return routes
 
 
 @pytest.fixture(scope="module")
 def client_calls():
-    """[(client_method, HTTP method, path-with-query)] plus the methods that
-    never reached _request, recorded by calling every public Client method
-    with sentinel arguments."""
+    """[(client_method, HTTP method, path-with-query)] plus every exception a
+    method raised (before OR after its request -- a method that blows up on
+    the recorded response would otherwise hide its later requests), recorded
+    by calling every public Client method with sentinel arguments."""
     calls, failures = [], []
     current = {"name": None}
 
@@ -176,8 +206,8 @@ def client_calls():
                 try:
                     getattr(client, name)(**variant)
                 except Exception as e:  # noqa: BLE001 - reported below
-                    if len(calls) == before:
-                        failures.append((name, f"raised before requesting: {e!r}"))
+                    when = "before requesting" if len(calls) == before else "after requesting"
+                    failures.append((name, f"raised {when}: {e!r}"))
     finally:
         Client._request = original
     return calls, failures
@@ -193,7 +223,7 @@ def _coverage(spec_routes, client_calls):
         parts = urlsplit(raw)
         full = "/api" + parts.path
         keys = set(parse_qs(parts.query, keep_blank_values=True))
-        hits = [(m, t) for m, t, _ in spec_routes if m == method and _matches(t, full)]
+        hits = _resolve(spec_routes, method, full)
         if not hits:
             unmatched.append((client_method, f"{method} {full}"))
         for hit in hits:
@@ -219,7 +249,8 @@ def test_every_route_is_reachable_or_explicitly_skipped(spec_routes, client_call
     new_gaps = sorted(uncovered - skipped)
     assert not new_gaps, (
         "Routes no Client method can reach. Add a client method, or add the route to "
-        "ROUTES_WITHOUT_A_CLIENT_METHOD with a reason:\n"
+        "ROUTES_WITHOUT_A_CLIENT_METHOD (a CLI gap) or ROUTES_NOT_FOR_THE_CLIENT (frontend/"
+        "infra) with a reason:\n"
         + _table([(m, t, ",".join(q)) for m, t, q in spec_routes if (m, t) in set(new_gaps)],
                  ["method", "route", "query params"])
     )
@@ -256,11 +287,30 @@ def test_every_reachable_route_param_is_emittable_or_explicitly_skipped(spec_rou
     )
 
 
+def test_every_emitted_query_key_is_one_the_route_declares(spec_routes, client_calls):
+    """The other direction: a key the client sends that the route does not
+    declare is ignored server-side (a misspelling, or a renamed parameter),
+    so every caller silently gets the unfiltered default."""
+    declared = {(m, t): set(q) for m, t, q in spec_routes}
+    calls, _ = client_calls
+    rows = []
+    for client_method, method, raw in calls:
+        parts = urlsplit(raw)
+        keys = set(parse_qs(parts.query, keep_blank_values=True))
+        for hit in _resolve(spec_routes, method, "/api" + parts.path):
+            for key in sorted(keys - declared[hit]):
+                rows.append((client_method, method, hit[1], key))
+    assert not rows, (
+        "Query keys the client sends that the route does not declare (the server ignores "
+        "them):\n" + _table(rows, ["client method", "method", "route", "undeclared key"])
+    )
+
+
 def test_skip_lists_only_name_routes_the_spec_declares(spec_routes):
     declared = {(m, t) for m, t, _ in spec_routes}
     for listed in (*ROUTES_NOT_FOR_THE_CLIENT, *ROUTES_WITHOUT_A_CLIENT_METHOD, *PARAMS_NOT_EXPOSED):
         assert listed in declared, f"skip-list names a route the spec does not declare: {listed}"
+    declared_params_by_route = {(m, t): set(q) for m, t, q in spec_routes}
     for key, params in PARAMS_NOT_EXPOSED.items():
-        declared_params = next(set(q) for m, t, q in spec_routes if (m, t) == key)
-        unknown = set(params) - declared_params
+        unknown = set(params) - declared_params_by_route[key]
         assert not unknown, f"PARAMS_NOT_EXPOSED[{key}] names params the route does not declare: {unknown}"

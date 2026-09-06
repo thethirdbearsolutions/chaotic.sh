@@ -570,6 +570,16 @@ chaotic await sprint --include-self
 - Concurrent `await` invocations are supported. No client-side
   coordination is required; each process maintains its own watermark.
 
+## Route coverage guard
+
+`e2e/test_client_route_coverage.py` calls every public `Client` method
+against the live `/openapi.json` and fails when a route or a query
+parameter the backend declares cannot be reached from this client (or when
+the client sends a key the route does not declare). Deliberate gaps live in
+that file's skip-lists with a reason each (currently inventoried as
+CHT-1383); adding a client method or kwarg that closes a gap requires
+removing its entry, so the lists stay honest.
+
 ## MCP server
 
 `chaotic mcp` runs an MCP (Model Context Protocol) server over stdio,
