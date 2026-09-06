@@ -1322,10 +1322,16 @@ class IssueService:
     async def delete(self, issue) -> None:
         """Delete an issue.
 
-        Schema cascades only fire under PRAGMA foreign_keys = ON, which
-        Oxyde defaults OFF — so every child table needs an explicit
-        delete here. (Open question on the broader codebase: do other
-        delete() methods have the same gap? Tracking as a follow-up.)
+        The child-table deletes below are defense in depth, not a
+        necessity: PRAGMA foreign_keys is ON on every connection Oxyde's
+        driver opens (measured on the runtime and test connections;
+        tests/test_infrastructure.py pins it, since nothing in this repo
+        sets it and a driver change could flip it), so the schema's ON
+        DELETE CASCADE rules fire and other services' delete() methods
+        rely on them with no gap (CHT-1341). They stay here because the
+        order is explicit and greppable, and because an issue's children
+        span nine tables that a future migration could add to without
+        a cascade.
         """
         from app.oxyde_models.ritual import OxydeRitualAttestation
 
