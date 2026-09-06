@@ -402,7 +402,7 @@ class TestTicketRitualErrorRendering:
         ))
         assert "Attested by ethan, awaiting human approval (review): design-review" in text
         assert "Nothing more to attest" in text
-        assert "Usage:" not in text
+        assert "ritual attest" not in text
 
     def test_mixed_rows_show_state_then_the_next_thing_to_do(self):
         text = Client()._format_ticket_ritual_error(self._detail(
@@ -414,6 +414,27 @@ class TestTicketRitualErrorRendering:
         assert text.index("awaiting human approval") < text.index("Pending ritual: work-on-branch")
         assert "chaotic ritual attest work-on-branch --ticket CHT-9" in text
         assert "(1 more ritual(s) pending after this one)" in text
+
+    def test_gate_ritual_gets_the_complete_hint_not_the_attest_one(self):
+        text = Client()._format_ticket_ritual_error(self._detail(
+            {"name": "claim-gate", "prompt": "Gate.", "approval_mode": "gate", "attestation": None},
+        ))
+        assert "Gate ritual (human completion only): claim-gate" in text
+        assert "chaotic ritual complete claim-gate --ticket CHT-9" in text
+        assert "ritual attest" not in text
+        assert "Nothing more to attest" in text
+
+    def test_missing_attester_name_falls_back_to_the_id_or_nothing(self):
+        text = Client()._format_ticket_ritual_error(self._detail(
+            {"name": "r1", "approval_mode": "review", "attestation": {"attested_by": "user-42"}},
+            {"name": "r2", "attestation": {}},
+            {"name": "r3", "attestation": {"attested_by_name": None}},
+        ))
+        assert "Attested by user-42, awaiting human approval (review): r1" in text
+        assert "by you" not in text
+        # r2's empty attestation counts as unattested; r3 has no actor or mode
+        assert "Attested, awaiting human approval: r3" in text
+        assert "Pending ritual: r2" in text
 
     def test_legacy_string_rows_still_render(self):
         text = Client()._format_ticket_ritual_error(self._detail("old-style"))

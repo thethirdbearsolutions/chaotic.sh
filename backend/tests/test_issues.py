@@ -4186,6 +4186,7 @@ async def test_claim_refusal_reports_attestation_state(client, auth_headers, tes
     assert row["approval_mode"] == "review" and row["trigger"] == "ticket_claim"
     assert row["attestation"] is None
     assert detail["unattested"] == ["design-review"] and detail["awaiting_approval"] == []
+    assert detail["gate"] == []
     assert "1 unattested (design-review)" in detail["message"]
     assert "Attest the unattested ones before claiming." in detail["message"]
 
@@ -4208,7 +4209,7 @@ async def test_claim_refusal_reports_attestation_state(client, auth_headers, tes
     assert row["attestation"]["approved_at"] is None
     assert detail["unattested"] == [] and detail["awaiting_approval"] == ["design-review"]
     assert "1 attested, awaiting human approval (design-review)" in detail["message"]
-    assert "Nothing more to attest; a human must approve before claiming." in detail["message"]
+    assert "Nothing more to attest; a human must approve the attested ones before claiming." in detail["message"]
 
 
 @pytest.mark.asyncio
@@ -4230,5 +4231,8 @@ async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, tes
     detail = response.json()["detail"]
     (row,) = detail["pending_rituals"]
     assert row["approval_mode"] == "gate" and row["attestation"] is None
-    assert detail["unattested"] == ["claim-gate"]
-    assert detail["message"].startswith("Cannot create issue as in_progress - ticket has pending claim rituals: 1 unattested (claim-gate).")
+    # A GATE ritual is never "attest this": only a human can complete it.
+    assert detail["gate"] == ["claim-gate"]
+    assert detail["unattested"] == [] and detail["awaiting_approval"] == []
+    assert "1 gate ritual only a human can complete (claim-gate)" in detail["message"]
+    assert "a human must complete the gate ritual before claiming" in detail["message"]

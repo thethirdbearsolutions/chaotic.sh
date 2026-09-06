@@ -141,17 +141,30 @@ class Client:
         if not pending:
             return "Ticket has pending rituals."
 
-        # Since CHT-1360 each row carries its attestation state: an attested
-        # ritual awaiting a human's approval is reported as such rather than
-        # as something to attest again.
-        awaiting = [r for r in pending if isinstance(r, dict) and r.get("attestation")]
-        todo = [r for r in pending if not (isinstance(r, dict) and r.get("attestation"))]
+        # Since CHT-1360 each row carries its attestation state and approval
+        # mode: an attested ritual awaiting a human's approval is reported as
+        # such rather than as something to attest again, and a GATE ritual
+        # (human-completion only; attesting it is refused) gets the
+        # `ritual complete` hint instead of the `ritual attest` one.
+        def _is_dict(r):
+            return isinstance(r, dict)
+
+        awaiting = [r for r in pending if _is_dict(r) and r.get("attestation")]
+        gate = [r for r in pending if _is_dict(r) and not r.get("attestation") and r.get("approval_mode") == "gate"]
+        todo = [r for r in pending if r not in awaiting and r not in gate]
 
         lines = []
         for r in awaiting:
-            by = (r.get("attestation") or {}).get("attested_by_name") or "you"
-            mode = r.get("approval_mode") or "review"
-            lines.append(f"Attested by {by}, awaiting human approval ({mode}): {r.get('name', 'unknown')}")
+            att = r.get("attestation") or {}
+            by = att.get("attested_by_name") or att.get("attested_by")
+            mode = r.get("approval_mode")
+            who = f" by {by}" if by else ""
+            how = f" ({mode})" if mode else ""
+            lines.append(f"Attested{who}, awaiting human approval{how}: {r.get('name', 'unknown')}")
+        for r in gate:
+            name = r.get("name", "unknown")
+            lines.append(f"Gate ritual (human completion only): {name}")
+            lines.append(f"  A human runs: chaotic ritual complete {name} --ticket {issue_id}")
 
         if todo:
             # Only show the first unattested ritual — subsequent ones are
@@ -176,7 +189,7 @@ class Client:
                 lines.append(f"\n({len(todo) - 1} more ritual(s) pending after this one)")
         else:
             lines.append(
-                "\nNothing more to attest -- a human must approve the attestation(s) above "
+                "\nNothing more to attest -- a human must approve/complete the ritual(s) above "
                 "before this transition can proceed."
             )
 

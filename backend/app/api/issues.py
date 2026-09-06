@@ -46,7 +46,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssueRelation
-from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import ApprovalMode, IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import DocumentActivityType, IssueRelationType
 
 
@@ -257,32 +257,48 @@ async def issue_response(issue: Issue) -> IssueResponse:
 async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
     """The 409 detail for a claim/close refused by pending ticket rituals
     (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
-    returns -- approval_mode and attestation included -- and the message
-    separates what the caller can still do (attest) from what only a human
-    can (approve):
+    returns -- approval_mode and attestation included -- and three name
+    lists plus the message separate what the caller can still do from what
+    only a human can:
+
+      * ``unattested``: AUTO/REVIEW rituals with no attestation -> attest.
+      * ``awaiting_approval``: attested, REVIEW -> a human approves.
+      * ``gate``: GATE rituals -> a human completes (attesting is refused).
 
         "Ticket has pending claim rituals: 1 unattested (work-on-branch);
          1 attested, awaiting human approval (design-review). Attest the
          unattested ones before claiming."
+
+    Cost: one attestation lookup per ritual (plus two user lookups per
+    attested one) on top of the gating queries the service already ran;
+    fine at today's ritual counts, revisit if projects grow dozens.
     """
     rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []
     if rows:
-        unattested = [r.name for r in rows if r.attestation is None]
+        gate = [r.name for r in rows if r.approval_mode == ApprovalMode.GATE and r.attestation is None]
         awaiting = [r.name for r in rows if r.attestation is not None]
+        unattested = [r.name for r in rows if r.attestation is None and r.approval_mode != ApprovalMode.GATE]
         pending = [r.model_dump(mode="json") for r in rows]
     else:  # a raiser without rows: keep the minimal name/prompt list
         unattested = [r.get("name", "unknown") for r in e.pending_rituals]
-        awaiting = []
+        awaiting, gate = [], []
         pending = e.pending_rituals
     parts = []
     if unattested:
         parts.append(f"{len(unattested)} unattested ({', '.join(unattested)})")
     if awaiting:
         parts.append(f"{len(awaiting)} attested, awaiting human approval ({', '.join(awaiting)})")
+    if gate:
+        parts.append(f"{len(gate)} gate ritual{'s' if len(gate) != 1 else ''} only a human can complete ({', '.join(gate)})")
     if unattested:
         action = f"Attest the unattested ones before {verb}."
     else:
-        action = f"Nothing more to attest; a human must approve before {verb}."
+        human = []
+        if awaiting:
+            human.append("approve the attested ones")
+        if gate:
+            human.append(f"complete the gate ritual{'s' if len(gate) != 1 else ''}")
+        action = f"Nothing more to attest; a human must {' and '.join(human) or 'act'} before {verb}."
     return {
         "error_code": error_code,
         "message": f"{lead}: {'; '.join(parts)}. {action}",
@@ -290,6 +306,7 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
         "pending_rituals": pending,
         "unattested": unattested,
         "awaiting_approval": awaiting,
+        "gate": gate,
     }
 
 

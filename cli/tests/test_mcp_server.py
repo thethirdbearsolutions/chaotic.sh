@@ -150,7 +150,7 @@ class TestErrorBoundary:
         from cli.main import client
         detail = {
             "error_code": "claim_rituals_pending",
-            "message": "Ticket has pending claim rituals. Complete them before claiming.",
+            "message": "Ticket has pending claim rituals: 1 unattested (design-review). Attest the unattested ones before claiming.",
             "issue_id": "CHT-1",
             "pending_rituals": [{"name": "design-review", "prompt": "Write it."}],
         }

@@ -204,9 +204,11 @@ errors keep their structure (`pending_rituals`, `arrears_by`, `override`
 hints) so you can act on them without parsing prose. A claim/close refused
 for pending ticket rituals lists each ritual with its `approval_mode` and
 any recorded `attestation` (the same rows `ritual_pending` returns), plus
-`unattested` and `awaiting_approval` name lists, and its message says
-which of the two you are looking at -- re-attesting something that is
-only waiting on a human is never the right move (CHT-1360). Both transports
+three name lists -- `unattested` (attest these), `awaiting_approval`
+(attested; a human approves) and `gate` (a human completes; attesting a
+gate ritual is refused) -- and its message says which you are looking at.
+Re-attesting something that is only waiting on a human is never the right
+move (CHT-1360). Both transports
 produce the identical envelope. (The CLI's own `--json` mode keeps its
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)
