@@ -775,6 +775,57 @@ class TestInboxApi:
         assert resp.status_code == 200
         assert resp.json()[0]["issue_identifier"] == test_issue.identifier
 
+    async def test_list_page_costs_a_fixed_number_of_queries(
+        self, client, db, test_project, test_team, test_issue, test_user, test_user2, auth_headers, monkeypatch,
+    ):
+        """The display fields (issue identifier, document title, source
+        user name) are fetched once per page with `id__in`, not once per
+        entry (CHT-1399): a 20-entry page must cost the same number of
+        queries as a 2-entry page."""
+        from oxyde.db.pool import AsyncDatabase
+
+        from app.services.document_service import DocumentService
+        from app.schemas.document import DocumentCreate
+
+        document = await DocumentService().create(
+            DocumentCreate(title="Doc", content="", project_id=test_project.id),
+            author_id=test_user.id, team_id=test_team.id,
+        )
+
+        async def make(n):
+            for i in range(n):
+                await OxydeInboxEntry.objects.create(
+                    recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
+                    team_id=test_team.id, issue_id=test_issue.id, document_id=document.id,
+                    source_user_id=test_user2.id, title=f"m{i}",
+                )
+
+        calls = []
+        real_execute = AsyncDatabase.execute
+
+        async def counting_execute(self, ir):
+            calls.append(ir.get("op") or ir.get("kind") or "?")
+            return await real_execute(self, ir)
+
+        monkeypatch.setattr(AsyncDatabase, "execute", counting_execute)
+
+        await make(2)
+        calls.clear()
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert resp.status_code == 200 and len(resp.json()) == 2
+        small = len(calls)
+        assert small > 0, "the query counter saw nothing; it is hooked on the wrong path"
+
+        await make(18)
+        calls.clear()
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert resp.status_code == 200 and len(resp.json()) == 20
+        assert len(calls) == small, f"{len(calls)} queries for 20 entries vs {small} for 2"
+        body = resp.json()
+        assert {e["issue_identifier"] for e in body} == {test_issue.identifier}
+        assert {e["document_title"] for e in body} == {"Doc"}
+        assert {e["source_user_name"] for e in body} == {test_user2.name}
+
     async def test_unread_count_endpoint(self, client, db, test_team, test_user, auth_headers):
         await OxydeInboxEntry.objects.create(
             recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
