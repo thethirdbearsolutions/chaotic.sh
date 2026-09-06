@@ -109,10 +109,13 @@ class TestServerAssembly:
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
         assert names == {
             "activity_recent", "doc_create", "doc_link", "doc_list",
+            "doc_revision", "doc_revisions",
             "doc_unlink", "doc_update", "doc_view", "issue_block",
             "issue_comment", "issue_create", "issue_label", "issue_list",
-            "issue_ready", "issue_relations", "issue_start", "issue_unblock",
-            "issue_update", "issue_view", "label_list", "project_list",
+            "issue_ready", "issue_relations", "issue_revision", "issue_revisions",
+            "issue_start", "issue_unblock",
+            "issue_update", "issue_view", "inbox_list", "inbox_mark_all_read",
+            "inbox_mark_read", "label_list", "project_list",
             "ritual_attest", "ritual_complete", "ritual_list",
             "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
             "sprint_list", "sprint_remove", "sprint_transactions",

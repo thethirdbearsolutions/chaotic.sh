@@ -63,6 +63,16 @@ class FakeBackend:
         self.pending_issue_rituals = {"pending_rituals": [], "completed_rituals": []}
         self.limbo = {"in_limbo": False, "pending_rituals": []}
         self.estimate_scale = "fibonacci"
+        self.inbox = [
+            {"id": "in-1", "kind": "mention", "title": "ethan mentioned you on CHT-1", "team_id": "team-1",
+             "issue_identifier": "CHT-1", "document_title": None, "source_user_name": "ethan",
+             "body": "@agent please look", "created_at": "2026-09-06T00:00:00Z", "read_at": None,
+             "recipient_user_id": "u-agent"},
+            {"id": "in-2", "kind": "assignment", "title": "Assigned CHT-2", "team_id": "team-1",
+             "issue_identifier": "CHT-2", "document_title": None, "source_user_name": "ethan",
+             "body": None, "created_at": "2026-09-05T00:00:00Z", "read_at": "2026-09-05T01:00:00Z",
+             "recipient_user_id": "u-agent"},
+        ]
         self.list_result: list = []
 
     def _rec(self, name, *args, **kwargs):
@@ -258,6 +268,41 @@ class FakeBackend:
         self._rec("get_project", project_id)
         return {"id": project_id, "key": "CHT", "estimate_scale": self.estimate_scale}
 
+    async def list_document_revisions(self, document_id, *, limit):
+        self._rec("list_document_revisions", document_id, limit=limit)
+        return [{"id": "rev-2", "document_id": document_id, "version": 2, "title": "T2"},
+                {"id": "rev-1", "document_id": document_id, "version": 1, "title": "T1"}][:limit]
+
+    async def get_document_revision(self, document_id, version):
+        self._rec("get_document_revision", document_id, version)
+        return {"id": f"rev-{version}", "document_id": document_id, "version": version, "title": "T", "content": "old"}
+
+    async def list_issue_description_revisions(self, issue_id, *, limit):
+        self._rec("list_issue_description_revisions", issue_id, limit=limit)
+        return [{"id": "irev-1", "issue_id": issue_id, "version": 1}][:limit]
+
+    async def get_issue_description_revision(self, issue_id, version):
+        self._rec("get_issue_description_revision", issue_id, version)
+        return {"id": f"irev-{version}", "issue_id": issue_id, "version": version, "description": "was"}
+
+    async def list_inbox(self, team_id, *, unread, limit):
+        self._rec("list_inbox", team_id, unread=unread, limit=limit)
+        rows = [e for e in self.inbox if not unread or e["read_at"] is None]
+        return rows[:limit]
+
+    async def mark_inbox_read(self, entry_id):
+        self._rec("mark_inbox_read", entry_id)
+        entry = next(e for e in self.inbox if e["id"] == entry_id)
+        entry["read_at"] = "now"
+        return dict(entry)
+
+    async def mark_all_inbox_read(self, team_id):
+        self._rec("mark_all_inbox_read", team_id)
+        n = sum(1 for e in self.inbox if e["read_at"] is None)
+        for e in self.inbox:
+            e["read_at"] = e["read_at"] or "now"
+        return {"marked_count": n}
+
     async def list_activities(self, team_id, **kw):
         self._rec("list_activities", team_id, **kw)
         return list(self.list_result)
@@ -332,7 +377,7 @@ def test_team_scoped_tools_derived_from_bodies():
     assert TEAM_SCOPED_TOOLS == {
         t.__name__ for t in ALL_TOOLS if "team" in inspect.signature(t).parameters
     }
-    assert len(TEAM_SCOPED_TOOLS) == 18
+    assert len(TEAM_SCOPED_TOOLS) == 20
 
 
 async def test_team_kwarg_is_dropped_when_not_advertised(fake):
@@ -388,6 +433,10 @@ class TestBoundary:
     _REACHING_KWARGS = {
         "issue_unblock": {"identifier": "CHT-1", "relation_id": "rel-1"},
         "issue_label": {"identifier": "CHT-1", "add": ["bug"]},
+        "inbox_mark_read": {"entry_id": "in-1"},
+        "doc_revisions": {"document_id": "d"},
+        "doc_revision": {"document_id": "d", "version": 1},
+        "issue_revision": {"identifier": "CHT-1", "version": 1},
         "sprint_add": {"identifiers": ["CHT-1"]},
         "sprint_remove": {"identifiers": ["CHT-1"]},
         "issue_block": {"identifier": "CHT-1", "blocked": "CHT-2"},
@@ -637,6 +686,94 @@ class TestEstimateScaleWarning:
         fake = FakeBackend(fail_on={"get_project": BackendError("boom", 500, "boom")})
         result = await _tools(fake)["issue_create"](title="T", estimate=7)
         assert "error" not in result and "warnings" not in result
+
+
+class TestRevisionTools:
+    """CHT-1335: history the agent writes (doc_update / description edits)
+    is readable from the same surface."""
+
+    async def test_doc_revisions_resolve_the_document_and_list(self, fake):
+        result = await _tools(fake)["doc_revisions"]("Some title")
+        assert [r["version"] for r in result["revisions"]] == [2, 1]
+        assert result["count"] == 2 and result["truncated"] is False
+        assert fake.calls_to("resolve_document") == [(("Some title",), {})]
+        assert fake.calls_to("list_document_revisions") == [(("doc-1",), {"limit": 21})]
+
+    async def test_doc_revision_fetches_one_snapshot(self, fake):
+        result = await _tools(fake)["doc_revision"]("d1", version=1)
+        assert result["content"] == "old" and result["version"] == 1
+
+    async def test_unknown_version_is_the_backend_404(self, fake):
+        """A version that does not exist is a not-found from the backend, on
+        both transports, and the body passes it through untouched."""
+        missing = BackendError("Revision not found", 404, "Revision not found")
+        fake = FakeBackend(fail_on={"get_document_revision": missing, "get_issue_description_revision": missing})
+        for name, kwargs in (
+            ("doc_revision", {"document_id": "doc-1", "version": 9}),
+            ("issue_revision", {"identifier": "CHT-1", "version": 9}),
+        ):
+            result = await _tools(fake)[name](**kwargs)
+            assert result == {"error": {"message": "Revision not found", "http_status": 404}}, name
+
+    async def test_issue_revisions_go_through_the_issue_id(self, fake):
+        result = await _tools(fake)["issue_revisions"]("CHT-1")
+        assert result["revisions"][0]["id"] == "irev-1"
+        assert fake.calls_to("list_issue_description_revisions") == [(("i1",), {"limit": 21})]
+        snap = await _tools(fake)["issue_revision"]("CHT-1", version=1)
+        assert snap["description"] == "was"
+
+    async def test_limit_truncation_marker(self, fake):
+        result = await _tools(fake)["doc_revisions"]("d1", limit=1)
+        assert result["count"] == 1 and result["truncated"] is True
+
+
+class TestInboxTools:
+    """CHT-1338: the mailbox the system keeps for an agent is readable
+    from the agent's own surface."""
+
+    async def test_list_is_compact_and_spans_every_team_by_default(self, fake):
+        """The inbox is addressed to the caller, not a team: with no `team`
+        the backend is asked for every team (None), which also keeps the
+        tool usable from a project-scoped key (PR #285 review)."""
+        result = await _tools(fake)["inbox_list"]()
+        assert result["count"] == 2 and result["truncated"] is False and result["unread_only"] is False
+        assert set(result["entries"][0]) == {
+            "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
+            "created_at", "read_at",
+        }
+        assert "body" not in result["entries"][0]
+        assert fake.calls_to("list_inbox") == [((None,), {"unread": False, "limit": 21})]
+        assert fake.calls_to("resolve_team") == []
+
+    async def test_explicit_team_is_resolved(self):
+        fake = FakeBackend(team_param=True)
+        await _tools(fake)["inbox_list"](team="team-1")
+        assert fake.calls_to("resolve_team") == [(("team-1",), {})]
+        assert fake.calls_to("list_inbox") == [(("team-1",), {"unread": False, "limit": 21})]
+        assert (await _tools(fake)["inbox_mark_all_read"](team="team-1"))["marked_count"] == 1
+        assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})
+
+    async def test_limit_never_exceeds_what_the_route_accepts(self, fake):
+        """The body fetches limit + 1 to detect truncation and the REST route
+        caps limit at 200, so the largest page is 199 (PR #285 review)."""
+        await _tools(fake)["inbox_list"](limit=199)
+        assert fake.calls_to("list_inbox")[-1][1]["limit"] == 200
+        # The 199 ceiling itself is pinned by the schema snapshot
+        # (docs/mcp-toolset-schema.json, inbox_list.limit.maximum).
+
+    async def test_unread_filter_and_detail(self, fake):
+        result = await _tools(fake)["inbox_list"](unread=True, detail=True)
+        assert [e["id"] for e in result["entries"]] == ["in-1"]
+        assert result["entries"][0]["body"] == "@agent please look"
+        assert result["unread_only"] is True
+
+    async def test_mark_read_and_mark_all(self, fake):
+        entry = await _tools(fake)["inbox_mark_read"]("in-1")
+        assert entry["id"] == "in-1" and entry["read_at"] == "now"
+        assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 0
+        fake.inbox[1]["read_at"] = None
+        assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 1
+        assert fake.calls_to("mark_all_inbox_read")[-1] == ((None,), {})
 
 
 class TestScopeDefaults:

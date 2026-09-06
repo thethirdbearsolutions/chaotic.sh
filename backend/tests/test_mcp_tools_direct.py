@@ -717,6 +717,80 @@ class TestSprintTools:
 
 
 
+class TestRevisionTools:
+    """CHT-1335: doc_update / description edits write history; the same
+    surface can read it back."""
+
+    async def test_doc_revisions_and_snapshot(self, test_project):
+        doc = await tools.doc_create(title="v1", content="one")
+        await tools.doc_update(document_id=doc["id"], content="two")
+        await tools.doc_update(document_id=doc["id"], title="v3", content="three")
+
+        history = await tools.doc_revisions(document_id=doc["id"])
+        # Creation snapshots too, so three versions: created, after edit 1, after edit 2.
+        assert [r["version"] for r in history["revisions"]] == [3, 2, 1]
+        assert history["count"] == 3 and history["truncated"] is False
+        assert "content" not in history["revisions"][0]  # light rows
+
+        snap = await tools.doc_revision(document_id=doc["id"], version=1)
+        assert snap["title"] == "v1" and snap["content"] == "one"
+        missing = await tools.doc_revision(document_id=doc["id"], version=9)
+        assert missing["error"]["http_status"] == 404 and "not found" in missing["error"]["message"].lower()
+
+    async def test_issue_description_revisions(self, test_project):
+        iss = await tools.issue_create(title="T", description="first")
+        await tools.issue_update(identifier=iss["identifier"], description="second")
+
+        history = await tools.issue_revisions(identifier=iss["identifier"])
+        assert [r["version"] for r in history["revisions"]] == [2, 1]
+        snap = await tools.issue_revision(identifier=iss["identifier"], version=1)
+        assert snap["description"] == "first"
+
+
+class TestInboxTools:
+    """CHT-1338: the mailbox the system keeps for the calling identity is
+    readable and acknowledgeable from the MCP surface."""
+
+    async def _entry(self, test_user, test_team, test_issue, title, read=False):
+        from datetime import datetime, timezone
+
+        from app.enums import InboxEntryKind
+        from app.oxyde_models.inbox import OxydeInboxEntry
+
+        return await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id,
+            issue_id=test_issue.id, title=title, body="@you please look",
+            read_at=datetime.now(timezone.utc) if read else None,
+        )
+
+    async def test_list_is_compact_and_resolves_the_issue_identifier(self, test_user, test_team, test_issue):
+        await self._entry(test_user, test_team, test_issue, "mentioned you")
+        result = await tools.inbox_list()
+        assert result["count"] == 1 and result["truncated"] is False
+        row = result["entries"][0]
+        assert row["kind"] == "mention" and row["issue_identifier"] == test_issue.identifier
+        assert row["read_at"] is None and "body" not in row
+        full = await tools.inbox_list(detail=True)
+        assert full["entries"][0]["body"] == "@you please look"
+
+    async def test_unread_filter_mark_read_and_mark_all(self, test_user, test_team, test_issue):
+        unread = await self._entry(test_user, test_team, test_issue, "new")
+        await self._entry(test_user, test_team, test_issue, "old", read=True)
+        assert [e["title"] for e in (await tools.inbox_list(unread=True))["entries"]] == ["new"]
+
+        marked = await tools.inbox_mark_read(entry_id=unread.id)
+        assert marked["id"] == unread.id and marked["read_at"] is not None
+        assert (await tools.inbox_list(unread=True))["count"] == 0
+
+        await self._entry(test_user, test_team, test_issue, "another")
+        assert (await tools.inbox_mark_all_read())["marked_count"] == 1
+
+    async def test_someone_elses_entry_is_an_error_envelope(self, test_user2, test_team, test_issue):
+        entry = await self._entry(test_user2, test_team, test_issue, "not yours")
+        result = await tools.inbox_mark_read(entry_id=entry.id)
+        assert result["error"]["http_status"] in (403, 404)
+
+
 class TestRitualTools:
     """CHT-1333: issue_update took an `attest` map keyed by ritual name,
     but nothing on this surface could tell you those names -- and
@@ -998,7 +1072,7 @@ class TestNoLeakedEnumNames:
             found.append((path, obj))
         return found
 
-    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team):
+    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team, test_user):
         from app.enums import RitualTrigger
         from app.schemas.issue import LabelCreate
         from app.schemas.ritual import RitualCreate
@@ -1016,22 +1090,29 @@ class TestNoLeakedEnumNames:
         doc = await tools.doc_create(title="Sweep doc", content="x")
         await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
         await tools.issue_label(identifier=iss["identifier"], add=["sweep"])
-        await tools.issue_update(identifier=iss["identifier"], priority="high")
+        await tools.issue_update(identifier=iss["identifier"], priority="high", description="edited")
+        await tools.doc_update(document_id=doc["id"], content="edited")
+        await _seed_inbox_entry(test_user, test_team, iss["id"], "sweep mention")
 
         outputs = {
             "issue_view": await tools.issue_view(iss["identifier"]),
             "issue_list": await tools.issue_list(),
             "issue_ready": await tools.issue_ready(),
             "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "issue_revisions": await tools.issue_revisions(identifier=iss["identifier"]),
+            "issue_revision": await tools.issue_revision(identifier=iss["identifier"], version=1),
             "label_list": await tools.label_list(),
             "doc_list": await tools.doc_list(),
             "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "doc_revisions": await tools.doc_revisions(document_id=doc["id"]),
+            "doc_revision": await tools.doc_revision(document_id=doc["id"], version=1),
             "sprint_current": await tools.sprint_current(),
             "sprint_list": await tools.sprint_list(),
             "ritual_list": await tools.ritual_list(),
             "ritual_pending": await tools.ritual_pending(identifier=iss["identifier"]),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
+            "inbox_list": await tools.inbox_list(detail=True),
         }
 
         # A tool that raised comes back as {"error": ...} and would sweep
@@ -1047,6 +1128,18 @@ class TestNoLeakedEnumNames:
             f"(the api function must return its response schema, ADR-0005): {leaked}"
         )
 
+
+
+async def _seed_inbox_entry(test_user, test_team, issue_id, title):
+    """One unread mention for the sweeps: inbox rows carry an enum (kind)
+    and a recipient, so they must be swept like everything else."""
+    from app.enums import InboxEntryKind
+    from app.oxyde_models.inbox import OxydeInboxEntry
+
+    return await OxydeInboxEntry.objects.create(
+        recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id,
+        issue_id=issue_id, title=title, body="@you please look",
+    )
 
 
 class TestNoLeakedInternalFields:
@@ -1071,11 +1164,12 @@ class TestNoLeakedInternalFields:
         "agent_team_id", "agent_project_id", "key_hash", "api_key",
     )
 
-    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team):
+    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team, test_user):
         import json
 
         iss = await tools.issue_create(title="Field sweep")
         doc = await tools.doc_create(title="Field sweep doc", content="x")
+        await _seed_inbox_entry(test_user, test_team, iss["id"], "field sweep mention")
 
         outputs = {
             "issue_view": await tools.issue_view(iss["identifier"]),
@@ -1083,8 +1177,13 @@ class TestNoLeakedInternalFields:
             "issue_create": iss,
             "issue_ready": await tools.issue_ready(),
             "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "issue_revisions": await tools.issue_revisions(identifier=iss["identifier"]),
+            "issue_revision": await tools.issue_revision(identifier=iss["identifier"], version=1),
             "doc_view": await tools.doc_view(document_id=doc["id"]),
             "doc_list": await tools.doc_list(),
+            "doc_revisions": await tools.doc_revisions(document_id=doc["id"]),
+            "doc_revision": await tools.doc_revision(document_id=doc["id"], version=1),
+            "inbox_list": await tools.inbox_list(detail=True),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
             "sprint_current": await tools.sprint_current(),
@@ -1359,6 +1458,7 @@ class TestSweepCoverage:
         "doc_create", "doc_update", "doc_link", "doc_unlink",
         "sprint_add", "sprint_remove", "sprint_close",
         "ritual_attest", "ritual_complete",
+        "inbox_mark_read", "inbox_mark_all_read",  # swept via inbox_list
         # read tools whose shape is asserted in their own tests
         "issue_view", "sprint_transactions",
     }

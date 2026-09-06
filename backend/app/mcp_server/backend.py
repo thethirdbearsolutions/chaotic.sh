@@ -33,6 +33,7 @@ from pydantic import ValidationError as PydanticValidationError
 from chaotic_mcp_tools import BackendError, Capabilities, ToolInputError, backend_error_payload
 
 from app.api import documents as documents_api
+from app.api import inbox as inbox_api
 from app.api import issues as issues_api
 from app.api import labels as labels_api
 from app.api import projects as projects_api
@@ -432,6 +433,48 @@ class InProcessBackend:
     @_translated
     async def get_project(self, project_id: str) -> dict:
         return _dump(await projects_api.get_project(project_id=project_id, current_user=self._user))
+
+    # -- revision history (CHT-1335) ------------------------------------------
+
+    @_translated
+    async def list_document_revisions(self, document_id: str, *, limit: int) -> list:
+        return _dump_list(await documents_api.list_document_revisions(
+            document_id=document_id, current_user=self._user, skip=0, limit=limit,
+        ))
+
+    @_translated
+    async def get_document_revision(self, document_id: str, version: int) -> dict:
+        return _dump(await documents_api.get_document_revision(
+            document_id=document_id, version=version, current_user=self._user,
+        ))
+
+    @_translated
+    async def list_issue_description_revisions(self, issue_id: str, *, limit: int) -> list:
+        return _dump_list(await issues_api.list_description_revisions(
+            issue_id=issue_id, current_user=self._user, skip=0, limit=limit,
+        ))
+
+    @_translated
+    async def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
+        return _dump(await issues_api.get_description_revision(
+            issue_id=issue_id, version=version, current_user=self._user,
+        ))
+
+    # -- inbox (CHT-1338) ------------------------------------------------------
+
+    @_translated
+    async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list:
+        return _dump_list(await inbox_api.list_inbox(
+            current_user=self._user, team_id=team_id, unread=unread, skip=0, limit=limit,
+        ))
+
+    @_translated
+    async def mark_inbox_read(self, entry_id: str) -> dict:
+        return _dump(await inbox_api.mark_inbox_read(entry_id=entry_id, current_user=self._user))
+
+    @_translated
+    async def mark_all_inbox_read(self, team_id: str | None) -> dict:
+        return _dump(await inbox_api.mark_all_inbox_read(current_user=self._user, team_id=team_id))
 
     @_translated
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:

@@ -78,6 +78,7 @@ def test_team_scoped_set_is_the_documented_one():
         "sprint_current", "sprint_list", "sprint_close",
         "sprint_transactions", "sprint_add", "doc_update",
         "ritual_pending", "ritual_list", "ritual_attest", "ritual_complete",
+        "inbox_list", "inbox_mark_all_read",
     }
     # And the ones that need no `team`: they key off a globally-unique issue
     # identifier, or resolve their team from the entity they were handed.
@@ -85,6 +86,7 @@ def test_team_scoped_set_is_the_documented_one():
         "issue_view", "issue_update", "issue_comment", "issue_start",
         "doc_view", "issue_relations", "issue_block", "issue_unblock",
         "issue_label", "doc_link", "doc_unlink", "sprint_remove",
+        "inbox_mark_read", "doc_revisions", "doc_revision", "issue_revisions", "issue_revision",
     }
 
 

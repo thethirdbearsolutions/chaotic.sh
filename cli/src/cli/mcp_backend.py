@@ -297,6 +297,31 @@ class RestBackend:
     async def get_project(self, project_id: str) -> dict:
         return await self._call(self._client().get_project, project_id)
 
+    # -- revision history (CHT-1335) ------------------------------------------
+
+    async def list_document_revisions(self, document_id: str, *, limit: int) -> list:
+        return list(await self._call(self._client().get_document_revisions, document_id, limit=limit) or [])
+
+    async def get_document_revision(self, document_id: str, version: int) -> dict:
+        return await self._call(self._client().get_document_revision, document_id, version)
+
+    async def list_issue_description_revisions(self, issue_id: str, *, limit: int) -> list:
+        return list(await self._call(self._client().get_issue_description_revisions, issue_id, limit=limit) or [])
+
+    async def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
+        return await self._call(self._client().get_issue_description_revision, issue_id, version)
+
+    # -- inbox (CHT-1338) ------------------------------------------------------
+
+    async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list:
+        return await self._call(self._client().get_inbox, team_id, unread=unread, limit=limit)
+
+    async def mark_inbox_read(self, entry_id: str) -> dict:
+        return await self._call(self._client().mark_inbox_read, entry_id)
+
+    async def mark_all_inbox_read(self, team_id: str | None) -> dict:
+        return await self._call(self._client().mark_all_inbox_read, team_id)
+
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         return await self._call(
             self._client().get_team_activities, team_id, limit=limit, project_id=project_id,

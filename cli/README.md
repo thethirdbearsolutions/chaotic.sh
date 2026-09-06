@@ -624,7 +624,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 
 ### Tools
 
-The 30 tools, grouped as in `chaotic_mcp_tools/tools/__init__.py`; the
+The 37 tools, grouped as in `chaotic_mcp_tools/tools/__init__.py`; the
 canonical descriptions and schemas are in `docs/mcp-toolset-schema.json`,
 and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
 
@@ -641,12 +641,16 @@ and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
 | `issue_block` | `issue block` |
 | `issue_unblock` | `issue unblock` |
 | `issue_label` | `issue update --label` / `--remove-label` |
+| `issue_revisions` | `issue history` |
+| `issue_revision` | `issue history` (one version) |
 | `doc_list` | `doc list` |
 | `doc_view` | `doc show` |
 | `doc_create` | `doc create` |
 | `doc_update` | `doc update` |
 | `doc_link` | `doc link` |
 | `doc_unlink` | `doc unlink` |
+| `doc_revisions` | `doc history` |
+| `doc_revision` | `doc history` (one version) |
 | `sprint_current` | `sprint current` |
 | `sprint_list` | `sprint list` |
 | `sprint_close` | `sprint close` |
@@ -657,6 +661,9 @@ and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
 | `ritual_list` | `ritual list` |
 | `ritual_attest` | `ritual attest` |
 | `ritual_complete` | `ritual complete` |
+| `inbox_list` | `inbox list` |
+| `inbox_mark_read` | `inbox mark-read` |
+| `inbox_mark_all_read` | `inbox mark-all-read` |
 | `label_list` | `label list` |
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |

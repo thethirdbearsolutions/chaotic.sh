@@ -500,6 +500,33 @@ async def issue_ready(
     return listing("issues", issues, limit, COMPACT_ISSUE_FIELDS, detail)
 
 
+async def issue_revisions(
+    backend: Backend,
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    limit: Annotated[int, Field(description="Maximum number of revisions to return.", ge=1, le=500)] = 20,
+) -> dict:
+    """List an issue's description revisions, newest first (CHT-1335).
+
+    Every description edit snapshots the PREVIOUS text, so this is how you
+    see what an issue used to say before overwriting it, and how to recover
+    a description you clobbered. Rows are light (version, author,
+    created_at); issue_revision fetches one snapshot's full text.
+    """
+    iss = await backend.get_issue(identifier)
+    rows = await backend.list_issue_description_revisions(iss["id"], limit=limit + 1)
+    return listing("revisions", rows, limit, (), True)
+
+
+async def issue_revision(
+    backend: Backend,
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    version: Annotated[int, Field(description="Revision version number, from issue_revisions.", ge=1)],
+) -> dict:
+    """Fetch one description-revision snapshot of an issue: the full text at that version."""
+    iss = await backend.get_issue(identifier)
+    return await backend.get_issue_description_revision(iss["id"], version)
+
+
 async def issue_relations(
     backend: Backend,
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],

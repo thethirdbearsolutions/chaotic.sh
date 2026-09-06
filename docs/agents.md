@@ -185,7 +185,7 @@ the same command:
 
 ### Toolset
 
-30 tools, curated for quality over coverage (CHT-1247). The canonical
+37 tools, curated for quality over coverage (CHT-1247). The canonical
 list is `docs/mcp-toolset-schema.json` -- every tool's description and
 input schema, regenerated from the code -- and
 `cli/tests/test_mcp_toolset_sync.py` fails if this section stops naming
@@ -193,13 +193,19 @@ one of them:
 
 - **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
   `issue_comment`, `issue_start`, `issue_ready`, `issue_relations`,
-  `issue_block`, `issue_unblock`, `issue_label`
+  `issue_block`, `issue_unblock`, `issue_label`, `issue_revisions`,
+  `issue_revision`
 - **docs:** `doc_list`, `doc_view`, `doc_create`, `doc_update`,
-  `doc_link`, `doc_unlink`
+  `doc_link`, `doc_unlink`, `doc_revisions`, `doc_revision` (every
+  title/content edit snapshots the previous text; the revision tools
+  are how you see what you are about to overwrite, CHT-1335)
 - **sprints:** `sprint_current`, `sprint_list`, `sprint_close`,
   `sprint_transactions`, `sprint_add`, `sprint_remove`
 - **rituals:** `ritual_pending`, `ritual_list`, `ritual_attest`,
   `ritual_complete`
+- **inbox:** `inbox_list`, `inbox_mark_read`, `inbox_mark_all_read` (what
+  is waiting on you: @mentions, assignments, gates and reviews awaiting
+  an admin -- the human-to-agent handoff channel, CHT-1338)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
   tells you which projects exist)
@@ -279,8 +285,9 @@ bound to its own data-access backend, so the two cannot drift. The one
 documented difference is that the team-scoped tools (listed under
 `_meta.team_scoped_tools` in `docs/mcp-toolset-schema.json`: `issue_list`,
 `issue_create`, `issue_ready`, `doc_list`, `doc_create`, `doc_update`,
-`label_list`, `project_list`, `activity_recent`, the `sprint_*` tools
-except `sprint_remove`, and the `ritual_*` tools) additionally accept an
+`label_list`, `project_list`, `activity_recent`, `inbox_list`,
+`inbox_mark_all_read`, the `sprint_*` tools except `sprint_remove`, and
+the `ritual_*` tools) additionally accept an
 optional `team` parameter here, because a hosted server has no single
 active profile to inherit context from -- see "Auth and scoping" below.
 
