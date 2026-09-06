@@ -12,7 +12,7 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.issue import OxydeIssue
 from app.oxyde_models.sprint import OxydeSprint
@@ -1560,7 +1560,7 @@ class OxydeRitualAttestation(Model):
     attested_at: datetime
     note: str | None
     approved_by: str | None
-    approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
     ritual_id: str | None
     sprint_id: str | None
     issue_id: str | None
@@ -1587,8 +1587,8 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
     def filter(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -1688,8 +1688,8 @@ class OxydeRitualAttestationQuery(Query[OxydeRitualAttestation]):
     def exclude(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -1962,8 +1962,8 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
     def filter(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -2063,8 +2063,8 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
     def exclude(
         self,
         *args: Any,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         approved_at__isnull: bool | None = None,
         approved_by: str | None = None,
         approved_by__contains: str | None = None,
@@ -2316,7 +2316,7 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         instance: OxydeRitualAttestation | None = None,
         client: Any | None = None,
         using: str | None = None,
-        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        approved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         approved_by: str | None = None,
         attested_at: datetime | None = None,
         attested_by: str | None = None,

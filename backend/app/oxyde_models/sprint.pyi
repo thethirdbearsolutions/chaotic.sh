@@ -25,8 +25,8 @@ class OxydeSprint(Model):
     name: str
     description: str | None
     status: SprintStatus
-    activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None
-    closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None
+    activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
+    closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
     budget: int | None
     points_spent: int
     limbo: bool
@@ -49,8 +49,8 @@ class OxydeSprintQuery(Query[OxydeSprint]):
     def filter(
         self,
         *args: Any,
-        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
@@ -61,8 +61,8 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
-        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -150,8 +150,8 @@ class OxydeSprintQuery(Query[OxydeSprint]):
     def exclude(
         self,
         *args: Any,
-        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
@@ -162,8 +162,8 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
-        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -424,8 +424,8 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
     def filter(
         self,
         *args: Any,
-        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
@@ -436,8 +436,8 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
-        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -525,8 +525,8 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
     def exclude(
         self,
         *args: Any,
-        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
@@ -537,8 +537,8 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
-        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -778,9 +778,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         instance: OxydeSprint | None = None,
         client: Any | None = None,
         using: str | None = None,
-        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         budget: int | None = None,
-        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         description: str | None = None,
         id: str | None = None,

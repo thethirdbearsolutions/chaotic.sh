@@ -99,6 +99,11 @@ class OxydeIssueRelation(Model):
     class Meta:
         is_table = True
         table_name = "issue_relations"
+        indexes = [
+            # One relation row per pair (0001, raw SQL); declared here so the
+            # migration record keeps it (CHT-1410).
+            Index(("issue_id", "related_issue_id"), unique=True, name="uq_issue_relation"),
+        ]
 
 
 class OxydeIssueLabel(Model):
@@ -143,6 +148,12 @@ class OxydeTicketLimbo(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo"
+        indexes = [
+            # The exclusive intent lock: one open intent per (issue, type)
+            # (0004/0005, raw SQL); declared so the record keeps it (CHT-1410).
+            Index(("issue_id", "limbo_type"), unique=True, name="uq_ticket_limbo_open_intent",
+                  where="cleared_at IS NULL"),
+        ]
 
 
 class OxydeTicketLimboBlocker(Model):
@@ -170,6 +181,11 @@ class OxydeTicketLimboBlocker(Model):
     class Meta:
         is_table = True
         table_name = "ticket_limbo_blockers"
+        indexes = [
+            # One blocker per (intent, ritual) (0005, raw SQL); declared so the
+            # record keeps it (CHT-1410).
+            Index(("limbo_id", "ritual_id"), unique=True, name="uq_ticket_limbo_blocker"),
+        ]
 
 
 class OxydeIssueDescriptionRevision(Model):
