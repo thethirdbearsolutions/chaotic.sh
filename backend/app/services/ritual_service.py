@@ -122,6 +122,29 @@ class RitualService:
             f"group '{group.name}' for this issue; choose '{offered}' instead."
         )
 
+    async def _validate_group_trigger(
+        self, group: OxydeRitualGroup, trigger: RitualTrigger, *, exclude_ritual_id: str | None = None,
+    ) -> None:
+        """A group's members must share a trigger (CHT-1403).
+
+        A group is one selection over one event: the sprint rotation
+        advances a ROUND_ROBIN pointer over the group's EVERY_SPRINT
+        members, the ticket listings select over its TICKET_CLOSE or
+        TICKET_CLAIM members, and validation now filters by trigger too.
+        Mixing triggers gives one pointer two unrelated event streams, so
+        a new member (or a member changing trigger) must match the
+        active members already there.
+        """
+        others = await OxydeRitual.objects.filter(group_id=group.id, is_active=True).all()
+        for member in others:
+            if member.id == exclude_ritual_id:
+                continue
+            if member.trigger != trigger:
+                raise ValueError(
+                    f"All rituals in a group must share a trigger: group '{group.name}' holds "
+                    f"{member.trigger.value} ritual '{member.name}', so a {trigger.value} ritual cannot join it."
+                )
+
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
         """Create a new ritual for a project."""
         # Check for duplicate name
@@ -149,6 +172,7 @@ class RitualService:
                         f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {ritual_in.weight}"
                     )
+            await self._validate_group_trigger(group, ritual_in.trigger)
 
         # Serialize conditions to JSON if provided
         conditions_json = None
@@ -223,6 +247,8 @@ class RitualService:
                         f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {new_weight}"
                     )
+            new_trigger = update_data.get("trigger", ritual.trigger)
+            await self._validate_group_trigger(group, new_trigger, exclude_ritual_id=ritual.id)
 
         # Serialize conditions to JSON if provided
         if "conditions" in update_data:

@@ -157,6 +157,43 @@ class TestRitualGroupServiceValidation:
         with pytest.raises(ValueError, match="different project"):
             await service.create(ritual_in, test_project.id)
 
+    async def test_group_members_must_share_a_trigger(self, db, test_project):
+        """A group is one selection over one event (CHT-1403): a
+        TICKET_CLOSE ritual cannot join a group of EVERY_SPRINT rituals,
+        whether it is created into it, moved into it, or retriggered
+        while in it. A different group, or no group, is fine."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+        from app.schemas.ritual import RitualUpdate
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="sprint-rotation", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        service = RitualService()
+        await service.create(RitualCreate(
+            name="report", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        ), test_project.id)
+
+        with pytest.raises(ValueError, match="must share a trigger.*every_sprint.*'report'.*ticket_close"):
+            await service.create(RitualCreate(
+                name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=group.id,
+            ), test_project.id)
+
+        loose = await service.create(RitualCreate(
+            name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE,
+        ), test_project.id)
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(loose, RitualUpdate(group_id=group.id))
+
+        second = await service.create(RitualCreate(
+            name="review", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        ), test_project.id)
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(second, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+        # Retriggering the only member, or a member alongside itself, is fine.
+        updated = await service.update(second, RitualUpdate(prompt="q"))
+        assert updated.prompt == "q" and updated.trigger == RitualTrigger.EVERY_SPRINT
+
     async def test_create_ritual_in_percentage_group_requires_percentage(self, db, test_project):
         """Test that rituals in PERCENTAGE groups must have percentage > 0."""
         from app.oxyde_models.ritual import OxydeRitualGroup
