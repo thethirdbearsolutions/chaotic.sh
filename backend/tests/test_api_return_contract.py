@@ -219,18 +219,22 @@ def _plain_default_is_fastapi_sentinel(node: ast.AST) -> bool:
     return False
 
 
+ALL_FUNCTIONS = [(m, f) for m, f, _, _ in PUBLIC_FUNCTIONS]
+
+
 @pytest.mark.parametrize(
-    "alias,func",
-    TOOL_CALLS,
-    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+    "module,func",
+    ALL_FUNCTIONS,
+    ids=[f"{m}.{f}" for m, f in ALL_FUNCTIONS],
 )
-def test_api_function_reachable_from_tools_has_real_defaults(alias, func):
+def test_api_function_has_real_defaults(module, func):
     """A parameter whose *default value* is `Query(...)`/`Header(...)` only
     works under FastAPI's dependency injection; called in-process it is a
-    live, truthy sentinel object. Every function the MCP tools call must
-    keep FastAPI metadata in `Annotated[...]` and a real Python default
-    (CHT-1375). Input-side twin of the return-contract check above."""
-    module = _ALIASES[alias]
+    live, truthy sentinel object. Every app/api function must keep FastAPI
+    metadata in `Annotated[...]` and a real Python default (CHT-1375).
+    Input-side twin of the return-contract check above. Scoped to the
+    tools-reachable set at first; widened to the whole layer in CHT-1377,
+    the same widening ADR-0005 anticipates for the return contract."""
     tree = ast.parse((_API_DIR / f"{module}.py").read_text())
     node = next(n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func)
     args = node.args
@@ -247,24 +251,38 @@ def test_api_function_reachable_from_tools_has_real_defaults(alias, func):
 
 
 @pytest.mark.parametrize(
-    "alias,func",
-    TOOL_CALLS,
-    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+    "module,func",
+    ALL_FUNCTIONS,
+    ids=[f"{m}.{f}" for m, f in ALL_FUNCTIONS],
 )
-def test_api_function_reachable_from_tools_has_real_defaults_at_runtime(alias, func):
+def test_api_function_has_real_defaults_at_runtime(module, func):
     """Runtime twin of the AST check above: whatever spelling produced it,
     no parameter's actual default object may be a FastAPI param/dependency
     marker. Immune to aliasing, attribute-form callees and re-exports."""
     import fastapi.params as fp
 
-    fn = getattr(importlib.import_module(f"app.api.{_ALIASES[alias]}"), func)
+    fn = _resolve(module, func)
     sentinels = (fp.Param, fp.Depends, fp.Body)  # Query/Header/Path/Cookie/Form/File subclass Param; Security subclasses Depends
+    params = inspect.signature(fn).parameters
     offenders = [
-        name for name, p in inspect.signature(fn).parameters.items()
+        name for name, p in params.items()
         if p.default is not inspect.Parameter.empty and isinstance(p.default, sentinels)
     ]
     assert offenders == [], (
-        f"app/api/{_ALIASES[alias]}.py::{func} has live FastAPI sentinel defaults at runtime: {offenders}"
+        f"app/api/{module}.py::{func} has live FastAPI sentinel defaults at runtime: {offenders}"
+    )
+    # A dependency-injected parameter (Annotated[..., Depends(...)], e.g.
+    # CurrentUser) must have no default at all: FastAPI ignores one, but an
+    # in-process caller that omits the argument would get it and pass None
+    # into an access check (PR #279 review).
+    hints = typing.get_type_hints(fn, include_extras=True)
+    injected = [
+        name for name, p in params.items()
+        if p.default is not inspect.Parameter.empty
+        and any(isinstance(m, fp.Depends) for m in getattr(hints.get(name), "__metadata__", ()))
+    ]
+    assert injected == [], (
+        f"app/api/{module}.py::{func}: dependency-injected parameters must not carry a default: {injected}"
     )
 
 

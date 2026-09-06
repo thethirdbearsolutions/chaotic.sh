@@ -86,8 +86,6 @@ CREATE TABLE IF NOT EXISTS sprints (
     end_date DATETIME,
     budget INTEGER,
     points_spent INTEGER NOT NULL DEFAULT 0,
-    token_budget INTEGER,
-    tokens_spent INTEGER NOT NULL DEFAULT 0,
     limbo BOOLEAN NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL

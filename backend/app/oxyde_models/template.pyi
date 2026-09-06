@@ -12,52 +12,40 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
-from app.enums import SprintStatus
-from app.oxyde_models.enums import DbEnum
+from oxyde import Model, Field, Index
 
-class OxydeSprint(Model):
+class OxydeTemplate(Model):
     class Meta:
         is_table: bool
         table_name: str
     id: str
-    project_id: str
+    team_id: str
     name: str
     description: str | None
-    status: SprintStatus
-    start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    budget: int | None
-    points_spent: int
-    limbo: bool
+    body: str
     created_at: datetime
     updated_at: datetime
-    @property
-    def in_arrears(self) -> bool:
-        ...
-    @property
-    def remaining_budget(self) -> int | None:
-        ...
-    objects: ClassVar["OxydeSprintManager"]
+    objects: ClassVar["OxydeTemplateManager"]
 
 
-class OxydeSprintQuery(Query[OxydeSprint]):
-    """Type-safe Query for OxydeSprint model."""
+class OxydeTemplateQuery(Query[OxydeTemplate]):
+    """Type-safe Query for OxydeTemplate model."""
 
     # Query building methods (sync, return Query)
 
     def filter(
         self,
         *args: Any,
-        budget: int | None = None,
-        budget__gt: int | None = None,
-        budget__gte: int | None = None,
-        budget__lt: int | None = None,
-        budget__lte: int | None = None,
-        budget__between: tuple[int, int] | None = None,
-        budget__range: int | None = None,
-        budget__in: list[int] | None = None,
-        budget__isnull: bool | None = None,
+        body: str | None = None,
+        body__contains: str | None = None,
+        body__icontains: str | None = None,
+        body__startswith: str | None = None,
+        body__istartswith: str | None = None,
+        body__endswith: str | None = None,
+        body__iendswith: str | None = None,
+        body__iexact: str | None = None,
+        body__in: list[str] | None = None,
+        body__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -80,9 +68,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -93,9 +78,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        limbo: bool | None = None,
-        limbo__in: list[bool] | None = None,
-        limbo__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
         name__icontains: str | None = None,
@@ -106,31 +88,16 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        points_spent: int | None = None,
-        points_spent__gt: int | None = None,
-        points_spent__gte: int | None = None,
-        points_spent__lt: int | None = None,
-        points_spent__lte: int | None = None,
-        points_spent__between: tuple[int, int] | None = None,
-        points_spent__range: int | None = None,
-        points_spent__in: list[int] | None = None,
-        points_spent__isnull: bool | None = None,
-        project_id: str | None = None,
-        project_id__contains: str | None = None,
-        project_id__icontains: str | None = None,
-        project_id__startswith: str | None = None,
-        project_id__istartswith: str | None = None,
-        project_id__endswith: str | None = None,
-        project_id__iendswith: str | None = None,
-        project_id__iexact: str | None = None,
-        project_id__in: list[str] | None = None,
-        project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
-        status: SprintStatus | None = None,
-        status__in: list[SprintStatus] | None = None,
-        status__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -143,22 +110,23 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         updated_at__day: int | None = None,
         updated_at__in: list[datetime] | None = None,
         updated_at__isnull: bool | None = None,
-    ) -> "OxydeSprintQuery":
+    ) -> "OxydeTemplateQuery":
         """Filter by Q-expressions or field lookups."""
         ...
 
     def exclude(
         self,
         *args: Any,
-        budget: int | None = None,
-        budget__gt: int | None = None,
-        budget__gte: int | None = None,
-        budget__lt: int | None = None,
-        budget__lte: int | None = None,
-        budget__between: tuple[int, int] | None = None,
-        budget__range: int | None = None,
-        budget__in: list[int] | None = None,
-        budget__isnull: bool | None = None,
+        body: str | None = None,
+        body__contains: str | None = None,
+        body__icontains: str | None = None,
+        body__startswith: str | None = None,
+        body__istartswith: str | None = None,
+        body__endswith: str | None = None,
+        body__iendswith: str | None = None,
+        body__iexact: str | None = None,
+        body__in: list[str] | None = None,
+        body__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -181,9 +149,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -194,9 +159,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        limbo: bool | None = None,
-        limbo__in: list[bool] | None = None,
-        limbo__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
         name__icontains: str | None = None,
@@ -207,31 +169,16 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        points_spent: int | None = None,
-        points_spent__gt: int | None = None,
-        points_spent__gte: int | None = None,
-        points_spent__lt: int | None = None,
-        points_spent__lte: int | None = None,
-        points_spent__between: tuple[int, int] | None = None,
-        points_spent__range: int | None = None,
-        points_spent__in: list[int] | None = None,
-        points_spent__isnull: bool | None = None,
-        project_id: str | None = None,
-        project_id__contains: str | None = None,
-        project_id__icontains: str | None = None,
-        project_id__startswith: str | None = None,
-        project_id__istartswith: str | None = None,
-        project_id__endswith: str | None = None,
-        project_id__iendswith: str | None = None,
-        project_id__iexact: str | None = None,
-        project_id__in: list[str] | None = None,
-        project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
-        status: SprintStatus | None = None,
-        status__in: list[SprintStatus] | None = None,
-        status__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -244,63 +191,63 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         updated_at__day: int | None = None,
         updated_at__in: list[datetime] | None = None,
         updated_at__isnull: bool | None = None,
-    ) -> "OxydeSprintQuery":
+    ) -> "OxydeTemplateQuery":
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["budget", "-budget", "created_at", "-created_at", "description", "-description", "end_date", "-end_date", "id", "-id", "limbo", "-limbo", "name", "-name", "points_spent", "-points_spent", "project_id", "-project_id", "start_date", "-start_date", "status", "-status", "updated_at", "-updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["body", "-body", "created_at", "-created_at", "description", "-description", "id", "-id", "name", "-name", "team_id", "-team_id", "updated_at", "-updated_at"]) -> "OxydeTemplateQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
-    def limit(self, n: int) -> "OxydeSprintQuery":
+    def limit(self, n: int) -> "OxydeTemplateQuery":
         """Limit number of results."""
         ...
 
-    def offset(self, n: int) -> "OxydeSprintQuery":
+    def offset(self, n: int) -> "OxydeTemplateQuery":
         """Skip first n results."""
         ...
 
-    def distinct(self, value: bool = True) -> "OxydeSprintQuery":
+    def distinct(self, value: bool = True) -> "OxydeTemplateQuery":
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"]) -> "OxydeTemplateQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
-    def join(self, *paths: str) -> "OxydeSprintQuery":
+    def join(self, *paths: str) -> "OxydeTemplateQuery":
         """Perform LEFT JOIN for relations."""
         ...
 
-    def prefetch(self, *paths: str) -> "OxydeSprintQuery":
+    def prefetch(self, *paths: str) -> "OxydeTemplateQuery":
         """Prefetch related objects (separate queries)."""
         ...
 
-    def for_update(self) -> "OxydeSprintQuery":
+    def for_update(self) -> "OxydeTemplateQuery":
         """Add FOR UPDATE lock to query."""
         ...
 
-    def for_share(self) -> "OxydeSprintQuery":
+    def for_share(self) -> "OxydeTemplateQuery":
         """Add FOR SHARE lock to query."""
         ...
 
-    def annotate(self, **annotations: Any) -> "OxydeSprintQuery":
+    def annotate(self, **annotations: Any) -> "OxydeTemplateQuery":
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"]) -> "OxydeTemplateQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
-    def having(self, *q_exprs: Any, **kwargs: Any) -> "OxydeSprintQuery":
+    def having(self, *q_exprs: Any, **kwargs: Any) -> "OxydeTemplateQuery":
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"]) -> "OxydeTemplateQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"], flat: bool = False) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"], flat: bool = False) -> "OxydeTemplateQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -311,7 +258,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         *,
         client: Any | None = None,
         using: str | None = None,
-    ) -> list[OxydeSprint]:
+    ) -> list[OxydeTemplate]:
         """Execute query and return all results."""
         ...
 
@@ -320,7 +267,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         *,
         client: Any | None = None,
         using: str | None = None,
-    ) -> OxydeSprint | None:
+    ) -> OxydeTemplate | None:
         """Execute query and return first result."""
         ...
 
@@ -329,7 +276,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         *,
         client: Any | None = None,
         using: str | None = None,
-    ) -> OxydeSprint | None:
+    ) -> OxydeTemplate | None:
         """Execute query and return last result."""
         ...
 
@@ -412,27 +359,28 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Delete matching objects."""
         ...
 
-class OxydeSprintManager(QueryManager[OxydeSprint]):
-    """Type-safe Manager for OxydeSprint model."""
+class OxydeTemplateManager(QueryManager[OxydeTemplate]):
+    """Type-safe Manager for OxydeTemplate model."""
 
     # Query building methods (sync, return Query)
 
-    def query(self) -> OxydeSprintQuery:
+    def query(self) -> OxydeTemplateQuery:
         """Return a Query builder for this model."""
         ...
 
     def filter(
         self,
         *args: Any,
-        budget: int | None = None,
-        budget__gt: int | None = None,
-        budget__gte: int | None = None,
-        budget__lt: int | None = None,
-        budget__lte: int | None = None,
-        budget__between: tuple[int, int] | None = None,
-        budget__range: int | None = None,
-        budget__in: list[int] | None = None,
-        budget__isnull: bool | None = None,
+        body: str | None = None,
+        body__contains: str | None = None,
+        body__icontains: str | None = None,
+        body__startswith: str | None = None,
+        body__istartswith: str | None = None,
+        body__endswith: str | None = None,
+        body__iendswith: str | None = None,
+        body__iexact: str | None = None,
+        body__in: list[str] | None = None,
+        body__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -455,9 +403,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -468,9 +413,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        limbo: bool | None = None,
-        limbo__in: list[bool] | None = None,
-        limbo__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
         name__icontains: str | None = None,
@@ -481,31 +423,16 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        points_spent: int | None = None,
-        points_spent__gt: int | None = None,
-        points_spent__gte: int | None = None,
-        points_spent__lt: int | None = None,
-        points_spent__lte: int | None = None,
-        points_spent__between: tuple[int, int] | None = None,
-        points_spent__range: int | None = None,
-        points_spent__in: list[int] | None = None,
-        points_spent__isnull: bool | None = None,
-        project_id: str | None = None,
-        project_id__contains: str | None = None,
-        project_id__icontains: str | None = None,
-        project_id__startswith: str | None = None,
-        project_id__istartswith: str | None = None,
-        project_id__endswith: str | None = None,
-        project_id__iendswith: str | None = None,
-        project_id__iexact: str | None = None,
-        project_id__in: list[str] | None = None,
-        project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
-        status: SprintStatus | None = None,
-        status__in: list[SprintStatus] | None = None,
-        status__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -518,22 +445,23 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         updated_at__day: int | None = None,
         updated_at__in: list[datetime] | None = None,
         updated_at__isnull: bool | None = None,
-    ) -> OxydeSprintQuery:
+    ) -> OxydeTemplateQuery:
         """Filter by Q-expressions or field lookups."""
         ...
 
     def exclude(
         self,
         *args: Any,
-        budget: int | None = None,
-        budget__gt: int | None = None,
-        budget__gte: int | None = None,
-        budget__lt: int | None = None,
-        budget__lte: int | None = None,
-        budget__between: tuple[int, int] | None = None,
-        budget__range: int | None = None,
-        budget__in: list[int] | None = None,
-        budget__isnull: bool | None = None,
+        body: str | None = None,
+        body__contains: str | None = None,
+        body__icontains: str | None = None,
+        body__startswith: str | None = None,
+        body__istartswith: str | None = None,
+        body__endswith: str | None = None,
+        body__iendswith: str | None = None,
+        body__iexact: str | None = None,
+        body__in: list[str] | None = None,
+        body__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -556,9 +484,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -569,9 +494,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         id__iexact: str | None = None,
         id__in: list[str] | None = None,
         id__isnull: bool | None = None,
-        limbo: bool | None = None,
-        limbo__in: list[bool] | None = None,
-        limbo__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
         name__icontains: str | None = None,
@@ -582,31 +504,16 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        points_spent: int | None = None,
-        points_spent__gt: int | None = None,
-        points_spent__gte: int | None = None,
-        points_spent__lt: int | None = None,
-        points_spent__lte: int | None = None,
-        points_spent__between: tuple[int, int] | None = None,
-        points_spent__range: int | None = None,
-        points_spent__in: list[int] | None = None,
-        points_spent__isnull: bool | None = None,
-        project_id: str | None = None,
-        project_id__contains: str | None = None,
-        project_id__icontains: str | None = None,
-        project_id__startswith: str | None = None,
-        project_id__istartswith: str | None = None,
-        project_id__endswith: str | None = None,
-        project_id__iendswith: str | None = None,
-        project_id__iexact: str | None = None,
-        project_id__in: list[str] | None = None,
-        project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
-        status: SprintStatus | None = None,
-        status__in: list[SprintStatus] | None = None,
-        status__isnull: bool | None = None,
+        team_id: str | None = None,
+        team_id__contains: str | None = None,
+        team_id__icontains: str | None = None,
+        team_id__startswith: str | None = None,
+        team_id__istartswith: str | None = None,
+        team_id__endswith: str | None = None,
+        team_id__iendswith: str | None = None,
+        team_id__iexact: str | None = None,
+        team_id__in: list[str] | None = None,
+        team_id__isnull: bool | None = None,
         updated_at: datetime | None = None,
         updated_at__gt: datetime | None = None,
         updated_at__gte: datetime | None = None,
@@ -619,35 +526,35 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         updated_at__day: int | None = None,
         updated_at__in: list[datetime] | None = None,
         updated_at__isnull: bool | None = None,
-    ) -> OxydeSprintQuery:
+    ) -> OxydeTemplateQuery:
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> OxydeSprintQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"]) -> OxydeTemplateQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"], flat: bool = False) -> OxydeSprintQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["body", "created_at", "description", "id", "name", "team_id", "updated_at"], flat: bool = False) -> OxydeTemplateQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
-    def distinct(self, distinct: bool = True) -> OxydeSprintQuery:
+    def distinct(self, distinct: bool = True) -> OxydeTemplateQuery:
         """Return distinct results."""
         ...
 
-    def join(self, *paths: str) -> OxydeSprintQuery:
+    def join(self, *paths: str) -> OxydeTemplateQuery:
         """Perform LEFT JOIN for relations."""
         ...
 
-    def prefetch(self, *paths: str) -> OxydeSprintQuery:
+    def prefetch(self, *paths: str) -> OxydeTemplateQuery:
         """Prefetch related objects (separate queries)."""
         ...
 
-    def for_update(self) -> OxydeSprintQuery:
+    def for_update(self) -> OxydeTemplateQuery:
         """Add FOR UPDATE lock to query."""
         ...
 
-    def for_share(self) -> OxydeSprintQuery:
+    def for_share(self) -> OxydeTemplateQuery:
         """Add FOR SHARE lock to query."""
         ...
 
@@ -659,7 +566,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         client: Any | None = None,
         using: str | None = None,
         **filters: Any,
-    ) -> OxydeSprint:
+    ) -> OxydeTemplate:
         """Get single object matching lookups."""
         ...
 
@@ -669,7 +576,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         client: Any | None = None,
         using: str | None = None,
         **filters: Any,
-    ) -> OxydeSprint | None:
+    ) -> OxydeTemplate | None:
         """Get object or None if not found."""
         ...
 
@@ -680,7 +587,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         client: Any | None = None,
         using: str | None = None,
         **filters: Any,
-    ) -> tuple[OxydeSprint, bool]:
+    ) -> tuple[OxydeTemplate, bool]:
         """Get object or create if not found. Returns (object, created)."""
         ...
 
@@ -691,7 +598,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         client: Any | None = None,
         using: str | None = None,
         **filters: Any,
-    ) -> tuple[OxydeSprint, bool]:
+    ) -> tuple[OxydeTemplate, bool]:
         """Get object, create if missing, or update it when defaults are provided."""
         ...
 
@@ -701,7 +608,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         client: Any | None = None,
         using: str | None = None,
         mode: str = "models",
-    ) -> list[OxydeSprint]:
+    ) -> list[OxydeTemplate]:
         """Get all objects."""
         ...
 
@@ -710,7 +617,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         *,
         client: Any | None = None,
         using: str | None = None,
-    ) -> OxydeSprint | None:
+    ) -> OxydeTemplate | None:
         """Get first object."""
         ...
 
@@ -719,7 +626,7 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         *,
         client: Any | None = None,
         using: str | None = None,
-    ) -> OxydeSprint | None:
+    ) -> OxydeTemplate | None:
         """Get last object."""
         ...
 
@@ -775,39 +682,34 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
     async def create(  # type: ignore[override]
         self,
         *,
-        instance: OxydeSprint | None = None,
+        instance: OxydeTemplate | None = None,
         client: Any | None = None,
         using: str | None = None,
-        budget: int | None = None,
+        body: str | None = None,
         created_at: datetime | None = None,
         description: str | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         id: str | None = None,
-        limbo: bool | None = None,
         name: str | None = None,
-        points_spent: int | None = None,
-        project_id: str | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        status: SprintStatus | None = None,
+        team_id: str | None = None,
         updated_at: datetime | None = None,
-    ) -> OxydeSprint:
+    ) -> OxydeTemplate:
         """Create new object."""
         ...
 
     async def bulk_create(  # type: ignore[override]
         self,
-        objects: list[OxydeSprint],
+        objects: list[OxydeTemplate],
         *,
         batch_size: int | None = None,
         client: Any | None = None,
         using: str | None = None,
-    ) -> list[OxydeSprint]:
+    ) -> list[OxydeTemplate]:
         """Bulk create objects."""
         ...
 
     async def bulk_update(  # type: ignore[override]
         self,
-        objects: list[OxydeSprint],
+        objects: list[OxydeTemplate],
         fields: list[str],
         *,
         client: Any | None = None,

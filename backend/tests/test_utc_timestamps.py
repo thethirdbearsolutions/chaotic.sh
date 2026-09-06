@@ -75,7 +75,6 @@ class TestDateTimeUTCType:
             description=None, status="active",
             start_date=naive, end_date=naive,
             budget=None, points_spent=0,
-            token_budget=None, tokens_spent=0,
             limbo=False, created_at=naive, updated_at=naive,
         )
         assert resp.created_at.tzinfo == timezone.utc

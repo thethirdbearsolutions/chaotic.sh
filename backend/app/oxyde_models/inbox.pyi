@@ -32,7 +32,8 @@ class OxydeInboxEntry(Model):
     title: str
     body: str | None
     created_at: datetime
-    read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None
+    read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
     objects: ClassVar["OxydeInboxEntryManager"]
 
 
@@ -44,6 +45,9 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
     def filter(
         self,
         *args: Any,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
         body__icontains: str | None = None,
@@ -109,8 +113,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -169,6 +173,9 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
     def exclude(
         self,
         *args: Any,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
         body__icontains: str | None = None,
@@ -234,8 +241,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -291,7 +298,7 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["body", "-body", "created_at", "-created_at", "document_id", "-document_id", "id", "-id", "issue_id", "-issue_id", "kind", "-kind", "project_id", "-project_id", "read_at", "-read_at", "recipient_user_id", "-recipient_user_id", "ritual_id", "-ritual_id", "source_user_id", "-source_user_id", "team_id", "-team_id", "title", "-title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["archived_at", "-archived_at", "body", "-body", "created_at", "-created_at", "document_id", "-document_id", "id", "-id", "issue_id", "-issue_id", "kind", "-kind", "project_id", "-project_id", "read_at", "-read_at", "recipient_user_id", "-recipient_user_id", "ritual_id", "-ritual_id", "source_user_id", "-source_user_id", "team_id", "-team_id", "title", "-title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -307,7 +314,7 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -331,7 +338,7 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -339,11 +346,11 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> "OxydeInboxEntryQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"], flat: bool = False) -> "OxydeInboxEntryQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"], flat: bool = False) -> "OxydeInboxEntryQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -467,6 +474,9 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
     def filter(
         self,
         *args: Any,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
         body__icontains: str | None = None,
@@ -532,8 +542,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -592,6 +602,9 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
     def exclude(
         self,
         *args: Any,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
         body__icontains: str | None = None,
@@ -657,8 +670,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -714,11 +727,11 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> OxydeInboxEntryQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"]) -> OxydeInboxEntryQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"], flat: bool = False) -> OxydeInboxEntryQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["archived_at", "body", "created_at", "document_id", "id", "issue_id", "kind", "project_id", "read_at", "recipient_user_id", "ritual_id", "source_user_id", "team_id", "title"], flat: bool = False) -> OxydeInboxEntryQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -869,6 +882,7 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         instance: OxydeInboxEntry | None = None,
         client: Any | None = None,
         using: str | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         body: str | None = None,
         created_at: datetime | None = None,
         document_id: str | None = None,
@@ -876,7 +890,7 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         issue_id: str | None = None,
         kind: InboxEntryKind | None = None,
         project_id: str | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x108bd56c0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         recipient_user_id: str | None = None,
         ritual_id: str | None = None,
         source_user_id: str | None = None,
