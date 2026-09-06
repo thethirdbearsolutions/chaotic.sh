@@ -98,6 +98,32 @@ reconnaissance (confirm a Chaotic instance is running, get its version)
 and, on shared or NAT'd networks, more surface for `/api/auth/*`
 credential-stuffing or DoS against the DB round-trip in `/health`.
 
+### API keys: verification cost and the 401 path
+
+`ck_...` API keys are 256 bits from `secrets.token_hex`. Since CHT-1369
+they are stored as `sha256$<hex>` and verified with a constant-time
+compare (about a microsecond); keys created earlier are stored as bcrypt
+hashes, still verify (off the event loop), and are re-hashed to SHA-256
+on their next successful use, so no rotation is needed. Before that
+change every request paid bcrypt's ~260 ms of CPU, and the stateless
+`/mcp` transport re-authenticates on every tool call, so an agent's
+three-call sequence was three bcrypt rounds and three `last_used_at`
+writes; `last_used_at` is now written at most once per minute per key.
+
+What that does and does not do for the unauthenticated 401 path
+(`/mcp` with a wrong key, `/api/auth/*`): a wrong `ck_` key now costs the
+server a prefix lookup and a hash compare, so there is no CPU
+amplification left to abuse, and guessing a 256-bit key is not a
+practical attack at any request rate. Password login (`/api/auth/login`)
+still uses bcrypt on purpose (passwords are low-entropy) and remains the
+one endpoint where request-rate limiting matters. **Decision (CHT-1369):
+the backend does not rate-limit; put that at the reverse proxy** (e.g.
+nginx `limit_req` on `/api/auth/` and `/mcp`, or Caddy's `rate_limit`),
+which sees the real client IP, survives restarts, and covers `/health`
+too. An in-process per-IP counter behind a proxy would see one IP for
+everyone; a per-key-prefix counter would let an attacker lock a real key
+out with wrong guesses.
+
 ## Hardening, in priority order
 
 1. **Keep the default: bind to loopback, put a TLS-terminating reverse

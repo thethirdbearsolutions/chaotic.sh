@@ -3,23 +3,50 @@
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
 import hashlib
+import hmac
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import anyio
+
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
-from app.utils.security import get_password_hash, verify_password
+from app.utils.security import verify_password
 
 # Type alias for API compatibility
 APIKey = OxydeAPIKey
 
+# How API keys are stored (CHT-1369). A `ck_` key is 256 bits from
+# secrets.token_hex, so a plain SHA-256 digest compared in constant time is
+# cryptographically sufficient: bcrypt exists to slow down guessing of
+# LOW-entropy secrets (passwords), and its ~260 ms per check was paid on
+# every stateless /mcp request. Stored as "sha256$<hex>" so the format is
+# self-describing next to the legacy bcrypt hashes ("$2b$..."), which keep
+# verifying (off the event loop) and are re-hashed to SHA-256 on their next
+# successful use, so a rotation is never required.
+SHA256_HASH_PREFIX = "sha256$"
+
+# `last_used_at` is informational ("is this key still in use?"); writing it
+# on every request turned each stateless MCP call into a DB write. Coalesce
+# to at most one write per key per interval.
+LAST_USED_WRITE_INTERVAL = timedelta(seconds=60)
+
 
 def _prehash_key(key: str) -> str:
-    """Prehash API key with SHA256 to fit bcrypt's 72-byte limit.
-
-    bcrypt truncates inputs >72 bytes. API keys are 67 chars which should fit,
-    but prehashing ensures consistent behavior and allows longer keys in future.
+    """SHA-256 hex digest of a key. For LEGACY bcrypt rows this was the
+    bcrypt input (bcrypt truncates past 72 bytes; keys are 67 chars, and
+    prehashing kept that safe); for current rows the same digest IS the
+    stored value, behind SHA256_HASH_PREFIX.
     """
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _sha256_key_hash(key: str) -> str:
+    return SHA256_HASH_PREFIX + _prehash_key(key)
+
+
+def _is_legacy_bcrypt_hash(key_hash: str) -> bool:
+    return not key_hash.startswith(SHA256_HASH_PREFIX)
 
 
 class APIKeyService:
@@ -44,7 +71,7 @@ class APIKeyService:
         """Create a new API key. Returns (api_key_model, full_key)."""
         full_key = self._generate_key()
         key_prefix = self._get_prefix(full_key)
-        key_hash = get_password_hash(_prehash_key(full_key))
+        key_hash = _sha256_key_hash(full_key)
 
         api_key = await OxydeAPIKey.objects.create(
             user_id=user_id,
@@ -82,12 +109,26 @@ class APIKeyService:
         if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
             return None
 
-        if not verify_password(_prehash_key(full_key), api_key.key_hash):
+        update_fields: set[str] = set()
+        if _is_legacy_bcrypt_hash(api_key.key_hash):
+            # bcrypt is CPU-bound and synchronous: keep it off the event loop
+            # so one legacy key's ~260 ms cannot stall every other request.
+            ok = await anyio.to_thread.run_sync(verify_password, _prehash_key(full_key), api_key.key_hash)
+            if not ok:
+                return None
+            # Opportunistic upgrade: the caller just proved they hold the key,
+            # so its SHA-256 digest can be stored and bcrypt is never paid again.
+            api_key.key_hash = _sha256_key_hash(full_key)
+            update_fields.add("key_hash")
+        elif not hmac.compare_digest(api_key.key_hash, _sha256_key_hash(full_key)):
             return None
 
-        # Update last_used_at
-        api_key.last_used_at = datetime.now(timezone.utc)
-        await api_key.save(update_fields={"last_used_at"})
+        now = datetime.now(timezone.utc)
+        if api_key.last_used_at is None or now - api_key.last_used_at >= LAST_USED_WRITE_INTERVAL:
+            api_key.last_used_at = now
+            update_fields.add("last_used_at")
+        if update_fields:
+            await api_key.save(update_fields=update_fields)
 
         return api_key
 
