@@ -762,7 +762,7 @@
       }
     },
     "issue_ready": {
-      "description": "List issues that are open, unblocked, and unclaimed -- what you can start right now.\n\n    Open + not-started (backlog/todo) only; excludes anything already\n    in_progress/in_review/done/canceled, and excludes issues with an\n    unresolved blocking relation. Priority-sorted (urgent first), then\n    oldest first. Unassigned by default -- `mine` restricts to your own\n    assigned-but-not-started work, `include_assigned` widens to every\n    not-started issue regardless of assignee.\n\n    Prefer this over issue_list when the question is \"what should I pick\n    up\"; issue_list can filter by status and assignee but cannot express\n    \"has no unresolved blocker\".\n    ",
+      "description": "List issues that are open, unblocked, and unclaimed -- what you can start right now.\n\n    Open + not-started (backlog/todo) only; excludes anything already\n    in_progress/in_review/done/canceled, and excludes issues with an\n    unresolved blocking relation. Priority-sorted (urgent first), then\n    oldest first. Unassigned by default -- `mine` restricts to your own\n    assigned-but-not-started work, `include_assigned` widens to every\n    not-started issue regardless of assignee.\n\n    Prefer this over issue_list when the question is \"what should I pick\n    up\"; issue_list can filter by status and assignee but cannot express\n    \"has no unresolved blocker\".\n\n    Scope is never widened silently: with no `project` and no current\n    project this refuses and says so, rather than answering with the\n    whole team's work. Pass `all_projects=true` to ask for that.\n    ",
       "inputSchema": {
         "properties": {
           "all_projects": {

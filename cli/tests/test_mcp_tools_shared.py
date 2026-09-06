@@ -607,11 +607,26 @@ class TestIssueStartBody:
 
 
 class TestScopeDefaults:
-    async def test_issue_ready_without_project_uses_optional_project(self, fake):
+    async def test_issue_ready_without_project_refuses_instead_of_widening(self, fake):
+        """CHT-1355: no `project`, no current project, no `all_projects` used
+        to silently answer with the whole team's ready work on stdio (and
+        raise on HTTP). Both now refuse; the widening is opt-in."""
         fake.current_project = None
-        await _tools(fake)["issue_ready"]()
+        result = await _tools(fake)["issue_ready"]()
+        assert result["error"]["error_code"] == "tool_input"
+        assert "No project selected" in result["error"]["message"]
+        assert fake.calls_to("list_ready_issues") == []
+
+    async def test_issue_ready_all_projects_is_the_explicit_widening(self, fake):
+        fake.current_project = None
+        await _tools(fake)["issue_ready"](all_projects=True)
         (_, kwargs), = fake.calls_to("list_ready_issues")
         assert kwargs["project_id"] is None and kwargs["team_id"] == "team-1"
+
+    async def test_issue_ready_with_current_project_is_project_scoped(self, fake):
+        await _tools(fake)["issue_ready"]()
+        (_, kwargs), = fake.calls_to("list_ready_issues")
+        assert kwargs["project_id"] == "proj-1" and kwargs["team_id"] is None
 
     async def test_doc_list_all_projects_goes_team_wide(self, fake):
         await _tools(fake)["doc_list"](all_projects=True)

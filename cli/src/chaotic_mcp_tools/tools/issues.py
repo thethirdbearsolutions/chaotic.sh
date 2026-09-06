@@ -445,6 +445,10 @@ async def issue_ready(
     Prefer this over issue_list when the question is "what should I pick
     up"; issue_list can filter by status and assignee but cannot express
     "has no unresolved blocker".
+
+    Scope is never widened silently: with no `project` and no current
+    project this refuses and says so, rather than answering with the
+    whole team's work. Pass `all_projects=true` to ask for that.
     """
     if mine and include_assigned:
         raise ToolInputError("Pass either `mine` or `include_assigned`, not both.")
@@ -453,7 +457,12 @@ async def issue_ready(
         project_id = None
         team_id = await backend.resolve_team(team)
     else:
-        project_id, team_id = await backend.optional_project(project, team)
+        # resolve_project, not optional_project (CHT-1355): a missing
+        # current project must be an error the caller sees, not a query
+        # that quietly becomes team-wide -- this is the tool an agent uses
+        # to choose its own next work, so a wrong scope means work started
+        # in a project it was never pointed at.
+        project_id, team_id = await backend.resolve_project(project, team)
 
     issues = await backend.list_ready_issues(
         project_id=project_id,
