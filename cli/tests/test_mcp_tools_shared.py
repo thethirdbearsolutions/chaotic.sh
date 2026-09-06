@@ -63,6 +63,16 @@ class FakeBackend:
         self.pending_issue_rituals = {"pending_rituals": [], "completed_rituals": []}
         self.limbo = {"in_limbo": False, "pending_rituals": []}
         self.estimate_scale = "fibonacci"
+        self.inbox = [
+            {"id": "in-1", "kind": "mention", "title": "ethan mentioned you on CHT-1", "team_id": "team-1",
+             "issue_identifier": "CHT-1", "document_title": None, "source_user_name": "ethan",
+             "body": "@agent please look", "created_at": "2026-09-06T00:00:00Z", "read_at": None,
+             "recipient_user_id": "u-agent"},
+            {"id": "in-2", "kind": "assignment", "title": "Assigned CHT-2", "team_id": "team-1",
+             "issue_identifier": "CHT-2", "document_title": None, "source_user_name": "ethan",
+             "body": None, "created_at": "2026-09-05T00:00:00Z", "read_at": "2026-09-05T01:00:00Z",
+             "recipient_user_id": "u-agent"},
+        ]
         self.list_result: list = []
 
     def _rec(self, name, *args, **kwargs):
@@ -258,6 +268,24 @@ class FakeBackend:
         self._rec("get_project", project_id)
         return {"id": project_id, "key": "CHT", "estimate_scale": self.estimate_scale}
 
+    async def list_inbox(self, team_id, *, unread, limit):
+        self._rec("list_inbox", team_id, unread=unread, limit=limit)
+        rows = [e for e in self.inbox if not unread or e["read_at"] is None]
+        return rows[:limit]
+
+    async def mark_inbox_read(self, entry_id):
+        self._rec("mark_inbox_read", entry_id)
+        entry = next(e for e in self.inbox if e["id"] == entry_id)
+        entry["read_at"] = "now"
+        return dict(entry)
+
+    async def mark_all_inbox_read(self, team_id):
+        self._rec("mark_all_inbox_read", team_id)
+        n = sum(1 for e in self.inbox if e["read_at"] is None)
+        for e in self.inbox:
+            e["read_at"] = e["read_at"] or "now"
+        return {"marked_count": n}
+
     async def list_activities(self, team_id, **kw):
         self._rec("list_activities", team_id, **kw)
         return list(self.list_result)
@@ -332,7 +360,7 @@ def test_team_scoped_tools_derived_from_bodies():
     assert TEAM_SCOPED_TOOLS == {
         t.__name__ for t in ALL_TOOLS if "team" in inspect.signature(t).parameters
     }
-    assert len(TEAM_SCOPED_TOOLS) == 18
+    assert len(TEAM_SCOPED_TOOLS) == 20
 
 
 async def test_team_kwarg_is_dropped_when_not_advertised(fake):
@@ -388,6 +416,7 @@ class TestBoundary:
     _REACHING_KWARGS = {
         "issue_unblock": {"identifier": "CHT-1", "relation_id": "rel-1"},
         "issue_label": {"identifier": "CHT-1", "add": ["bug"]},
+        "inbox_mark_read": {"entry_id": "in-1"},
         "sprint_add": {"identifiers": ["CHT-1"]},
         "sprint_remove": {"identifiers": ["CHT-1"]},
         "issue_block": {"identifier": "CHT-1", "blocked": "CHT-2"},
@@ -637,6 +666,35 @@ class TestEstimateScaleWarning:
         fake = FakeBackend(fail_on={"get_project": BackendError("boom", 500, "boom")})
         result = await _tools(fake)["issue_create"](title="T", estimate=7)
         assert "error" not in result and "warnings" not in result
+
+
+class TestInboxTools:
+    """CHT-1338: the mailbox the system keeps for an agent is readable
+    from the agent's own surface."""
+
+    async def test_list_is_compact_and_team_scoped(self, fake):
+        result = await _tools(fake)["inbox_list"]()
+        assert result["count"] == 2 and result["truncated"] is False and result["unread_only"] is False
+        assert set(result["entries"][0]) == {
+            "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
+            "created_at", "read_at",
+        }
+        assert "body" not in result["entries"][0]
+        assert fake.calls_to("list_inbox") == [(("team-1",), {"unread": False, "limit": 21})]
+
+    async def test_unread_filter_and_detail(self, fake):
+        result = await _tools(fake)["inbox_list"](unread=True, detail=True)
+        assert [e["id"] for e in result["entries"]] == ["in-1"]
+        assert result["entries"][0]["body"] == "@agent please look"
+        assert result["unread_only"] is True
+
+    async def test_mark_read_and_mark_all(self, fake):
+        entry = await _tools(fake)["inbox_mark_read"]("in-1")
+        assert entry["id"] == "in-1" and entry["read_at"] == "now"
+        assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 0
+        fake.inbox[1]["read_at"] = None
+        assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 1
+        assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})
 
 
 class TestScopeDefaults:

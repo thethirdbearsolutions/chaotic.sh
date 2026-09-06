@@ -624,7 +624,7 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 
 ### Tools
 
-The 30 tools, grouped as in `chaotic_mcp_tools/tools/__init__.py`; the
+The 33 tools, grouped as in `chaotic_mcp_tools/tools/__init__.py`; the
 canonical descriptions and schemas are in `docs/mcp-toolset-schema.json`,
 and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
 
@@ -657,6 +657,9 @@ and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
 | `ritual_list` | `ritual list` |
 | `ritual_attest` | `ritual attest` |
 | `ritual_complete` | `ritual complete` |
+| `inbox_list` | `inbox list` |
+| `inbox_mark_read` | `inbox mark-read` |
+| `inbox_mark_all_read` | `inbox mark-all-read` |
 | `label_list` | `label list` |
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |

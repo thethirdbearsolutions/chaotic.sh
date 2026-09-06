@@ -1,4 +1,4 @@
-"""The 30 tool bodies, grouped by subject. Each is
+"""The 33 tool bodies, grouped by subject. Each is
 ``async def name(backend: Backend, ...params) -> dict`` and is registered
 through ``registry.bind`` -- never directly.
 
@@ -12,6 +12,7 @@ Toolset (curated for quality over coverage -- see CHT-1247):
                sprint_transactions, sprint_add, sprint_remove
     rituals:   ritual_pending, ritual_list, ritual_attest,
                ritual_complete
+    inbox:     inbox_list, inbox_mark_read, inbox_mark_all_read
     other:     label_list, activity_recent, project_list
 
 The sprint and ritual groups exist because governance state can BLOCK
@@ -35,6 +36,7 @@ LLM caller rather than a human at a terminal:
 from __future__ import annotations
 
 from .docs import doc_create, doc_link, doc_list, doc_unlink, doc_update, doc_view
+from .inbox import inbox_list, inbox_mark_all_read, inbox_mark_read
 from .issues import (
     issue_block,
     issue_comment,
@@ -68,6 +70,7 @@ ALL_TOOLS = (
     sprint_current, sprint_list, sprint_close, sprint_transactions,
     sprint_add, sprint_remove,
     ritual_pending, ritual_list, ritual_attest, ritual_complete,
+    inbox_list, inbox_mark_read, inbox_mark_all_read,
     doc_list, doc_view, doc_create, doc_update, activity_recent, project_list,
 )
 

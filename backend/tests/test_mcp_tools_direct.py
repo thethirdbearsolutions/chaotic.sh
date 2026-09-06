@@ -717,6 +717,50 @@ class TestSprintTools:
 
 
 
+class TestInboxTools:
+    """CHT-1338: the mailbox the system keeps for the calling identity is
+    readable and acknowledgeable from the MCP surface."""
+
+    async def _entry(self, test_user, test_team, test_issue, title, read=False):
+        from datetime import datetime, timezone
+
+        from app.enums import InboxEntryKind
+        from app.oxyde_models.inbox import OxydeInboxEntry
+
+        return await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id,
+            issue_id=test_issue.id, title=title, body="@you please look",
+            read_at=datetime.now(timezone.utc) if read else None,
+        )
+
+    async def test_list_is_compact_and_resolves_the_issue_identifier(self, test_user, test_team, test_issue):
+        await self._entry(test_user, test_team, test_issue, "mentioned you")
+        result = await tools.inbox_list()
+        assert result["count"] == 1 and result["truncated"] is False
+        row = result["entries"][0]
+        assert row["kind"] == "mention" and row["issue_identifier"] == test_issue.identifier
+        assert row["read_at"] is None and "body" not in row
+        full = await tools.inbox_list(detail=True)
+        assert full["entries"][0]["body"] == "@you please look"
+
+    async def test_unread_filter_mark_read_and_mark_all(self, test_user, test_team, test_issue):
+        unread = await self._entry(test_user, test_team, test_issue, "new")
+        await self._entry(test_user, test_team, test_issue, "old", read=True)
+        assert [e["title"] for e in (await tools.inbox_list(unread=True))["entries"]] == ["new"]
+
+        marked = await tools.inbox_mark_read(entry_id=unread.id)
+        assert marked["id"] == unread.id and marked["read_at"] is not None
+        assert (await tools.inbox_list(unread=True))["count"] == 0
+
+        await self._entry(test_user, test_team, test_issue, "another")
+        assert (await tools.inbox_mark_all_read())["marked_count"] == 1
+
+    async def test_someone_elses_entry_is_an_error_envelope(self, test_user2, test_team, test_issue):
+        entry = await self._entry(test_user2, test_team, test_issue, "not yours")
+        result = await tools.inbox_mark_read(entry_id=entry.id)
+        assert result["error"]["http_status"] in (403, 404)
+
+
 class TestRitualTools:
     """CHT-1333: issue_update took an `attest` map keyed by ritual name,
     but nothing on this surface could tell you those names -- and

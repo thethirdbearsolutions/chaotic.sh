@@ -60,7 +60,7 @@ async def list_inbox(
     unread: bool = False,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-):
+) -> list[InboxEntryResponse]:
     """List the current user's inbox entries, newest first."""
     entries = await InboxService().list_for_user(
         current_user.id, team_id=team_id, unread_only=unread, skip=skip, limit=limit,
@@ -76,7 +76,7 @@ async def get_unread_count(current_user: CurrentUser, team_id: str | None = None
 
 
 @router.post("/{entry_id}/read", response_model=InboxEntryResponse)
-async def mark_inbox_read(entry_id: str, current_user: CurrentUser):
+async def mark_inbox_read(entry_id: str, current_user: CurrentUser) -> InboxEntryResponse:
     """Mark a single inbox entry as read."""
     inbox_service = InboxService()
     entry = await inbox_service.get_by_id(entry_id)
@@ -129,7 +129,7 @@ async def archive_inbox_entry(entry_id: str, current_user: CurrentUser):
 
 
 @router.post("/mark-all-read", response_model=MarkAllReadResponse)
-async def mark_all_inbox_read(current_user: CurrentUser, team_id: str | None = None):
+async def mark_all_inbox_read(current_user: CurrentUser, team_id: str | None = None) -> MarkAllReadResponse:
     """Mark every unread inbox entry for the current user as read."""
     marked = await InboxService().mark_all_read(current_user.id, team_id=team_id)
     if marked and team_id:

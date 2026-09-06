@@ -25,6 +25,10 @@ COMPACT_PROJECT_FIELDS = (
     "unestimated_handling", "default_sprint_budget", "require_estimate_on_claim",
     "human_rituals_required",
 )
+COMPACT_INBOX_FIELDS = (
+    "id", "kind", "title", "issue_identifier", "document_title", "source_user_name",
+    "created_at", "read_at",
+)
 # Long free text in list/feed rows is cut to this many chars with an
 # explicit `...(+N chars)` marker: project descriptions in project_list,
 # old_value/new_value in activity_recent (an issue-description edit
@@ -46,6 +50,7 @@ RESPONSE_SHAPES = {
     "compact_issue_fields": list(COMPACT_ISSUE_FIELDS),
     "compact_document_fields": list(COMPACT_DOCUMENT_FIELDS),
     "compact_project_fields": list(COMPACT_PROJECT_FIELDS),
+    "compact_inbox_fields": list(COMPACT_INBOX_FIELDS),
     "text_preview_chars": TEXT_PREVIEW_CHARS,
     "issue_view_comment_cap": ISSUE_VIEW_COMMENT_CAP,
     "issue_view_fetch_limit": ISSUE_VIEW_FETCH_LIMIT,

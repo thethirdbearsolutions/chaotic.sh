@@ -297,6 +297,17 @@ class RestBackend:
     async def get_project(self, project_id: str) -> dict:
         return await self._call(self._client().get_project, project_id)
 
+    # -- inbox (CHT-1338) ------------------------------------------------------
+
+    async def list_inbox(self, team_id: str, *, unread: bool, limit: int) -> list:
+        return await self._call(self._client().get_inbox, team_id, unread=unread, limit=limit)
+
+    async def mark_inbox_read(self, entry_id: str) -> dict:
+        return await self._call(self._client().mark_inbox_read, entry_id)
+
+    async def mark_all_inbox_read(self, team_id: str) -> dict:
+        return await self._call(self._client().mark_all_inbox_read, team_id)
+
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         return await self._call(
             self._client().get_team_activities, team_id, limit=limit, project_id=project_id,

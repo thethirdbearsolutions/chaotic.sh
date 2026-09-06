@@ -13,6 +13,16 @@
         "labels",
         "updated_at"
       ],
+      "compact_inbox_fields": [
+        "id",
+        "kind",
+        "title",
+        "issue_identifier",
+        "document_title",
+        "source_user_name",
+        "created_at",
+        "read_at"
+      ],
       "compact_issue_fields": [
         "identifier",
         "title",
@@ -60,6 +70,8 @@
       "doc_create",
       "doc_list",
       "doc_update",
+      "inbox_list",
+      "inbox_mark_all_read",
       "issue_create",
       "issue_list",
       "issue_ready",
@@ -359,6 +371,60 @@
           "document_id"
         ],
         "title": "doc_viewArguments",
+        "type": "object"
+      }
+    },
+    "inbox_list": {
+      "description": "List the calling identity's inbox: what is waiting on YOU, newest first.\n\n    This is the human-to-agent handoff channel: an @mention of you in a\n    comment, an assignment, a GATE ritual an admin must complete, a\n    REVIEW attestation awaiting approval. Check it when you start work\n    and between tasks; nothing else on this surface delivers it. Rows\n    carry `kind`, a `title`, and the issue identifier / document title\n    they point at; `read_at` is null until inbox_mark_read.\n    ",
+      "inputSchema": {
+        "properties": {
+          "detail": {
+            "default": false,
+            "description": "Return full inbox rows (every field) instead of the compact projection.",
+            "title": "Detail",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of entries to return.",
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "unread": {
+            "default": false,
+            "description": "Only entries not yet marked read.",
+            "title": "Unread",
+            "type": "boolean"
+          }
+        },
+        "title": "inbox_listArguments",
+        "type": "object"
+      }
+    },
+    "inbox_mark_all_read": {
+      "description": "Mark every unread inbox entry for the calling identity as read.\n\n    Returns `marked_count`. Read the entries first (inbox_list) -- this\n    is how you acknowledge them, not how you find out what they said.\n    ",
+      "inputSchema": {
+        "properties": {},
+        "title": "inbox_mark_all_readArguments",
+        "type": "object"
+      }
+    },
+    "inbox_mark_read": {
+      "description": "Mark one inbox entry as read. Returns the updated entry.",
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Inbox entry id, from inbox_list.",
+            "title": "Entry Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "title": "inbox_mark_readArguments",
         "type": "object"
       }
     },
