@@ -4,10 +4,11 @@
 default:
     @just --list
 
-# Sync all dependencies (including dev)
+# Sync all dependencies (including dev) for every project `just lint`/`test-*` touch
 sync:
     cd backend && uv sync --extra dev
-    cd cli && uv sync
+    cd cli && uv sync --extra dev
+    cd e2e && uv sync
 
 # Sync backend dependencies
 sync-backend:
