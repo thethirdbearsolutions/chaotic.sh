@@ -22,6 +22,9 @@ def base_patches():
          patch("cli.system.get_current_commit", return_value="abc1234"), \
          patch("cli.system.fetch_updates", return_value=True), \
          patch("cli.system.get_latest_version", return_value="v1.1.0"), \
+         patch("cli.system.resolve_commit", return_value="def5678"), \
+         patch("cli.system.is_ancestor", side_effect=lambda older, newer: (older, newer) == ("abc1234", "def5678")), \
+         patch("cli.system.verify_deployed_commit", return_value=(True, "def5678")), \
          patch("cli.system.validate_git_ref", return_value=True):
         yield
 
@@ -74,8 +77,9 @@ class TestUpgradeChangelog:
 
         assert "1 commit)" in result.output
 
-    def test_no_changelog_when_no_commits(self, cli_runner, base_patches):
-        """No changelog section when git log returns empty."""
+    def test_empty_changelog_between_different_commits_is_said_out_loud(self, cli_runner, base_patches):
+        """An empty range between two different shas used to print nothing,
+        which read as "nothing to see" (CHT-1357). Say it explicitly."""
         def fake_run_command(cmd, **kwargs):
             result = MagicMock()
             result.returncode = 0
@@ -87,7 +91,7 @@ class TestUpgradeChangelog:
             from cli.system import system
             result = cli_runner.invoke(system, ["upgrade"])
 
-        assert "Changelog" not in result.output
+        assert "Changelog: no commits in abc1234..def5678" in result.output
 
     def test_no_changelog_when_git_log_fails(self, cli_runner, base_patches):
         """Changelog gracefully skipped when git log fails."""
@@ -115,12 +119,14 @@ class TestUpgradeChangelog:
              patch("cli.system.get_current_commit", return_value=None), \
              patch("cli.system.fetch_updates", return_value=True), \
              patch("cli.system.get_latest_version", return_value="v1.1.0"), \
+             patch("cli.system.resolve_commit", return_value="def5678"), \
              patch("cli.system.run_command") as mock_run, \
              patch("cli.system._confirm_action", return_value=False):
             from cli.system import system
             result = cli_runner.invoke(system, ["upgrade"])
 
         assert "Changelog" not in result.output
+        assert "Upgrade from v1.0.0 to v1.1.0" in str(result.output) or result.exit_code == 0
 
     def test_already_on_target_skips_changelog(self, cli_runner):
         """When already on target version, no changelog shown."""
@@ -128,6 +134,7 @@ class TestUpgradeChangelog:
              patch("cli.system.get_current_version", return_value="v1.0.0"), \
              patch("cli.system.get_current_commit", return_value="abc1234"), \
              patch("cli.system.fetch_updates", return_value=True), \
+             patch("cli.system.resolve_commit", return_value="abc1234"), \
              patch("cli.system.get_latest_version", return_value="v1.0.0"):
             from cli.system import system
             result = cli_runner.invoke(system, ["upgrade"])

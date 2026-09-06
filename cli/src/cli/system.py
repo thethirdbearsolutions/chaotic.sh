@@ -716,6 +716,86 @@ def get_latest_version() -> str | None:
     return None
 
 
+def resolve_commit(ref: str) -> str | None:
+    """Full sha a tag/branch/commit ref points at, or None if it does not resolve."""
+    try:
+        result = run_command(
+            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            cwd=SERVER_DIR,
+            check=False,
+        )
+    except subprocess.CalledProcessError:
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def is_ancestor(older: str, newer: str) -> bool:
+    """True if `older` is an ancestor of (or equal to) `newer`."""
+    try:
+        result = run_command(
+            ["git", "merge-base", "--is-ancestor", older, newer],
+            cwd=SERVER_DIR,
+            check=False,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    return result.returncode == 0
+
+
+def describe_commit(sha: str) -> str:
+    """`abc1234 (2026-07-24)` -- short sha and commit date, for messages."""
+    try:
+        result = run_command(
+            ["git", "log", "-1", "--format=%h (%cs)", sha],
+            cwd=SERVER_DIR,
+            check=False,
+        )
+    except subprocess.CalledProcessError:
+        return sha[:7]
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else sha[:7]
+
+
+def upgrade_direction(current_commit: str | None, target_commit: str) -> str:
+    """Where an upgrade from `current_commit` to `target_commit` would move
+    the server: "same", "forward" (target descends from current), "backward"
+    (target is an ancestor of current -- a downgrade), "diverged" (neither),
+    or "unknown" when the current commit could not be determined (CHT-1357).
+    """
+    if current_commit is None:
+        return "unknown"
+    if current_commit == target_commit:
+        return "same"
+    if is_ancestor(current_commit, target_commit):
+        return "forward"
+    if is_ancestor(target_commit, current_commit):
+        return "backward"
+    return "diverged"
+
+
+def verify_deployed_commit(
+    port: int, expected_sha: str, host: str = "localhost", timeout: int = 30,
+) -> tuple[bool, str | None]:
+    """Poll /health until the process answering the port reports the commit
+    we just checked out (CHT-1363). health_check() only proves that
+    SOMETHING answers; if start_service() failed while an old process
+    still held the port, the old code would pass it. /health reports the
+    short sha, so compare by prefix. Returns (matched, last sha seen).
+
+    Polls rather than failing on the first mismatch: during a restart the
+    old process may answer briefly before the new one binds.
+    """
+    start = time.time()
+    served = None
+    while True:
+        body = get_health(port, host=host)
+        served = (body or {}).get("git_sha") or None
+        if served and (expected_sha.startswith(served) or served.startswith(expected_sha)):
+            return True, served
+        if time.time() - start >= timeout:
+            return False, served
+        time.sleep(1)
+
+
 def checkout_version(version: str, force: bool = False) -> tuple[bool, str]:
     """Checkout a specific version (tag, branch, or commit).
 
@@ -1326,12 +1406,54 @@ def system_logs(follow, lines):
         pass  # User interrupted, exit cleanly
 
 
+def _print_commit_list(rev_range: str, heading: str) -> None:
+    """`git log --oneline <range>` under a heading; silent if git fails
+    (non-critical), explicit when the range is empty."""
+    try:
+        log_result = run_command(
+            ["git", "log", "--oneline", rev_range],
+            cwd=SERVER_DIR,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
+        return
+    if log_result.returncode != 0:
+        return
+    commits = log_result.stdout.strip().splitlines()
+    if not commits:
+        console.print(f"\n[bold]{heading}[/bold]: no commits in {rev_range}")
+        return
+    console.print(f"\n[bold]{heading}[/bold] ({len(commits)} commit{'s' if len(commits) != 1 else ''}):")
+    for line in commits:
+        console.print(f"  {line}")
+    console.print()
+
+
+def _roll_back(current_commit: str | None, backup_path: Path | None) -> None:
+    """Undo a failed upgrade: stop whatever is running, restore the previous
+    checkout and (if one was taken) the database backup, restart."""
+    stop_service()
+    if current_commit:
+        checkout_version(current_commit, force=True)
+    if backup_path:
+        restore_backup(backup_path)
+    if not start_service():
+        console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+    else:
+        console.print("[yellow]Rolled back to previous version.[/yellow]")
+
+
 @system.command("upgrade")
 @click.option("--version", "target_version", default=None, help="Version to upgrade to (default: latest)")
 @click.option("--no-backup", is_flag=True, help="Skip database backup (not recommended)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
 @click.option("--fake-initial", is_flag=True, help="Fake-apply initial migration (for pre-Oxyde databases)")
-def system_upgrade(target_version, no_backup, yes, fake_initial):
+@click.option(
+    "--allow-downgrade", is_flag=True,
+    help="Permit a target that is older than (or diverged from) the deployed commit. "
+         "Off by default: an upgrade must never move a server backwards by accident (CHT-1357).",
+)
+def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade):
     """Upgrade to a new version.
 
     This command:
@@ -1340,7 +1462,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
     3. Pulls and checks out the new version
     4. Syncs dependencies and runs database migrations
     5. Restarts the server
-    6. Rolls back automatically if health check fails
+    6. Rolls back automatically if the health check fails or the process
+       answering the port is not running the new commit
+
+    Refuses to move the server to an older or diverged commit unless
+    --allow-downgrade is given: the default target is the newest tag on
+    origin/main, and tags can fall behind what is deployed.
 
     If migrations fail with "already exists", your database predates the
     migration system. Re-run with --fake-initial to mark the initial schema
@@ -1374,6 +1501,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
         raise SystemExit(1)
 
     # Determine target version
+    target_was_default = target_version is None
     if target_version is None:
         target_version = get_latest_version()
         if target_version is None:
@@ -1382,25 +1510,47 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
 
     console.print(f"Target version:  {target_version}")
 
-    # Show changelog between current and target
-    if current_commit:
-        try:
-            log_result = run_command(
-                ["git", "log", "--oneline", f"{current_commit}..{target_version}"],
-                cwd=SERVER_DIR,
-                check=False,
-            )
-            if log_result.returncode == 0 and log_result.stdout.strip():
-                commits = log_result.stdout.strip().splitlines()
-                console.print(f"\n[bold]Changelog[/bold] ({len(commits)} commit{'s' if len(commits) != 1 else ''}):")
-                for line in commits:
-                    console.print(f"  {line}")
-                console.print()
-        except (subprocess.TimeoutExpired, OSError):
-            pass  # Non-critical, skip if git log fails
+    target_commit = resolve_commit(target_version)
+    if target_commit is None:
+        console.print(f"[red]Unknown version: {target_version}[/red] (not a tag, branch, or commit in the server checkout)")
+        raise SystemExit(1)
 
-    # Check if already on target
-    already_current = current_version == target_version
+    # An upgrade must never move the server backwards by accident (CHT-1357):
+    # the default target is the newest tag, and tags can lag origin/main --
+    # production once sat 13 days AHEAD of the newest tag, so a bare
+    # `system upgrade` would have checked out older code, shown an empty
+    # changelog, passed its health check and reported success.
+    direction = upgrade_direction(current_commit, target_commit)
+    if direction in ("backward", "diverged"):
+        current_desc = describe_commit(current_commit)
+        target_desc = describe_commit(target_commit)
+        if direction == "backward":
+            console.print(
+                f"\n[red]Target {target_desc} is OLDER than the deployed commit {current_desc}:[/red] "
+                "it is an ancestor of what is running, so this would be a downgrade, not an upgrade."
+            )
+            _print_commit_list(f"{target_commit}..{current_commit}", "Commits that would be REMOVED")
+        else:
+            console.print(
+                f"\n[red]Target {target_desc} does not descend from the deployed commit {current_desc}:[/red] "
+                "the histories have diverged, so this is not an upgrade."
+            )
+        if not allow_downgrade:
+            if target_was_default:
+                console.print(
+                    "The newest tag is behind what is deployed. To deploy main instead: "
+                    "chaotic system upgrade --version origin/main"
+                )
+            console.print("To roll back deliberately: chaotic system upgrade --version <ref> --allow-downgrade")
+            raise SystemExit(1)
+        console.print("[yellow]Proceeding anyway because --allow-downgrade was given.[/yellow]\n")
+    elif direction == "forward":
+        _print_commit_list(f"{current_commit}..{target_commit}", "Changelog")
+
+    # Check if already on target (commit identity, not version-string
+    # equality: `describe --tags --always` output and a tag name only agree
+    # when HEAD sits exactly on the tag).
+    already_current = direction == "same" or (direction == "unknown" and current_version == target_version)
     if already_current and not fake_initial:
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
@@ -1505,22 +1655,34 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
 
         # Health check
         console.print("Waiting for health check...", end=" ")
-        if health_check(port, host=host):
-            console.print("[green]OK[/green]")
-            version_after = get_remote_version(port, host=host)
-        else:
+        if not health_check(port, host=host):
             console.print("[red]FAILED[/red]")
             console.print("\nHealth check failed. Rolling back...")
-            stop_service()
-            if current_commit:
-                checkout_version(current_commit, force=True)
-            if backup_path:
-                restore_backup(backup_path)
-            if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
-            else:
-                console.print("[yellow]Rolled back to previous version.[/yellow]")
+            _roll_back(current_commit, backup_path)
             raise SystemExit(1)
+        console.print("[green]OK[/green]")
+
+        # Liveness is not identity (CHT-1363): /health answering proves that
+        # SOMETHING is on the port. If the new process failed to start while
+        # an old one still held the port, the old code passes the health
+        # check and "Upgraded to X" would be a lie. /health reports the
+        # commit it is running; insist it is the one we checked out.
+        new_commit = get_current_commit()
+        if new_commit:
+            console.print("Verifying the new process took over...", end=" ")
+            matched, served = verify_deployed_commit(port, new_commit, host=host)
+            if not matched:
+                console.print("[red]FAILED[/red]")
+                console.print(
+                    f"\nPort {port} is answering, but with {served or 'no git_sha'}, not "
+                    f"{new_commit[:7]}: the new process did not take over. Rolling back..."
+                )
+                _roll_back(current_commit, backup_path)
+                raise SystemExit(1)
+            console.print("[green]OK[/green]")
+        version_after = get_remote_version(port, host=host)
+        if version_after and version_after.get("git_dirty"):
+            console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")
 
     # Success
     new_version = get_current_version()
