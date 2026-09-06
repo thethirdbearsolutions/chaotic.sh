@@ -29,8 +29,18 @@ class TestOffScaleWarning:
         assert off_scale_warning(7, "hexadecimal") is None  # a newer server's scale, not our business
 
     def test_tables_match_the_frontend(self):
-        """Mirrors frontend/src/projects.js ESTIMATE_SCALES; keep in step."""
-        assert SCALE_VALUES["fibonacci"] == (1, 2, 3, 5, 8, 13, 21)
-        assert SCALE_VALUES["linear"] == tuple(range(1, 11))
-        assert SCALE_VALUES["powers_of_2"] == (1, 2, 4, 8, 16, 32, 64)
-        assert SCALE_VALUES["tshirt"] == (1, 2, 3, 5, 8)
+        """The same tables drive the frontend's estimate dropdown
+        (frontend/src/projects.js ESTIMATE_SCALES). Parse that source rather
+        than hand-copy it, so drift fails here (PR #283 review)."""
+        import re
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "projects.js").read_text()
+        block = source[source.index("const ESTIMATE_SCALES = {"):]
+        block = block[: block.index("\n};") + 3]
+        frontend = {
+            name: tuple(int(v) for v in re.findall(r"value: (\d+)", body))
+            for name, body in re.findall(r"\n  (\w+): \[((?:.|\n)*?)\n  \]", block)
+        }
+        assert frontend, "could not parse ESTIMATE_SCALES out of projects.js"
+        assert frontend == dict(SCALE_VALUES)

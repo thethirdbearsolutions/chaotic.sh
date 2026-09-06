@@ -10,6 +10,10 @@ name: Publish CLI to PyPI
 #        workflow: publish-cli.yml      environment: pypi   (test-pypi on TestPyPI)
 # The TestPyPI job is a smoke test and cannot block the real publish: a17
 # never shipped because publish-pypi `needs`ed a TestPyPI job that failed.
+# Nothing `needs` it now, so its failure is visible on the run but gates
+# nothing. Note the token path has no safety net: a secret that is SET but
+# invalid or expired fails the upload outright; only an empty secret falls
+# back to OIDC.
 
 on:
   release:
@@ -121,9 +125,9 @@ jobs:
     environment: test-pypi
     permissions:
       id-token: write
-    # Smoke test only. Its failure must never decide whether the real
-    # publish runs (CHT-1356).
-    continue-on-error: true
+    # Smoke test only: nothing `needs` this job, so its failure cannot decide
+    # whether the real publish runs (CHT-1356), and it stays visible as a
+    # failed job rather than being hidden by continue-on-error.
 
     steps:
       - name: Download artifacts
