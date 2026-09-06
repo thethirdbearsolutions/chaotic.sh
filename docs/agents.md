@@ -185,14 +185,36 @@ the same command:
 
 ### Toolset
 
-Eleven tools, curated for quality over coverage:
+30 tools, curated for quality over coverage (CHT-1247). The canonical
+list is `docs/mcp-toolset-schema.json` -- every tool's description and
+input schema, regenerated from the code -- and
+`cli/tests/test_mcp_toolset_sync.py` fails if this section stops naming
+one of them:
 
-- `issue_list`, `issue_view`, `issue_create`, `issue_update`,
-  `issue_comment`, `issue_start`
-- `doc_list`, `doc_view`, `doc_create`
-- `activity_recent`
-- `project_list` (enumerate the team's projects -- every other tool
-  filters by project, this one tells you which projects exist)
+- **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
+  `issue_comment`, `issue_start`, `issue_ready`, `issue_relations`,
+  `issue_block`, `issue_unblock`, `issue_label`
+- **docs:** `doc_list`, `doc_view`, `doc_create`, `doc_update`,
+  `doc_link`, `doc_unlink`
+- **sprints:** `sprint_current`, `sprint_list`, `sprint_close`,
+  `sprint_transactions`, `sprint_add`, `sprint_remove`
+- **rituals:** `ritual_pending`, `ritual_list`, `ritual_attest`,
+  `ritual_complete`
+- **other:** `label_list`, `activity_recent`, `project_list` (enumerate
+  the team's projects -- every other tool filters by project, this one
+  tells you which projects exist)
+
+The sprint and ritual groups exist because governance state can block
+the rest of this surface: arrears stops ticket transitions project-wide
+and limbo stops a sprint rotating, and an agent that cannot see or clear
+either is stuck (CHT-1332/CHT-1333). `sprint_current` is the call to
+make when a write is refused with `sprint_in_arrears` or
+`sprint_in_limbo`. `sprint_close` is the remedy for arrears; when it
+enters limbo instead of rotating, its result carries `limbo_pending`
+(the same rows `ritual_pending` returns: name, prompt, approval mode,
+any attestation) and the not-yet-attested names in `unattested`, so the
+next step -- `ritual_attest`, or `ritual_complete` for gate rituals --
+needs no second lookup (CHT-1381).
 
 Every tool returns a JSON object. Failures come back as
 `{"error": {"message": "...", "error_code": "...", ...}}` rather than an
@@ -235,10 +257,9 @@ cross-transport contract (`_meta.response_shapes` in
 No destructive tools (delete) are exposed. Destructive operations need
 a human in the loop for now; that may change behind an explicit opt-in
 flag in a future ticket. `issue_start` acquires a claim lease the same
-way the CLI does (CHT-1246), but doesn't yet expose a duration
-override. `issue_ready` (CHT-1245's open/unblocked/unclaimed work
-query, documented above) landed CLI-side but isn't wired up as an MCP
-tool yet -- a natural fast-follow ticket, not done here.
+way the CLI does (CHT-1246) and takes an optional `lease_seconds`
+override; `issue_ready` is the open/unblocked/unclaimed work query
+documented above.
 
 See `cli/README.md` § MCP server for the full tool list mapped to
 their CLI equivalents.

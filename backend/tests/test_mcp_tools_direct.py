@@ -663,6 +663,7 @@ class TestSprintTools:
         result = await tools.sprint_close()
         assert "entered_limbo" in result
         assert result["entered_limbo"] is False
+        assert result["limbo_pending"] == [] and result["unattested"] == []
 
     async def test_sprint_transactions_audit_trail(self, test_project):
         await self._active()
@@ -752,6 +753,10 @@ class TestRitualTools:
 
         closed = await tools.sprint_close()
         assert closed["entered_limbo"] is True
+        # The close result already names what limbo waits on (CHT-1381).
+        assert [r["name"] for r in closed["limbo_pending"]] == ["retro"]
+        assert closed["unattested"] == ["retro"]
+        assert closed["limbo_pending"][0]["prompt"] == "Write the retro."
 
         pending = await tools.ritual_pending()
         assert pending["in_limbo"] is True

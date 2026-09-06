@@ -624,17 +624,40 @@ claude mcp add chaotic -- chaotic --profile myprofile mcp
 
 ### Tools
 
+The 30 tools, grouped as in `chaotic_mcp_tools/tools/__init__.py`; the
+canonical descriptions and schemas are in `docs/mcp-toolset-schema.json`,
+and `tests/test_mcp_toolset_sync.py` keeps this table matching it.
+
 | Tool | Equivalent to |
 |---|---|
 | `issue_list` | `issue list` (with `all_projects` for team-wide) |
 | `issue_view` | `issue show` |
 | `issue_create` | `issue create` |
-| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description; `assignee: "unassigned"` clears) |
+| `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description; `assignee: "unassigned"` clears; `attest` map for ritual notes) |
 | `issue_comment` | `issue comment` |
 | `issue_start` | `issue start` |
+| `issue_ready` | `issue ready` |
+| `issue_relations` | `issue relations` |
+| `issue_block` | `issue block` |
+| `issue_unblock` | `issue unblock` |
+| `issue_label` | `issue update --label` / `--remove-label` |
 | `doc_list` | `doc list` |
 | `doc_view` | `doc show` |
 | `doc_create` | `doc create` |
+| `doc_update` | `doc update` |
+| `doc_link` | `doc link` |
+| `doc_unlink` | `doc unlink` |
+| `sprint_current` | `sprint current` |
+| `sprint_list` | `sprint list` |
+| `sprint_close` | `sprint close` |
+| `sprint_transactions` | `sprint transactions` |
+| `sprint_add` | `sprint add` |
+| `sprint_remove` | `sprint remove` |
+| `ritual_pending` | `ritual pending` |
+| `ritual_list` | `ritual list` |
+| `ritual_attest` | `ritual attest` |
+| `ritual_complete` | `ritual complete` |
+| `label_list` | `label list` |
 | `activity_recent` | `activity` |
 | `project_list` | `project list` |
 
@@ -645,9 +668,8 @@ context is data for the caller to read, not a crash. `message` is always a
 sentence; `error_code` names the failure when it has a stable name. (This
 CLI's own `--json` mode keeps its flat `{"error": "..."}` string.)
 
-No destructive tools (delete) are exposed in v1 -- those need a human
-in the loop. An `issue_ready` tool (open/unblocked/unclaimed work
-query) is expected once CHT-1245 lands; it isn't included here yet.
+No destructive tools (delete) are exposed -- those need a human in the
+loop.
 
 ## Status Values
 
