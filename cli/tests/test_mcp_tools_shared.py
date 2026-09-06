@@ -336,7 +336,7 @@ async def test_team_kwarg_is_dropped_when_not_advertised(fake):
     tools = _tools(fake)
     result = await tools["label_list"](team="ignored")
     assert result == {"labels": fake.labels}
-    assert fake.calls_to("resolve_team") == [(("ignored" if False else None,), {})]
+    assert fake.calls_to("resolve_team") == [((None,), {})]
 
 
 async def test_team_kwarg_is_forwarded_when_advertised():
@@ -378,9 +378,30 @@ class TestBoundary:
         assert result["error"]["error_code"] == "unexpected"
         assert "kaboom" in result["error"]["message"]
 
+    # Enough input for each tool to get PAST its own input validation and
+    # make a backend call; the default is one issue identifier.
+    _REACHING_KWARGS = {
+        "issue_unblock": {"identifier": "CHT-1", "relation_id": "rel-1"},
+        "issue_label": {"identifier": "CHT-1", "add": ["bug"]},
+        "sprint_add": {"identifiers": ["CHT-1"]},
+        "sprint_remove": {"identifiers": ["CHT-1"]},
+        "issue_block": {"identifier": "CHT-1", "blocked": "CHT-2"},
+        "issue_comment": {"identifier": "CHT-1", "content": "hi"},
+        "issue_create": {"title": "T"},
+        "doc_create": {"title": "T"},
+        "doc_update": {"document_id": "d", "title": "T"},
+        "doc_link": {"document_id": "d", "identifier": "CHT-1"},
+        "doc_unlink": {"document_id": "d", "identifier": "CHT-1"},
+        "doc_view": {"document_id": "d"},
+        "ritual_attest": {"ritual": "retro", "note": "n"},
+        "ritual_complete": {"ritual": "retro"},
+    }
+
     def test_every_tool_is_guarded(self):
         """Not just the ones tested above: each bound tool returns an
-        envelope, never raises, when its very first backend call blows up."""
+        `unexpected` envelope, never raises, when its FIRST backend call
+        blows up -- so the kwargs must carry the tool past its own input
+        checks (PR #271 review, finding 3)."""
         async def run():
             out = {}
             for body in ALL_TOOLS:
@@ -388,17 +409,15 @@ class TestBoundary:
                 for name in [n for n, m in inspect.getmembers(FakeBackend) if inspect.iscoroutinefunction(m)]:
                     fake.fail_on[name] = RuntimeError("first call fails")
                 tool = bind(body, fake)
-                required = [
-                    p.name for p in inspect.signature(tool).parameters.values()
-                    if p.default is inspect.Parameter.empty
-                ]
-                kwargs = {name: (["CHT-1"] if name == "identifiers" else "CHT-1") for name in required}
-                out[body.__name__] = await tool(**kwargs)
+                kwargs = self._REACHING_KWARGS.get(body.__name__, {"identifier": "CHT-1"})
+                accepted = set(inspect.signature(tool).parameters)
+                out[body.__name__] = (await tool(**{k: v for k, v in kwargs.items() if k in accepted}), fake)
             return out
         results = asyncio.run(run())
-        for name, result in results.items():
+        for name, (result, fake) in results.items():
             assert set(result) == {"error"}, name
-            assert result["error"]["error_code"] in ("unexpected", "tool_input"), name
+            assert result["error"]["error_code"] == "unexpected", (name, result)
+            assert fake.calls, f"{name} never reached its backend"
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +439,13 @@ class TestEnvelope:
             "http_status": 422,
         }
         assert "SECRET" not in str(payload)
+
+    def test_validation_payload_keeps_integer_loc_parts(self):
+        """The REST 422 handler emits list indexes as ints; both transports
+        forward them untouched so the envelope is the wire shape."""
+        payload = validation_payload([{"loc": ["body", "identifiers", 0], "msg": "bad"}])
+        assert payload["errors"] == [{"loc": ["body", "identifiers", 0], "msg": "bad"}]
+        assert payload["message"] == "identifiers.0: bad"
 
     def test_validation_payload_tolerates_non_dict_entries(self):
         payload = validation_payload(["weird"])
@@ -551,6 +577,21 @@ class TestIssueUpdateBody:
         result = await _tools(fake)["issue_update"]("CHT-1", attest={"close-gate": "  "})
         assert result["error"]["error_code"] == "tool_input"
 
+    async def test_attest_skips_already_attested_and_completed_rituals(self, fake):
+        fake.pending_issue_rituals = {
+            "pending_rituals": [{"id": "r-a", "name": "awaiting", "attestation": {"id": "x"}}],
+            "completed_rituals": [{"name": "done-one"}],
+        }
+        result = await _tools(fake)["issue_update"]("CHT-1", status="done",
+                                                    attest={"awaiting": "again", "done-one": "again"})
+        assert "error" not in result
+        assert fake.calls_to("attest_ritual_for_issue") == [] and fake.calls_to("complete_gate_ritual_for_issue") == []
+
+    async def test_title_and_description_are_passed_through(self, fake):
+        await _tools(fake)["issue_update"]("CHT-1", title="New", description="Body")
+        (_, kwargs), = fake.calls_to("update_issue")
+        assert kwargs == {"title": "New", "description": "Body"}
+
 
 class TestIssueStartBody:
     async def test_claims_as_me(self, fake):
@@ -582,6 +623,15 @@ class TestScopeDefaults:
         (args, kwargs), = fake.calls_to("create_document")
         assert kwargs["project_id"] is None
 
+    async def test_doc_update_icon_and_project_move(self, fake):
+        await _tools(fake)["doc_update"]("d", icon="x", project="X")
+        (args, kwargs), = fake.calls_to("update_document")
+        assert args == ("doc-1",) and kwargs == {"icon": "x", "project_id": "proj-X"}
+        result = await _tools(fake)["doc_update"]("d", project="X", is_global=True)
+        assert result["error"]["error_code"] == "tool_input"
+        result = await _tools(fake)["doc_update"]("d")
+        assert "No updates provided" in result["error"]["message"]
+
     async def test_activity_recent_project_scopes(self, fake):
         await _tools(fake)["activity_recent"](project="X", limit=5)
         (args, kwargs), = fake.calls_to("list_activities")
@@ -609,6 +659,28 @@ class TestLabelBody:
     async def test_requires_add_or_remove(self, fake):
         result = await _tools(fake)["issue_label"]("CHT-1")
         assert result["error"]["error_code"] == "tool_input" and fake.calls == []
+
+    async def test_exact_id_and_id_prefix_resolve(self, fake):
+        result = await _tools(fake)["issue_label"]("CHT-2", add=["lab-2"], remove=["lab-"])
+        assert "error" in result and "Ambiguous label id prefix" in result["error"]["message"]
+        result = await _tools(fake)["issue_label"]("CHT-2", add=["lab-2"])
+        assert result["labels_added"] == ["lab-2"]
+        fake.labels.append({"id": "zz-unique", "name": "other"})
+        result = await _tools(fake)["issue_label"]("CHT-2", add=["zz-"])
+        assert fake.calls_to("add_label")[-1] == (("i2", "zz-unique"), {})
+
+    async def test_ambiguous_name_and_no_labels(self, fake):
+        fake.labels.append({"id": "lab-3", "name": "BUG"})
+        result = await _tools(fake)["issue_label"]("CHT-2", add=["bug"])
+        assert "Ambiguous label name" in result["error"]["message"]
+        fake.labels = []
+        result = await _tools(fake)["issue_label"]("CHT-2", add=["bug"])
+        assert result["error"]["message"] == "No labels exist in this team yet."
+
+    async def test_non_auth_backend_error_during_lookup_propagates(self):
+        fake = FakeBackend(fail_on={"list_labels": BackendError("boom", 500, "boom")})
+        result = await _tools(fake)["issue_label"]("CHT-1", add=["bug"])
+        assert result["error"] == {"message": "boom", "http_status": 500}
 
 
 class TestSprintBody:
@@ -666,6 +738,23 @@ class TestRitualBody:
         fake.rituals = [dict(fake.rituals[1], trigger="TICKET_CLOSE")]
         result = await _tools(fake)["ritual_attest"](ritual="close-gate", note="x")
         assert "identifier" in result["error"]["message"]  # dispatched to the ticket branch
+
+    async def test_find_ritual_by_id_no_rituals_and_ambiguous(self, fake):
+        result = await _tools(fake)["ritual_complete"](ritual="r-sprint")
+        assert result["scope"] == "sprint" and fake.calls_to("complete_gate_ritual") == [(("r-sprint", "proj-1", None), {})]
+        fake.rituals.append(dict(fake.rituals[0], id="r-dup"))
+        result = await _tools(fake)["ritual_complete"](ritual="retro")
+        assert "Ambiguous ritual name" in result["error"]["message"]
+        fake.rituals = []
+        result = await _tools(fake)["ritual_complete"](ritual="retro")
+        assert "no rituals configured" in result["error"]["message"]
+
+    async def test_complete_ticket_ritual(self, fake):
+        result = await _tools(fake)["ritual_complete"](ritual="close-gate", identifier="CHT-1", note="ok")
+        assert result == {"scope": "ticket", "ritual": "close-gate", "identifier": "CHT-1", "attestation": {"id": "att-4"}}
+        assert fake.calls_to("complete_gate_ritual_for_issue") == [(("r-ticket", "i1", "ok"), {})]
+        result = await _tools(fake)["ritual_complete"](ritual="close-gate")
+        assert "identifier" in result["error"]["message"]
 
     async def test_unknown_ritual_lists_the_known_ones(self, fake):
         result = await _tools(fake)["ritual_attest"](ritual="nope", note="x")

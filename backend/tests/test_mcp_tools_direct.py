@@ -1,12 +1,12 @@
 """Direct (non-HTTP) tool-function tests for app.mcp_server.tools (CHT-1266).
 
 test_mcp_endpoint.py drives these through the real MCP protocol over HTTP
-for end-to-end confidence; this file calls the (already-`_boundary`-wrapped)
-tool coroutines directly with the auth contextvar set by hand, to reach
+for end-to-end confidence; this file calls the bound tool coroutines
+(shared bodies + InProcessBackend + the shared error boundary) directly with the auth contextvar set by hand, to reach
 branches an HTTP round-trip per case would make tedious: parameter
 combinations (epic filters, sprint filters, assignee resolution,
-explicit `project`/`team` overrides, `unassigned`), the `_boundary`
-error-translation paths, and doc_view's fuzzy id/title matching.
+explicit `project`/`team` overrides, `unassigned`), the error-translation
+paths, and doc_view's fuzzy id/title matching.
 """
 import pathlib
 import re
@@ -1465,6 +1465,9 @@ class TestProjectList:
             result = await tools.project_list()
             assert "error" in result
             assert "scoped to a single project" in result["error"]["message"]
+            # A scope-resolution failure is caller-fixable input, never a
+            # server bug (PR #271 review, finding 1).
+            assert result["error"]["error_code"] == "tool_input"
         finally:
             context.current_mcp_user.reset(token)
 
@@ -1770,6 +1773,17 @@ class TestErrorEnvelope:
 
     async def test_tool_input_errors(self, test_project):
         err = self._check(await tools.issue_list(all_projects=True, sprint="current"))
+        assert err["error_code"] == "tool_input"
+
+    async def test_scope_errors_are_tool_input(self, test_project):
+        """scope.py's resolvers raise ToolContextError; it must reach the
+        shared boundary as a ToolInputError, or every multi-team
+        disambiguation prompt on /mcp reads as `unexpected` (PR #271
+        review, finding 1)."""
+        err = self._check(await tools.sprint_current(project="no-such-project"))
+        assert err["error_code"] == "tool_input"
+        assert "not found" in err["message"].lower()
+        err = self._check(await tools.sprint_close(sprint="no-such-sprint"))
         assert err["error_code"] == "tool_input"
 
     async def test_string_http_detail_gets_message_and_status(self, test_project):

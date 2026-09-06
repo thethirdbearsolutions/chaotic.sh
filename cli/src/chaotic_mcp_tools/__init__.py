@@ -23,8 +23,8 @@ flag, not two copies.
 This package ships inside the ``chaotic-cli`` distribution (see
 docs/adr/0007-one-mcp-tool-body-two-backends.md for why not a third
 PyPI package) but imports nothing from ``cli`` or ``app``; a guard test
-pins that. Its dependencies are pydantic, anyio (already an mcp
-dependency) and nothing else.
+pins that. Its only dependency is pydantic (the ``Field`` metadata on
+tool parameters).
 """
 from __future__ import annotations
 

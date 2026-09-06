@@ -28,7 +28,10 @@ dependencies = [
     "mcp>=2.1,<3",
     # The shared MCP toolset (chaotic_mcp_tools, CHT-1374) ships inside the
     # chaotic-cli distribution; the backend is only ever installed from this
-    # repo checkout, so a path source (below) is how it gets it.
+    # repo checkout with uv, so the path source below is how it gets it.
+    # NOTE: a plain `pip install` would resolve this from PyPI instead, and
+    # no published chaotic-cli wheel carries chaotic_mcp_tools yet -- add a
+    # version floor here with the first CLI release that does.
     "chaotic-cli",
 ]
 

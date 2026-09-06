@@ -88,12 +88,15 @@ is a pyproject change, not a code change.
 * Every stdio tool is now a coroutine (the sync-by-design guard flipped
   to all-async). A cancelled stdio tool call no longer interrupts its
   in-flight HTTP request, which finishes on the worker thread. Accepted.
-* Three behaviours were unified deliberately and are visible on one
+* Four behaviours were unified deliberately and are visible on one
   transport each: `issue_update`/`issue_start` return the update
   response instead of re-fetching (the HTTP behaviour; one fewer REST
   call); `issue_view` tolerates a failed sub-issue fetch (the stdio
   behaviour); label-name resolution uses one wording, including the
-  project-scoped-key explanation, on both sides.
+  project-scoped-key explanation, on both sides; and validation
+  envelopes keep `errors[].loc` exactly as the REST 422 handler emits it
+  (list indexes stay integers), where the HTTP side used to stringify
+  them.
 * `ISSUE_TYPES`/`ISSUE_TYPE_ALIASES` have one definition
   (`chaotic_mcp_tools.constants`), imported by the CLI's `issue`
   commands.

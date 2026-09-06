@@ -146,7 +146,7 @@ def test_undecorated_api_function_returns_a_schema(module, func):
 
 def _tools_api_aliases() -> dict:
     """``{alias: module_name}`` for every ``from app.api import X as
-    X_api`` in tools.py -- derived, so a newly imported API module is
+    X_api`` in the adapter module -- derived, so a newly imported API module is
     covered the day it lands."""
     tree = ast.parse(_TOOLS_PATH.read_text())
     aliases = {}
@@ -171,8 +171,8 @@ TOOL_CALLS = _tools_api_calls()
 
 def test_tools_module_calls_the_api_layer():
     """Sanity for the derivation above: every ``*_api.`` reference in
-    tools.py resolves to an import we found, and every import is used.
-    If tools.py changes aliasing conventions this fails loudly instead
+    the adapter module resolves to an import we found, and every import is
+    used. If it changes aliasing conventions this fails loudly instead
     of the parametrized test below silently testing nothing."""
     assert len(TOOL_CALLS) >= 20
     referenced = {a for a, _ in TOOL_CALLS}
@@ -194,7 +194,7 @@ def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     fn = _resolve(module, func)
     hints = typing.get_type_hints(fn)
     assert "return" in hints, (
-        f"app/api/{module}.py::{func} is called from app/mcp_server/tools.py "
+        f"app/api/{module}.py::{func} is called from app/mcp_server/backend.py "
         f"but declares no return type -- see ADR-0005"
     )
     ret = hints["return"]

@@ -25,17 +25,14 @@ def mock_dependencies(patched_auth, patched_project):
 
     Deliberately does NOT use conftest's `patched_client` fixture: that
     fixture swaps `sys.modules['cli.client']` for a MagicMock whose
-    `.APIError` is a conftest-local `_FakeAPIError`, not the real
-    class. cli.mcp_server is a brand-new module -- if ITS first-ever
-    import in the test session happened while that swap was active,
-    `cli.mcp_server.APIError` would permanently bind to the fake and
-    every `except APIError` in `_boundary` would silently stop
-    matching this file's real `from cli.client import APIError`.
-    Every other cli.commands.* test file already has cli.main (and its
-    real APIError binding) cached from earlier in the suite, so they
-    don't hit this; a fresh module does. Individual client methods are
-    still mocked directly on the shared `cli.main.client` singleton
-    below, same as every other test file.
+    `.APIError` is a conftest-local `_FakeAPIError`, not the real class.
+    `cli.mcp_backend` binds `from .client import APIError` at import -- if
+    ITS first-ever import in the test session happened while that swap was
+    active, `RestBackend._call`'s `except APIError` would permanently bind
+    to the fake and silently stop matching this file's real
+    `from cli.client import APIError`. Individual client methods are still
+    mocked directly on the shared `cli.main.client` singleton below, same
+    as every other test file.
     """
     yield
 
@@ -134,7 +131,7 @@ class TestServerAssembly:
 
 
 # ---------------------------------------------------------------------------
-# _boundary: the error envelope contract
+# The error boundary (chaotic_mcp_tools.registry.call_guarded): envelope contract
 # ---------------------------------------------------------------------------
 
 class TestErrorBoundary:
@@ -1699,7 +1696,7 @@ class TestMCPProtocolLoop:
                 return await session.call_tool("issue_view", {"identifier": "CHT-999"})
 
         result = asyncio.run(run())
-        # Our _boundary catches the error and returns a normal {"error": ...}
+        # The shared boundary catches the error and returns a normal {"error": ...}
         # payload rather than raising -- so this is NOT an MCP-protocol-level
         # error (isError=False); the error is data, per CHT-1247's contract.
         assert result.is_error is not True

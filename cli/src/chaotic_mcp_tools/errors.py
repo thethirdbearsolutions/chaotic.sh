@@ -69,9 +69,12 @@ def validation_payload(errors: list) -> dict:
             cleaned.append({"loc": [], "msg": str(err)})
             lines.append(str(err))
             continue
-        loc = [str(part) for part in err.get("loc", [])]
+        # `loc` is kept as the server sent it (list indexes are ints in the
+        # REST 422 shape); only the rendered message stringifies it.
+        loc = list(err.get("loc", []))
         cleaned.append({"loc": loc, "msg": err["msg"]})
-        field = ".".join(p for p in loc if p not in ("body", "query", "path", "header")) or ".".join(loc)
+        parts = [str(p) for p in loc]
+        field = ".".join(p for p in parts if p not in ("body", "query", "path", "header")) or ".".join(parts)
         lines.append(f"{field}: {err['msg']}" if field else str(err["msg"]))
     return {
         "message": "\n".join(lines) or "Validation error.",

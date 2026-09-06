@@ -32,8 +32,8 @@ UX is an explicit, separate follow-up):
    dedicated-expiring-key advice above.
 
 Either way, the resolved user is stashed in
-``context.current_mcp_user`` for the life of the request; tool functions
-(tools.py) read it back out.
+``context.current_mcp_user`` for the life of the request; the
+``InProcessBackend`` adapter (backend.py) reads it back out on every call.
 """
 from __future__ import annotations
 

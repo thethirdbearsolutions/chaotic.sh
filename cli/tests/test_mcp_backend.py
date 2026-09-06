@@ -57,6 +57,10 @@ class TestScope:
         monkeypatch.setattr("cli.main.get_current_project", lambda: None)
         assert await backend.optional_project(None, None) == (None, "test-team-123")
 
+    async def test_optional_project_explicit_goes_through_the_cli_resolver(self, backend, monkeypatch):
+        monkeypatch.setattr("cli.main.resolve_project_id", lambda v: f"resolved-{v}")
+        assert await backend.optional_project("KEY", None) == ("resolved-KEY", "test-team-123")
+
     async def test_team_for_project_is_the_profile_team(self, backend):
         assert await backend.team_for_project("whatever") == "test-team-123"
 

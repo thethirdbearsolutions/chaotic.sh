@@ -20,6 +20,13 @@ from app.oxyde_models.user import OxydeUser
 from app.utils.security import get_password_hash
 
 
+def test_tool_context_error_is_the_shared_input_error():
+    """The resolvers' exception must be what the shared MCP boundary
+    classifies as caller-fixable input (PR #271 review, finding 1)."""
+    from chaotic_mcp_tools import ToolInputError
+    assert issubclass(ToolContextError, ToolInputError)
+
+
 @pytest.fixture
 async def team_scoped_agent(db, test_team):
     return await OxydeUser.objects.create(
