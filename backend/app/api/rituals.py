@@ -346,7 +346,7 @@ async def force_clear_ticket_limbo(
 ):
     """Force-clear ticket-level limbo for a specific issue (admin only)."""
     from app.oxyde_models.issue import (
-        OxydeIssue, OxydeTicketLimbo, OxydeTicketLimboBlocker,
+        OxydeTicketLimbo, OxydeTicketLimboBlocker,
     )
 
     issue_service = IssueService()

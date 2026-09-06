@@ -665,7 +665,7 @@ def register(cli):
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
 
-        result = _client().approve_ritual(rit["id"], project_id)
+        _client().approve_ritual(rit["id"], project_id)
 
         # Check if limbo cleared
         status = _client().get_limbo_status(project_id)
@@ -708,14 +708,14 @@ def register(cli):
 
             # Get the issue to get its ID
             issue = _client().get_issue_by_identifier(ticket_id)
-            result = _client().complete_gate_ritual_for_issue(rit["id"], issue["id"], note)
+            _client().complete_gate_ritual_for_issue(rit["id"], issue["id"], note)
             console.print(f"[green]Ritual '{ritual_name}' completed for {ticket_id}.[/green]")
         else:
             # Sprint ritual
             if ticket_id:
                 console.print(f"[yellow]Note: --ticket ignored for sprint rituals.[/yellow]")
 
-            result = _client().complete_gate_ritual(rit["id"], project_id, note)
+            _client().complete_gate_ritual(rit["id"], project_id, note)
 
             # Check if limbo cleared
             status = _client().get_limbo_status(project_id)

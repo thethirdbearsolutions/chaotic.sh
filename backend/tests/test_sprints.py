@@ -6,8 +6,7 @@ Sprints are now created automatically via the cadence system (ensure_sprints_exi
 import pytest
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeBudgetTransaction
-from app.oxyde_models.team import OxydeTeamMember
-from app.enums import SprintStatus, TeamRole, UnestimatedHandling
+from app.enums import SprintStatus, UnestimatedHandling
 
 
 @pytest.mark.asyncio
@@ -596,8 +595,8 @@ async def test_ensure_sprints_exist_idempotent(db, test_project):
 
 
 @pytest.mark.asyncio
-async def test_get_current_sprint(db, test_project):
-    """Test getting the current sprint."""
+async def test_service_get_current_sprint(db, test_project):
+    """SprintService.get_current_sprint returns the active sprint (service layer; the API-level test of the same name is above)."""
     from app.services.sprint_service import SprintService
 
     sprint = await OxydeSprint.objects.create(

@@ -1,6 +1,5 @@
 """Ritual schemas."""
 import json
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import RitualTrigger, ApprovalMode, SelectionMode
 from app.utils import DateTimeUTC

@@ -1,5 +1,4 @@
 """Document schemas."""
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.issue import LabelResponse
 from app.utils import DateTimeUTC

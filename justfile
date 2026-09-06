@@ -28,6 +28,11 @@ serve-prod:
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
 
+# Pyflakes-rule lint for backend and CLI (what CI runs; CHT-1362)
+lint:
+    cd backend && uv run ruff check .
+    cd cli && uv run ruff check .
+
 # Run backend tests
 test-backend:
     cd backend && uv run pytest

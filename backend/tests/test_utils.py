@@ -1,5 +1,4 @@
 """Tests for utility functions."""
-import pytest
 from datetime import timedelta
 from app.utils.security import (
     verify_password,

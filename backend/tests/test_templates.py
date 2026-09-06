@@ -22,7 +22,6 @@ from app.schemas.ritual import RitualCreate
 from app.schemas.template import (
     TemplateBody,
     TemplateCreate,
-    TemplateSettings,
 )
 from app.services.ritual_service import RitualService
 from app.services.template_service import TemplateService
@@ -756,7 +755,6 @@ async def test_api_from_project_wrong_team_400(
     client, auth_headers, test_team, test_user, test_project
 ):
     from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
-    from app.oxyde_models.project import OxydeProject
 
     other_team = await OxydeTeam.objects.create(name="Other", key="OTHR")
     await OxydeTeamMember.objects.create(

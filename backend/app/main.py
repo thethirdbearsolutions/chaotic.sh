@@ -263,7 +263,7 @@ async def websocket_endpoint(
     try:
         while True:
             # Keep connection alive, listen for client messages
-            data = await websocket.receive_text()
+            await websocket.receive_text()
             # Could handle client messages here if needed (e.g., presence, typing indicators)
     except WebSocketDisconnect:
         manager.disconnect(websocket, team_id)

@@ -3,7 +3,6 @@
 Verifies that `chaotic system upgrade` shows a git log of commits
 between the current version and target version.
 """
-import subprocess
 from unittest.mock import patch, MagicMock
 
 import pytest

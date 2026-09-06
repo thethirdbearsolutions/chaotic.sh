@@ -187,7 +187,6 @@ class TestErrorBoundary:
 
     async def test_click_exception_becomes_error_envelope(self, mcp_mod, monkeypatch):
         import click
-        from cli.main import client
 
         def _boom(*a, **k):
             raise click.ClickException("Ambiguous project name 'foo'")

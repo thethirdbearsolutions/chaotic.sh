@@ -55,6 +55,7 @@ dev = [
     "pytest-mock>=3.12.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.3",
+    "ruff>=0.16.6,<0.17",  # pinned range; see backend/pyproject.toml
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -67,3 +68,10 @@ include = ["src/cli", "src/chaotic_mcp_tools"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+
+# Pyflakes-equivalent checks only (CHT-1362); see backend/pyproject.toml.
+[tool.ruff.lint]
+select = ["F401", "F811", "F821", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841"]

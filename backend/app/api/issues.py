@@ -1,6 +1,5 @@
 """Issue API routes."""
 import logging
-from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status, Query, Header

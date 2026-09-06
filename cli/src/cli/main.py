@@ -8,23 +8,24 @@ import sys
 import webbrowser
 import click
 import httpx
-from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.markdown import Markdown
-from rich import print as rprint
 
 from .config import (
     set_token, get_token, set_api_url, get_api_url, get_web_url,
     get_current_team, set_current_team,
     get_current_project, set_current_project,
-    get_api_key, set_api_key, has_local_config,
-    find_local_config, get_local_config_path,
-    load_config, load_global_config, save_global_config,
-    get_global_config_file, DEFAULT_PORT,
-    set_profile, get_profile, get_effective_profile,
-    list_profiles, check_profile_ambiguity,
-    ProfileAmbiguityError, ProfileError,
+    get_api_key, set_api_key, find_local_config, get_local_config_path,
+    load_config, get_global_config_file, DEFAULT_PORT,
+    set_profile, get_effective_profile,
+    check_profile_ambiguity,
+    ProfileAmbiguityError,
+)
+# Not used in this module, but command modules late-bind them through
+# `sys.modules['cli.main']` (and tests patch them there), so they are part
+# of this module's surface.
+from .config import (  # noqa: F401 - re-exported for late-binding command modules
+    load_global_config, save_global_config,
+    get_profile, list_profiles, ProfileError,
 )
 from .client import client, APIError
 from .system import system

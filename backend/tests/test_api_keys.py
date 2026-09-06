@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from app.services.api_key_service import APIKeyService, _prehash_key
 from app.schemas.api_key import APIKeyCreate
 from app.oxyde_models.api_key import OxydeAPIKey
-from app.utils.security import get_password_hash, verify_password
+from app.utils.security import verify_password
 
 
 class TestPrehashKey:
@@ -327,7 +327,6 @@ class TestAPIKeyAPIEndpoints:
         assert response.status_code == 204
 
         # Re-fetch to verify key is revoked (Oxyde doesn't auto-refresh)
-        from app.oxyde_models.api_key import OxydeAPIKey
         refreshed = await OxydeAPIKey.objects.get(id=api_key.id)
         assert refreshed.is_active is False
 

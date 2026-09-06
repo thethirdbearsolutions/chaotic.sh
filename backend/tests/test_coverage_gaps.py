@@ -4,7 +4,6 @@ Covers: api/documents.py branch misses, api/deps.py auth method detection,
 api/sprints.py current sprint edge case, schemas/ritual.py validators.
 """
 import pytest
-import pytest_asyncio
 from datetime import datetime, timezone
 from app.oxyde_models.document import OxydeDocument
 from app.schemas.ritual import RitualCreate, CompletedRitualResponse, PendingRitualResponse

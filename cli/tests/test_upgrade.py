@@ -1,6 +1,5 @@
 """Tests for chaotic upgrade command (CHT-811)."""
 import subprocess
-import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 from cli.main import cli, _detect_installer, _build_upgrade_cmd

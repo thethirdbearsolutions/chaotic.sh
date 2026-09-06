@@ -647,7 +647,7 @@ class TestSprintUpdate:
     def test_sprint_update_resolve_failure(self, cli_runner):
         """sprint update shows error when sprint ID resolution fails."""
         import click
-        from cli.main import cli, client
+        from cli.main import cli
 
         with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
