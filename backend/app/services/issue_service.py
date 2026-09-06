@@ -60,7 +60,8 @@ class SprintInArrearsError(Exception):
         self.points_spent = points_spent
         self.arrears_by = points_spent - budget
         super().__init__(
-            f"Sprint is in arrears. Close the current sprint to continue. "
+            f"Sprint is in arrears. Close the current sprint to continue; sprints end "
+            f"when their budget is spent, not on a date. "
             f"(budget: {budget}, spent: {points_spent}, arrears by: {self.arrears_by})"
         )
 

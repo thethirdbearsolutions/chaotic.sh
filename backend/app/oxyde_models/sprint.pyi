@@ -25,8 +25,8 @@ class OxydeSprint(Model):
     name: str
     description: str | None
     status: SprintStatus
-    start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None
+    closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None
     budget: int | None
     points_spent: int
     limbo: bool
@@ -49,6 +49,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
     def filter(
         self,
         *args: Any,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
         budget__gte: int | None = None,
@@ -58,6 +61,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -80,9 +86,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -125,9 +128,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
         status: SprintStatus | None = None,
         status__in: list[SprintStatus] | None = None,
         status__isnull: bool | None = None,
@@ -150,6 +150,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
     def exclude(
         self,
         *args: Any,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
         budget__gte: int | None = None,
@@ -159,6 +162,9 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -181,9 +187,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -226,9 +229,6 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
         status: SprintStatus | None = None,
         status__in: list[SprintStatus] | None = None,
         status__isnull: bool | None = None,
@@ -248,7 +248,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["budget", "-budget", "created_at", "-created_at", "description", "-description", "end_date", "-end_date", "id", "-id", "limbo", "-limbo", "name", "-name", "points_spent", "-points_spent", "project_id", "-project_id", "start_date", "-start_date", "status", "-status", "updated_at", "-updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["activated_at", "-activated_at", "budget", "-budget", "closed_at", "-closed_at", "created_at", "-created_at", "description", "-description", "id", "-id", "limbo", "-limbo", "name", "-name", "points_spent", "-points_spent", "project_id", "-project_id", "status", "-status", "updated_at", "-updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -264,7 +264,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -288,7 +288,7 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -296,11 +296,11 @@ class OxydeSprintQuery(Query[OxydeSprint]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> "OxydeSprintQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"], flat: bool = False) -> "OxydeSprintQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> "OxydeSprintQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -424,6 +424,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
     def filter(
         self,
         *args: Any,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
         budget__gte: int | None = None,
@@ -433,6 +436,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -455,9 +461,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -500,9 +503,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
         status: SprintStatus | None = None,
         status__in: list[SprintStatus] | None = None,
         status__isnull: bool | None = None,
@@ -525,6 +525,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
     def exclude(
         self,
         *args: Any,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        activated_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        activated_at__isnull: bool | None = None,
         budget: int | None = None,
         budget__gt: int | None = None,
         budget__gte: int | None = None,
@@ -534,6 +537,9 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         budget__range: int | None = None,
         budget__in: list[int] | None = None,
         budget__isnull: bool | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        closed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        closed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -556,9 +562,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        end_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        end_date__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -601,9 +604,6 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        start_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
-        start_date__isnull: bool | None = None,
         status: SprintStatus | None = None,
         status__in: list[SprintStatus] | None = None,
         status__isnull: bool | None = None,
@@ -623,11 +623,11 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"]) -> OxydeSprintQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"]) -> OxydeSprintQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["budget", "created_at", "description", "end_date", "id", "limbo", "name", "points_spent", "project_id", "start_date", "status", "updated_at"], flat: bool = False) -> OxydeSprintQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["activated_at", "budget", "closed_at", "created_at", "description", "id", "limbo", "name", "points_spent", "project_id", "status", "updated_at"], flat: bool = False) -> OxydeSprintQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -778,16 +778,16 @@ class OxydeSprintManager(QueryManager[OxydeSprint]):
         instance: OxydeSprint | None = None,
         client: Any | None = None,
         using: str | None = None,
+        activated_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         budget: int | None = None,
+        closed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2123ca3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         description: str | None = None,
-        end_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         id: str | None = None,
         limbo: bool | None = None,
         name: str | None = None,
         points_spent: int | None = None,
         project_id: str | None = None,
-        start_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         status: SprintStatus | None = None,
         updated_at: datetime | None = None,
     ) -> OxydeSprint:

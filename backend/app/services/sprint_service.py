@@ -2,6 +2,8 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+from datetime import datetime, timezone
+
 from oxyde import atomic, execute_raw
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.project import OxydeProject
@@ -61,6 +63,7 @@ class SprintService:
                 name=f"Sprint {sprint_num}",
                 status=SprintStatus.ACTIVE,
                 budget=default_budget,
+                activated_at=datetime.now(timezone.utc),
             )
             await current.refresh()
 
@@ -161,7 +164,8 @@ class SprintService:
                 # Full rotation - complete and activate next sprint
                 sprint.status = SprintStatus.COMPLETED
                 sprint.limbo = False
-                await sprint.save(update_fields={"status", "limbo"})
+                sprint.closed_at = datetime.now(timezone.utc)
+                await sprint.save(update_fields={"status", "limbo", "closed_at"})
                 await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
@@ -170,7 +174,8 @@ class SprintService:
     async def _activate_next_sprint(self, next_sprint: OxydeSprint) -> None:
         """Activate the next sprint and create a new next."""
         next_sprint.status = SprintStatus.ACTIVE
-        await next_sprint.save(update_fields={"status"})
+        next_sprint.activated_at = datetime.now(timezone.utc)
+        await next_sprint.save(update_fields={"status", "activated_at"})
 
         # Only create a new PLANNED sprint if one doesn't already exist
         existing_planned = await OxydeSprint.objects.filter(
@@ -225,6 +230,10 @@ class SprintService:
             await sprint.refresh()
             return sprint
         await sprint.refresh()
+        # The winner stamps the close time (CHT-1366): limbo is part of the
+        # sprint; it closes when the rotation actually happens.
+        sprint.closed_at = datetime.now(timezone.utc)
+        await sprint.save(update_fields={"closed_at"})
 
         # Get and activate the next sprint
         next_sprint = await self.get_next_sprint(sprint.project_id)

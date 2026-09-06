@@ -207,15 +207,29 @@ export function renderSprints() {
     });
 }
 
+// A sprint has no scheduled dates (CHT-1366): it ends when its budget is
+// spent, however long that takes. "Progress" is therefore points spent
+// against budget, and the x axis is budget consumed -- not calendar time.
+// activated_at/closed_at say when that turned out to happen.
+function describeSprintSpan(sprint) {
+    if (!sprint.activated_at) return '';
+    const start = new Date(sprint.activated_at);
+    const end = sprint.closed_at ? new Date(sprint.closed_at) : new Date();
+    const days = Math.max(1, Math.round((end - start) / 86400000));
+    const span = sprint.closed_at
+        ? `activated ${formatDate(sprint.activated_at)}, closed ${formatDate(sprint.closed_at)} (${days} day${days === 1 ? '' : 's'})`
+        : `activated ${formatDate(sprint.activated_at)}, ${days} day${days === 1 ? '' : 's'} so far`;
+    return span;
+}
+
 function renderSprintBurndown(sprint) {
-    const hasDates = sprint.start_date && sprint.end_date;
     const hasBudget = sprint.budget !== null && sprint.budget !== undefined;
-    if (!hasDates || !hasBudget) {
+    if (!hasBudget) {
         return `
             <div class="sprint-burndown-card">
                 <div class="sprint-burndown-header">
                     <h4>Burndown</h4>
-                    <span class="text-muted">Set sprint dates and budget to see burndown</span>
+                    <span class="text-muted">Set a sprint budget to see burndown; sprints end when it is spent, not on a date</span>
                 </div>
             </div>
         `;
@@ -224,11 +238,8 @@ function renderSprintBurndown(sprint) {
     const total = sprint.budget;
     const spent = sprint.points_spent || 0;
     const remaining = Math.max(total - spent, 0);
-    const start = new Date(sprint.start_date);
-    const end = new Date(sprint.end_date);
-    const now = new Date();
     const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
-    const progress = clamp((now - start) / (end - start), 0, 1);
+    const progress = total === 0 ? 1 : clamp(spent / total, 0, 1);
 
     const width = 360;
     const height = 120;
@@ -253,7 +264,7 @@ function renderSprintBurndown(sprint) {
             <div class="sprint-burndown-header">
                 <h4>Burndown</h4>
                 <div class="sprint-burndown-meta">
-                    <span>${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}</span>
+                    <span>${escapeHtml(describeSprintSpan(sprint)) || 'not yet activated'}</span>
                     <span>${remaining} of ${total} pts remaining</span>
                 </div>
             </div>
@@ -408,9 +419,9 @@ function renderSprintDetail() {
                 ${statusBadge}
                 ${sprint.limbo ? '<span class="badge badge-limbo">IN LIMBO</span>' : ''}
             </div>
-            ${sprint.start_date && sprint.end_date ? `
+            ${sprint.activated_at ? `
                 <div class="sprint-detail-dates">
-                    ${formatDate(sprint.start_date)} \u2192 ${formatDate(sprint.end_date)}
+                    ${escapeHtml(describeSprintSpan(sprint))}
                 </div>
             ` : ''}
         </div>

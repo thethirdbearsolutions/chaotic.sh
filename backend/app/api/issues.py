@@ -386,7 +386,7 @@ async def create_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue.",
+                "message": "Sprint is in arrears. Close the current sprint to continue; sprints end when their budget is spent, not on a date.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
                 "arrears_by": e.arrears_by,
@@ -1066,7 +1066,7 @@ async def update_issue(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": "sprint_in_arrears",
-                "message": "Sprint is in arrears. Close the current sprint to continue.",
+                "message": "Sprint is in arrears. Close the current sprint to continue; sprints end when their budget is spent, not on a date.",
                 "budget": e.budget,
                 "points_spent": e.points_spent,
                 "arrears_by": e.arrears_by,

@@ -57,6 +57,14 @@ Use these priority levels:
 
 ## Sprint & Budget Model (read this before calling any of it a bug)
 
+**Sprints are measured by work, not by time.** A sprint is defined by the
+work that closes in it: it begins when the previous one closes and ends when
+its point budget is spent. It has no scheduled length. Time is a *dependent*
+variable — a sprint takes however long its budget takes to spend. This is the
+inverse of calendar-boxed agile, where time is fixed and velocity is measured.
+Every rule below follows from it (CHT-1366): a sprint's `activated_at` and
+`closed_at` record when it turned out to run; nothing plans them.
+
 Chaotic has one deliberate, strictly-correct sprint philosophy. It is **not** a
 smell — treat the following as invariants:
 

@@ -73,13 +73,13 @@ class TestDateTimeUTCType:
         resp = SprintResponse(
             id="s-1", project_id="p-1", name="Sprint 1",
             description=None, status="active",
-            start_date=naive, end_date=naive,
+            activated_at=naive, closed_at=naive,
             budget=None, points_spent=0,
             limbo=False, created_at=naive, updated_at=naive,
         )
         assert resp.created_at.tzinfo == timezone.utc
-        assert resp.start_date.tzinfo == timezone.utc
-        assert resp.end_date.tzinfo == timezone.utc
+        assert resp.activated_at.tzinfo == timezone.utc
+        assert resp.closed_at.tzinfo == timezone.utc
 
     def test_user_response_enforces_utc(self):
         """UserResponse converts naive datetimes to UTC."""

@@ -16,8 +16,11 @@ class OxydeSprint(Model):
     description: str | None = Field(default=None)
     status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
 
-    start_date: DateTimeUTC | None = Field(default=None)
-    end_date: DateTimeUTC | None = Field(default=None)
+    # Outputs, not inputs (CHT-1366): a sprint has no scheduled dates. It is
+    # activated when the previous one closes and closed when its budget is
+    # spent, and these record when that turned out to happen.
+    activated_at: DateTimeUTC | None = Field(default=None)
+    closed_at: DateTimeUTC | None = Field(default=None)
     budget: int | None = Field(default=None)
     points_spent: int = Field(default=0)
     limbo: bool = Field(default=False)
