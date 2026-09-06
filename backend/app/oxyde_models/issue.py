@@ -8,7 +8,7 @@ from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.label import OxydeLabel  # noqa: F401 — needed for FK/M2M resolution
-from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType, LimboType
 from app.oxyde_models.enums import DbEnum
 
 
@@ -130,7 +130,11 @@ class OxydeTicketLimbo(Model):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
     issue_id: str = Field(db_on_delete="CASCADE")
-    limbo_type: str = Field()
+    # DbEnum, not a bare str (CHT-1353): the column stores the NAME
+    # ("CLAIM"/"CLOSE") like every other enum column, reads back as a
+    # member, and serialises to the VALUE on the wire -- so no boundary
+    # has to translate it by hand, and test_dbenum_contract covers it.
+    limbo_type: DbEnum(LimboType) = Field()
     requested_by_id: str = Field(db_on_delete="CASCADE")
     requested_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
     cleared_at: DateTimeUTC | None = Field(default=None)

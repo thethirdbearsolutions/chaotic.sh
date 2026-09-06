@@ -113,8 +113,14 @@ class TestStaleIntentTakeover:
         with pytest.raises(TicketRitualsError):
             await _attempt_close(test_issue, test_user.id)
 
-        with pytest.raises(IntentInFlightError):
+        with pytest.raises(IntentInFlightError) as exc:
             await _attempt_close(test_issue, test_user2.id)
+        # intent_type is what the 409 body carries: the enum VALUE, like every
+        # other enum on the wire (CHT-1353). It was the NAME ("CLOSE") while
+        # limbo_type was a bare str column.
+        assert exc.value.intent_type == "close"
+        assert exc.value.issue_id == test_issue.id
+        assert exc.value.initiator_user_id == test_user.id
 
     @pytest.mark.asyncio
     async def test_expired_intent_is_taken_over_not_blocking(

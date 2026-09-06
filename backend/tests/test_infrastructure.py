@@ -477,3 +477,17 @@ class TestBroadcastHelpers:
             )
         finally:
             websocket.manager = original_manager
+
+
+@pytest.mark.asyncio
+async def test_foreign_keys_pragma_is_on(db):
+    """Schema cascades (ON DELETE CASCADE) only fire when SQLite's
+    foreign_keys pragma is ON. Nothing in this repo sets it -- Oxyde's
+    driver enables it on every connection it opens -- so pin the fact on
+    a connection from the test pool (same driver as production, smaller
+    pool): if a driver upgrade ever flips the default, every service that
+    relies on cascades would silently start leaving orphans (CHT-1341)."""
+    from oxyde import execute_raw
+
+    rows = await execute_raw("PRAGMA foreign_keys")
+    assert rows == [{"foreign_keys": 1}]

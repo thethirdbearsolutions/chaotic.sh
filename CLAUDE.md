@@ -137,8 +137,9 @@ covered automatically) and asserts Oxyde still persists via python mode;
 `TestOutputMatchesResponseSchema` checks tool output against the response
 schemas, and `TestNoLeakedEnumNames` sweeps for leaked names. Note what is
 *not* guarded: an enum column typed as a bare `str` rather than `DbEnum` is
-invisible to all of it (`OxydeTicketLimbo.limbo_type` is one, and is
-inconsistent today — CHT-1353). If you are about to add a `.lower()`, a `.upper()`, or a
+invisible to all of it (`OxydeTicketLimbo.limbo_type` was one until CHT-1353;
+a sweep found no other, so type every enum column `DbEnum(...)` and the
+contract test covers it for free). If you are about to add a `.lower()`, a `.upper()`, or a
 name↔value translation at some boundary — stop. That is how this bug class
 survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
 schema, not at a seventh boundary. Background: CHT-1345.

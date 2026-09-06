@@ -1011,7 +1011,7 @@ class RitualService:
                 try:
                     audit_intent = await OxydeTicketLimbo.objects.create(
                         issue_id=issue_id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         requested_by_id=user_id,
                     )
                     audit_blocker = await OxydeTicketLimboBlocker.objects.create(
@@ -1637,28 +1637,12 @@ class RitualService:
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
-                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
+                "limbo_type": limbo.limbo_type.value,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
             })
 
         return list(issues_map.values())
-
-    @staticmethod
-    def _resolve_limbo_type(val) -> str | None:
-        """Convert limbo_type to its value string, handling enum/name/value inputs."""
-        if val is None:
-            return None
-        if isinstance(val, LimboType):
-            return val.value
-        # Try by name first (e.g. "CLOSE"), then by value (e.g. "close")
-        try:
-            return LimboType[val].value
-        except KeyError:
-            try:
-                return LimboType(val).value
-            except ValueError:
-                return str(val)
 
     async def _get_pending_gate_limbo_records(self, project_id: str):
         """Get uncleared limbo records for a project."""
@@ -1766,7 +1750,7 @@ class RitualService:
                 "ritual_prompt": ritual.prompt,
                 "trigger": ritual.trigger.value,
                 "approval_mode": "gate",
-                "limbo_type": self._resolve_limbo_type(limbo.limbo_type),
+                "limbo_type": limbo.limbo_type.value,
                 "requested_by_name": requested_by.name if requested_by else "Unknown",
                 "requested_at": limbo.requested_at.isoformat() if limbo.requested_at else None,
                 "attestation_note": None,

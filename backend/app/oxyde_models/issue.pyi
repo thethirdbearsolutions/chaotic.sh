@@ -15,7 +15,7 @@ from app.utils.datetimes import DateTimeUTC
 from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
-from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType
+from app.enums import IssueStatus, IssuePriority, IssueType, IssueRelationType, ActivityType, LimboType
 from app.oxyde_models.enums import DbEnum
 
 class OxydeIssue(Model):
@@ -36,9 +36,9 @@ class OxydeIssue(Model):
     creator: OxydeUser | None
     sprint_id: str | None
     parent_id: str | None
-    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None
+    completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None
+    lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None
     created_at: datetime
     updated_at: datetime
     creator_id: str | None
@@ -63,8 +63,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -101,8 +101,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -136,8 +136,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -223,8 +223,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -261,8 +261,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -296,8 +296,8 @@ class OxydeIssueQuery(Query[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -556,8 +556,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -594,8 +594,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -629,8 +629,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -716,8 +716,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         assignee_id__iexact: str | None = None,
         assignee_id__in: list[str] | None = None,
         assignee_id__isnull: bool | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         completed_at__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
@@ -754,8 +754,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         description__iexact: str | None = None,
         description__in: list[str] | None = None,
         description__isnull: bool | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         due_date__isnull: bool | None = None,
         estimate: int | None = None,
         estimate__gt: int | None = None,
@@ -789,8 +789,8 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         issue_type: IssueType | None = None,
         issue_type__in: list[IssueType] | None = None,
         issue_type__isnull: bool | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         lease_expires_at__isnull: bool | None = None,
         number: int | None = None,
         number__gt: int | None = None,
@@ -1019,17 +1019,17 @@ class OxydeIssueManager(QueryManager[OxydeIssue]):
         client: Any | None = None,
         using: str | None = None,
         assignee_id: str | None = None,
-        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        completed_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         created_at: datetime | None = None,
         creator: OxydeUser | None = None,
         creator_id: str | None = None,
         description: str | None = None,
-        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        due_date: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         estimate: int | None = None,
         id: str | None = None,
         identifier: str | None = None,
         issue_type: IssueType | None = None,
-        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        lease_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         number: int | None = None,
         parent_id: str | None = None,
         priority: IssuePriority | None = None,
@@ -3579,10 +3579,10 @@ class OxydeTicketLimbo(Model):
         table_name: str
     id: str
     issue_id: str
-    limbo_type: str
+    limbo_type: LimboType
     requested_by_id: str
     requested_at: datetime
-    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None
     cleared_by_id: str | None
     objects: ClassVar["OxydeTicketLimboManager"]
 
@@ -3595,8 +3595,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3628,15 +3628,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
         issue_id__iexact: str | None = None,
         issue_id__in: list[str] | None = None,
         issue_id__isnull: bool | None = None,
-        limbo_type: str | None = None,
-        limbo_type__contains: str | None = None,
-        limbo_type__icontains: str | None = None,
-        limbo_type__startswith: str | None = None,
-        limbo_type__istartswith: str | None = None,
-        limbo_type__endswith: str | None = None,
-        limbo_type__iendswith: str | None = None,
-        limbo_type__iexact: str | None = None,
-        limbo_type__in: list[str] | None = None,
+        limbo_type: LimboType | None = None,
+        limbo_type__in: list[LimboType] | None = None,
         limbo_type__isnull: bool | None = None,
         requested_at: datetime | None = None,
         requested_at__gt: datetime | None = None,
@@ -3667,8 +3660,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3700,15 +3693,8 @@ class OxydeTicketLimboQuery(Query[OxydeTicketLimbo]):
         issue_id__iexact: str | None = None,
         issue_id__in: list[str] | None = None,
         issue_id__isnull: bool | None = None,
-        limbo_type: str | None = None,
-        limbo_type__contains: str | None = None,
-        limbo_type__icontains: str | None = None,
-        limbo_type__startswith: str | None = None,
-        limbo_type__istartswith: str | None = None,
-        limbo_type__endswith: str | None = None,
-        limbo_type__iendswith: str | None = None,
-        limbo_type__iexact: str | None = None,
-        limbo_type__in: list[str] | None = None,
+        limbo_type: LimboType | None = None,
+        limbo_type__in: list[LimboType] | None = None,
         limbo_type__isnull: bool | None = None,
         requested_at: datetime | None = None,
         requested_at__gt: datetime | None = None,
@@ -3912,8 +3898,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def filter(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -3945,15 +3931,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
         issue_id__iexact: str | None = None,
         issue_id__in: list[str] | None = None,
         issue_id__isnull: bool | None = None,
-        limbo_type: str | None = None,
-        limbo_type__contains: str | None = None,
-        limbo_type__icontains: str | None = None,
-        limbo_type__startswith: str | None = None,
-        limbo_type__istartswith: str | None = None,
-        limbo_type__endswith: str | None = None,
-        limbo_type__iendswith: str | None = None,
-        limbo_type__iexact: str | None = None,
-        limbo_type__in: list[str] | None = None,
+        limbo_type: LimboType | None = None,
+        limbo_type__in: list[LimboType] | None = None,
         limbo_type__isnull: bool | None = None,
         requested_at: datetime | None = None,
         requested_at__gt: datetime | None = None,
@@ -3984,8 +3963,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
     def exclude(
         self,
         *args: Any,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         cleared_at__isnull: bool | None = None,
         cleared_by_id: str | None = None,
         cleared_by_id__contains: str | None = None,
@@ -4017,15 +3996,8 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
         issue_id__iexact: str | None = None,
         issue_id__in: list[str] | None = None,
         issue_id__isnull: bool | None = None,
-        limbo_type: str | None = None,
-        limbo_type__contains: str | None = None,
-        limbo_type__icontains: str | None = None,
-        limbo_type__startswith: str | None = None,
-        limbo_type__istartswith: str | None = None,
-        limbo_type__endswith: str | None = None,
-        limbo_type__iendswith: str | None = None,
-        limbo_type__iexact: str | None = None,
-        limbo_type__in: list[str] | None = None,
+        limbo_type: LimboType | None = None,
+        limbo_type__in: list[LimboType] | None = None,
         limbo_type__isnull: bool | None = None,
         requested_at: datetime | None = None,
         requested_at__gt: datetime | None = None,
@@ -4208,11 +4180,11 @@ class OxydeTicketLimboManager(QueryManager[OxydeTicketLimbo]):
         instance: OxydeTicketLimbo | None = None,
         client: Any | None = None,
         using: str | None = None,
-        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        cleared_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         cleared_by_id: str | None = None,
         id: str | None = None,
         issue_id: str | None = None,
-        limbo_type: str | None = None,
+        limbo_type: LimboType | None = None,
         requested_at: datetime | None = None,
         requested_by_id: str | None = None,
     ) -> OxydeTicketLimbo:
@@ -4249,7 +4221,7 @@ class OxydeTicketLimboBlocker(Model):
     id: str
     limbo_id: str
     ritual_id: str
-    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None
     resolved_by_id: str | None
     objects: ClassVar["OxydeTicketLimboBlockerManager"]
 
@@ -4282,8 +4254,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4332,8 +4304,8 @@ class OxydeTicketLimboBlockerQuery(Query[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4555,8 +4527,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4605,8 +4577,8 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         limbo_id__iexact: str | None = None,
         limbo_id__in: list[str] | None = None,
         limbo_id__isnull: bool | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         resolved_at__isnull: bool | None = None,
         resolved_by_id: str | None = None,
         resolved_by_id__contains: str | None = None,
@@ -4789,7 +4761,7 @@ class OxydeTicketLimboBlockerManager(QueryManager[OxydeTicketLimboBlocker]):
         using: str | None = None,
         id: str | None = None,
         limbo_id: str | None = None,
-        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        resolved_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f39985d23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         resolved_by_id: str | None = None,
         ritual_id: str | None = None,
     ) -> OxydeTicketLimboBlocker:
