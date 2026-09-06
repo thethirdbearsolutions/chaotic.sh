@@ -1,5 +1,16 @@
 name: Publish CLI to PyPI
 
+# How this publishes (CHT-1356). Both publish jobs try, in order:
+#   1. an API token, if the environment defines the PYPI_API_TOKEN /
+#      TEST_PYPI_API_TOKEN secret (what the out-of-band a16/a18 uploads used);
+#   2. otherwise PyPI trusted publishing (OIDC). For that to work the PyPI
+#      project must list a trusted publisher matching EXACTLY these claims,
+#      which is what every run so far has failed on ("invalid-publisher"):
+#        owner: thethirdbearsolutions   repository: chaotic.sh
+#        workflow: publish-cli.yml      environment: pypi   (test-pypi on TestPyPI)
+# The TestPyPI job is a smoke test and cannot block the real publish: a17
+# never shipped because publish-pypi `needs`ed a TestPyPI job that failed.
+
 on:
   release:
     types: [published]
@@ -110,6 +121,9 @@ jobs:
     environment: test-pypi
     permissions:
       id-token: write
+    # Smoke test only. Its failure must never decide whether the real
+    # publish runs (CHT-1356).
+    continue-on-error: true
 
     steps:
       - name: Download artifacts
@@ -122,9 +136,14 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # Empty when the secret is unset, which makes the action fall back
+          # to trusted publishing (OIDC).
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
   publish-pypi:
-    needs: [build, publish-test-pypi]
+    # Deliberately NOT `needs: publish-test-pypi`: the smoke publish is
+    # informational. Only a green build gates the release.
+    needs: build
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -139,3 +158,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Empty when the secret is unset, which makes the action fall back
+          # to trusted publishing (OIDC); see the header comment for the
+          # publisher claims PyPI must be configured with.
+          password: ${{ secrets.PYPI_API_TOKEN }}
