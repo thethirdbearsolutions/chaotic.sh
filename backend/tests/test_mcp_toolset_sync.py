@@ -87,8 +87,19 @@ def test_every_tool_is_async():
     trip `asyncio.get_running_loop()` off-loop. Pin that they are all
     coroutines (CHT-1367)."""
     import inspect
-    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(getattr(t, "__wrapped__", t))]
+    # The SDK decides thread-vs-loop from the object handed to add_tool --
+    # the (possibly decorated) wrapper, NOT its `__wrapped__` body -- so
+    # that is what must be a coroutine function.
+    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(t)]
     assert sync == [], f"backend tools must be `async def`: {sync}"
+    # And a decorator must not change the kind: an async body behind a
+    # sync wrapper (or vice versa) would run on the wrong thread.
+    disagree = [
+        t.__name__ for t in ALL_TOOLS
+        if hasattr(t, "__wrapped__")
+        and inspect.iscoroutinefunction(t) != inspect.iscoroutinefunction(t.__wrapped__)
+    ]
+    assert disagree == [], f"wrapper/body async-ness disagree: {disagree}"
 
 
 def test_all_tools_registered():

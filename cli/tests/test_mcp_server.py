@@ -11,6 +11,7 @@ Two layers:
 """
 import asyncio
 import json
+from functools import partial
 from unittest.mock import MagicMock
 
 import pytest
@@ -1619,6 +1620,11 @@ async def _connected_session(server):
     (CHT-1367); this is the same few lines it used to do: a pair of
     memory streams, the server's lowlevel run loop in a task, and an
     initialized ClientSession on the other end.
+
+    `server._lowlevel_server` is a private SDK attribute (the removed
+    helper reached for it the same way). If an SDK bump renames it, this
+    helper is the one place to fix; the TestMCPProtocolLoop tests will
+    fail loudly at that attribute access rather than silently pass.
     """
     import anyio
     from mcp.client.session import ClientSession
@@ -1627,13 +1633,13 @@ async def _connected_session(server):
     async with create_client_server_memory_streams() as (client_streams, server_streams):
         client_read, client_write = client_streams
         server_read, server_write = server_streams
+        lowlevel = server._lowlevel_server
         async with anyio.create_task_group() as tg:
             tg.start_soon(
-                lambda: server._lowlevel_server.run(
-                    server_read, server_write,
-                    server._lowlevel_server.create_initialization_options(),
-                    raise_exceptions=True,
-                )
+                partial(lowlevel.run, raise_exceptions=True),
+                server_read,
+                server_write,
+                lowlevel.create_initialization_options(),
             )
             async with ClientSession(client_read, client_write) as session:
                 await session.initialize()

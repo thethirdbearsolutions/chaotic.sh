@@ -30,7 +30,7 @@ _LIVE_SESSION_MANAGER_CMS = []
 
 @pytest_asyncio.fixture(autouse=True)
 async def _fresh_mcp_session_manager():
-    """Each test gets its own FastMCP instance + session manager, entered
+    """Each test gets its own MCPServer instance + session manager, entered
     for exactly this test's lifetime.
 
     Two things force this: (1) StreamableHTTPSessionManager.run() can only
@@ -49,10 +49,19 @@ async def _fresh_mcp_session_manager():
     the same task it was entered in -- so pairing `session_manager.run()`
     with a yield-based teardown always raises "Attempted to exit cancel
     scope in a different task". Nothing to clean up anyway: each test
-    gets a brand-new FastMCP/session-manager instance (reset above), so
+    gets a brand-new MCPServer/session-manager instance (reset above), so
     the previous test's task group (with no pending requests left) is
     simply abandoned to the garbage collector along with that test's
     event loop.
+    """
+    await _remount_mcp()
+
+
+async def _remount_mcp():
+    """Throw away the process-wide MCPServer and rebuild + remount it
+    against the CURRENT settings. The autouse fixture calls this once per
+    test; TestTransportSecurity calls it again after changing CORS_ORIGINS,
+    since _transport_security() is read at build time.
     """
     import app.mcp_server.asgi as asgi_mod
     from app.main import app as fastapi_app
@@ -107,6 +116,72 @@ async def api_key(db, test_user):
 @pytest.fixture
 def bearer_headers(api_key):
     return {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
+
+
+class TestTransportSecurity:
+    """The two knobs asgi.py passes to streamable_http_app() actually take
+    effect in the mounted app (CHT-1367 / PR #269 review): DNS-rebinding
+    protection keyed to CORS_ORIGINS, and the request-body cap.
+    """
+
+    @pytest.fixture
+    async def rebinding_enabled(self, monkeypatch):
+        from app.config import get_settings
+
+        monkeypatch.setenv("CORS_ORIGINS", "https://tracker.example.com")
+        get_settings.cache_clear()
+        await _remount_mcp()
+        yield
+        get_settings.cache_clear()
+
+    async def test_explicit_origins_reject_foreign_host_with_421(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 421
+
+    async def test_explicit_origins_accept_matching_host(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_explicit_origins_accept_matching_host_any_port(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com:8443"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_explicit_origins_reject_foreign_origin_header(self, client, bearer_headers, rebinding_enabled):
+        headers = {**bearer_headers, "Host": "tracker.example.com", "Origin": "https://evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 403
+
+    async def test_auth_still_runs_before_host_check(self, client, rebinding_enabled):
+        """Auth wraps the transport, so an unauthenticated request against
+        a foreign Host is a 401, not a 421 -- no oracle for the allowlist."""
+        headers = {**_MCP_HEADERS, "Host": "evil.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 401
+
+    async def test_wildcard_default_accepts_any_host(self, client, bearer_headers):
+        """conftest leaves CORS_ORIGINS at its `*` default -> protection off."""
+        headers = {**bearer_headers, "Host": "whatever.example.net"}
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 200
+
+    async def test_oversized_body_is_413(self, client, bearer_headers):
+        from app.mcp_server.asgi import MCP_MAX_REQUEST_BODY_BYTES
+
+        body = b" " * (MCP_MAX_REQUEST_BODY_BYTES + 1)
+        resp = await client.post("/mcp", content=body, headers=bearer_headers)
+        assert resp.status_code == 413
+
+    async def test_body_at_cap_is_not_413(self, client, bearer_headers):
+        """Exactly-at-cap must pass the limiter (it then fails JSON parsing
+        downstream, which is a 400 from the transport, not a 413)."""
+        from app.mcp_server.asgi import MCP_MAX_REQUEST_BODY_BYTES
+
+        body = b" " * MCP_MAX_REQUEST_BODY_BYTES
+        resp = await client.post("/mcp", content=body, headers=bearer_headers)
+        assert resp.status_code != 413
 
 
 class TestAuth:

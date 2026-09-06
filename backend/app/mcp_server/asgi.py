@@ -45,6 +45,13 @@ from app.mcp_server.tools import ALL_TOOLS
 
 _fastmcp: MCPServer | None = None
 
+# Hard cap on a single Streamable HTTP request body. mcp 2.x's session
+# manager rejects anything larger with a 413 before parsing it (1.x had
+# no such limit). The SDK's own default is also 4 MiB; pinned explicitly
+# here so a future SDK default change can't silently move the ceiling on
+# `doc_create`/`issue_comment` payloads, and so tests can reference it.
+MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+
 
 def _transport_security() -> TransportSecuritySettings:
     """DNS-rebinding protection keyed to the operator's CORS_ORIGINS
@@ -130,6 +137,7 @@ def get_fastmcp() -> MCPServer:
             json_response=True,
             stateless_http=True,
             transport_security=_transport_security(),
+            max_request_body_size=MCP_MAX_REQUEST_BODY_BYTES,
         )
     return _fastmcp
 

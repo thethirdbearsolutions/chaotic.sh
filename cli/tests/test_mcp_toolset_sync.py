@@ -45,8 +45,16 @@ def test_every_tool_is_async_or_sync_by_design():
     thread a tool runs on (CHT-1367)."""
     import inspect
     from cli.mcp_server import ALL_TOOLS
-    mixed = [t.__name__ for t in ALL_TOOLS if inspect.iscoroutinefunction(getattr(t, "__wrapped__", t))]
+    # Check the object handed to add_tool (the wrapper), which is what the
+    # SDK inspects to pick a worker thread vs the event loop.
+    mixed = [t.__name__ for t in ALL_TOOLS if inspect.iscoroutinefunction(t)]
     assert mixed == [], f"stdio tools must be plain `def` (they block on httpx): {mixed}"
+    disagree = [
+        t.__name__ for t in ALL_TOOLS
+        if hasattr(t, "__wrapped__")
+        and inspect.iscoroutinefunction(t) != inspect.iscoroutinefunction(t.__wrapped__)
+    ]
+    assert disagree == [], f"wrapper/body async-ness disagree: {disagree}"
 
 
 def test_snapshot_file_exists():
