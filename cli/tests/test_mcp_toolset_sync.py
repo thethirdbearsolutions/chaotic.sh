@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+from chaotic_mcp_tools.expected import toolset_diff
 from cli.mcp_server import build_server
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "mcp-toolset-schema.json"
@@ -91,19 +92,8 @@ def test_stdio_toolset_matches_snapshot_exactly():
 
 def test_snapshot_covers_the_full_toolset():
     snapshot = json.loads(_SCHEMA_PATH.read_text())["tools"]
-    assert set(snapshot.keys()) == {
-        "activity_recent", "doc_create", "doc_link", "doc_list",
-        "doc_revision", "doc_revisions",
-        "doc_unlink", "doc_update", "doc_view", "issue_block",
-        "issue_comment", "issue_create", "issue_label", "issue_list",
-        "issue_ready", "issue_relations", "issue_revision", "issue_revisions",
-        "issue_start", "issue_unblock",
-        "issue_update", "issue_view", "inbox_list", "inbox_mark_all_read",
-        "inbox_mark_read", "label_list", "project_list",
-        "ritual_attest", "ritual_complete", "ritual_list",
-        "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
-        "sprint_list", "sprint_remove", "sprint_transactions",
-    }
+    problem = toolset_diff(set(snapshot), "the schema snapshot (docs/mcp-toolset-schema.json)")
+    assert not problem, problem
 
 
 _REPO = _SCHEMA_PATH.parents[1]

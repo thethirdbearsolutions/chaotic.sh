@@ -100,26 +100,14 @@ def mock_document():
 
 class TestServerAssembly:
     def test_curated_toolset(self, mcp_mod):
-        """The full curated toolset, no more, no less.
-
-        Deliberately spelled out rather than counted: the count moves
-        every time a tool lands, and a number in the test name tells
-        you nothing about which tool went missing.
+        """The full curated toolset, no more, no less: the reviewed list in
+        chaotic_mcp_tools/expected.py, so the failure names the tool that
+        went missing (or appeared) rather than diffing two sets (CHT-1394).
         """
+        from chaotic_mcp_tools.expected import toolset_diff
+
         names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
-        assert names == {
-            "activity_recent", "doc_create", "doc_link", "doc_list",
-            "doc_revision", "doc_revisions",
-            "doc_unlink", "doc_update", "doc_view", "issue_block",
-            "issue_comment", "issue_create", "issue_label", "issue_list",
-            "issue_ready", "issue_relations", "issue_revision", "issue_revisions",
-            "issue_start", "issue_unblock",
-            "issue_update", "issue_view", "inbox_list", "inbox_mark_all_read",
-            "inbox_mark_read", "label_list", "project_list",
-            "ritual_attest", "ritual_complete", "ritual_list",
-            "ritual_pending", "sprint_add", "sprint_close", "sprint_current",
-            "sprint_list", "sprint_remove", "sprint_transactions",
-        }
+        assert not toolset_diff(names, "the stdio server"), toolset_diff(names, "the stdio server")
 
     def test_no_delete_tools(self, mcp_mod):
         """Destructive operations stay off this surface deliberately.
