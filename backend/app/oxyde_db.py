@@ -227,26 +227,49 @@ async def bootstrap_if_empty() -> list[str]:
     migration chain (CHT-1195). Returns the migrations applied, [] when
     the database already had tables.
 
-    This is the one case where applying migrations at startup is safe: an
-    empty file has no data to protect and no running-old-code hazard, so a
-    self-hoster who points uvicorn at a fresh DATABASE_URL gets a working
-    server instead of "no such table" on the first request. Every other
-    state is left to verify_migrations_current: a database that already
-    has tables and is behind the code must be migrated deliberately, by an
-    operator, before the new code serves it (the CHT-1317 incident).
+    "Empty" means no tables at all, or only an oxyde_migrations table with
+    no rows in it: a first bootstrap that was interrupted before any
+    migration committed leaves exactly that behind (Oxyde creates the
+    bookkeeping table in autocommit first), and it provably holds no data.
+    Once a single migration has been recorded the file is a partial schema,
+    which is left to verify_migrations_current to refuse with the fix.
+
+    This is the one state where applying migrations at startup cannot lose
+    data or serve new code against an old schema, so a self-hoster who
+    points uvicorn at a fresh DATABASE_URL gets a working server instead
+    of "no such table" on the first request. It cannot corrupt, but it is
+    not serialised either: SQLite has no migration lock in Oxyde, so two
+    processes starting against the same empty file race, one applies the
+    chain and the other fails loudly (a table that already exists, or the
+    BEHIND refusal). Start one process first. Every database that already
+    has a schema is left to verify_migrations_current: behind the code
+    must be migrated deliberately, by an operator, before the new code
+    serves it (the CHT-1317 incident). SQLite only, like the migrations
+    themselves; any other dialect is left alone.
     """
     from oxyde import execute_raw
 
-    tables = await execute_raw(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-    )
-    if tables:
+    if not _get_oxyde_url().startswith("sqlite"):
         return []
+    tables = {
+        r["name"] for r in await execute_raw(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    if tables - {"oxyde_migrations"}:
+        return []
+    if "oxyde_migrations" in tables:
+        recorded = await execute_raw("SELECT count(*) AS n FROM oxyde_migrations")
+        if recorded and recorded[0]["n"]:
+            return []  # a partial chain: the guard below says what to do
     from oxyde.migrations.executor import apply_migrations
 
     applied = await apply_migrations(migrations_dir=MIGRATIONS_DIR)
-    logging.getLogger(__name__).info(
-        "Empty database: created the schema by applying %d migration(s) (CHT-1195)", len(applied),
+    # WARNING, not INFO: nothing configures app loggers in production, so
+    # INFO is dropped, and an operator should see that a schema was created.
+    logging.getLogger(__name__).warning(
+        "Empty database at %s: created the schema by applying %d migration(s) (CHT-1195)",
+        _get_oxyde_url(), len(applied),
     )
     return applied
 

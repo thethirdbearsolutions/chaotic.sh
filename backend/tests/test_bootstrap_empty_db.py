@@ -54,6 +54,30 @@ async def test_second_start_is_a_no_op(fresh_db):
 
 
 @pytest.mark.asyncio
+async def test_an_interrupted_first_start_is_still_empty(fresh_db):
+    """Oxyde creates oxyde_migrations before the first migration commits, so
+    a bootstrap killed at that moment leaves only an empty bookkeeping
+    table. That holds no data and must not become a dead end that needs a
+    hand-run `oxyde migrate` (PR #286 review)."""
+    await execute_raw("CREATE TABLE oxyde_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMP NOT NULL)")
+
+    assert await bootstrap_if_empty() == _code_migrations()
+    await verify_migrations_current()
+
+
+@pytest.mark.asyncio
+async def test_a_partial_chain_is_left_for_the_guard(fresh_db):
+    """One recorded migration means a partial schema: not ours to finish at
+    startup. The guard refuses it and names the fix."""
+    await execute_raw("CREATE TABLE oxyde_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMP NOT NULL)")
+    await execute_raw("INSERT INTO oxyde_migrations (name, applied_at) VALUES ('0001_initial', '2026-01-01')")
+
+    assert await bootstrap_if_empty() == []
+    with pytest.raises(RuntimeError, match="BEHIND"):
+        await verify_migrations_current()
+
+
+@pytest.mark.asyncio
 async def test_a_database_with_tables_is_not_touched(fresh_db):
     """Anything that already has a table is either migration-managed (the
     CHT-1318 guard decides) or hand-built (served as is). Bootstrapping it
