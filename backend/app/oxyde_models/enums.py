@@ -47,7 +47,38 @@ sweeps the MCP tool output for anything that slipped through.
 """
 from typing import Annotated
 
+from oxyde.core.types import TYPE_REGISTRY, TypeDescriptor
 from pydantic import BeforeValidator, PlainSerializer, SerializationInfo
+
+
+def _register_for_filters(enum_cls) -> None:
+    """Make a member mean its ``.name`` on Oxyde's FILTER path too (CHT-1398).
+
+    Writes go through pydantic (``model_dump``, python mode -> ``.name``).
+    Filter values do not: ``Q``/``filter(...)`` run each value through
+    ``oxyde.core.types.serialize_value``, which consults ``TYPE_REGISTRY``
+    by exact type and otherwise hands the object to msgpack as is. Our
+    enums subclass ``str``, so an unregistered member packs as its
+    ``.value`` ("close") and matches no stored row ("CLOSE"). Until this
+    hook every filter had to spell ``member.name`` by hand, and the one
+    that forgot silently matched nothing (test_stale_intent_takeover
+    found it through a unique-index collision). Registering the class
+    makes ``filter(status=SprintStatus.ACTIVE)`` compare against the
+    stored form, the same as ``.name`` strings still do.
+
+    Two more things read the registry, and both must see what they saw
+    before: the migration autodetector records a column's type as
+    ``get_ir_type(python_type)`` or, for an unregistered class, its
+    lowercased ``__name__`` ("sprintstatus"), so the descriptor's
+    ``ir_name`` is exactly that fallback and the recorded schema does not
+    change (registering as "str" produced fifteen spurious alter_column
+    operations); and the lookup category becomes "string", which allows
+    ``status__in`` / ``status__icontains`` on the column as on any TEXT
+    column.
+    """
+    TYPE_REGISTRY.setdefault(
+        enum_cls, TypeDescriptor(enum_cls.__name__.lower(), "string", lambda v: v.name)
+    )
 
 
 def DbEnum(enum_cls):
@@ -57,6 +88,7 @@ def DbEnum(enum_cls):
         class OxydeSprint(Model):
             status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
     """
+    _register_for_filters(enum_cls)
     def coerce(v):
         if isinstance(v, enum_cls):
             return v

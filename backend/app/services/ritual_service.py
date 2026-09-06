@@ -989,7 +989,7 @@ class RitualService:
         async with atomic():
             existing_intent = await OxydeTicketLimbo.objects.filter(
                 issue_id=issue_id,
-                limbo_type=limbo_type.name,
+                limbo_type=limbo_type,
                 cleared_at=None,
             ).first()
 
@@ -1050,7 +1050,7 @@ class RitualService:
                     # past a real intent and should fire.
                     rechecked = await OxydeTicketLimbo.objects.filter(
                         issue_id=issue_id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         cleared_at=None,
                     ).first()
                     if rechecked is not None:

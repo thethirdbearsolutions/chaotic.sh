@@ -392,7 +392,7 @@ class IssueService:
         """
         existing = await OxydeTicketLimbo.objects.filter(
             issue_id=issue_id,
-            limbo_type=limbo_type.name,  # .name for filters: raw query path, stored form
+            limbo_type=limbo_type,
             cleared_at=None,
         ).all()
         if not existing:

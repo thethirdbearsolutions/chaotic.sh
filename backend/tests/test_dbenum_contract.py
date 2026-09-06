@@ -221,3 +221,75 @@ def test_coerce_enum_copies_agree(module_name):
             assert coerce(enum_cls, member.name) is member
             assert coerce(enum_cls, member.value) is member
             assert coerce(enum_cls, member) is member
+
+
+# ---------------------------------------------------------------------------
+# The FILTER path (CHT-1398). Writes go through pydantic (python mode ->
+# .name). Filter values do not: Oxyde runs them through serialize_value,
+# which consults TYPE_REGISTRY by exact type and otherwise hands a
+# str-subclassed enum to msgpack as its .value. DbEnum registers each enum
+# class so a member means its stored form on both paths.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("cls,fname,enum_cls,annotated", ENUM_FIELDS, ids=IDS)
+def test_a_member_filters_by_its_stored_form(cls, fname, enum_cls, annotated):
+    """What `.filter(field=member)` sends must equal what a write stored.
+
+    Before DbEnum registered the class this sent "close" against rows
+    holding "CLOSE" and matched nothing; the only symptom was a unique
+    index collision two calls later (test_stale_intent_takeover)."""
+    from oxyde.core.types import serialize_value
+
+    for member in enum_cls:
+        assert serialize_value(member) == member.name
+        assert serialize_value([member]) == [member.name]  # `field__in=[...]`
+        # The stored-form string still passes through untouched, so the
+        # older `.filter(field=member.name)` spelling keeps working.
+        assert serialize_value(member.name) == member.name
+
+
+@pytest.mark.parametrize("cls,fname,enum_cls,annotated", ENUM_FIELDS, ids=IDS)
+def test_registration_does_not_change_the_recorded_column_type(cls, fname, enum_cls, annotated):
+    """The migration autodetector records a column's type as
+    get_ir_type(python_type), falling back to the class's lowercased
+    __name__ for an unregistered class. The descriptor's ir_name must be
+    exactly that fallback, or every enum column shows up as an
+    alter_column in `oxyde makemigrations` (it did, as "str": fifteen of
+    them)."""
+    from oxyde.migrations.extract import _get_python_type_name
+
+    assert _get_python_type_name(enum_cls) == enum_cls.__name__.lower()
+
+
+@pytest.mark.asyncio
+async def test_filtering_by_member_finds_the_row(db, test_issue, test_user):
+    """End to end on the column that bit: a row written with a member is
+    found by a filter with the same member, and by the .name string."""
+    from app.enums import LimboType
+    from app.oxyde_models.issue import OxydeTicketLimbo
+
+    issue = test_issue
+    await OxydeTicketLimbo.objects.create(
+        issue_id=issue.id, limbo_type=LimboType.CLOSE, requested_by_id=test_user.id,
+    )
+
+    by_member = await OxydeTicketLimbo.objects.filter(issue_id=issue.id, limbo_type=LimboType.CLOSE).all()
+    by_name = await OxydeTicketLimbo.objects.filter(issue_id=issue.id, limbo_type=LimboType.CLOSE.name).all()
+    assert len(by_member) == 1 and len(by_name) == 1
+    assert by_member[0].limbo_type is LimboType.CLOSE
+    assert await OxydeTicketLimbo.objects.filter(issue_id=issue.id, limbo_type__in=[LimboType.CLOSE]).count() == 1
+
+
+def test_without_registration_a_member_filters_by_its_wire_value():
+    """Pin the mechanism this guards against, so the registration cannot
+    be removed as 'unused': with the class absent from TYPE_REGISTRY a
+    str-subclassed member serialises as its .value."""
+    from oxyde.core.types import TYPE_REGISTRY, serialize_value
+
+    from app.enums import LimboType
+
+    saved = TYPE_REGISTRY.pop(LimboType)
+    try:
+        assert serialize_value(LimboType.CLOSE) == "close"
+    finally:
+        TYPE_REGISTRY[LimboType] = saved

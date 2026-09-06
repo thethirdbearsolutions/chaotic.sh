@@ -130,6 +130,16 @@ form back to a member on read. So:
 - **Never** `str(member)` or f-string a member: that yields a third form,
   `"IssueStatus.BACKLOG"`, which nothing expects (the frontend's `cleanValue`
   still strips that prefix as legacy defense).
+- **Filtering?** Pass the member: `.filter(status=SprintStatus.ACTIVE)`.
+  Filter values do not go through pydantic at all; Oxyde serialises them
+  through its own `TYPE_REGISTRY`, and `DbEnum` registers every enum class
+  there so a member means its stored `.name` on that path too (CHT-1398).
+  Before that, a member on the filter path packed as its `.value` and
+  matched nothing, which is why older code spells `.filter(status=X.name)`;
+  that still works and need not be rewritten, but do not add a `.name` for a
+  filter that "isn't matching": it is matching, and the missing row is
+  something else. `execute_raw` params are the one place you still write
+  `.name` by hand.
 
 This is guarded, not just documented: `backend/tests/test_dbenum_contract.py`
 pins the contract for every `DbEnum` field (registry-derived, so new models are
