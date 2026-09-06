@@ -4241,16 +4241,26 @@ async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, tes
 @pytest.mark.asyncio
 class TestBlockingCycleCheckIsAtomic:
     """CHT-1311: the cycle check runs inside the insert's transaction,
-    after the writer lock, so an inverse BLOCKS edge committed by a
-    concurrent writer is seen and refused."""
+    behind SQLite's writer lock, so a concurrent writer's inverse BLOCKS
+    edge is waited for and then seen. The test database is a file, so a
+    second Oxyde pool on it is a genuine second connection."""
 
     async def _issue(self, project, user, title):
         from app.schemas.issue import IssueCreate
         from app.services.issue_service import IssueService
         return await IssueService().create(IssueCreate(title=title, project_id=project.id), project, user.id)
 
-    async def test_an_edge_landing_before_the_lock_is_seen_by_the_check(self, db, test_project, test_user):
-        from unittest.mock import patch
+    async def test_a_concurrent_inverse_edge_is_waited_for_and_refused(self, db, test_project, test_user):
+        """A rival connection holds the writer lock with "Y blocks X"
+        inserted but uncommitted. Our "X blocks Y" must block behind it,
+        then, once the rival commits, walk a graph that includes the
+        rival's edge and refuse; nothing of ours lands."""
+        import asyncio
+        import os
+        import uuid
+        from datetime import datetime, timezone
+        from oxyde import AsyncDatabase, PoolSettings, execute_raw
+        from oxyde.db.transaction import AsyncTransaction
         from app.enums import IssueRelationType
         from app.oxyde_models.issue import OxydeIssueRelation
         from app.schemas.issue import IssueRelationCreate
@@ -4258,28 +4268,34 @@ class TestBlockingCycleCheckIsAtomic:
 
         x = await self._issue(test_project, test_user, "x")
         y = await self._issue(test_project, test_user, "y")
-        service = IssueService()
-        original = IssueService._take_relation_write_lock
-
-        async def rival_wins_the_lock(self_):
-            # What a concurrent "Y blocks X" that got the writer lock first
-            # leaves behind by the time our lock is granted.
-            await OxydeIssueRelation.objects.create(
-                issue_id=y.id, related_issue_id=x.id, relation_type=IssueRelationType.BLOCKS,
+        url = os.environ["DATABASE_URL"].replace("sqlite+aiosqlite:///", "sqlite:///")
+        rival = AsyncDatabase(url, name="rival", overwrite=True, settings=PoolSettings(max_connections=1))
+        await rival.connect()
+        try:
+            tx = AsyncTransaction(rival)
+            await tx.__aenter__()
+            await execute_raw("UPDATE issue_relations SET relation_type = relation_type WHERE 0", client=tx)
+            await execute_raw(
+                "INSERT INTO issue_relations (id, issue_id, related_issue_id, relation_type, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [str(uuid.uuid4()), y.id, x.id, IssueRelationType.BLOCKS.name, datetime.now(timezone.utc).isoformat()],
+                client=tx,
             )
-            await original(self_)
-
-        with patch.object(IssueService, "_take_relation_write_lock", rival_wins_the_lock):
+            ours = asyncio.create_task(IssueService().create_relation(
+                x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+            ))
+            await asyncio.sleep(0.5)
+            assert not ours.done(), "our transaction must wait behind the rival's writer lock"
+            await tx.__aexit__(None, None, None)  # the rival commits
             with pytest.raises(RelationCycleError, match="blocking cycle"):
-                await service.create_relation(
-                    x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
-                )
-        rows = await OxydeIssueRelation.objects.filter(issue_id=x.id, related_issue_id=y.id).all()
-        assert rows == [], "the refused edge must not have landed"
+                await ours
+        finally:
+            await rival.disconnect()
 
-    async def test_the_check_and_the_insert_share_one_transaction(self, db, test_project, test_user):
-        """A failure after the lock rolls back everything, including the
-        lock's own (zero-row) write; a success commits the edge once."""
+        assert len(await OxydeIssueRelation.objects.filter(issue_id=y.id, related_issue_id=x.id).all()) == 1
+        assert await OxydeIssueRelation.objects.filter(issue_id=x.id, related_issue_id=y.id).all() == []
+
+    async def test_a_duplicate_is_a_no_op_through_the_same_transaction(self, db, test_project, test_user):
         from app.enums import IssueRelationType
         from app.oxyde_models.issue import OxydeIssueRelation
         from app.schemas.issue import IssueRelationCreate
@@ -4296,3 +4312,20 @@ class TestBlockingCycleCheckIsAtomic:
         )
         assert again.id == first.id
         assert len(await OxydeIssueRelation.objects.filter(issue_id=x.id).all()) == 1
+
+    async def test_create_relation_refuses_to_run_inside_an_outer_transaction(self, db, test_project, test_user):
+        """Inside a transaction that has already read, the writer lock
+        cannot wait (SQLITE_BUSY_SNAPSHOT), so the precondition is
+        checked up front rather than surfacing as a sporadic 500."""
+        from oxyde import atomic
+        from app.enums import IssueRelationType
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        with pytest.raises(RuntimeError, match="own transaction"):
+            async with atomic():
+                await IssueService().create_relation(
+                    x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+                )

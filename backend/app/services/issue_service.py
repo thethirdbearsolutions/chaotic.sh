@@ -7,6 +7,7 @@ import re
 import random
 from datetime import datetime, timedelta, timezone
 from oxyde import atomic, execute_raw, IntegrityError
+from oxyde.db.transaction import get_active_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -2167,8 +2168,16 @@ class IssueService:
         that reads first only gets the writer lock at its first write; two
         transactions can both read the same graph and both insert. A
         zero-row UPDATE is a write statement, so it takes the lock (or
-        waits for the holder to commit) without changing anything, and
-        every read after it sees the previous writer's commit (CHT-1311).
+        waits, up to the pool's busy_timeout, for the holder to commit)
+        without changing anything, and every read after it sees the
+        previous writer's commit (CHT-1311).
+
+        This only waits when it is the transaction's FIRST statement. A
+        transaction that has already read holds a snapshot, and SQLite
+        refuses to upgrade it once another writer has committed
+        (SQLITE_BUSY_SNAPSHOT, immediately, no wait: the CHT-1411 case),
+        so the caller must open the transaction itself, which
+        create_relation does and asserts.
         """
         await execute_raw("UPDATE issue_relations SET relation_type = relation_type WHERE 0")
 
@@ -2179,7 +2188,19 @@ class IssueService:
         non-DONE incoming BLOCKS as never-ready, so no issue in the cycle
         can ever start (CHT-298). Walk the existing BLOCKS graph forward
         from Y; if it reaches X, refuse. Visited-guarded and bounded so
-        pre-existing corruption cannot loop forever."""
+        pre-existing corruption cannot loop forever.
+
+        The edge list is fetched in one query and walked in memory: this
+        runs under the database-wide writer lock (every other writer
+        waits behind it), so the walk must not cost a round trip per
+        node."""
+        rows = await execute_raw(
+            "SELECT issue_id, related_issue_id FROM issue_relations WHERE relation_type = ?",
+            [IssueRelationType.BLOCKS.name],
+        )
+        blocks: dict[str, list[str]] = {}
+        for row in rows:
+            blocks.setdefault(row["issue_id"], []).append(row["related_issue_id"])
         frontier = [related_issue_id]
         visited: set[str] = set()
         while frontier:
@@ -2193,10 +2214,7 @@ class IssueService:
             if node in visited:
                 continue
             visited.add(node)
-            for edge in await OxydeIssueRelation.objects.filter(
-                issue_id=node, relation_type=IssueRelationType.BLOCKS,
-            ).all():
-                frontier.append(edge.related_issue_id)
+            frontier.extend(blocks.get(node, ()))
 
     async def create_relation(
         self, issue_id: str, relation_in: IssueRelationCreate
@@ -2217,8 +2235,15 @@ class IssueService:
         exists to prevent. Now the second waits for the first to commit
         and then sees its edge.
         """
+        if get_active_transaction() is not None:
+            # See _take_relation_write_lock: inside a transaction that has
+            # already read, the lock cannot wait, it fails.
+            raise RuntimeError("create_relation must open its own transaction (CHT-1311)")
         async with atomic():
             await self._take_relation_write_lock()
+            # The duplicate check comes before the walk: a re-run of the
+            # same pair is a no-op without a walk, and without a cycle
+            # error for a pre-existing cycle elsewhere in the graph.
             existing = await OxydeIssueRelation.objects.filter(
                 issue_id=issue_id,
                 related_issue_id=relation_in.related_issue_id,
@@ -2234,8 +2259,11 @@ class IssueService:
                     relation_type=relation_in.relation_type,
                 )
             except IntegrityError:
-                # Under the writer lock only a retried statement of our own
-                # can have inserted the pair; report it as the no-op.
+                # Under the writer lock, after the check above, the unique
+                # pair cannot fail; Oxyde retries nothing. Any
+                # IntegrityError here is something else (NOT NULL, a
+                # foreign key) and propagates; the re-query is a defensive
+                # no-op kept so a duplicate would still read as one.
                 existing = await OxydeIssueRelation.objects.filter(
                     issue_id=issue_id,
                     related_issue_id=relation_in.related_issue_id,
