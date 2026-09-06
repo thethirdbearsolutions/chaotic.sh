@@ -113,3 +113,12 @@ jobs:
 
       - name: Run tests with coverage
         run: npm run test:coverage
+
+  scripts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rolling backup rotation
+        run: bash scripts/sqlite-backup.test.sh
