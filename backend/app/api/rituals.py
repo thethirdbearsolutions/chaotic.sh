@@ -805,6 +805,14 @@ async def approve_issue_attestation(
 # ============================================================================
 
 
+def _group_response(group) -> RitualGroupResponse:
+    """RitualGroupResponse for a group row that carries its active members
+    (`group.rituals`, attached by the service's group loaders)."""
+    response = RitualGroupResponse.model_validate(group)
+    response.triggers = sorted({r.trigger.value for r in getattr(group, "rituals", None) or []})
+    return response
+
+
 @router.post("/groups", response_model=RitualGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_ritual_group(
     project_id: str,
@@ -831,7 +839,7 @@ async def create_ritual_group(
 
     try:
         group = await ritual_service.create_group(group_in, project_id)
-        return group
+        return _group_response(group)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -864,7 +872,7 @@ async def list_ritual_groups(
         )
 
     groups = await ritual_service.list_groups_by_project(project_id)
-    return groups[skip:skip + limit]
+    return [_group_response(g) for g in groups[skip:skip + limit]]
 
 
 @router.get("/groups/{group_id}", response_model=RitualGroupResponse)
@@ -896,7 +904,7 @@ async def get_ritual_group(
             detail="Not a member of this team",
         )
 
-    return group
+    return _group_response(group)
 
 
 @router.patch("/groups/{group_id}", response_model=RitualGroupResponse)
@@ -931,7 +939,7 @@ async def update_ritual_group(
         )
 
     group = await ritual_service.update_group(group, group_in)
-    return group
+    return _group_response(group)
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)

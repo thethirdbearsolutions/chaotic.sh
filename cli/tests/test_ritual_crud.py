@@ -375,6 +375,25 @@ class TestRitualGroupList:
         assert 'mindfulness' in result.output
         assert 'meditation' in result.output
 
+    def test_group_list_flags_mixed_triggers(self, cli_runner):
+        """A group whose members do not share a trigger (a legacy group,
+        CHT-1403) is flagged so an operator can split it; a clean group
+        gets no such line."""
+        from cli.main import cli, client
+
+        client.get_ritual_groups = MagicMock(return_value=[
+            {"id": "group-1", "name": "legacy", "selection_mode": "round_robin",
+             "triggers": ["every_sprint", "ticket_close"]},
+            {"id": "group-2", "name": "clean", "selection_mode": "round_robin", "triggers": ["every_sprint"]},
+        ])
+        client.get_rituals = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['ritual', 'group', 'list'])
+
+        assert result.exit_code == 0, result.output
+        assert "mixed triggers: every_sprint, ticket_close" in result.output
+        assert result.output.count("mixed triggers") == 1
+
     def test_group_list_empty(self, cli_runner):
         """ritual group list with no groups shows message."""
         from cli.main import cli, client

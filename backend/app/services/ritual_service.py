@@ -122,6 +122,30 @@ class RitualService:
             f"group '{group.name}' for this issue; choose '{offered}' instead."
         )
 
+    async def _validate_group_trigger(
+        self, group: OxydeRitualGroup, trigger: RitualTrigger, *, exclude_ritual_id: str | None = None,
+    ) -> None:
+        """A group's members must share a trigger (CHT-1403).
+
+        A group is one selection over one event: the sprint rotation
+        advances a ROUND_ROBIN pointer over the group's EVERY_SPRINT
+        members, the ticket listings select over its TICKET_CLOSE or
+        TICKET_CLAIM members, and validation now filters by trigger too.
+        Mixing triggers gives one pointer two unrelated event streams, so
+        a new member (or a member changing trigger) must match the
+        active members already there.
+        """
+        others = await OxydeRitual.objects.filter(group_id=group.id, is_active=True).all()
+        for member in others:
+            if member.id == exclude_ritual_id:
+                continue
+            if member.trigger != trigger:
+                raise ValueError(
+                    f"All rituals in a group must share a trigger: group '{group.name}' holds "
+                    f"{member.trigger.value} ritual '{member.name}', so a ritual with trigger "
+                    f"{trigger.value} cannot join it."
+                )
+
     async def create(self, ritual_in: RitualCreate, project_id: str) -> OxydeRitual:
         """Create a new ritual for a project."""
         # Check for duplicate name
@@ -155,18 +179,25 @@ class RitualService:
         if ritual_in.conditions is not None:
             conditions_json = json.dumps(ritual_in.conditions)
 
-        ritual = await OxydeRitual.objects.create(
-            project_id=project_id,
-            name=ritual_in.name,
-            prompt=ritual_in.prompt,
-            trigger=ritual_in.trigger,
-            approval_mode=ritual_in.approval_mode,
-            note_required=ritual_in.note_required,
-            conditions=conditions_json,
-            group_id=ritual_in.group_id,
-            weight=ritual_in.weight,
-            percentage=ritual_in.percentage,
-        )
+        # The shared-trigger check and the insert share a transaction: two
+        # joins racing on an empty group are serialised by SQLite, and the
+        # loser fails at its write rather than landing a mixed group
+        # (CHT-1403; the deferred-BEGIN caveat is CHT-1411).
+        async with atomic():
+            if ritual_in.group_id:
+                await self._validate_group_trigger(group, ritual_in.trigger)
+            ritual = await OxydeRitual.objects.create(
+                project_id=project_id,
+                name=ritual_in.name,
+                prompt=ritual_in.prompt,
+                trigger=ritual_in.trigger,
+                approval_mode=ritual_in.approval_mode,
+                note_required=ritual_in.note_required,
+                conditions=conditions_json,
+                group_id=ritual_in.group_id,
+                weight=ritual_in.weight,
+                percentage=ritual_in.percentage,
+            )
         return ritual
 
     async def get_by_id(self, ritual_id: str, include_inactive: bool = False) -> OxydeRitual | None:
@@ -223,6 +254,19 @@ class RitualService:
                         f"Rituals in a {group.selection_mode.value} group must have weight > 0. "
                         f"Got: {new_weight}"
                     )
+            # Only a transition that can change the invariant is checked:
+            # joining a (different) group, changing trigger, or coming back
+            # to life among active siblings. A member of a group that
+            # already mixes triggers stays editable (prompt, weight, name);
+            # `chaotic ritual group list` flags such groups (CHT-1403).
+            if "trigger" in update_data and update_data["trigger"] is None:
+                raise ValueError("trigger cannot be null")
+            new_trigger = update_data.get("trigger", ritual.trigger)
+            joining = new_group_id != ritual.group_id
+            retriggering = new_trigger != ritual.trigger
+            reactivating = update_data.get("is_active") is True and not ritual.is_active
+            if joining or retriggering or reactivating:
+                await self._validate_group_trigger(group, new_trigger, exclude_ritual_id=ritual.id)
 
         # Serialize conditions to JSON if provided
         if "conditions" in update_data:
