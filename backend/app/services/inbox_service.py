@@ -20,12 +20,18 @@ fan out one entry per team admin, mirroring the authorization check.
 import logging
 import re
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from app.enums import ActivityType, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.team_service import TeamService
 from app.utils.markdown import strip_code_spans
+
+if TYPE_CHECKING:
+    from app.oxyde_models.document import OxydeDocument
+    from app.oxyde_models.issue import OxydeIssue
+    from app.oxyde_models.user import OxydeUser
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +305,36 @@ class InboxService:
     async def is_member_of_entry_team(self, user_id: str, entry: OxydeInboxEntry) -> bool:
         """Whether the user is currently a member of the entry's team (CHT-1274)."""
         return entry.team_id in await self.current_team_ids(user_id)
+
+    async def resolve_display_fields(
+        self, entries: list[OxydeInboxEntry],
+    ) -> tuple[dict[str, "OxydeIssue"], dict[str, "OxydeDocument"], dict[str, "OxydeUser"]]:
+        """The issues, documents and users a page of entries refers to,
+        keyed by id, in three queries for the whole page (CHT-1399).
+
+        The API used to resolve each entry's issue identifier, document
+        title and source user name with one service lookup apiece, per
+        entry: several queries per row, up to a page of 200. The distinct
+        ids are collected first and each set is fetched with one `id__in`
+        filter; an empty set costs no query. This is the one place that
+        decides what an inbox row may show about the things it points at,
+        so an access rule for those lookups belongs here, not in the route.
+        """
+        from app.oxyde_models.document import OxydeDocument
+        from app.oxyde_models.issue import OxydeIssue
+        from app.oxyde_models.user import OxydeUser
+
+        issue_ids = sorted({e.issue_id for e in entries if e.issue_id})
+        document_ids = sorted({e.document_id for e in entries if e.document_id})
+        user_ids = sorted({e.source_user_id for e in entries if e.source_user_id})
+
+        issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=issue_ids).all()} if issue_ids else {}
+        documents = (
+            {d.id: d for d in await OxydeDocument.objects.filter(id__in=document_ids).all()}
+            if document_ids else {}
+        )
+        users = {u.id: u for u in await OxydeUser.objects.filter(id__in=user_ids).all()} if user_ids else {}
+        return issues, documents, users
 
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,

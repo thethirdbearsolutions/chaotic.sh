@@ -5,35 +5,21 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser
 from app.schemas.inbox import InboxEntryResponse, MarkAllReadResponse, UnreadCountResponse
-from app.oxyde_models.document import OxydeDocument
-from app.oxyde_models.issue import OxydeIssue
-from app.oxyde_models.user import OxydeUser
+from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.inbox_service import InboxService
 from app.websocket import broadcast_inbox_event
 
 router = APIRouter()
 
 
-async def _build_responses(entries) -> list[InboxEntryResponse]:
+async def _build_responses(entries: list[OxydeInboxEntry]) -> list[InboxEntryResponse]:
     """Fill in display fields (issue identifier, document title, source
-    user name) that aren't stored on the entry itself.
+    user name) that aren't stored on the entry itself. Three queries for
+    the whole page, not several per entry: InboxService resolves the
+    referents in bulk (CHT-1399)."""
+    issues, documents, users = await InboxService().resolve_display_fields(entries)
 
-    Three queries for the whole page, not three per entry (CHT-1399):
-    the distinct ids are collected first and each set is fetched with one
-    `id__in` filter. A page of 200 used to cost up to 600 lookups.
-    """
-    issue_ids = {e.issue_id for e in entries if e.issue_id}
-    document_ids = {e.document_id for e in entries if e.document_id}
-    user_ids = {e.source_user_id for e in entries if e.source_user_id}
-
-    issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=list(issue_ids)).all()} if issue_ids else {}
-    documents = (
-        {d.id: d for d in await OxydeDocument.objects.filter(id__in=list(document_ids)).all()}
-        if document_ids else {}
-    )
-    users = {u.id: u for u in await OxydeUser.objects.filter(id__in=list(user_ids)).all()} if user_ids else {}
-
-    def one(entry) -> InboxEntryResponse:
+    def one(entry: OxydeInboxEntry) -> InboxEntryResponse:
         issue = issues.get(entry.issue_id) if entry.issue_id else None
         document = documents.get(entry.document_id) if entry.document_id else None
         source_user = users.get(entry.source_user_id) if entry.source_user_id else None
@@ -59,7 +45,7 @@ async def _build_responses(entries) -> list[InboxEntryResponse]:
     return [one(e) for e in entries]
 
 
-async def _build_response(entry) -> InboxEntryResponse:
+async def _build_response(entry: OxydeInboxEntry) -> InboxEntryResponse:
     return (await _build_responses([entry]))[0]
 
 

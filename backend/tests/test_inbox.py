@@ -776,55 +776,72 @@ class TestInboxApi:
         assert resp.json()[0]["issue_identifier"] == test_issue.identifier
 
     async def test_list_page_costs_a_fixed_number_of_queries(
-        self, client, db, test_project, test_team, test_issue, test_user, test_user2, auth_headers, monkeypatch,
+        self, client, db, test_project, test_team, test_user, auth_headers, monkeypatch,
     ):
         """The display fields (issue identifier, document title, source
         user name) are fetched once per page with `id__in`, not once per
-        entry (CHT-1399): a 20-entry page must cost the same number of
-        queries as a 2-entry page."""
+        entry and not once per distinct referent (CHT-1399): a 20-entry
+        page pointing at three users, three issues and one document costs
+        the same number of queries as a 2-entry page, and exactly three
+        more than a page whose entries point at nothing."""
         from oxyde.db.pool import AsyncDatabase
 
-        from app.services.document_service import DocumentService
         from app.schemas.document import DocumentCreate
+        from app.schemas.issue import IssueCreate
+        from app.services.document_service import DocumentService
 
+        senders = [await _add_distinct_member(test_team.id, name) for name in ("Ada", "Bea", "Cy")]
+        issues = [
+            await IssueService().create(
+                IssueCreate(title=f"Issue {n}", project_id=test_project.id), test_project, test_user.id,
+            )
+            for n in range(3)
+        ]
         document = await DocumentService().create(
             DocumentCreate(title="Doc", content="", project_id=test_project.id),
             author_id=test_user.id, team_id=test_team.id,
         )
 
-        async def make(n):
+        async def make(n, *, referents=True):
             for i in range(n):
                 await OxydeInboxEntry.objects.create(
                     recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION,
-                    team_id=test_team.id, issue_id=test_issue.id, document_id=document.id,
-                    source_user_id=test_user2.id, title=f"m{i}",
+                    team_id=test_team.id, title=f"m{i}",
+                    issue_id=issues[i % 3].id if referents else None,
+                    document_id=document.id if referents else None,
+                    source_user_id=senders[i % 3].id if referents else None,
                 )
 
         calls = []
         real_execute = AsyncDatabase.execute
 
         async def counting_execute(self, ir):
-            calls.append(ir.get("op") or ir.get("kind") or "?")
+            calls.append(ir["op"])
             return await real_execute(self, ir)
 
         monkeypatch.setattr(AsyncDatabase, "execute", counting_execute)
 
+        async def count_for(expected_rows):
+            calls.clear()
+            resp = await client.get("/api/inbox", headers=auth_headers)
+            assert resp.status_code == 200 and len(resp.json()) == expected_rows
+            return len(calls), resp.json()
+
+        await make(2, referents=False)
+        bare, _ = await count_for(2)
+        assert bare > 0, "the query counter saw nothing; it is hooked on the wrong path"
+        await OxydeInboxEntry.objects.filter(recipient_user_id=test_user.id).delete()
+
         await make(2)
-        calls.clear()
-        resp = await client.get("/api/inbox", headers=auth_headers)
-        assert resp.status_code == 200 and len(resp.json()) == 2
-        small = len(calls)
-        assert small > 0, "the query counter saw nothing; it is hooked on the wrong path"
+        small, _ = await count_for(2)
+        assert small == bare + 3, f"{small - bare} referent queries for a page, expected 3"
 
         await make(18)
-        calls.clear()
-        resp = await client.get("/api/inbox", headers=auth_headers)
-        assert resp.status_code == 200 and len(resp.json()) == 20
-        assert len(calls) == small, f"{len(calls)} queries for 20 entries vs {small} for 2"
-        body = resp.json()
-        assert {e["issue_identifier"] for e in body} == {test_issue.identifier}
+        large, body = await count_for(20)
+        assert large == small, f"{large} queries for 20 entries vs {small} for 2"
+        assert {e["issue_identifier"] for e in body} == {i.identifier for i in issues}
         assert {e["document_title"] for e in body} == {"Doc"}
-        assert {e["source_user_name"] for e in body} == {test_user2.name}
+        assert {e["source_user_name"] for e in body} == {u.name for u in senders}
 
     async def test_unread_count_endpoint(self, client, db, test_team, test_user, auth_headers):
         await OxydeInboxEntry.objects.create(
