@@ -67,7 +67,7 @@ async def list_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: str, current_user: CurrentUser):
+async def get_project(project_id: str, current_user: CurrentUser) -> ProjectResponse:
     """Get project by ID."""
     project_service = ProjectService()
 
@@ -84,7 +84,7 @@ async def get_project(project_id: str, current_user: CurrentUser):
             detail="Not a member of this team",
         )
 
-    return project
+    return ProjectResponse.model_validate(project)
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

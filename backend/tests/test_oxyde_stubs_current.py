@@ -13,10 +13,12 @@ sides are normalised before comparing. That repr is also not valid stub
 syntax; it is an upstream Oxyde limitation, tracked separately (CHT-1386),
 and not something this test can fix.
 """
+import inspect
 import re
 from pathlib import Path
 
 from oxyde.codegen import generate_stubs_for_models
+from oxyde.models.registry import registered_tables
 
 import app.oxyde_models  # noqa: F401 -- importing registers every table model
 
@@ -29,7 +31,14 @@ def _normalised(text: str) -> str:
 
 
 def test_checked_in_stubs_match_the_generator():
-    expected = generate_stubs_for_models()
+    # Only the app's own models: the registry is process-global, so a table
+    # model defined by some test module would otherwise make this test
+    # order-dependent (PR #279 review).
+    models = [
+        m for m in registered_tables().values()
+        if Path(inspect.getfile(m)).parent == _MODELS_DIR
+    ]
+    expected = generate_stubs_for_models(models)
     assert len(expected) >= 10, "the model registry looks empty; is app.oxyde_models imported?"
 
     stale = []

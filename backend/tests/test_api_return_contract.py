@@ -263,12 +263,26 @@ def test_api_function_has_real_defaults_at_runtime(module, func):
 
     fn = _resolve(module, func)
     sentinels = (fp.Param, fp.Depends, fp.Body)  # Query/Header/Path/Cookie/Form/File subclass Param; Security subclasses Depends
+    params = inspect.signature(fn).parameters
     offenders = [
-        name for name, p in inspect.signature(fn).parameters.items()
+        name for name, p in params.items()
         if p.default is not inspect.Parameter.empty and isinstance(p.default, sentinels)
     ]
     assert offenders == [], (
         f"app/api/{module}.py::{func} has live FastAPI sentinel defaults at runtime: {offenders}"
+    )
+    # A dependency-injected parameter (Annotated[..., Depends(...)], e.g.
+    # CurrentUser) must have no default at all: FastAPI ignores one, but an
+    # in-process caller that omits the argument would get it and pass None
+    # into an access check (PR #279 review).
+    hints = typing.get_type_hints(fn, include_extras=True)
+    injected = [
+        name for name, p in params.items()
+        if p.default is not inspect.Parameter.empty
+        and any(isinstance(m, fp.Depends) for m in getattr(hints.get(name), "__metadata__", ()))
+    ]
+    assert injected == [], (
+        f"app/api/{module}.py::{func}: dependency-injected parameters must not carry a default: {injected}"
     )
 
 

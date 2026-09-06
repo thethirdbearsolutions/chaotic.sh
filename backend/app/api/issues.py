@@ -653,7 +653,7 @@ async def list_issues(
 async def search_issues(
     team_id: str,
     q: Annotated[str, Query(min_length=1, max_length=200)],
-    current_user: CurrentUser = None,
+    current_user: CurrentUser,
     project_id: str | None = None,
     issue_status: IssueStatus | None = None,
     skip: int = 0,
