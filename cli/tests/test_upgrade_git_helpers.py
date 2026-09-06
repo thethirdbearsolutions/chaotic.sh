@@ -5,7 +5,9 @@ nothing there proves the actual `git rev-parse --verify --quiet <ref>^{commit}`,
 `git merge-base --is-ancestor` and `git log -1 --format=%h (%cs)` invocations
 do what the helpers assume. This builds a tiny history and checks them.
 """
+import os
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -14,11 +16,18 @@ from cli import system
 from cli.system import describe_commit, is_ancestor, resolve_commit, upgrade_direction
 
 
+GIT = shutil.which("git")
+pytestmark = pytest.mark.skipif(GIT is None, reason="git is not on PATH")
+
+
 def _git(repo, *args):
+    # Same binary the code under test will resolve (run_command inherits the
+    # parent PATH); only identity and HOME are pinned so user gitconfig and
+    # hooks cannot leak in.
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
-        env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
-             "GIT_COMMITTER_EMAIL": "t@x", "HOME": str(repo), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+        [GIT, *args], cwd=repo, check=True, capture_output=True, text=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+             "GIT_COMMITTER_EMAIL": "t@x", "HOME": str(repo), "GIT_CONFIG_GLOBAL": "/dev/null"},
     ).stdout.strip()
 
 

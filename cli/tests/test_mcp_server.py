@@ -41,11 +41,13 @@ def mock_dependencies(patched_auth, patched_project):
 def restore_client_mocks():
     """Undo the `client.<method> = MagicMock(...)` assignments each test makes
     on the shared `cli.main.client` singleton (CHT-1391). Those instance
-    attributes shadow the class methods and used to leak into every later
-    test in the session, so a test could pass only because an earlier one
-    had left the mock it needed behind (and fail when run alone). Snapshot
-    the instance dict before the test and put it back afterwards; class
-    attributes are untouched, so the real methods reappear.
+    attributes shadow the class methods and leaked into every later test
+    in the session, so any test that relied on one left behind would pass
+    in the suite and fail alone. (No test in this file did at the time
+    this was added; the rotation test came closest, and now supplies its
+    own mock.) Snapshot the instance dict before the test and put it back
+    afterwards; class attributes are untouched, so the real methods
+    reappear.
     """
     from cli.main import client
 
