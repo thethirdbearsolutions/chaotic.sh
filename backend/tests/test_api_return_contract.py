@@ -203,6 +203,38 @@ def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     )
 
 
+def _plain_default_is_fastapi_sentinel(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"Query", "Header", "Depends", "Body", "Path", "Cookie"}
+    )
+
+
+@pytest.mark.parametrize(
+    "alias,func",
+    TOOL_CALLS,
+    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+)
+def test_api_function_reachable_from_tools_has_real_defaults(alias, func):
+    """A parameter whose *default value* is `Query(...)`/`Header(...)` only
+    works under FastAPI's dependency injection; called in-process it is a
+    live, truthy sentinel object. Every function the MCP tools call must
+    keep FastAPI metadata in `Annotated[...]` and a real Python default
+    (CHT-1375). Input-side twin of the return-contract check above."""
+    module = _ALIASES[alias]
+    tree = ast.parse((_API_DIR / f"{module}.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func)
+    args = node.args
+    positional = [a.arg for a in args.args][-len(args.defaults):] if args.defaults else []
+    offenders = [name for name, d in zip(positional, args.defaults) if _plain_default_is_fastapi_sentinel(d)]
+    offenders += [a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None and _plain_default_is_fastapi_sentinel(d)]
+    assert offenders == [], (
+        f"app/api/{module}.py::{func} has FastAPI sentinel defaults {offenders}; "
+        f"use `param: Annotated[T, Query(...)] = <default>` so in-process callers get a real value"
+    )
+
+
 def test_tools_module_never_validates_a_row_itself():
     """The tools module must not need to know about ORM rows at all: no
     ``Schema.model_validate(...)`` and no ``from_attributes=`` laundering
@@ -285,6 +317,13 @@ class TestInProcessCallsReturnSchemas:
         )
         result = await sprints.list_transactions(sprint_id=current.id, current_user=test_user)
         assert result and all(type(t) is BudgetTransactionResponse for t in result)
+
+    async def test_list_issues_in_process_with_only_scope_kwargs(self, test_project, test_user, test_issue):
+        """Before CHT-1375 this call filtered on live Query objects; now the
+        defaults are real, so scope-only kwargs list the project's issues."""
+        from app.api import issues
+        rows = await issues.list_issues(current_user=test_user, project_id=test_project.id)
+        assert [r.id for r in rows] == [test_issue.id]
 
     async def test_no_schema_instance_carries_internal_fields(self, test_project, test_user, test_issue):
         """The filtering half of response_model, by construction: the

@@ -1,6 +1,8 @@
 """Issue API routes."""
 import logging
 from datetime import datetime, timezone
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, status, Query, Header
 from app.api.deps import CurrentUser, check_user_project_access, check_user_team_access
 from app.utils import ensure_utc
@@ -256,7 +258,7 @@ async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
-    x_chaotic_interactive: str | None = Header(default=None),
+    x_chaotic_interactive: Annotated[str | None, Header()] = None,
 ) -> IssueResponse:
     """Create a new issue.
 
@@ -442,19 +444,23 @@ async def list_issues(
     assignee_id: str | None = None,
     team_id: str | None = None,
     parent_id: str | None = None,
-    statuses: list[IssueStatus] | None = Query(None, alias="status"),
-    priorities: list[IssuePriority] | None = Query(None, alias="priority"),
-    issue_type: IssueType | None = Query(None, alias="issue_type"),
-    labels: list[str] | None = Query(None, alias="label"),
-    label_match: str = Query("all", pattern="^(all|any)$"),
-    exclude_labels: list[str] | None = Query(None, alias="exclude_label"),
-    exclude_statuses: list[IssueStatus] | None = Query(None, alias="exclude_status"),
-    exclude_priorities: list[IssuePriority] | None = Query(None, alias="exclude_priority"),
-    exclude_issue_types: list[IssueType] | None = Query(None, alias="exclude_issue_type"),
-    exclude_assignee_ids: list[str] | None = Query(None, alias="exclude_assignee_id"),
-    search: str | None = Query(None, min_length=1, max_length=200),
-    sort_by: str | None = Query(None, pattern="^(created|updated|priority|status|title|estimate|random)$"),
-    order: str | None = Query(None, pattern="^(asc|desc)$"),
+    # Query metadata lives in Annotated so the Python default is a real
+    # value: this function is also called in-process (the MCP tools,
+    # ADR-0005) where a bare `= Query(None)` default would be a live,
+    # truthy Query object instead of None (CHT-1375).
+    statuses: Annotated[list[IssueStatus] | None, Query(alias="status")] = None,
+    priorities: Annotated[list[IssuePriority] | None, Query(alias="priority")] = None,
+    issue_type: Annotated[IssueType | None, Query(alias="issue_type")] = None,
+    labels: Annotated[list[str] | None, Query(alias="label")] = None,
+    label_match: Annotated[str, Query(pattern="^(all|any)$")] = "all",
+    exclude_labels: Annotated[list[str] | None, Query(alias="exclude_label")] = None,
+    exclude_statuses: Annotated[list[IssueStatus] | None, Query(alias="exclude_status")] = None,
+    exclude_priorities: Annotated[list[IssuePriority] | None, Query(alias="exclude_priority")] = None,
+    exclude_issue_types: Annotated[list[IssueType] | None, Query(alias="exclude_issue_type")] = None,
+    exclude_assignee_ids: Annotated[list[str] | None, Query(alias="exclude_assignee_id")] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    sort_by: Annotated[str | None, Query(pattern="^(created|updated|priority|status|title|estimate|random)$")] = None,
+    order: Annotated[str | None, Query(pattern="^(asc|desc)$")] = None,
     skip: int = 0,
     limit: int = 1000,
 ) -> list[IssueResponse]:
@@ -947,7 +953,7 @@ async def update_issue(
     issue_id: str,
     issue_in: IssueUpdate,
     current_user: CurrentUser,
-    x_chaotic_interactive: str | None = Header(default=None),
+    x_chaotic_interactive: Annotated[str | None, Header()] = None,
 ) -> IssueResponse:
     """Update an issue."""
     issue_service = IssueService()
