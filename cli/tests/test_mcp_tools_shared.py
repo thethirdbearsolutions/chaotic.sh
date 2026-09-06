@@ -701,6 +701,23 @@ class TestSprintBody:
         assert result["entered_limbo"] is True and result["now_active"] is None
         assert fake.calls_to("get_current_sprint") == []
 
+    async def test_close_into_limbo_names_the_pending_rituals(self, fake):
+        """The next step after entering limbo is attesting the EVERY_SPRINT
+        rituals; the close result carries them so no second call is needed
+        (CHT-1381). Same rows and `unattested` list as ritual_pending."""
+        retro = {"name": "retro", "approval_mode": "auto", "attestation": None}
+        report = {"name": "report", "approval_mode": "review", "attestation": {"note": "written"}}
+        fake.limbo = {"in_limbo": True, "pending_rituals": [retro, report]}
+        result = await _tools(fake)["sprint_close"]()
+        assert result["limbo_pending"] == [retro, report]
+        assert result["unattested"] == ["retro"]
+        assert fake.calls_to("get_limbo_status") == [(("proj-1",), {})]
+
+    async def test_close_that_rotates_has_empty_limbo_fields(self, fake):
+        result = await _tools(fake)["sprint_close"]()
+        assert result["limbo_pending"] == [] and result["unattested"] == []
+        assert fake.calls_to("get_limbo_status") == []
+
     async def test_sprint_add_reports_partial_failure_in_the_envelope_shape(self, fake):
         result = await _tools(fake)["sprint_add"](identifiers=["CHT-1", "CHT-404"])
         assert result["updated"] == ["CHT-1"]

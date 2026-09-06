@@ -71,9 +71,13 @@ async def sprint_close(
     by closing, not by editing tickets.
 
     If the project has per-sprint rituals, closing enters LIMBO instead
-    of rotating -- the returned sprint has `limbo: true`, and the next
-    step is ritual_pending / ritual_complete. Check `limbo` on the
-    result rather than assuming the rotation happened.
+    of rotating -- the result has `entered_limbo: true`, `now_active`
+    is null, and `limbo_pending` lists the rituals the rotation is
+    waiting on (the same rows ritual_pending returns: name, prompt,
+    approval_mode, any attestation) with the not-yet-attested names in
+    `unattested`, so the next step -- ritual_attest / ritual_complete --
+    needs no second lookup. Check `entered_limbo` rather than assuming
+    the rotation happened.
 
     Rotating sprints is a project-wide state change that affects
     everyone's budget accounting, so prefer sprint_current first and
@@ -93,8 +97,17 @@ async def sprint_close(
     if not result["entered_limbo"]:
         active = await backend.get_current_sprint(project_id)
         result["now_active"] = with_budget_state(active) if active else None
+        result["limbo_pending"] = []
+        result["unattested"] = []
     else:
         result["now_active"] = None
+        # Name what limbo is waiting on here, so the caller's next step
+        # (attest/complete those rituals) is in the same result instead of
+        # behind a second call to ritual_pending (CHT-1381).
+        status = await backend.get_limbo_status(project_id) or {}
+        rituals = status.get("pending_rituals", []) or []
+        result["limbo_pending"] = rituals
+        result["unattested"] = [r["name"] for r in rituals if not r.get("attestation")]
     return result
 
 
