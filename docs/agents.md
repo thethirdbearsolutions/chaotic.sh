@@ -185,11 +185,11 @@ the same command:
 
 ### Toolset
 
-37 tools, curated for quality over coverage (CHT-1247). The canonical
-list is `docs/mcp-toolset-schema.json` -- every tool's description and
-input schema, regenerated from the code -- and
+A toolset curated for quality over coverage (CHT-1247), grouped below;
+the canonical list is `docs/mcp-toolset-schema.json` -- every tool's
+description and input schema, regenerated from the code -- and
 `cli/tests/test_mcp_toolset_sync.py` fails if this section stops naming
-one of them:
+one of them (there is deliberately no count here to rot, CHT-1395):
 
 - **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
   `issue_comment`, `issue_start`, `issue_ready`, `issue_relations`,
