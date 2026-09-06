@@ -1,6 +1,7 @@
 """Wires the remote MCP Streamable HTTP transport onto the FastAPI app
 (CHT-1266). See ``mcp_server/__init__.py`` for the big picture, ``tools.py``
-for the tool definitions, ``auth.py`` for the two supported auth modes.
+for the binding of the shared toolset to this server's ``InProcessBackend``
+(``backend.py``), ``auth.py`` for the two supported auth modes.
 
 Two plain ``Route``s, not a Starlette ``Mount`` -- Mount compiles its
 path regex as ``"<prefix>/{path:path}"``, which requires a trailing

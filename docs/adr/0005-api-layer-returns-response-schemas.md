@@ -15,7 +15,8 @@ layer. That is idiomatic FastAPI, and it is sound for exactly as long
 as the router is the only way to call the function.
 
 CHT-1266 added a second caller. The backend-hosted MCP transport
-(`app/mcp_server/tools.py`) cannot loop back over HTTP into the process
+(`app/mcp_server/tools.py`; since CHT-1374 its data-access adapter
+`app/mcp_server/backend.py`) cannot loop back over HTTP into the process
 it lives in, so its tools call the `app/api` functions directly. At
 that moment those functions stopped being route handlers and became a
 shared API layer with two consumers, and the output contract did not
@@ -62,7 +63,8 @@ Concretely:
 1. Every public undecorated function in `app/api` (the ones that exist
    specifically to be called in-process) declares a return type and
    returns that type.
-2. Every API function reachable from `app/mcp_server/tools.py` declares
+2. Every API function reachable from the MCP adapter
+   (`app/mcp_server/backend.py`, ADR-0007) declares
    a return type that is a response schema, a list of one, `dict`, or
    `None`.
 3. The tools module never validates or launders a row itself; it only

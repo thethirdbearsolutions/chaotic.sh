@@ -48,7 +48,7 @@ cov-frontend:
 
 # Run CLI tests with coverage
 cov-cli:
-    cd cli && uv run pytest --cov=cli --cov-report=term-missing
+    cd cli && uv run pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing
 
 # Run backend tests with coverage (alias)
 test-cov: cov-backend

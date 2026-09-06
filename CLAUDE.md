@@ -104,7 +104,8 @@ form back to a member on read. So:
   row. Since CHT-1348 the `app/api` functions do this themselves: every
   function reachable in-process returns its response schema and says so in
   its signature (ADR-0005; `tests/test_api_return_contract.py` enforces it).
-  So an in-process caller (the MCP tools) just `.model_dump(mode="json")`s
+  So an in-process caller (the MCP `InProcessBackend` adapter in
+  `backend/app/mcp_server/backend.py`) just `.model_dump(mode="json")`s
   what it was handed. If you add an API function, annotate its return type
   and construct the schema in the body — the guard test will tell you.
   The input side has the same rule (CHT-1375): keep `Query`/`Header`

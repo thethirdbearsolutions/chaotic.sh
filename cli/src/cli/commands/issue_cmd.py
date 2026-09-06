@@ -25,15 +25,8 @@ def _main():
 PRIORITY_LEVELS = ["no_priority", "low", "medium", "high", "urgent"]
 
 # Canonical issue types and aliases
-ISSUE_TYPES = ["task", "bug", "feature", "chore", "docs", "tech_debt", "refactor", "epic"]
-ISSUE_TYPE_ALIASES = {
-    "feat": "feature",
-    "improvement": "feature",
-    "doc": "docs",
-    "debt": "tech_debt",
-    "techdebt": "tech_debt",
-    "tech-debt": "tech_debt",
-}
+# One copy, shared with both MCP servers (CHT-1374).
+from chaotic_mcp_tools import ISSUE_TYPE_ALIASES, ISSUE_TYPES  # noqa: E402
 
 
 class IssueTypeChoice(click.ParamType):

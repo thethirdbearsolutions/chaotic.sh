@@ -1,8 +1,8 @@
 """The API layer's return contract, pinned (CHT-1348; ADR-0005).
 
 Since CHT-1266 the functions in ``app/api`` have two callers: FastAPI's
-router, and in-process consumers (the backend-hosted MCP transport in
-``app/mcp_server/tools.py``). The router applies each route's
+router, and in-process consumers (the backend-hosted MCP transport's
+data-access adapter, ``app/mcp_server/backend.py``; ADR-0007). The router applies each route's
 ``response_model`` -- which both *filters* the payload to the schema's
 fields and *serialises* it -- but an in-process caller gets whatever the
 function actually returns. When that was a raw Oxyde row, the tool
@@ -40,7 +40,7 @@ from pydantic import BaseModel
 import app.api as api_pkg
 
 _API_DIR = pathlib.Path(api_pkg.__file__).parent
-_TOOLS_PATH = _API_DIR.parent / "mcp_server" / "tools.py"
+_TOOLS_PATH = _API_DIR.parent / "mcp_server" / "backend.py"
 
 # Auth dependencies, not API functions: they return the current user row,
 # a bool, or an auth-method string, and are never a tool's output.
@@ -146,7 +146,7 @@ def test_undecorated_api_function_returns_a_schema(module, func):
 
 def _tools_api_aliases() -> dict:
     """``{alias: module_name}`` for every ``from app.api import X as
-    X_api`` in tools.py -- derived, so a newly imported API module is
+    X_api`` in the adapter module -- derived, so a newly imported API module is
     covered the day it lands."""
     tree = ast.parse(_TOOLS_PATH.read_text())
     aliases = {}
@@ -171,8 +171,8 @@ TOOL_CALLS = _tools_api_calls()
 
 def test_tools_module_calls_the_api_layer():
     """Sanity for the derivation above: every ``*_api.`` reference in
-    tools.py resolves to an import we found, and every import is used.
-    If tools.py changes aliasing conventions this fails loudly instead
+    the adapter module resolves to an import we found, and every import is
+    used. If it changes aliasing conventions this fails loudly instead
     of the parametrized test below silently testing nothing."""
     assert len(TOOL_CALLS) >= 20
     referenced = {a for a, _ in TOOL_CALLS}
@@ -194,7 +194,7 @@ def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     fn = _resolve(module, func)
     hints = typing.get_type_hints(fn)
     assert "return" in hints, (
-        f"app/api/{module}.py::{func} is called from app/mcp_server/tools.py "
+        f"app/api/{module}.py::{func} is called from app/mcp_server/backend.py "
         f"but declares no return type -- see ADR-0005"
     )
     ret = hints["return"]

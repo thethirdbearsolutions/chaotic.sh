@@ -582,6 +582,11 @@ separate MCP login step: it inherits whatever `chaotic status` reports
 (profile, team, project, credentials) via the usual `CHAOTIC_PROFILE` /
 `CHAOTIC_HOME` / `config.json` resolution.
 
+The tool definitions themselves live in the `chaotic_mcp_tools` package
+(shipped in this same distribution) and are shared with the backend's
+hosted `/mcp` endpoint -- one body per tool, bound here to a REST-backed
+adapter (`cli/src/cli/mcp_backend.py`); see `docs/adr/0007-one-mcp-tool-body-two-backends.md`.
+
 ### Add it to Claude Code
 
 ```bash

@@ -27,16 +27,21 @@ profile; this is new, backend-only plumbing, not duplicated logic.
 """
 from __future__ import annotations
 
+from chaotic_mcp_tools import ToolInputError
+
 from app.oxyde_models.user import OxydeUser as User
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 
 
-class ToolContextError(Exception):
-    """Raised by every resolver below -- caught at the tool boundary
-    (tools.py's ``_boundary``) and reported as ``{"error": ...}``, same
-    contract as the stdio server's ``ToolInputError``.
+class ToolContextError(ToolInputError):
+    """Raised by every resolver below. A subclass of the shared toolset's
+    ``ToolInputError`` so the one error boundary
+    (``chaotic_mcp_tools.registry.call_guarded``) reports it as
+    ``error_code: tool_input`` -- these are the disambiguation prompts
+    the `team`/`project` parameters exist for, not server bugs (PR #271
+    review, finding 1).
     """
 
 
