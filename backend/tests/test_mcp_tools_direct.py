@@ -1071,7 +1071,7 @@ class TestNoLeakedEnumNames:
             found.append((path, obj))
         return found
 
-    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team):
+    async def test_no_tool_leaks_an_enum_name(self, test_project, test_team, test_user):
         from app.enums import RitualTrigger
         from app.schemas.issue import LabelCreate
         from app.schemas.ritual import RitualCreate
@@ -1089,22 +1089,29 @@ class TestNoLeakedEnumNames:
         doc = await tools.doc_create(title="Sweep doc", content="x")
         await tools.doc_link(document_id=doc["id"], identifier=iss["identifier"])
         await tools.issue_label(identifier=iss["identifier"], add=["sweep"])
-        await tools.issue_update(identifier=iss["identifier"], priority="high")
+        await tools.issue_update(identifier=iss["identifier"], priority="high", description="edited")
+        await tools.doc_update(document_id=doc["id"], content="edited")
+        await _seed_inbox_entry(test_user, test_team, iss["id"], "sweep mention")
 
         outputs = {
             "issue_view": await tools.issue_view(iss["identifier"]),
             "issue_list": await tools.issue_list(),
             "issue_ready": await tools.issue_ready(),
             "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "issue_revisions": await tools.issue_revisions(identifier=iss["identifier"]),
+            "issue_revision": await tools.issue_revision(identifier=iss["identifier"], version=1),
             "label_list": await tools.label_list(),
             "doc_list": await tools.doc_list(),
             "doc_view": await tools.doc_view(document_id=doc["id"]),
+            "doc_revisions": await tools.doc_revisions(document_id=doc["id"]),
+            "doc_revision": await tools.doc_revision(document_id=doc["id"], version=1),
             "sprint_current": await tools.sprint_current(),
             "sprint_list": await tools.sprint_list(),
             "ritual_list": await tools.ritual_list(),
             "ritual_pending": await tools.ritual_pending(identifier=iss["identifier"]),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
+            "inbox_list": await tools.inbox_list(detail=True),
         }
 
         # A tool that raised comes back as {"error": ...} and would sweep
@@ -1120,6 +1127,18 @@ class TestNoLeakedEnumNames:
             f"(the api function must return its response schema, ADR-0005): {leaked}"
         )
 
+
+
+async def _seed_inbox_entry(test_user, test_team, issue_id, title):
+    """One unread mention for the sweeps: inbox rows carry an enum (kind)
+    and a recipient, so they must be swept like everything else."""
+    from app.enums import InboxEntryKind
+    from app.oxyde_models.inbox import OxydeInboxEntry
+
+    return await OxydeInboxEntry.objects.create(
+        recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id,
+        issue_id=issue_id, title=title, body="@you please look",
+    )
 
 
 class TestNoLeakedInternalFields:
@@ -1144,11 +1163,12 @@ class TestNoLeakedInternalFields:
         "agent_team_id", "agent_project_id", "key_hash", "api_key",
     )
 
-    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team):
+    async def test_no_tool_returns_a_non_schema_field(self, test_project, test_team, test_user):
         import json
 
         iss = await tools.issue_create(title="Field sweep")
         doc = await tools.doc_create(title="Field sweep doc", content="x")
+        await _seed_inbox_entry(test_user, test_team, iss["id"], "field sweep mention")
 
         outputs = {
             "issue_view": await tools.issue_view(iss["identifier"]),
@@ -1156,8 +1176,13 @@ class TestNoLeakedInternalFields:
             "issue_create": iss,
             "issue_ready": await tools.issue_ready(),
             "issue_relations": await tools.issue_relations(identifier=iss["identifier"]),
+            "issue_revisions": await tools.issue_revisions(identifier=iss["identifier"]),
+            "issue_revision": await tools.issue_revision(identifier=iss["identifier"], version=1),
             "doc_view": await tools.doc_view(document_id=doc["id"]),
             "doc_list": await tools.doc_list(),
+            "doc_revisions": await tools.doc_revisions(document_id=doc["id"]),
+            "doc_revision": await tools.doc_revision(document_id=doc["id"], version=1),
+            "inbox_list": await tools.inbox_list(detail=True),
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
             "sprint_current": await tools.sprint_current(),
@@ -1432,6 +1457,7 @@ class TestSweepCoverage:
         "doc_create", "doc_update", "doc_link", "doc_unlink",
         "sprint_add", "sprint_remove", "sprint_close",
         "ritual_attest", "ritual_complete",
+        "inbox_mark_read", "inbox_mark_all_read",  # swept via inbox_list
         # read tools whose shape is asserted in their own tests
         "issue_view", "sprint_transactions",
     }
