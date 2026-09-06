@@ -2,8 +2,9 @@
 
 **Sprints are measured by work, not by time.** A sprint is defined by the
 work that closes in it: it begins when the previous one closes and ends
-when its point budget is spent. It has no scheduled length, no
-time-box, no calendar. Time is a *dependent* variable -- a sprint takes
+when it is closed, which a spent point budget forces (arrears blocks
+every further close until then; an under-budget sprint can be closed
+early by hand). It has no scheduled length, no time-box, no calendar. Time is a *dependent* variable -- a sprint takes
 however long its budget takes to spend -- which is the inverse of
 calendar-boxed agile, where time is fixed and velocity is measured.
 Everything below follows from that (CHT-1366). The only dates a sprint

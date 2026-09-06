@@ -13,7 +13,7 @@ from .shared import _client, console, print_sprint_panel, resolve_content_value
 # (CHT-1366): the moment a reader sees a sprint is the moment they assume
 # it is a calendar period. It is not.
 _SPRINT_EXPLAINER = (
-    "[dim]sprints end when their budget is spent, not on a date; "
+    "[dim]a spent budget ends a sprint, not a date; "
     "activated/closed record when that happened[/dim]"
 )
 
@@ -62,7 +62,7 @@ def _print_budget_panel(result):
         f"{status_line}\n"
         f"[dim]spent = points from tickets CLOSED while this sprint is active "
         f"(unestimated = 1pt); one active sprint at a time, close to rotate; "
-        f"sprints end when the budget is spent, not on a date[/dim]",
+        f"a spent budget ends a sprint, not a date[/dim]",
         title="Sprint Budget"
     ))
 

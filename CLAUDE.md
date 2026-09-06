@@ -59,7 +59,8 @@ Use these priority levels:
 
 **Sprints are measured by work, not by time.** A sprint is defined by the
 work that closes in it: it begins when the previous one closes and ends when
-its point budget is spent. It has no scheduled length. Time is a *dependent*
+it is closed, which a spent point budget forces (arrears blocks every further
+close until then). It has no scheduled length. Time is a *dependent*
 variable — a sprint takes however long its budget takes to spend. This is the
 inverse of calendar-boxed agile, where time is fixed and velocity is measured.
 Every rule below follows from it (CHT-1366): a sprint's `activated_at` and

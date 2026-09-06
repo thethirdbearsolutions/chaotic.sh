@@ -909,6 +909,24 @@ async def test_update_sprint_status(client, auth_headers, test_project, db):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "active"
+    # PATCH is a lifecycle transition too: it stamps the same outputs the
+    # service's own activation paths do (CHT-1366, PR #282 review).
+    assert data["activated_at"] is not None
+    assert data["closed_at"] is None
+
+    response = await client.patch(
+        f"/api/sprints/{sprint.id}", headers=auth_headers, json={"status": "completed"},
+    )
+    assert response.status_code == 200
+    closed = response.json()
+    assert closed["activated_at"] == data["activated_at"], "activation stamp is written once"
+    assert closed["closed_at"] is not None
+
+    # A non-transition PATCH (same status, or a rename) leaves both alone.
+    response = await client.patch(
+        f"/api/sprints/{sprint.id}", headers=auth_headers, json={"name": "renamed", "status": "completed"},
+    )
+    assert response.json()["closed_at"] == closed["closed_at"]
 
 
 @pytest.mark.asyncio

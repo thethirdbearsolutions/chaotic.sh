@@ -220,20 +220,24 @@ class SprintService:
         # guard was dead code — after ANY caller's UPDATE landed, a
         # refresh showed limbo=0 for every racer, so all of them
         # proceeded to _activate_next_sprint (PR #223 review, CHT-1278).
-        result = await execute_raw(
-            "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
-            [SprintStatus.COMPLETED.name, sprint.id],
-        )
+        # The winner also stamps the close time (CHT-1366): limbo is part
+        # of the sprint; it closes when the rotation actually happens. The
+        # stamp rides in the same transaction as the status flip so a crash
+        # between them cannot leave a COMPLETED sprint with no closed_at.
+        async with atomic():
+            result = await execute_raw(
+                "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND limbo = 1 RETURNING id",
+                [SprintStatus.COMPLETED.name, sprint.id],
+            )
+            if result:
+                await sprint.refresh()
+                sprint.closed_at = datetime.now(timezone.utc)
+                await sprint.save(update_fields={"closed_at"})
         if not result:
             # Lost the race (or sprint wasn't in limbo): another request
             # already cleared limbo and owns next-sprint activation.
             await sprint.refresh()
             return sprint
-        await sprint.refresh()
-        # The winner stamps the close time (CHT-1366): limbo is part of the
-        # sprint; it closes when the rotation actually happens.
-        sprint.closed_at = datetime.now(timezone.utc)
-        await sprint.save(update_fields={"closed_at"})
 
         # Get and activate the next sprint
         next_sprint = await self.get_next_sprint(sprint.project_id)
@@ -248,8 +252,22 @@ class SprintService:
         return await OxydeSprint.objects.get_or_none(id=sprint_id)
 
     async def update(self, sprint: OxydeSprint, sprint_in: SprintUpdate) -> OxydeSprint:
-        """Update a sprint."""
+        """Update a sprint.
+
+        A status change through PATCH is still a lifecycle transition, so it
+        stamps the same outputs close_sprint and complete_limbo do
+        (CHT-1366): activated_at the first time a sprint becomes ACTIVE,
+        closed_at the first time it becomes COMPLETED. Without this the
+        dates would be outputs of two code paths and a NULL on the third.
+        """
         update_data = sprint_in.model_dump(exclude_unset=True)
+        new_status = update_data.get("status")
+        if new_status is not None and new_status != sprint.status:
+            now = datetime.now(timezone.utc)
+            if new_status == SprintStatus.ACTIVE and sprint.activated_at is None:
+                update_data["activated_at"] = now
+            if new_status == SprintStatus.COMPLETED and sprint.closed_at is None:
+                update_data["closed_at"] = now
         for field, value in update_data.items():
             setattr(sprint, field, value)
         await sprint.save(update_fields=set(update_data.keys()))
