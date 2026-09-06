@@ -268,6 +268,23 @@ class FakeBackend:
         self._rec("get_project", project_id)
         return {"id": project_id, "key": "CHT", "estimate_scale": self.estimate_scale}
 
+    async def list_document_revisions(self, document_id, *, limit):
+        self._rec("list_document_revisions", document_id, limit=limit)
+        return [{"id": "rev-2", "document_id": document_id, "version": 2, "title": "T2"},
+                {"id": "rev-1", "document_id": document_id, "version": 1, "title": "T1"}][:limit]
+
+    async def get_document_revision(self, document_id, version):
+        self._rec("get_document_revision", document_id, version)
+        return {"id": f"rev-{version}", "document_id": document_id, "version": version, "title": "T", "content": "old"}
+
+    async def list_issue_description_revisions(self, issue_id, *, limit):
+        self._rec("list_issue_description_revisions", issue_id, limit=limit)
+        return [{"id": "irev-1", "issue_id": issue_id, "version": 1}][:limit]
+
+    async def get_issue_description_revision(self, issue_id, version):
+        self._rec("get_issue_description_revision", issue_id, version)
+        return {"id": f"irev-{version}", "issue_id": issue_id, "version": version, "description": "was"}
+
     async def list_inbox(self, team_id, *, unread, limit):
         self._rec("list_inbox", team_id, unread=unread, limit=limit)
         rows = [e for e in self.inbox if not unread or e["read_at"] is None]
@@ -417,6 +434,9 @@ class TestBoundary:
         "issue_unblock": {"identifier": "CHT-1", "relation_id": "rel-1"},
         "issue_label": {"identifier": "CHT-1", "add": ["bug"]},
         "inbox_mark_read": {"entry_id": "in-1"},
+        "doc_revisions": {"document_id": "d"},
+        "doc_revision": {"document_id": "d", "version": 1},
+        "issue_revision": {"identifier": "CHT-1", "version": 1},
         "sprint_add": {"identifiers": ["CHT-1"]},
         "sprint_remove": {"identifiers": ["CHT-1"]},
         "issue_block": {"identifier": "CHT-1", "blocked": "CHT-2"},
@@ -666,6 +686,33 @@ class TestEstimateScaleWarning:
         fake = FakeBackend(fail_on={"get_project": BackendError("boom", 500, "boom")})
         result = await _tools(fake)["issue_create"](title="T", estimate=7)
         assert "error" not in result and "warnings" not in result
+
+
+class TestRevisionTools:
+    """CHT-1335: history the agent writes (doc_update / description edits)
+    is readable from the same surface."""
+
+    async def test_doc_revisions_resolve_the_document_and_list(self, fake):
+        result = await _tools(fake)["doc_revisions"]("Some title")
+        assert [r["version"] for r in result["revisions"]] == [2, 1]
+        assert result["count"] == 2 and result["truncated"] is False
+        assert fake.calls_to("resolve_document") == [(("Some title",), {})]
+        assert fake.calls_to("list_document_revisions") == [(("doc-1",), {"limit": 21})]
+
+    async def test_doc_revision_fetches_one_snapshot(self, fake):
+        result = await _tools(fake)["doc_revision"]("d1", version=1)
+        assert result["content"] == "old" and result["version"] == 1
+
+    async def test_issue_revisions_go_through_the_issue_id(self, fake):
+        result = await _tools(fake)["issue_revisions"]("CHT-1")
+        assert result["revisions"][0]["id"] == "irev-1"
+        assert fake.calls_to("list_issue_description_revisions") == [(("i1",), {"limit": 21})]
+        snap = await _tools(fake)["issue_revision"]("CHT-1", version=1)
+        assert snap["description"] == "was"
+
+    async def test_limit_truncation_marker(self, fake):
+        result = await _tools(fake)["doc_revisions"]("d1", limit=1)
+        assert result["count"] == 1 and result["truncated"] is True
 
 
 class TestInboxTools:

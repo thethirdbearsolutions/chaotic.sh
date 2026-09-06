@@ -51,6 +51,34 @@ async def doc_view(
     return d
 
 
+async def doc_revisions(
+    backend: Backend,
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    limit: Annotated[int, Field(description="Maximum number of revisions to return.", ge=1, le=500)] = 20,
+) -> dict:
+    """List a document's revision history, newest first (CHT-1335).
+
+    Every doc_update that changes the title or content snapshots the
+    PREVIOUS text as a revision, so this is what you check before
+    overwriting a document you did not write, and how you recover text
+    you clobbered. Rows are light (version, title, author, created_at);
+    doc_revision fetches one snapshot's full content.
+    """
+    resolved_id = await backend.resolve_document(document_id)
+    rows = await backend.list_document_revisions(resolved_id, limit=limit + 1)
+    return listing("revisions", rows, limit, (), True)
+
+
+async def doc_revision(
+    backend: Backend,
+    document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
+    version: Annotated[int, Field(description="Revision version number, from doc_revisions.", ge=1)],
+) -> dict:
+    """Fetch one revision snapshot of a document: its full title and content at that version."""
+    resolved_id = await backend.resolve_document(document_id)
+    return await backend.get_document_revision(resolved_id, version)
+
+
 async def doc_create(
     backend: Backend,
     title: Annotated[str, Field(description="Document title.")],

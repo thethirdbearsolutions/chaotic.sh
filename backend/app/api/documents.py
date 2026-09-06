@@ -613,7 +613,7 @@ async def list_document_revisions(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[DocumentRevisionListItem]:
     """List revision history for a document, newest first."""
     limit = min(limit, 10000)
     document_service = DocumentService()
@@ -647,7 +647,7 @@ async def get_document_revision(
     document_id: str,
     version: int,
     current_user: CurrentUser,
-):
+) -> DocumentRevisionResponse:
     """Get a single revision snapshot by version number."""
     document_service = DocumentService()
 

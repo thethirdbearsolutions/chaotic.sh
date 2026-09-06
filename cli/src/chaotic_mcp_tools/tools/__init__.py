@@ -1,13 +1,14 @@
-"""The 33 tool bodies, grouped by subject. Each is
+"""The 37 tool bodies, grouped by subject. Each is
 ``async def name(backend: Backend, ...params) -> dict`` and is registered
 through ``registry.bind`` -- never directly.
 
 Toolset (curated for quality over coverage -- see CHT-1247):
     issues:    issue_list, issue_view, issue_create, issue_update,
                issue_comment, issue_start, issue_ready, issue_relations,
-               issue_block, issue_unblock, issue_label
+               issue_block, issue_unblock, issue_label, issue_revisions,
+               issue_revision
     docs:      doc_list, doc_view, doc_create, doc_update, doc_link,
-               doc_unlink
+               doc_unlink, doc_revisions, doc_revision
     sprints:   sprint_current, sprint_list, sprint_close,
                sprint_transactions, sprint_add, sprint_remove
     rituals:   ritual_pending, ritual_list, ritual_attest,
@@ -35,7 +36,16 @@ LLM caller rather than a human at a terminal:
 """
 from __future__ import annotations
 
-from .docs import doc_create, doc_link, doc_list, doc_unlink, doc_update, doc_view
+from .docs import (
+    doc_create,
+    doc_link,
+    doc_list,
+    doc_revision,
+    doc_revisions,
+    doc_unlink,
+    doc_update,
+    doc_view,
+)
 from .inbox import inbox_list, inbox_mark_all_read, inbox_mark_read
 from .issues import (
     issue_block,
@@ -45,6 +55,8 @@ from .issues import (
     issue_list,
     issue_ready,
     issue_relations,
+    issue_revision,
+    issue_revisions,
     issue_start,
     issue_unblock,
     issue_update,
@@ -65,8 +77,8 @@ from .sprints import (
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_start,
     issue_ready, issue_relations, issue_block, issue_unblock,
-    label_list, issue_label,
-    doc_link, doc_unlink,
+    label_list, issue_label, issue_revisions, issue_revision,
+    doc_link, doc_unlink, doc_revisions, doc_revision,
     sprint_current, sprint_list, sprint_close, sprint_transactions,
     sprint_add, sprint_remove,
     ritual_pending, ritual_list, ritual_attest, ritual_complete,

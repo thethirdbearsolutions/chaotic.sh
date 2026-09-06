@@ -717,6 +717,35 @@ class TestSprintTools:
 
 
 
+class TestRevisionTools:
+    """CHT-1335: doc_update / description edits write history; the same
+    surface can read it back."""
+
+    async def test_doc_revisions_and_snapshot(self, test_project):
+        doc = await tools.doc_create(title="v1", content="one")
+        await tools.doc_update(document_id=doc["id"], content="two")
+        await tools.doc_update(document_id=doc["id"], title="v3", content="three")
+
+        history = await tools.doc_revisions(document_id=doc["id"])
+        # Creation snapshots too, so three versions: created, after edit 1, after edit 2.
+        assert [r["version"] for r in history["revisions"]] == [3, 2, 1]
+        assert history["count"] == 3 and history["truncated"] is False
+        assert "content" not in history["revisions"][0]  # light rows
+
+        snap = await tools.doc_revision(document_id=doc["id"], version=1)
+        assert snap["title"] == "v1" and snap["content"] == "one"
+        assert "error" in await tools.doc_revision(document_id=doc["id"], version=9)
+
+    async def test_issue_description_revisions(self, test_project):
+        iss = await tools.issue_create(title="T", description="first")
+        await tools.issue_update(identifier=iss["identifier"], description="second")
+
+        history = await tools.issue_revisions(identifier=iss["identifier"])
+        assert [r["version"] for r in history["revisions"]] == [2, 1]
+        snap = await tools.issue_revision(identifier=iss["identifier"], version=1)
+        assert snap["description"] == "first"
+
+
 class TestInboxTools:
     """CHT-1338: the mailbox the system keeps for the calling identity is
     readable and acknowledgeable from the MCP surface."""

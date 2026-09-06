@@ -297,6 +297,22 @@ class RestBackend:
     async def get_project(self, project_id: str) -> dict:
         return await self._call(self._client().get_project, project_id)
 
+    # -- revision history (CHT-1335) ------------------------------------------
+
+    async def list_document_revisions(self, document_id: str, *, limit: int) -> list:
+        rows = await self._call(self._client().get_document_revisions, document_id)
+        return list(rows or [])[:limit]
+
+    async def get_document_revision(self, document_id: str, version: int) -> dict:
+        return await self._call(self._client().get_document_revision, document_id, version)
+
+    async def list_issue_description_revisions(self, issue_id: str, *, limit: int) -> list:
+        rows = await self._call(self._client().get_issue_description_revisions, issue_id)
+        return list(rows or [])[:limit]
+
+    async def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
+        return await self._call(self._client().get_issue_description_revision, issue_id, version)
+
     # -- inbox (CHT-1338) ------------------------------------------------------
 
     async def list_inbox(self, team_id: str, *, unread: bool, limit: int) -> list:

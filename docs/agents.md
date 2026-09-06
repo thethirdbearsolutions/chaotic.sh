@@ -185,7 +185,7 @@ the same command:
 
 ### Toolset
 
-33 tools, curated for quality over coverage (CHT-1247). The canonical
+37 tools, curated for quality over coverage (CHT-1247). The canonical
 list is `docs/mcp-toolset-schema.json` -- every tool's description and
 input schema, regenerated from the code -- and
 `cli/tests/test_mcp_toolset_sync.py` fails if this section stops naming
@@ -193,9 +193,12 @@ one of them:
 
 - **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
   `issue_comment`, `issue_start`, `issue_ready`, `issue_relations`,
-  `issue_block`, `issue_unblock`, `issue_label`
+  `issue_block`, `issue_unblock`, `issue_label`, `issue_revisions`,
+  `issue_revision`
 - **docs:** `doc_list`, `doc_view`, `doc_create`, `doc_update`,
-  `doc_link`, `doc_unlink`
+  `doc_link`, `doc_unlink`, `doc_revisions`, `doc_revision` (every
+  title/content edit snapshots the previous text; the revision tools
+  are how you see what you are about to overwrite, CHT-1335)
 - **sprints:** `sprint_current`, `sprint_list`, `sprint_close`,
   `sprint_transactions`, `sprint_add`, `sprint_remove`
 - **rituals:** `ritual_pending`, `ritual_list`, `ritual_attest`,

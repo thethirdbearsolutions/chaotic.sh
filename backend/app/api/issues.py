@@ -1344,7 +1344,7 @@ async def list_description_revisions(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
-):
+) -> list[IssueDescriptionRevisionListItem]:
     """List description revisions for an issue, newest first."""
     limit = min(limit, 10000)
     await _get_issue_checked(issue_id, current_user)
@@ -1371,7 +1371,7 @@ async def get_description_revision(
     issue_id: str,
     version: int,
     current_user: CurrentUser,
-):
+) -> IssueDescriptionRevisionResponse:
     """Get a single description-revision snapshot by version number."""
     await _get_issue_checked(issue_id, current_user)
 

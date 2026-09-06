@@ -259,6 +259,55 @@
         "type": "object"
       }
     },
+    "doc_revision": {
+      "description": "Fetch one revision snapshot of a document: its full title and content at that version.",
+      "inputSchema": {
+        "properties": {
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "version": {
+            "description": "Revision version number, from doc_revisions.",
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "version"
+        ],
+        "title": "doc_revisionArguments",
+        "type": "object"
+      }
+    },
+    "doc_revisions": {
+      "description": "List a document's revision history, newest first (CHT-1335).\n\n    Every doc_update that changes the title or content snapshots the\n    PREVIOUS text as a revision, so this is what you check before\n    overwriting a document you did not write, and how you recover text\n    you clobbered. Rows are light (version, title, author, created_at);\n    doc_revision fetches one snapshot's full content.\n    ",
+      "inputSchema": {
+        "properties": {
+          "document_id": {
+            "description": "Document id, exact title, or id prefix.",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of revisions to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "title": "doc_revisionsArguments",
+        "type": "object"
+      }
+    },
     "doc_unlink": {
       "description": "Remove the link between a document and an issue.\n\n    Removes only the association -- neither the document nor the issue\n    is deleted.\n    ",
       "inputSchema": {
@@ -895,6 +944,55 @@
           "identifier"
         ],
         "title": "issue_relationsArguments",
+        "type": "object"
+      }
+    },
+    "issue_revision": {
+      "description": "Fetch one description-revision snapshot of an issue: the full text at that version.",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "version": {
+            "description": "Revision version number, from issue_revisions.",
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "identifier",
+          "version"
+        ],
+        "title": "issue_revisionArguments",
+        "type": "object"
+      }
+    },
+    "issue_revisions": {
+      "description": "List an issue's description revisions, newest first (CHT-1335).\n\n    Every description edit snapshots the PREVIOUS text, so this is how you\n    see what an issue used to say before overwriting it, and how to recover\n    a description you clobbered. Rows are light (version, author,\n    created_at); issue_revision fetches one snapshot's full text.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of revisions to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_revisionsArguments",
         "type": "object"
       }
     },

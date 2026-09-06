@@ -86,7 +86,7 @@ def test_team_scoped_set_is_the_documented_one():
         "issue_view", "issue_update", "issue_comment", "issue_start",
         "doc_view", "issue_relations", "issue_block", "issue_unblock",
         "issue_label", "doc_link", "doc_unlink", "sprint_remove",
-        "inbox_mark_read",
+        "inbox_mark_read", "doc_revisions", "doc_revision", "issue_revisions", "issue_revision",
     }
 
 

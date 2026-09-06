@@ -434,6 +434,32 @@ class InProcessBackend:
     async def get_project(self, project_id: str) -> dict:
         return _dump(await projects_api.get_project(project_id=project_id, current_user=self._user))
 
+    # -- revision history (CHT-1335) ------------------------------------------
+
+    @_translated
+    async def list_document_revisions(self, document_id: str, *, limit: int) -> list:
+        return _dump_list(await documents_api.list_document_revisions(
+            document_id=document_id, current_user=self._user, skip=0, limit=limit,
+        ))
+
+    @_translated
+    async def get_document_revision(self, document_id: str, version: int) -> dict:
+        return _dump(await documents_api.get_document_revision(
+            document_id=document_id, version=version, current_user=self._user,
+        ))
+
+    @_translated
+    async def list_issue_description_revisions(self, issue_id: str, *, limit: int) -> list:
+        return _dump_list(await issues_api.list_description_revisions(
+            issue_id=issue_id, current_user=self._user, skip=0, limit=limit,
+        ))
+
+    @_translated
+    async def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
+        return _dump(await issues_api.get_description_revision(
+            issue_id=issue_id, version=version, current_user=self._user,
+        ))
+
     # -- inbox (CHT-1338) ------------------------------------------------------
 
     @_translated
