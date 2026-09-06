@@ -107,6 +107,10 @@ form back to a member on read. So:
   So an in-process caller (the MCP tools) just `.model_dump(mode="json")`s
   what it was handed. If you add an API function, annotate its return type
   and construct the schema in the body — the guard test will tell you.
+  The input side has the same rule (CHT-1375): keep `Query`/`Header`
+  metadata in `Annotated[T, Query(...)]` with a real Python default. A bare
+  `= Query(None)` default is a live, truthy sentinel object when the
+  function is called in-process, and the same guard test catches it.
   This is not only about casing. `response_model` also **filters** to the
   schema's fields, and an ORM row carries more: `OxydeIssue` has a `creator`
   relation whose user row includes `hashed_password` and `is_superuser`, none

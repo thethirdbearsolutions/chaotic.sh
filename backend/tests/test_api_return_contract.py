@@ -28,6 +28,7 @@ The first three are AST/signature checks and run without a database.
 """
 import ast
 import importlib
+import inspect
 import pathlib
 import re
 import typing
@@ -203,12 +204,19 @@ def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     )
 
 
+_FASTAPI_SENTINELS = {"Query", "Header", "Depends", "Body", "Path", "Cookie", "Form", "File", "Security"}
+
+
 def _plain_default_is_fastapi_sentinel(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {"Query", "Header", "Depends", "Body", "Path", "Cookie"}
-    )
+    """`Query(...)` or `fastapi.Query(...)` used as a default value."""
+    if not isinstance(node, ast.Call):
+        return False
+    callee = node.func
+    if isinstance(callee, ast.Name):
+        return callee.id in _FASTAPI_SENTINELS
+    if isinstance(callee, ast.Attribute):
+        return callee.attr in _FASTAPI_SENTINELS
+    return False
 
 
 @pytest.mark.parametrize(
@@ -226,12 +234,37 @@ def test_api_function_reachable_from_tools_has_real_defaults(alias, func):
     tree = ast.parse((_API_DIR / f"{module}.py").read_text())
     node = next(n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func)
     args = node.args
-    positional = [a.arg for a in args.args][-len(args.defaults):] if args.defaults else []
+    # defaults align with the TAIL of posonlyargs + args (positional-only
+    # params can carry defaults too).
+    positional_all = [a.arg for a in args.posonlyargs + args.args]
+    positional = positional_all[-len(args.defaults):] if args.defaults else []
     offenders = [name for name, d in zip(positional, args.defaults) if _plain_default_is_fastapi_sentinel(d)]
     offenders += [a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None and _plain_default_is_fastapi_sentinel(d)]
     assert offenders == [], (
         f"app/api/{module}.py::{func} has FastAPI sentinel defaults {offenders}; "
         f"use `param: Annotated[T, Query(...)] = <default>` so in-process callers get a real value"
+    )
+
+
+@pytest.mark.parametrize(
+    "alias,func",
+    TOOL_CALLS,
+    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+)
+def test_api_function_reachable_from_tools_has_real_defaults_at_runtime(alias, func):
+    """Runtime twin of the AST check above: whatever spelling produced it,
+    no parameter's actual default object may be a FastAPI param/dependency
+    marker. Immune to aliasing, attribute-form callees and re-exports."""
+    import fastapi.params as fp
+
+    fn = getattr(importlib.import_module(f"app.api.{_ALIASES[alias]}"), func)
+    sentinels = (fp.Param, fp.Depends, fp.Body)  # Query/Header/Path/Cookie/Form/File subclass Param; Security subclasses Depends
+    offenders = [
+        name for name, p in inspect.signature(fn).parameters.items()
+        if p.default is not inspect.Parameter.empty and isinstance(p.default, sentinels)
+    ]
+    assert offenders == [], (
+        f"app/api/{_ALIASES[alias]}.py::{func} has live FastAPI sentinel defaults at runtime: {offenders}"
     )
 
 
