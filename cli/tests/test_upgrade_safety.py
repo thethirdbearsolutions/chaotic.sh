@@ -38,6 +38,12 @@ class TestUpgradeDirection:
         assert upgrade_direction("cur", "cur") == "same"
         assert upgrade_direction(None, "new") == "unknown"
 
+    def test_git_unable_to_answer_is_unknown_not_diverged(self):
+        """A merge-base error (exit 128: unknown ref, corrupt checkout) must
+        not be reported as 'the histories have diverged'."""
+        with patch("cli.system.is_ancestor", return_value=None):
+            assert upgrade_direction("cur", "new") == "unknown"
+
 
 @pytest.fixture
 def upgrade_patches():
@@ -148,6 +154,22 @@ class TestVerifyDeployedCommit:
              patch("cli.system.time.sleep"):
             assert verify_deployed_commit(1, "ab71cd5f00d", timeout=0) == (False, "19ae385")
 
+    def test_no_sha_at_all_is_unverifiable_not_a_mismatch(self):
+        """A server older than 4a9db89 has no git_sha on /health; a git-less
+        host reports "unknown". Neither proves the wrong process answered, so
+        a deliberate --allow-downgrade to such a commit must not roll back."""
+        with patch("cli.system.get_health", return_value={"status": "healthy"}), \
+             patch("cli.system.time.sleep"):
+            assert verify_deployed_commit(1, "ab71cd5f00d", timeout=0) == (None, None)
+        with patch("cli.system.get_health", return_value={"git_sha": "unknown"}), \
+             patch("cli.system.time.sleep"):
+            assert verify_deployed_commit(1, "ab71cd5f00d", timeout=0) == (None, None)
+
+    def test_a_sha_too_short_to_be_one_does_not_match(self):
+        with patch("cli.system.get_health", return_value={"git_sha": "a"}), \
+             patch("cli.system.time.sleep"):
+            assert verify_deployed_commit(1, "ab71cd5f00d", timeout=0) == (None, None)
+
     def test_waits_for_the_old_process_to_hand_over(self):
         answers = iter([{"git_sha": "19ae385"}, None, {"git_sha": "ab71cd5"}])
         with patch("cli.system.get_health", side_effect=lambda *a, **k: next(answers)), \
@@ -159,7 +181,7 @@ class TestVerifyDeployedCommit:
 class TestIdentityAfterRestart:
     """The was_running path: the health check passes, but who is answering?"""
 
-    def _run(self, cli_runner, served):
+    def _run(self, cli_runner, served, args=("--no-backup",), **extra):
         commits = iter(["19ae385deployed", "ab71cd5newer"])  # before / after checkout
         patches = {
             "is_server_installed": dict(return_value=True),
@@ -178,15 +200,16 @@ class TestIdentityAfterRestart:
             "health_check": dict(return_value=True),
             "load_server_json": dict(return_value={"port": 24267}),
             "get_remote_version": dict(return_value=None),
-            "verify_deployed_commit": dict(return_value=(served == "ab71cd5", served)),
+            "verify_deployed_commit": dict(return_value=(None if served is None else served == "ab71cd5", served)),
             "checkout_version": dict(return_value=(True, None)),
-            "restore_backup": {},
+            "restore_backup": dict(return_value=True),
             "run_migrations": dict(return_value=(True, "ok")),
             "rebuild_frontend": dict(return_value=(True, "built")),
         }
+        patches.update(extra)
         with ExitStack() as stack:
             mocks = {name: stack.enter_context(patch(f"cli.system.{name}", **kw)) for name, kw in patches.items()}
-            result = cli_runner.invoke(system.system, ["upgrade", "--yes", "--no-backup"])
+            result = cli_runner.invoke(system.system, ["upgrade", "--yes", *args])
         return (result, mocks["checkout_version"], mocks["verify_deployed_commit"],
                 mocks["stop_service"], mocks["start_service"], mocks["restore_backup"])
 
@@ -209,3 +232,34 @@ class TestIdentityAfterRestart:
         assert "Verifying the new process took over" in _flat(result.output)
         assert "Upgraded to" in _flat(result.output)
         assert checkout.call_count == 1
+
+    def test_no_sha_on_the_port_warns_instead_of_rolling_back(self, cli_runner):
+        result, checkout, verify, stop, start, restore = self._run(cli_runner, served=None)
+
+        assert result.exit_code == 0, result.output
+        assert "UNVERIFIED" in result.output
+        assert "reports no git_sha" in _flat(result.output)
+        assert "Upgraded to" in _flat(result.output)
+        assert stop.call_count == 1 and start.call_count == 1  # no rollback
+
+    def test_rollback_does_not_restore_the_database_under_a_process_it_could_not_stop(self, cli_runner, tmp_path):
+        """The old process is still on the port after stop_service(): that is
+        the CHT-1363 case, and it still has the database open. The checkout
+        is rolled back; the database restore is refused out loud."""
+        (tmp_path / "chaotic.db").write_bytes(b"")  # a database to back up
+        backup = tmp_path / "chaotic.db.backup-20260906-000000"
+        backup.write_bytes(b"")
+        result, checkout, verify, stop, start, restore = self._run(
+            cli_runner, served="19ae385", args=(),
+            create_backup=dict(return_value=backup),
+            cleanup_old_backups=dict(return_value=None),
+            DATABASE_PATH=dict(new=tmp_path / "chaotic.db"),
+            is_port_in_use=dict(return_value=True),
+        )
+
+        assert result.exit_code == 1
+        assert "NOT restoring the database backup" in _flat(result.output)
+        assert "port 24267 is in use" in _flat(result.output)
+        assert f"--restore {backup.name}" in _flat(result.output)
+        restore.assert_not_called()
+        assert checkout.call_args_list[-1].args == ("19ae385deployed",)

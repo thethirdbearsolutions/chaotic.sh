@@ -583,7 +583,14 @@ def _sidecars(db_path: Path) -> list[Path]:
     return [db_path.with_name(db_path.name + suffix) for suffix in ("-wal", "-shm")]
 
 
-def create_backup() -> Path | None:
+class BackupError(RuntimeError):
+    """create_backup could not produce a verified backup; the message says why."""
+
+
+BACKUP_TIMEOUT = 60.0
+
+
+def create_backup(timeout: float = BACKUP_TIMEOUT) -> Path | None:
     """Create a backup of the database. Returns backup path or None if no db.
 
     Uses SQLite's online backup API rather than copying the file: the
@@ -594,17 +601,32 @@ def create_backup() -> Path | None:
     single self-contained, consistent file, whether or not the server is
     running. The result is verified with `PRAGMA quick_check` before it
     is reported as a backup.
+
+    Raises BackupError (never a bare sqlite3 error) when the source cannot
+    be read, the copy fails verification, or the backup does not finish
+    within `timeout` seconds. The last case exists because the backup API
+    retries a locked source forever: a rollback-journal database held by an
+    exclusive writer would otherwise hang this command with no output.
     """
     if not DATABASE_PATH.exists():
         return None
 
     backup_path = get_backup_path()
+    deadline = time.monotonic() + timeout
+
+    def _check_deadline(_status, _remaining, _total):
+        # Called after every backup step, including the BUSY retries.
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"backup did not finish within {timeout:g}s: the database is locked by a writer"
+            )
+
     try:
         src = sqlite3.connect(f"file:{DATABASE_PATH}?mode=ro", uri=True)
         try:
             dst = sqlite3.connect(backup_path)
             try:
-                src.backup(dst)
+                src.backup(dst, pages=256, progress=_check_deadline, sleep=0.05)
                 # The copy inherits the WAL flag from the live file; flip the
                 # backup to a rollback journal so it is one self-contained
                 # file that never grows -wal/-shm sidecars of its own.
@@ -614,28 +636,51 @@ def create_backup() -> Path | None:
                 dst.close()
         finally:
             src.close()
-    except Exception:
+    except (sqlite3.Error, TimeoutError, OSError) as e:
         backup_path.unlink(missing_ok=True)  # never leave a half-written backup behind
+        raise BackupError(f"Backup failed: {e}") from e
+    except BaseException:
+        backup_path.unlink(missing_ok=True)
         raise
     if not ok:
         backup_path.unlink(missing_ok=True)
-        return None
+        raise BackupError("Backup failed verification (PRAGMA quick_check) and was discarded")
     return backup_path
 
 
-def restore_backup(backup_path: Path) -> bool:
-    """Restore database from a backup. Returns True on success.
+def database_in_use(port: int | None = None, host: str = "127.0.0.1") -> bool:
+    """True if something that could hold the database open is still running:
+    the managed service, or (when a port is given) any process on the port.
+    The port check matters because the CHT-1363 failure is precisely a
+    process the service unit does not own answering the port."""
+    if is_service_running():
+        return True
+    return port is not None and is_port_in_use(port, host)
 
-    Note: This is a pure file operation. Callers are responsible for
-    stopping the server before calling and restarting after.
+
+def restore_backup(backup_path: Path, port: int | None = None, host: str = "127.0.0.1") -> bool:
+    """Restore database from a backup. Returns True on success.
 
     A backup made by create_backup is a single self-contained file, so
     restoring is a copy -- but the live database's `-wal`/`-shm` sidecars
     belong to the file being replaced, and a stale WAL left next to the
     restored file would be replayed onto it at the next open (CHT-1207).
     They are removed first.
+
+    Refuses (returns False, says why) while the service or, if `port` is
+    given, anything on that port is still running: overwriting a database
+    under a live connection loses the restore at best and corrupts the file
+    at worst. Callers stop the server first and pass the port so a process
+    the service unit could not stop is caught too.
     """
     if not backup_path.exists():
+        return False
+    if database_in_use(port, host):
+        console.print(
+            "[red]Refusing to restore: something is still running against the database"
+            + (f" (port {port} is in use)" if port is not None and is_port_in_use(port, host) else "")
+            + ". Stop it first.[/red]"
+        )
         return False
 
     for sidecar in _sidecars(DATABASE_PATH):
@@ -716,83 +761,101 @@ def get_latest_version() -> str | None:
     return None
 
 
+def _git_query(args: list[str]) -> subprocess.CompletedProcess | None:
+    """Run a read-only git query in the server checkout; None if git itself
+    could not run (missing binary, timeout). A non-zero exit is returned to
+    the caller to interpret, since for `merge-base --is-ancestor` it is an
+    answer, not an error."""
+    try:
+        return run_command(["git", *args], cwd=SERVER_DIR, check=False)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def resolve_commit(ref: str) -> str | None:
     """Full sha a tag/branch/commit ref points at, or None if it does not resolve."""
-    try:
-        result = run_command(
-            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-            cwd=SERVER_DIR,
-            check=False,
-        )
-    except subprocess.CalledProcessError:
+    result = _git_query(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+    if result is None or result.returncode != 0:
         return None
-    return result.stdout.strip() or None if result.returncode == 0 else None
+    return result.stdout.strip() or None
 
 
-def is_ancestor(older: str, newer: str) -> bool:
-    """True if `older` is an ancestor of (or equal to) `newer`."""
-    try:
-        result = run_command(
-            ["git", "merge-base", "--is-ancestor", older, newer],
-            cwd=SERVER_DIR,
-            check=False,
-        )
-    except subprocess.CalledProcessError:
-        return False
+def is_ancestor(older: str, newer: str) -> bool | None:
+    """True if `older` is an ancestor of (or equal to) `newer`, False if not,
+    None if git could not answer (unknown ref, corrupt checkout, no git)."""
+    result = _git_query(["merge-base", "--is-ancestor", older, newer])
+    if result is None or result.returncode not in (0, 1):
+        return None
     return result.returncode == 0
 
 
 def describe_commit(sha: str) -> str:
     """`abc1234 (2026-07-24)` -- short sha and commit date, for messages."""
-    try:
-        result = run_command(
-            ["git", "log", "-1", "--format=%h (%cs)", sha],
-            cwd=SERVER_DIR,
-            check=False,
-        )
-    except subprocess.CalledProcessError:
+    result = _git_query(["log", "-1", "--format=%h (%cs)", sha])
+    if result is None or result.returncode != 0 or not result.stdout.strip():
         return sha[:7]
-    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else sha[:7]
+    return result.stdout.strip()
 
 
 def upgrade_direction(current_commit: str | None, target_commit: str) -> str:
     """Where an upgrade from `current_commit` to `target_commit` would move
     the server: "same", "forward" (target descends from current), "backward"
     (target is an ancestor of current -- a downgrade), "diverged" (neither),
-    or "unknown" when the current commit could not be determined (CHT-1357).
+    or "unknown" when the current commit could not be determined or git
+    could not answer the ancestry question (CHT-1357).
     """
     if current_commit is None:
         return "unknown"
     if current_commit == target_commit:
         return "same"
-    if is_ancestor(current_commit, target_commit):
+    forward = is_ancestor(current_commit, target_commit)
+    if forward is None:
+        return "unknown"
+    if forward:
         return "forward"
-    if is_ancestor(target_commit, current_commit):
+    backward = is_ancestor(target_commit, current_commit)
+    if backward is None:
+        return "unknown"
+    if backward:
         return "backward"
     return "diverged"
 
 
+# /health has reported git_sha since 4a9db89 (2026-07-11). Anything shorter
+# than a short sha is not one.
+_MIN_SHA_PREFIX = 7
+
+
 def verify_deployed_commit(
     port: int, expected_sha: str, host: str = "localhost", timeout: int = 30,
-) -> tuple[bool, str | None]:
+) -> tuple[bool | None, str | None]:
     """Poll /health until the process answering the port reports the commit
     we just checked out (CHT-1363). health_check() only proves that
     SOMETHING answers; if start_service() failed while an old process
     still held the port, the old code would pass it. /health reports the
-    short sha, so compare by prefix. Returns (matched, last sha seen).
+    short sha, so compare by prefix. Returns (verdict, last sha seen):
+    True when it matched, False when the port kept reporting a DIFFERENT
+    commit, None when nothing on the port ever reported a usable sha (a
+    server older than 4a9db89, or a git-less host reporting "unknown"), in
+    which case the caller can only warn -- a missing sha proves nothing
+    about which process answered.
 
     Polls rather than failing on the first mismatch: during a restart the
     old process may answer briefly before the new one binds.
     """
     start = time.time()
     served = None
+    saw_sha = False
     while True:
         body = get_health(port, host=host)
-        served = (body or {}).get("git_sha") or None
-        if served and (expected_sha.startswith(served) or served.startswith(expected_sha)):
-            return True, served
+        sha = (body or {}).get("git_sha") or None
+        if isinstance(sha, str) and len(sha) >= _MIN_SHA_PREFIX and sha != "unknown":
+            served = sha
+            saw_sha = True
+            if expected_sha.startswith(sha) or sha.startswith(expected_sha):
+                return True, sha
         if time.time() - start >= timeout:
-            return False, served
+            return (False if saw_sha else None), served
         time.sleep(1)
 
 
@@ -1429,14 +1492,31 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
     console.print()
 
 
-def _roll_back(current_commit: str | None, backup_path: Path | None) -> None:
+def _roll_back(
+    current_commit: str | None, backup_path: Path | None,
+    port: int | None = None, host: str = "127.0.0.1",
+) -> None:
     """Undo a failed upgrade: stop whatever is running, restore the previous
-    checkout and (if one was taken) the database backup, restart."""
+    checkout and (if one was taken) the database backup, restart.
+
+    The database step is skipped, loudly, if something still holds the port
+    after the service was told to stop: that is exactly the CHT-1363 case
+    (a process the service unit does not own), and copying a backup over a
+    file that process has open would lose the restore or corrupt the file.
+    """
     stop_service()
+    wait_for_service_stop(timeout=10)
     if current_commit:
         checkout_version(current_commit, force=True)
     if backup_path:
-        restore_backup(backup_path)
+        if database_in_use(port, host):
+            console.print(
+                f"[red]NOT restoring the database backup: something is still running against it"
+                f"{f' (port {port} is in use)' if port is not None else ''}. "
+                f"Stop it, then restore by hand: chaotic system backup --restore {backup_path.name}[/red]"
+            )
+        elif not restore_backup(backup_path, port=port, host=host):
+            console.print(f"[red]Database restore failed. Backup is at {backup_path}[/red]")
     if not start_service():
         console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
     else:
@@ -1546,6 +1626,11 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("[yellow]Proceeding anyway because --allow-downgrade was given.[/yellow]\n")
     elif direction == "forward":
         _print_commit_list(f"{current_commit}..{target_commit}", "Changelog")
+    elif direction == "unknown":
+        console.print(
+            "[yellow]Could not determine where the deployed checkout sits relative to the target "
+            "(no current commit, or git could not answer), so the downgrade check is skipped.[/yellow]"
+        )
 
     # Check if already on target (commit identity, not version-string
     # equality: `describe --tags --always` output and a tag name only agree
@@ -1590,7 +1675,14 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     backup_path = None
     if not no_backup and DATABASE_PATH.exists():
         console.print("Backing up database...")
-        backup_path = create_backup()
+        try:
+            backup_path = create_backup()
+        except BackupError as e:
+            console.print(f"[red]{e}[/red]")
+            console.print("Nothing was changed. Fix the backup problem or pass --no-backup deliberately.")
+            if was_running:
+                start_service()
+            raise SystemExit(1)
         if backup_path:
             console.print(f"  [dim]{backup_path}[/dim]")
             cleanup_old_backups()
@@ -1645,12 +1737,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if not start_service():
             console.print("[red]Failed to start server.[/red]")
             console.print("Rolling back...")
-            if current_commit:
-                checkout_version(current_commit, force=True)
-            if backup_path:
-                restore_backup(backup_path)
-            if not start_service():
-                console.print("[red]CRITICAL: Failed to restart server after rollback. Manual intervention required.[/red]")
+            _roll_back(current_commit, backup_path, port=port, host=host)
             raise SystemExit(1)
 
         # Health check
@@ -1658,7 +1745,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if not health_check(port, host=host):
             console.print("[red]FAILED[/red]")
             console.print("\nHealth check failed. Rolling back...")
-            _roll_back(current_commit, backup_path)
+            _roll_back(current_commit, backup_path, port=port, host=host)
             raise SystemExit(1)
         console.print("[green]OK[/green]")
 
@@ -1671,15 +1758,26 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if new_commit:
             console.print("Verifying the new process took over...", end=" ")
             matched, served = verify_deployed_commit(port, new_commit, host=host)
-            if not matched:
+            if matched is False:
                 console.print("[red]FAILED[/red]")
                 console.print(
-                    f"\nPort {port} is answering, but with {served or 'no git_sha'}, not "
+                    f"\nPort {port} is answering, but with {served}, not "
                     f"{new_commit[:7]}: the new process did not take over. Rolling back..."
                 )
-                _roll_back(current_commit, backup_path)
+                _roll_back(current_commit, backup_path, port=port, host=host)
                 raise SystemExit(1)
-            console.print("[green]OK[/green]")
+            if matched is None:
+                # A server too old to report git_sha (before 4a9db89) or a
+                # git-less host. Nothing on the port disagreed with us, but
+                # nothing confirmed us either; say so instead of failing a
+                # deliberate downgrade that can never pass this check.
+                console.print("[yellow]UNVERIFIED[/yellow]")
+                console.print(
+                    f"  /health on port {port} reports no git_sha, so whether the new process took over "
+                    "could not be confirmed. Check `chaotic system status` after this finishes."
+                )
+            else:
+                console.print("[green]OK[/green]")
         version_after = get_remote_version(port, host=host)
         if version_after and version_after.get("git_dirty"):
             console.print("[yellow]Warning: the server checkout has uncommitted changes (git_dirty).[/yellow]")
@@ -1739,6 +1837,10 @@ def system_backup(list_mode, restore_timestamp):
 
         console.print(f"Restoring from {backup_path.name}...")
 
+        server_info = load_server_json()
+        port = server_info.get("port", DEFAULT_PORT)
+        host = server_info.get("host", "127.0.0.1")
+
         was_running = is_service_running()
         if was_running:
             console.print("Stopping server...")
@@ -1746,18 +1848,19 @@ def system_backup(list_mode, restore_timestamp):
             if not wait_for_service_stop(timeout=10):
                 console.print("[yellow]Warning: Service may still be stopping[/yellow]")
 
-        if restore_backup(backup_path):
+        # restore_backup refuses while the service or anything on the port
+        # is still up: a restore under a live connection is not a restore.
+        if restore_backup(backup_path, port=port, host=host):
             console.print("[green]Database restored.[/green]")
         else:
             console.print("[red]Failed to restore backup.[/red]")
+            if was_running:
+                start_service()
             raise SystemExit(1)
 
         if was_running:
             console.print("Starting server...")
             start_service()
-            server_info = load_server_json()
-            port = server_info.get("port", DEFAULT_PORT)
-            host = server_info.get("host", "127.0.0.1")
             console.print("Waiting for health check...", end=" ")
             if health_check(port, host=host):
                 console.print("[green]OK[/green]")
@@ -1776,7 +1879,11 @@ def system_backup(list_mode, restore_timestamp):
         console.print("[dim]Server is running; taking a consistent snapshot with SQLite's online backup.[/dim]")
 
     console.print("Creating backup...")
-    backup_path = create_backup()
+    try:
+        backup_path = create_backup()
+    except BackupError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
     if backup_path:
         size_mb = backup_path.stat().st_size / (1024 * 1024)
         console.print(f"[green]Backup created: {backup_path.name} ({size_mb:.1f} MB)[/green]")

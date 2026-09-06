@@ -25,6 +25,7 @@ def base_patches():
          patch("cli.system.resolve_commit", return_value="def5678"), \
          patch("cli.system.is_ancestor", side_effect=lambda older, newer: (older, newer) == ("abc1234", "def5678")), \
          patch("cli.system.verify_deployed_commit", return_value=(True, "def5678")), \
+         patch("cli.system.wait_for_service_stop", return_value=True), \
          patch("cli.system.validate_git_ref", return_value=True):
         yield
 
@@ -126,7 +127,10 @@ class TestUpgradeChangelog:
             result = cli_runner.invoke(system, ["upgrade"])
 
         assert "Changelog" not in result.output
-        assert "Upgrade from v1.0.0 to v1.1.0" in str(result.output) or result.exit_code == 0
+        # No current commit: the downgrade check cannot run, and says so
+        # rather than silently proceeding (CHT-1357).
+        assert "downgrade check is skipped" in " ".join(result.output.split())
+        assert result.exit_code == 0, result.output
 
     def test_already_on_target_skips_changelog(self, cli_runner):
         """When already on target version, no changelog shown."""

@@ -19,6 +19,7 @@ def live_db(tmp_path, monkeypatch):
     db = tmp_path / "chaotic.db"
     monkeypatch.setattr(system, "DATA_DIR", tmp_path)
     monkeypatch.setattr(system, "DATABASE_PATH", db)
+    monkeypatch.setattr(system, "is_service_running", lambda: False)
     writer = sqlite3.connect(db)
     writer.execute("PRAGMA journal_mode=WAL")
     writer.execute("CREATE TABLE issues (id INTEGER PRIMARY KEY, title TEXT)")
@@ -67,9 +68,29 @@ class TestCreateBackup:
         db.write_bytes(b"SQLite format 3\x00" + b"\x00" * 4000)  # a header and garbage
         monkeypatch.setattr(system, "DATA_DIR", tmp_path)
         monkeypatch.setattr(system, "DATABASE_PATH", db)
-        with pytest.raises(sqlite3.DatabaseError):
+        with pytest.raises(system.BackupError):
             system.create_backup()
         assert list(tmp_path.glob("chaotic.db.backup-*")) == [], "no half-written backup left behind"
+
+    def test_locked_source_fails_within_the_timeout_instead_of_hanging(self, tmp_path, monkeypatch):
+        """The backup API retries a locked source forever. A rollback-journal
+        database held by an exclusive writer must fail loudly, not hang."""
+        db = tmp_path / "chaotic.db"
+        monkeypatch.setattr(system, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(system, "DATABASE_PATH", db)
+        setup = sqlite3.connect(db)
+        setup.execute("PRAGMA journal_mode=DELETE")
+        setup.execute("CREATE TABLE t (x)")
+        setup.commit()
+        setup.close()
+        holder = sqlite3.connect(db, isolation_level=None)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(system.BackupError, match="locked"):
+                system.create_backup(timeout=0.5)
+        finally:
+            holder.close()
+        assert list(tmp_path.glob("chaotic.db.backup-*")) == []
 
 
 class TestRestoreBackup:
@@ -91,3 +112,28 @@ class TestRestoreBackup:
     def test_missing_backup_is_refused(self, live_db):
         db, _ = live_db
         assert system.restore_backup(db.parent / "chaotic.db.backup-nope") is False
+
+    def test_refuses_while_the_service_is_running(self, live_db, monkeypatch):
+        """Copying a backup over a database a live process has open loses the
+        restore at best and corrupts the file at worst."""
+        db, writer = live_db
+        backup = system.create_backup()
+        writer.execute("INSERT INTO issues (title) VALUES ('after backup')")
+        writer.commit()
+        monkeypatch.setattr(system, "is_service_running", lambda: True)
+
+        assert system.restore_backup(backup) is False
+        assert _count(db) == 51, "the live database was left alone"
+
+    def test_refuses_while_something_holds_the_port(self, live_db, monkeypatch):
+        """The CHT-1363 case: the service unit is stopped but a process it does
+        not own still answers the port, so it still has the database open."""
+        db, writer = live_db
+        backup = system.create_backup()
+        writer.execute("INSERT INTO issues (title) VALUES ('after backup')")
+        writer.commit()
+        monkeypatch.setattr(system, "is_port_in_use", lambda port, host="127.0.0.1": port == 24267)
+
+        assert system.restore_backup(backup, port=24267) is False
+        assert _count(db) == 51
+        assert system.restore_backup(backup, port=24268) is True
