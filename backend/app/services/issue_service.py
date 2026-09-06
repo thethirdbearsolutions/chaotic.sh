@@ -987,11 +987,15 @@ class IssueService:
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
 
         # Decide upfront whether this update will snapshot the
-        # description. We capture this before mutating the issue object
-        # so the comparison reflects the true old vs new value.
+        # description, against the newest revision rather than the
+        # caller's in-memory row (CHT-1340): the column is written
+        # unconditionally below, so a stale object writing the value a
+        # concurrent edit had already moved away from would otherwise
+        # put the row back without a revision saying so. An issue with
+        # no history (created outside the service) falls back to the row.
         description_changed = (
             "description" in update_data
-            and update_data["description"] != issue.description
+            and update_data["description"] != await self._recorded_description(issue)
         )
 
         # Track changes for activity log
@@ -1204,6 +1208,15 @@ class IssueService:
         await InboxService().notify_assignment(
             issue=issue, project=project, assignee_id=assignee_id, assigned_by=actor,
         )
+
+    async def _recorded_description(self, issue: OxydeIssue) -> str | None:
+        """The description the newest revision recorded, which the
+        revision invariant says is the stored one; the row's own value
+        when it has no revisions."""
+        newest = await OxydeIssueDescriptionRevision.objects.filter(
+            issue_id=issue.id,
+        ).order_by("-version").first()
+        return newest.description if newest is not None else issue.description
 
     async def _next_description_revision_version(self, issue_id: str) -> int:
         """Compute the next description-revision number for an issue.
@@ -2347,6 +2360,10 @@ class IssueService:
         team_id: str | None = None, user_id: str | None = None,
     ) -> list[OxydeIssue]:
         """Batch update multiple issues with safe fields only."""
+        if "description" in update_data:
+            # The body has revision history that only `update` writes
+            # (CHT-1340); this path saves columns without snapshotting.
+            raise ValueError("description cannot be batch-updated; use update per issue")
         issue_ids = [iss.id for iss in issues]
 
         # Validate labels
