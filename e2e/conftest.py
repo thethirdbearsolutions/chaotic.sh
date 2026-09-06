@@ -29,6 +29,10 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 # Single connection so per-connection PRAGMAs (foreign_keys) in the
 # between-test reset apply deterministically (same pin as backend/tests).
 os.environ["OXYDE_MAX_CONNECTIONS"] = "1"
+# Test-cost bcrypt (CHT-1413): most e2e tests register a user, and at the
+# production cost that was ~45% of the suite's wall time. Verification is
+# cost-agnostic, so the login path is exercised for real.
+os.environ.setdefault("BCRYPT_ROUNDS", "4")
 
 import pytest
 from unittest.mock import patch

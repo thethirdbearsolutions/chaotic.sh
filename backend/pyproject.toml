@@ -40,6 +40,8 @@ dev = [
     "pytest>=7.4.4",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.3",
+    # Sharded runs (`-n auto` in pytest.ini, CHT-1413).
+    "pytest-xdist>=3.8,<4",
     # Pinned to a compatible range: uv.lock is gitignored, so an unbounded
     # floor would make CI adopt each new ruff release (and its F-rule
     # changes) unreviewed. Bump deliberately.

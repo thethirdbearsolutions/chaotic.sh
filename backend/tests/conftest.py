@@ -4,6 +4,13 @@ Uses Oxyde ORM for all database operations. Each test gets a fresh
 file-based SQLite database to ensure isolation.
 """
 import os
+
+# Before anything imports app.config: a bcrypt cost of 4 instead of the
+# production 12 turns the ~250 ms fixture-user hash into ~1 ms. Verification
+# is cost-agnostic, so every login test still exercises the real path
+# (CHT-1413). setdefault, so an explicit environment wins.
+os.environ.setdefault("BCRYPT_ROUNDS", "4")
+
 import pytest
 import pytest_asyncio
 from unittest.mock import patch

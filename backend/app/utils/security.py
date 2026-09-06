@@ -16,7 +16,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # Read fresh, not from the module-level `settings` captured at import:
+    # that copy can predate the test environment's BCRYPT_ROUNDS.
+    rounds = get_settings().bcrypt_rounds
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=rounds)).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
