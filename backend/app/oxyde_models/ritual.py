@@ -5,7 +5,7 @@ Phase 2 migration from SQLAlchemy.
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.oxyde_models.user import OxydeUser  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.issue import OxydeIssue  # noqa: F401 — needed for FK resolution
 from app.oxyde_models.sprint import OxydeSprint  # noqa: F401 — needed for FK resolution
@@ -99,3 +99,11 @@ class OxydeRitualAttestation(Model):
     class Meta:
         is_table = True
         table_name = "ritual_attestations"
+        indexes = [
+            # One attestation per (ritual, issue) and per (ritual, sprint)
+            # (0004, raw SQL); declared so the record keeps them (CHT-1410).
+            Index(("ritual_id", "issue_id"), unique=True, name="uq_ritual_attestation_per_issue",
+                  where="issue_id IS NOT NULL"),
+            Index(("ritual_id", "sprint_id"), unique=True, name="uq_ritual_attestation_per_sprint",
+                  where="sprint_id IS NOT NULL"),
+        ]

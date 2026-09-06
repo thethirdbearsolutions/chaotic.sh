@@ -248,14 +248,30 @@ Using SQLite with Oxyde ORM and Oxyde migrations.
    ```
 
 `makemigrations` never reads a database: it replays the migration chain
-in memory and diffs that against the models, and raw `ctx.execute(...)`
-SQL is invisible to the replay. If you hand-write a migration (a data
-fix, SQLite's table-rebuild dance), also record its schema state with
-the declarative `ctx.*` calls in a `collect`-mode-only branch, as
-`0017_record_hand_written_schema_state.py` does; otherwise the next
-`makemigrations` proposes your change again (CHT-1410: by 0016 that
-was 51 phantom operations). `tests/test_migration_state.py` fails
-while the replay and the models disagree.
+in memory and diffs that against the models. Raw `ctx.execute(...)` SQL
+is invisible to the replay, and the extractor reports no index for
+`db_index=True` and no foreign key for a `str` column with
+`db_on_delete`, so by 0016 the record was 51 operations behind the
+models (CHT-1410; 0017 recorded the gap without executing anything).
+Rules that keep it closed, enforced by `tests/test_migration_state.py`:
+
+- Write the schema part of a migration with the declarative `ctx.*`
+  calls (they execute *and* record). Use `ctx.execute` only for what
+  they cannot express (data fixes, SQLite's table-rebuild dance), and
+  then also record the resulting schema in a `collect`-mode-only branch
+  the way `0017_record_hand_written_schema_state.py` does.
+- An index a migration creates by hand must also be declared in the
+  model's `Meta.indexes` with the same name. On SQLite a generated
+  column alter rebuilds the table from the *record's* indexes, so an
+  index missing from the record vanishes from production.
+- On SQLite `makemigrations` is usable for `create_table`,
+  `add_column` and `create_index`. Column alters and foreign-key
+  changes stay hand-written: Oxyde cannot ADD/DROP a FOREIGN KEY there,
+  and its table rebuild recreates indexes before the rename (an Oxyde
+  bug, ticketed)
+  and drops every foreign key on the table.
+- `oxyde sqlmigrate` cannot render a state-only migration (it has no
+  SQL); review those by reading them.
 
 ### How a database comes to exist
 

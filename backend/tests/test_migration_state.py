@@ -1,16 +1,27 @@
-"""The migration replay agrees with the models (CHT-1410).
+"""The migration replay agrees with the models, and the record agrees with
+the database (CHT-1410).
 
 `oxyde makemigrations` never reads a database: it replays the migration
-chain in memory and diffs the result against the models. Hand-written
-raw-SQL migrations are invisible to that replay, so by 0016 the tool
-proposed 51 operations on a clean checkout and could not be used for
-the next schema change. 0017 recorded the missing state without
-executing anything; these tests keep the diff empty, so a schema change
-either comes from makemigrations or records its state the same way.
+chain in memory and diffs the result against the models. Raw-SQL
+migrations are invisible to that replay, and Oxyde's extractor does not
+report an index for `db_index=True` or a foreign key for a `str` column
+with `db_on_delete`, so by 0016 the tool proposed 51 operations on a
+clean checkout and could not be used for the next schema change. 0017
+recorded the missing state without executing anything, and the indexes
+the migrations had created by hand are now declared on the models.
+
+Two invariants keep it that way: the replay-vs-models diff stays empty
+(a schema change either comes from makemigrations or records its state
+the same way), and every index a real database built from the chain
+has is in the record with the same name. The second matters because a
+makemigrations-generated column alter rebuilds the table on SQLite from
+the *record's* indexes: an index missing from the record would silently
+vanish from production on the first such migration.
 """
 import importlib.util
 import json
 import pathlib
+import sqlite3
 
 import pytest
 from oxyde.core import migration_compute_diff
@@ -53,6 +64,42 @@ def test_the_replay_sees_every_table_the_models_declare():
     assert len(replayed["tables"]) >= 28
 
 
+def test_every_index_the_database_has_is_in_the_record(schema_template):
+    """`schema_template` is a database built by applying the whole chain
+    (conftest). Its index names per table must equal the replayed
+    record's, or a makemigrations-driven table rebuild drops the rest."""
+    connection = sqlite3.connect(f"file:{schema_template}?mode=ro", uri=True)
+    try:
+        rows = connection.execute(
+            "SELECT tbl_name, name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
+        ).fetchall()
+    finally:
+        connection.close()
+    in_database: dict[str, set[str]] = {}
+    for table, name in rows:
+        in_database.setdefault(table, set()).add(name)
+    replayed = replay_migrations(str(MIGRATIONS))
+    in_record = {
+        table: {index["name"] for index in spec.get("indexes", [])}
+        for table, spec in replayed["tables"].items()
+    }
+    missing = {
+        table: sorted(names - in_record.get(table, set()))
+        for table, names in in_database.items()
+        if names - in_record.get(table, set())
+    }
+    assert not missing, (
+        "indexes the database has that the migration record lacks (declare them in the "
+        f"model's Meta.indexes with the same name): {missing}"
+    )
+    extra = {
+        table: sorted(names - in_database.get(table, set()))
+        for table, names in in_record.items()
+        if names - in_database.get(table, set())
+    }
+    assert not extra, f"indexes the record claims that the database never built: {extra}"
+
+
 class _RefusingContext:
     """A context in execute mode that refuses every call: what 0017 sees
     against a real database, where it must do nothing."""
@@ -71,9 +118,16 @@ def _load_0017():
 
 
 def test_the_state_only_migration_executes_nothing_against_a_database():
+    from oxyde.migrations.context import MigrationContext
+
     module = _load_0017()
     module.upgrade(_RefusingContext())
     module.downgrade(_RefusingContext())
+    # And against Oxyde's own execute-mode context: no SQL collected.
+    ctx = MigrationContext(mode="execute", dialect="sqlite")
+    module.upgrade(ctx)
+    module.downgrade(ctx)
+    assert not getattr(ctx, "_sql_statements", []) and not ctx.get_collected_operations()
 
 
 def test_the_state_only_migration_records_in_the_replay():
@@ -81,8 +135,12 @@ def test_the_state_only_migration_records_in_the_replay():
 
     ctx = MigrationContext(mode="collect")
     _load_0017().upgrade(ctx)
-    kinds = [op["type"] for op in ctx.get_collected_operations()]
-    assert len(kinds) == 51
-    assert "create_table" in kinds and "alter_column" in kinds
+    ops = ctx.get_collected_operations()
+    kinds = {op["type"] for op in ops}
+    assert {"create_table", "add_column", "drop_column", "create_index", "alter_column", "drop_foreign_key"} <= kinds
+    assert "drop_index" not in kinds, "0017 must not un-record an index the database has"
+    assert {op["table"]["name"] for op in ops if op["type"] == "create_table"} == {
+        "ticket_limbo_blockers", "templates", "issue_description_revisions", "document_revisions", "document_issues",
+    }
     with pytest.raises(AssertionError):
         _load_0017()._record_state(_RefusingContext())

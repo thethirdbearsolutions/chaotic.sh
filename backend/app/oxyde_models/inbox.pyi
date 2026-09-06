@@ -12,7 +12,7 @@ from oxyde.queries import Query, QueryManager
 import uuid
 from datetime import datetime, timezone
 from app.utils.datetimes import DateTimeUTC
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.enums import InboxEntryKind
 from app.oxyde_models.enums import DbEnum
 
@@ -32,8 +32,8 @@ class OxydeInboxEntry(Model):
     title: str
     body: str | None
     created_at: datetime
-    read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
-    archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None
+    read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
+    archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
     objects: ClassVar["OxydeInboxEntryManager"]
 
 
@@ -45,8 +45,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
     def filter(
         self,
         *args: Any,
-        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
@@ -113,8 +113,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -173,8 +173,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
     def exclude(
         self,
         *args: Any,
-        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
@@ -241,8 +241,8 @@ class OxydeInboxEntryQuery(Query[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -474,8 +474,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
     def filter(
         self,
         *args: Any,
-        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
@@ -542,8 +542,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -602,8 +602,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
     def exclude(
         self,
         *args: Any,
-        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         archived_at__isnull: bool | None = None,
         body: str | None = None,
         body__contains: str | None = None,
@@ -670,8 +670,8 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         project_id__iexact: str | None = None,
         project_id__in: list[str] | None = None,
         project_id__isnull: bool | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
         read_at__isnull: bool | None = None,
         recipient_user_id: str | None = None,
         recipient_user_id__contains: str | None = None,
@@ -882,7 +882,7 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         instance: OxydeInboxEntry | None = None,
         client: Any | None = None,
         using: str | None = None,
-        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        archived_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         body: str | None = None,
         created_at: datetime | None = None,
         document_id: str | None = None,
@@ -890,7 +890,7 @@ class OxydeInboxEntryManager(QueryManager[OxydeInboxEntry]):
         issue_id: str | None = None,
         kind: InboxEntryKind | None = None,
         project_id: str | None = None,
-        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f6c41bba3e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        read_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
         recipient_user_id: str | None = None,
         ritual_id: str | None = None,
         source_user_id: str | None = None,
