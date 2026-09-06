@@ -463,7 +463,7 @@ class InProcessBackend:
     # -- inbox (CHT-1338) ------------------------------------------------------
 
     @_translated
-    async def list_inbox(self, team_id: str, *, unread: bool, limit: int) -> list:
+    async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list:
         return _dump_list(await inbox_api.list_inbox(
             current_user=self._user, team_id=team_id, unread=unread, skip=0, limit=limit,
         ))
@@ -473,7 +473,7 @@ class InProcessBackend:
         return _dump(await inbox_api.mark_inbox_read(entry_id=entry_id, current_user=self._user))
 
     @_translated
-    async def mark_all_inbox_read(self, team_id: str) -> dict:
+    async def mark_all_inbox_read(self, team_id: str | None) -> dict:
         return _dump(await inbox_api.mark_all_inbox_read(current_user=self._user, team_id=team_id))
 
     @_translated

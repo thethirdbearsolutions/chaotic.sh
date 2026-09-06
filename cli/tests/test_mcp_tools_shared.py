@@ -703,6 +703,18 @@ class TestRevisionTools:
         result = await _tools(fake)["doc_revision"]("d1", version=1)
         assert result["content"] == "old" and result["version"] == 1
 
+    async def test_unknown_version_is_the_backend_404(self, fake):
+        """A version that does not exist is a not-found from the backend, on
+        both transports, and the body passes it through untouched."""
+        missing = BackendError("Revision not found", 404, "Revision not found")
+        fake = FakeBackend(fail_on={"get_document_revision": missing, "get_issue_description_revision": missing})
+        for name, kwargs in (
+            ("doc_revision", {"document_id": "doc-1", "version": 9}),
+            ("issue_revision", {"identifier": "CHT-1", "version": 9}),
+        ):
+            result = await _tools(fake)[name](**kwargs)
+            assert result == {"error": {"message": "Revision not found", "http_status": 404}}, name
+
     async def test_issue_revisions_go_through_the_issue_id(self, fake):
         result = await _tools(fake)["issue_revisions"]("CHT-1")
         assert result["revisions"][0]["id"] == "irev-1"
@@ -719,7 +731,10 @@ class TestInboxTools:
     """CHT-1338: the mailbox the system keeps for an agent is readable
     from the agent's own surface."""
 
-    async def test_list_is_compact_and_team_scoped(self, fake):
+    async def test_list_is_compact_and_spans_every_team_by_default(self, fake):
+        """The inbox is addressed to the caller, not a team: with no `team`
+        the backend is asked for every team (None), which also keeps the
+        tool usable from a project-scoped key (PR #285 review)."""
         result = await _tools(fake)["inbox_list"]()
         assert result["count"] == 2 and result["truncated"] is False and result["unread_only"] is False
         assert set(result["entries"][0]) == {
@@ -727,7 +742,24 @@ class TestInboxTools:
             "created_at", "read_at",
         }
         assert "body" not in result["entries"][0]
+        assert fake.calls_to("list_inbox") == [((None,), {"unread": False, "limit": 21})]
+        assert fake.calls_to("resolve_team") == []
+
+    async def test_explicit_team_is_resolved(self):
+        fake = FakeBackend(team_param=True)
+        await _tools(fake)["inbox_list"](team="team-1")
+        assert fake.calls_to("resolve_team") == [(("team-1",), {})]
         assert fake.calls_to("list_inbox") == [(("team-1",), {"unread": False, "limit": 21})]
+        assert (await _tools(fake)["inbox_mark_all_read"](team="team-1"))["marked_count"] == 1
+        assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})
+
+    async def test_limit_never_exceeds_what_the_route_accepts(self, fake):
+        """The body fetches limit + 1 to detect truncation and the REST route
+        caps limit at 200, so the largest page is 199 (PR #285 review)."""
+        await _tools(fake)["inbox_list"](limit=199)
+        assert fake.calls_to("list_inbox")[-1][1]["limit"] == 200
+        # The 199 ceiling itself is pinned by the schema snapshot
+        # (docs/mcp-toolset-schema.json, inbox_list.limit.maximum).
 
     async def test_unread_filter_and_detail(self, fake):
         result = await _tools(fake)["inbox_list"](unread=True, detail=True)
@@ -741,7 +773,7 @@ class TestInboxTools:
         assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 0
         fake.inbox[1]["read_at"] = None
         assert (await _tools(fake)["inbox_mark_all_read"]())["marked_count"] == 1
-        assert fake.calls_to("mark_all_inbox_read")[-1] == (("team-1",), {})
+        assert fake.calls_to("mark_all_inbox_read")[-1] == ((None,), {})
 
 
 class TestScopeDefaults:

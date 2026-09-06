@@ -734,7 +734,8 @@ class TestRevisionTools:
 
         snap = await tools.doc_revision(document_id=doc["id"], version=1)
         assert snap["title"] == "v1" and snap["content"] == "one"
-        assert "error" in await tools.doc_revision(document_id=doc["id"], version=9)
+        missing = await tools.doc_revision(document_id=doc["id"], version=9)
+        assert missing["error"]["http_status"] == 404 and "not found" in missing["error"]["message"].lower()
 
     async def test_issue_description_revisions(self, test_project):
         iss = await tools.issue_create(title="T", description="first")

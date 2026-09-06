@@ -397,8 +397,11 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}")
 
     # Description revisions
-    def get_issue_description_revisions(self, issue_id: str) -> list:
-        return self._request("GET", f"/issues/{issue_id}/description-revisions")
+    def get_issue_description_revisions(self, issue_id: str, limit: int | None = None) -> list:
+        path = f"/issues/{issue_id}/description-revisions"
+        if limit is not None:
+            path += f"?limit={limit}"
+        return self._request("GET", path)
 
     def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
         return self._request("GET", f"/issues/{issue_id}/description-revisions/{version}")
@@ -510,8 +513,11 @@ class Client:
         return self._request("DELETE", f"/documents/{document_id}")
 
     # Document revisions
-    def get_document_revisions(self, document_id: str) -> list:
-        return self._request("GET", f"/documents/{document_id}/revisions")
+    def get_document_revisions(self, document_id: str, limit: int | None = None) -> list:
+        path = f"/documents/{document_id}/revisions"
+        if limit is not None:
+            path += f"?limit={limit}"
+        return self._request("GET", path)
 
     def get_document_revision(self, document_id: str, version: int) -> dict:
         return self._request("GET", f"/documents/{document_id}/revisions/{version}")
@@ -690,10 +696,12 @@ class Client:
 
     # Inbox (CHT-1250)
     def get_inbox(
-        self, team_id: str, unread: bool = False, skip: int = 0, limit: int = 50,
+        self, team_id: str | None, unread: bool = False, skip: int = 0, limit: int = 50,
     ) -> list:
-        """List the current user's inbox entries."""
-        params = {"team_id": team_id, "skip": skip, "limit": limit}
+        """List the current user's inbox entries (every team when team_id is None)."""
+        params = {"skip": skip, "limit": limit}
+        if team_id is not None:
+            params["team_id"] = team_id
         if unread:
             params["unread"] = "true"
         query = urlencode(params)
@@ -705,8 +713,11 @@ class Client:
     def mark_inbox_read(self, entry_id: str) -> dict:
         return self._request("POST", f"/inbox/{entry_id}/read", {})
 
-    def mark_all_inbox_read(self, team_id: str) -> dict:
-        return self._request("POST", f"/inbox/mark-all-read?team_id={team_id}", {})
+    def mark_all_inbox_read(self, team_id: str | None = None) -> dict:
+        path = "/inbox/mark-all-read"
+        if team_id is not None:
+            path += f"?team_id={team_id}"
+        return self._request("POST", path, {})
 
     # Templates (CHT-1259)
     def create_template(

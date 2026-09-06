@@ -436,7 +436,7 @@
           "limit": {
             "default": 20,
             "description": "Maximum number of entries to return.",
-            "maximum": 200,
+            "maximum": 199,
             "minimum": 1,
             "title": "Limit",
             "type": "integer"
@@ -461,7 +461,7 @@
       }
     },
     "inbox_mark_read": {
-      "description": "Mark one inbox entry as read. Returns the updated entry.",
+      "description": "Mark one inbox entry as read. Returns the updated entry; marking an\n    entry that is already read is a no-op that returns it unchanged.",
       "inputSchema": {
         "properties": {
           "entry_id": {

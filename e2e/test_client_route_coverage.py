@@ -76,13 +76,13 @@ _PAGING = "pagination not exposed; callers get the server's default page (CHT-13
 PARAMS_NOT_EXPOSED = {
     ("GET", "/api/api-keys"): {"skip": _PAGING, "limit": _PAGING},
     ("GET", "/api/documents/{document_id}/comments"): {"skip": _PAGING, "limit": _PAGING},
-    ("GET", "/api/documents/{document_id}/revisions"): {"skip": _PAGING, "limit": _PAGING},
+    ("GET", "/api/documents/{document_id}/revisions"): {"skip": _PAGING},
     ("GET", "/api/issues"): {
         "label_match": "CLI deliberately omits it (pinned by cli/tests/test_issue_list_labels.py)",
     },
     ("GET", "/api/issues/search"): {"skip": _PAGING},
     ("GET", "/api/issues/{issue_id}/comments"): {"skip": _PAGING},
-    ("GET", "/api/issues/{issue_id}/description-revisions"): {"skip": _PAGING, "limit": _PAGING},
+    ("GET", "/api/issues/{issue_id}/description-revisions"): {"skip": _PAGING},
     ("GET", "/api/issues/{issue_id}/relations"): {"skip": _PAGING, "limit": _PAGING},
     ("GET", "/api/issues/{issue_id}/sub-issues"): {"skip": _PAGING},
     ("GET", "/api/projects/{project_id}/rituals"): {"skip": _PAGING, "limit": _PAGING},
