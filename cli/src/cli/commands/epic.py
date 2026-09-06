@@ -28,7 +28,7 @@ def register(cli):
     @click.option("--description", default="", callback=resolve_content_value)
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
-    @click.option("--estimate", type=int)
+    @click.option("--estimate", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--label", "labels", multiple=True, help="Label name(s) to assign (can be used multiple times)")
     @click.option("--project", "project_key", help="Project (ID, key, or name) - overrides current project")
@@ -57,7 +57,7 @@ def register(cli):
                 raise SystemExit(1)
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": "epic"}
-        if estimate:
+        if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
         if labels:
             team_id = m.get_current_team()

@@ -25,12 +25,17 @@ def off_scale_warning(estimate: int | None, scale: str | None) -> str | None:
 
     Unknown scales (a value this copy of the table has never heard of)
     produce no warning: the point is to catch drift, not to shout about
-    a newer server.
+    a newer server. 0 is never off-scale: it is a zero-point estimate
+    (charges nothing on close), not a typo for the nearest value.
     """
     if estimate is None:
         return None
     values = SCALE_VALUES.get(scale or "")
     if not values or estimate in values:
+        return None
+    if estimate == 0:
+        # A zero-point estimate is a deliberate "costs nothing" (it charges
+        # 0 to the sprint), not a typo for the nearest scale value.
         return None
     nearest = min(values, key=lambda v: (abs(v - estimate), v))
     listed = ", ".join(str(v) for v in values)

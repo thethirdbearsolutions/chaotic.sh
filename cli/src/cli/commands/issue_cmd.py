@@ -224,7 +224,7 @@ def register(cli):
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 sprint_names.get(i.get("sprint_id"), "-"),
             ])
             table.add_row(*row)
@@ -310,7 +310,7 @@ def register(cli):
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 sprint_names.get(i.get("sprint_id"), "-")
             )
 
@@ -391,7 +391,7 @@ def register(cli):
             row.extend([
                 i["priority"].replace("_", " ").title(),
                 i.get("issue_type", "task").replace("_", " ").title(),
-                str(i.get("estimate") or "-"),
+                "-" if i.get("estimate") is None else str(i.get("estimate")),
                 "Unassigned" if not i.get("assignee_id") else i.get("assignee_id")[:8] + "...",
             ])
             table.add_row(*row)
@@ -455,7 +455,7 @@ def register(cli):
     @click.option("--status", default="backlog", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done"], case_sensitive=False))
     @click.option("--priority", default="no_priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", default="task", type=IssueTypeChoice(), help="Issue type")
-    @click.option("--estimate", "--points", type=int, help="Story point estimate")
+    @click.option("--estimate", "--points", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--parent", help="Parent issue identifier (e.g., PRJ-123) to create a sub-issue")
     @click.option("--epic", help="Epic identifier (e.g., PRJ-123) - shorthand for --parent with an epic")
@@ -485,7 +485,7 @@ def register(cli):
                 )
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
-        if estimate:
+        if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
         if parent and epic:
             raise click.UsageError("Cannot use both --parent and --epic")
@@ -731,7 +731,7 @@ def register(cli):
     @click.option("--status", type=click.Choice(["backlog", "todo", "in_progress", "in_review", "done", "canceled"], case_sensitive=False))
     @click.option("--priority", type=click.Choice(["no_priority", "low", "medium", "high", "urgent"], case_sensitive=False))
     @click.option("--type", "issue_type", type=IssueTypeChoice(), help="Issue type")
-    @click.option("--estimate", "--points", type=int, help="Story point estimate")
+    @click.option("--estimate", "--points", type=int, help="Story point estimate (0 is a zero-point ticket: charges nothing on close)")
     @click.option("--sprint", help="Set sprint (name, 'current', 'next', 'none', or ID)")
     @click.option("--no-sprint", "clear_sprint", is_flag=True, help="Remove from sprint")
     @click.option("--parent", help="Set parent issue (e.g., CHT-123) to make this a sub-issue")

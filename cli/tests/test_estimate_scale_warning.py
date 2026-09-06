@@ -28,6 +28,10 @@ class TestOffScaleWarning:
         assert off_scale_warning(7, None) is None
         assert off_scale_warning(7, "hexadecimal") is None  # a newer server's scale, not our business
 
+    def test_zero_is_a_zero_point_estimate_not_a_typo(self):
+        assert off_scale_warning(0, "fibonacci") is None
+        assert off_scale_warning(0, "powers_of_2") is None
+
     def test_tables_match_the_frontend(self):
         """The same tables drive the frontend's estimate dropdown
         (frontend/src/projects.js ESTIMATE_SCALES). Parse that source rather
