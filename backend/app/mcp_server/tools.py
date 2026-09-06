@@ -506,23 +506,8 @@ async def issue_list(
         team_id=team_id if not project_id else None,
         statuses=statuses,
         priorities=priorities,
-        # issue_type/label_match/exclude_* all default to a raw
-        # `fastapi.Query(...)` sentinel object in list_issues' own
-        # signature (FastAPI's param-metadata-as-default pattern) --
-        # harmless when FastAPI's dependency injection resolves them from
-        # a real request, but calling the function directly in-process
-        # (as every tool here does) skips that resolution entirely, so
-        # every one of them MUST be passed explicitly or IssueService
-        # ends up truthiness-testing a live Query object instead of None.
-        issue_type=None,
         assignee_id=assignee_id,
         labels=[label] if label else None,
-        label_match="all",
-        exclude_labels=None,
-        exclude_statuses=None,
-        exclude_priorities=None,
-        exclude_issue_types=None,
-        exclude_assignee_ids=None,
         search=search,
         sprint_id=sprint_id,
         parent_id=parent_id,
@@ -542,15 +527,8 @@ async def issue_list(
             team_id=team_id if not project_id else None,
             statuses=statuses,
             priorities=priorities,
-            issue_type=None,
             assignee_id=assignee_id,
             labels=[label] if label else None,
-            label_match="all",
-            exclude_labels=None,
-            exclude_statuses=None,
-            exclude_priorities=None,
-            exclude_issue_types=None,
-            exclude_assignee_ids=None,
             search=search,
             sprint_id=sprint_id,
             parent_id=parent_id,

@@ -98,6 +98,13 @@ in-process subset.
   changes. Do not push schema construction down into services.
 * Adding an API function that the tools call without a schema return
   type fails a test with a message pointing here.
+* The same two-caller reasoning applies to inputs (CHT-1375). FastAPI
+  `Query(...)`/`Header(...)` metadata on a tools-reachable function lives
+  in `Annotated[T, Query(...)]` with a real Python default, never as the
+  default value itself: under dependency injection both spellings behave
+  identically, but in-process a `= Query(None)` default is a live, truthy
+  sentinel object that a service would happily filter on. The same guard
+  test checks this, both by AST and at runtime via `inspect.signature`.
 
 ## Alternatives considered
 

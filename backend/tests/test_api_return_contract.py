@@ -28,6 +28,7 @@ The first three are AST/signature checks and run without a database.
 """
 import ast
 import importlib
+import inspect
 import pathlib
 import re
 import typing
@@ -203,6 +204,70 @@ def test_api_function_reachable_from_tools_returns_a_schema(alias, func):
     )
 
 
+_FASTAPI_SENTINELS = {"Query", "Header", "Depends", "Body", "Path", "Cookie", "Form", "File", "Security"}
+
+
+def _plain_default_is_fastapi_sentinel(node: ast.AST) -> bool:
+    """`Query(...)` or `fastapi.Query(...)` used as a default value."""
+    if not isinstance(node, ast.Call):
+        return False
+    callee = node.func
+    if isinstance(callee, ast.Name):
+        return callee.id in _FASTAPI_SENTINELS
+    if isinstance(callee, ast.Attribute):
+        return callee.attr in _FASTAPI_SENTINELS
+    return False
+
+
+@pytest.mark.parametrize(
+    "alias,func",
+    TOOL_CALLS,
+    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+)
+def test_api_function_reachable_from_tools_has_real_defaults(alias, func):
+    """A parameter whose *default value* is `Query(...)`/`Header(...)` only
+    works under FastAPI's dependency injection; called in-process it is a
+    live, truthy sentinel object. Every function the MCP tools call must
+    keep FastAPI metadata in `Annotated[...]` and a real Python default
+    (CHT-1375). Input-side twin of the return-contract check above."""
+    module = _ALIASES[alias]
+    tree = ast.parse((_API_DIR / f"{module}.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func)
+    args = node.args
+    # defaults align with the TAIL of posonlyargs + args (positional-only
+    # params can carry defaults too).
+    positional_all = [a.arg for a in args.posonlyargs + args.args]
+    positional = positional_all[-len(args.defaults):] if args.defaults else []
+    offenders = [name for name, d in zip(positional, args.defaults) if _plain_default_is_fastapi_sentinel(d)]
+    offenders += [a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None and _plain_default_is_fastapi_sentinel(d)]
+    assert offenders == [], (
+        f"app/api/{module}.py::{func} has FastAPI sentinel defaults {offenders}; "
+        f"use `param: Annotated[T, Query(...)] = <default>` so in-process callers get a real value"
+    )
+
+
+@pytest.mark.parametrize(
+    "alias,func",
+    TOOL_CALLS,
+    ids=[f"{a}.{f}" for a, f in TOOL_CALLS],
+)
+def test_api_function_reachable_from_tools_has_real_defaults_at_runtime(alias, func):
+    """Runtime twin of the AST check above: whatever spelling produced it,
+    no parameter's actual default object may be a FastAPI param/dependency
+    marker. Immune to aliasing, attribute-form callees and re-exports."""
+    import fastapi.params as fp
+
+    fn = getattr(importlib.import_module(f"app.api.{_ALIASES[alias]}"), func)
+    sentinels = (fp.Param, fp.Depends, fp.Body)  # Query/Header/Path/Cookie/Form/File subclass Param; Security subclasses Depends
+    offenders = [
+        name for name, p in inspect.signature(fn).parameters.items()
+        if p.default is not inspect.Parameter.empty and isinstance(p.default, sentinels)
+    ]
+    assert offenders == [], (
+        f"app/api/{_ALIASES[alias]}.py::{func} has live FastAPI sentinel defaults at runtime: {offenders}"
+    )
+
+
 def test_tools_module_never_validates_a_row_itself():
     """The tools module must not need to know about ORM rows at all: no
     ``Schema.model_validate(...)`` and no ``from_attributes=`` laundering
@@ -285,6 +350,13 @@ class TestInProcessCallsReturnSchemas:
         )
         result = await sprints.list_transactions(sprint_id=current.id, current_user=test_user)
         assert result and all(type(t) is BudgetTransactionResponse for t in result)
+
+    async def test_list_issues_in_process_with_only_scope_kwargs(self, test_project, test_user, test_issue):
+        """Before CHT-1375 this call filtered on live Query objects; now the
+        defaults are real, so scope-only kwargs list the project's issues."""
+        from app.api import issues
+        rows = await issues.list_issues(current_user=test_user, project_id=test_project.id)
+        assert [r.id for r in rows] == [test_issue.id]
 
     async def test_no_schema_instance_carries_internal_fields(self, test_project, test_user, test_issue):
         """The filtering half of response_model, by construction: the
