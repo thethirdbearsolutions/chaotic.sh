@@ -133,3 +133,51 @@ class TestUpgradeChangelog:
             result = cli_runner.invoke(system, ["upgrade"])
 
         assert "Already on the latest version" in result.output
+
+
+class TestUpgradeMcpReconnectNote:
+    """A successful upgrade tells operators whether MCP clients must
+    reconnect (CHT-1364): definitively when /api/version was readable
+    before and after, as a general reminder otherwise."""
+
+    def _run(self, cli_runner, *, running, versions=()):
+        with patch("cli.system.is_service_running", return_value=running), \
+             patch("cli.system.stop_service", return_value=True), \
+             patch("cli.system.wait_for_service_stop", return_value=True), \
+             patch("cli.system.start_service", return_value=True), \
+             patch("cli.system.health_check", return_value=True), \
+             patch("cli.system.load_server_json", return_value={}), \
+             patch("cli.system.get_remote_version", side_effect=list(versions)) as remote, \
+             patch("cli.system.run_command", return_value=MagicMock(returncode=0, stdout="")), \
+             patch("cli.system.checkout_version", return_value=(True, None)), \
+             patch("cli.system.run_migrations", return_value=(True, "ok")), \
+             patch("cli.system.rebuild_frontend", return_value=(True, "built")):
+            from cli.system import system
+            result = cli_runner.invoke(system, ["upgrade", "--yes", "--no-backup"])
+        assert result.exit_code == 0, result.output
+        assert "Upgraded to" in result.output
+        return result.output, remote
+
+    def test_server_not_running_prints_the_general_reminder(self, cli_runner, base_patches):
+        output, remote = self._run(cli_runner, running=False)
+        assert "MCP clients cache the toolset" in output
+        assert "mcp_toolset_fingerprint" in output
+        assert remote.call_count == 0
+
+    def test_changed_toolset_is_reported_with_counts(self, cli_runner, base_patches):
+        before = {"mcp_toolset_fingerprint": "a" * 64, "mcp_tool_count": 30}
+        after = {"mcp_toolset_fingerprint": "b" * 64, "mcp_tool_count": 31}
+        output, remote = self._run(cli_runner, running=True, versions=[before, after])
+        assert "MCP toolset changed (30 -> 31 tools)" in output
+        assert "re-add connectors" in output
+        assert remote.call_count == 2
+
+    def test_unchanged_toolset_needs_no_action(self, cli_runner, base_patches):
+        same = {"mcp_toolset_fingerprint": "a" * 64, "mcp_tool_count": 30}
+        output, _ = self._run(cli_runner, running=True, versions=[same, dict(same)])
+        assert "MCP toolset unchanged" in output
+        assert "re-add connectors" not in output
+
+    def test_older_server_without_the_field_falls_back_to_the_reminder(self, cli_runner, base_patches):
+        output, _ = self._run(cli_runner, running=True, versions=[{"git_sha": "abc"}, {"git_sha": "def"}])
+        assert "MCP clients cache the toolset" in output

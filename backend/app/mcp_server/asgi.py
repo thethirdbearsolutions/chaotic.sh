@@ -31,7 +31,6 @@ host/domain an operator picks (no fixed hostname to hardcode):
 """
 from __future__ import annotations
 
-import logging
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
@@ -42,7 +41,7 @@ from starlette.routing import Route
 
 from app.config import get_settings
 from app.mcp_server.auth import BearerHeaderAuth, CapabilityPathRedaction, CapabilityURLAuth
-from app.mcp_server.tools import ALL_TOOLS
+from app.mcp_server.tools import ALL_TOOLS, preserve_root_logger
 
 _fastmcp: MCPServer | None = None
 
@@ -100,18 +99,9 @@ def get_fastmcp() -> MCPServer:
     """
     global _fastmcp
     if _fastmcp is None:
-        # MCPServer.__init__ unconditionally calls the SDK's
-        # configure_logging(), which logging.basicConfig()s a
-        # RichHandler onto the ROOT logger at INFO -- a global side
-        # effect that would hijack the whole backend's logging (every
-        # library's INFO chatter, rich-formatted, on stderr) just
-        # because app.main imports this module. Snapshot and restore
-        # the root logger around construction so building the MCP
-        # server changes MCP state and nothing else.
-        root = logging.getLogger()
-        prev_handlers = root.handlers[:]
-        prev_level = root.level
-        try:
+        # MCPServer.__init__ reconfigures the ROOT logger as a side effect;
+        # see preserve_root_logger for why that must not leak out of here.
+        with preserve_root_logger():
             _fastmcp = MCPServer(
                 name="chaotic",
                 instructions=(
@@ -124,9 +114,6 @@ def get_fastmcp() -> MCPServer:
                     'error_code, read message.'
                 ),
             )
-        finally:
-            root.handlers[:] = prev_handlers
-            root.setLevel(prev_level)
         for tool_fn in ALL_TOOLS:
             _fastmcp.add_tool(tool_fn)
         # streamable_http_app() is what builds the session manager, and in
