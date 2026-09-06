@@ -94,6 +94,7 @@ def _status_patches(**overrides):
         load_server_json=MagicMock(return_value={"host": "127.0.0.1", "port": 24267}),
         is_service_running=MagicMock(return_value=True),
         run_command=MagicMock(return_value=MagicMock(returncode=0, stdout="v1.2.3")),
+        get_remote_version=MagicMock(return_value=None),
         DATABASE_PATH=Path("/nonexistent/chaotic.db"),
     )
     patches.update(overrides)
@@ -102,6 +103,29 @@ def _status_patches(**overrides):
 
 class TestSystemStatusHealth:
     """`chaotic system status` surfacing get_health()'s result."""
+
+    def test_shows_the_running_commit_and_toolset(self):
+        """The clone's `git describe` says what is checked out; the Commit
+        and MCP lines say what is actually serving (CHT-1401), from
+        /api/version."""
+        patches = _status_patches(
+            get_health=MagicMock(return_value={"status": "healthy", "db": "ok"}),
+            get_remote_version=MagicMock(return_value={
+                "git_sha_short": "abc1234", "git_dirty": True,
+                "mcp_tool_count": 38, "mcp_toolset_fingerprint": "0123456789abcdef",
+            }),
+        )
+        with patch.multiple("cli.system", **patches):
+            result = CliRunner().invoke(cli, ["system", "status"])
+        assert result.exit_code == 0, result.output
+        assert "Commit:   abc1234 (dirty)" in result.output
+        assert "38 tools served" in result.output and "0123456789ab" in result.output
+
+    def test_no_deploy_lines_when_the_server_does_not_answer_version(self):
+        patches = _status_patches(get_health=MagicMock(return_value={"status": "healthy", "db": "ok"}))
+        with patch.multiple("cli.system", **patches):
+            result = CliRunner().invoke(cli, ["system", "status"])
+        assert result.exit_code == 0 and "Commit:" not in result.output
 
     def test_healthy_db_ok_shows_ok(self):
         patches = _status_patches(

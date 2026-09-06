@@ -1428,7 +1428,7 @@
       }
     },
     "server_info": {
-      "description": "Which server this surface is talking to: git commit, app version,\n    MCP toolset fingerprint and tool count.\n\n    Call it when a field looks stale or a tool is missing: a tracker can\n    run a commit older than the repository you have checked out, and\n    nothing else on this surface says so (CHT-1401). Compare `git_sha`\n    with `git rev-parse origin/main`; `mcp_toolset_fingerprint` changes\n    whenever the toolset's shape does.\n    ",
+      "description": "Which server this surface is talking to: git commit, app version,\n    MCP toolset fingerprint and tool count, beside this client's own.\n\n    Call it when a field looks stale or a tool is missing. The check\n    that needs no checkout: compare `mcp_tool_count` with\n    `client_tool_count` (the tools this client was built with) and with\n    the number of Chaotic tools you were actually given; a mismatch\n    means a client cached an older toolset and must reconnect\n    (CHT-1364). With a checkout, compare `git_sha` against the branch\n    you deploy from (`git rev-parse origin/main` by default); `git_dirty`\n    true means the deployed tree has uncommitted edits. The fingerprint\n    changes whenever the toolset's shape does, so it also catches\n    same-count schema changes. A null field means the server predates it\n    or could not compute it (CHT-1401).\n    ",
       "inputSchema": {
         "properties": {},
         "title": "server_infoArguments",

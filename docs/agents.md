@@ -305,8 +305,10 @@ over which the server could send `notifications/tools/list_changed`
 connector still showed 11). After `chaotic system upgrade`, remove and
 re-add the connector (or restart the Claude Code session); the upgrade
 command reads `/api/version` before and after and says whether that is
-needed. To check a running server without reconnecting: `GET
-/api/version` reports `mcp_tool_count` and `mcp_toolset_fingerprint`. The
+needed. To check a running server without reconnecting: call the
+`server_info` tool (or `GET /api/version` outside MCP), which reports
+`mcp_tool_count` and `mcp_toolset_fingerprint` beside the client's own
+count. The
 count is the one thing you can compare against a client's tool list; the
 fingerprint (SHA-256 over every tool definition as served on `/mcp`,
 `team` parameters included, so not the hash of the stdio snapshot

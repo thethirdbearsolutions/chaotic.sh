@@ -1024,4 +1024,8 @@ async def test_server_info_reports_the_deploy_not_the_asset_hashes(fake):
     assert result["git_sha"] == "abc123def456" and result["mcp_tool_count"] == 38
     assert result["mcp_toolset_fingerprint"] == "fp" and result["app_version"] == "1.0.0"
     assert "bundle_hash" not in result
+    # The client side rides along, so a stdio caller can see CLI-vs-server
+    # skew in one call without a checkout.
+    assert result["client_tool_count"] == len(ALL_TOOLS)
+    assert "client_version" in result
     assert fake.calls_to("server_info") == [((), {})]
