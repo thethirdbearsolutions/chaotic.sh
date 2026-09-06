@@ -47,7 +47,7 @@ async def _main() -> None:
     for tool in tools:
         out["tools"][tool.name] = {
             "description": tool.description,
-            "inputSchema": tool.inputSchema,
+            "inputSchema": tool.input_schema,
         }
     print(json.dumps(out, indent=2, sort_keys=True))
 

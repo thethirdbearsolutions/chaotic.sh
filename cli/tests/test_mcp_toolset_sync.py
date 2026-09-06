@@ -32,9 +32,29 @@ def _live_toolset() -> dict:
     async def _collect():
         mcp = build_server()
         tools = await mcp.list_tools()
-        return {t.name: {"description": t.description, "inputSchema": t.inputSchema} for t in tools}
+        return {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
 
     return asyncio.run(_collect())
+
+
+def test_every_tool_is_async_or_sync_by_design():
+    """mcp 2.x runs `def` tool handlers on worker threads (no event-loop
+    affinity). The stdio server's tools are deliberately synchronous --
+    they call the blocking httpx client -- so pin that they ALL are, and
+    that none touches asyncio. A mixed set would silently change which
+    thread a tool runs on (CHT-1367)."""
+    import inspect
+    from cli.mcp_server import ALL_TOOLS
+    # Check the object handed to add_tool (the wrapper), which is what the
+    # SDK inspects to pick a worker thread vs the event loop.
+    mixed = [t.__name__ for t in ALL_TOOLS if inspect.iscoroutinefunction(t)]
+    assert mixed == [], f"stdio tools must be plain `def` (they block on httpx): {mixed}"
+    disagree = [
+        t.__name__ for t in ALL_TOOLS
+        if hasattr(t, "__wrapped__")
+        and inspect.iscoroutinefunction(t) != inspect.iscoroutinefunction(t.__wrapped__)
+    ]
+    assert disagree == [], f"wrapper/body async-ness disagree: {disagree}"
 
 
 def test_snapshot_file_exists():

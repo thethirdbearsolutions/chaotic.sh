@@ -40,9 +40,9 @@ an LLM caller rather than a human at a terminal:
     (`--status a,b`) are plain JSON arrays here (`status: ["a", "b"]`)
     -- structured input is the whole point of a typed MCP schema.
 
-Every tool function below is a plain, undecorated-by-FastMCP module
+Every tool function below is a plain, undecorated-by-MCPServer module
 function wrapped only by ``@_boundary`` -- they're registered onto the
-FastMCP instance explicitly in ``build_server()`` via ``add_tool()``
+MCPServer instance explicitly in ``build_server()`` via ``add_tool()``
 rather than the ``@mcp.tool()`` decorator, specifically so tests (and
 anything else) can import and call e.g. ``issue_view(identifier=...)``
 directly against a mocked Client, same as every other cli.commands.*
@@ -58,7 +58,7 @@ import click
 import httpx
 from pydantic import Field
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .client import APIError
 from .commands.issue_cmd import ISSUE_TYPE_ALIASES, ISSUE_TYPES
@@ -181,7 +181,7 @@ def _boundary(fn):
     the identical shape; ``RESPONSE_SHAPES["error_envelope"]`` pins it.
 
     Uses functools.wraps (not a manual __name__/__doc__ copy) because
-    FastMCP builds each tool's JSON schema from the ORIGINAL function's
+    MCPServer builds each tool's JSON schema from the ORIGINAL function's
     signature via inspect.signature(..., follow_wrapped=True); wraps()
     sets __wrapped__, which is what makes that unwrapping find the real
     typed signature instead of this wrapper's bare (*args, **kwargs).
@@ -1596,14 +1596,14 @@ ALL_TOOLS = (
 )
 
 
-def build_server() -> FastMCP:
-    """Construct the FastMCP server with all tools registered.
+def build_server() -> MCPServer:
+    """Construct the MCPServer with all tools registered.
 
     Kept separate from ``serve()`` so tests (and the in-memory MCP
     client harness) can build a server instance without going through
     stdio or Click.
     """
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="chaotic",
         instructions=(
             "Tools for the Chaotic issue tracker. Auth and team/project "

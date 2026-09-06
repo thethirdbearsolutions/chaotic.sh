@@ -52,7 +52,7 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import Field, ValidationError as PydanticValidationError
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.api import documents as documents_api
 from app.api import projects as projects_api
@@ -223,7 +223,7 @@ def _boundary(fn):
     pins the shape on both transports.
     Async (the stdio version's isn't) because every tool body here does
     real I/O. ``functools.wraps`` still matters for the same reason it
-    does there: FastMCP derives each tool's JSON schema from the
+    does there: MCPServer derives each tool's JSON schema from the
     ORIGINAL function's signature via ``inspect.signature(...,
     follow_wrapped=True)``, which needs ``__wrapped__``.
     """
@@ -1863,14 +1863,14 @@ ALL_TOOLS = (
 )
 
 
-def build_server() -> FastMCP:
-    """Construct a standalone FastMCP instance with all tools registered.
+def build_server() -> MCPServer:
+    """Construct a standalone MCPServer instance with all tools registered.
 
     Used by tests (toolset-shape assertions) and by anything else that
     wants a throwaway server without touching the shared one behind
     /mcp (``asgi.get_fastmcp()``).
     """
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="chaotic",
         instructions=(
             'Tools for the Chaotic issue tracker, scoped to the API key '

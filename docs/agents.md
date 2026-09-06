@@ -249,6 +249,13 @@ Same 11 tools, same names (see Toolset below); six of them
 because a hosted server has no single active profile to inherit context
 from -- see "Auth and scoping" below.
 
+Protocol notes: the server is built on mcp 2.x, so it negotiates both
+the 2025-06-18 protocol revision and the 2026-07-28 "modern" era --
+any current client works, no version pinning needed. Request bodies are
+capped at 4 MiB per call (a 413 if exceeded); the only tools that can
+plausibly approach that are `doc_create`/`doc_update` with a very large
+`content`, so split enormous documents rather than sending one body.
+
 **Auth v1 is API-key only.** There's no OAuth flow yet (dynamic client
 registration + the paste-a-URL-and-authorize connector UX is tracked
 separately, CHT-1266's follow-up); an existing `ck_...` API key is
