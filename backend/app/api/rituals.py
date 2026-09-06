@@ -27,7 +27,7 @@ from app.services.ritual_service import RitualService
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
-from app.enums import ApprovalMode, RitualTrigger, ActivityType, LimboType
+from app.enums import ApprovalMode, RitualTrigger, ActivityType
 from app.services.user_service import UserService
 from app.websocket import broadcast_attestation_event
 
@@ -436,10 +436,7 @@ async def force_clear_ticket_limbo(
             # rather than firing the auto-transition. The user must
             # re-attempt the claim/close, but the await primitive can
             # wake on the cancel.
-            try:
-                limbo_type_value = LimboType[limbo.limbo_type].value
-            except KeyError:
-                limbo_type_value = limbo.limbo_type
+            limbo_type_value = limbo.limbo_type.value
             await OxydeIssueActivity.objects.create(
                 issue_id=issue_id,
                 user_id=current_user.id,

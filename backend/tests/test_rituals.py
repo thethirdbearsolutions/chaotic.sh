@@ -3041,7 +3041,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.limbo_type == LimboType.CLAIM
         assert limbo.requested_by_id == test_user.id
         assert limbo.cleared_at is None
 
@@ -3091,7 +3091,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLOSE.name
+        assert limbo.limbo_type == LimboType.CLOSE
         assert limbo.requested_by_id == test_user.id
         assert limbo.cleared_at is None
 
@@ -3237,7 +3237,7 @@ class TestTicketLimbo:
         ).all()
         assert len(limbo_records) == 1
         limbo = limbo_records[0]
-        assert limbo.limbo_type == LimboType.CLAIM.name
+        assert limbo.limbo_type == LimboType.CLAIM
         assert limbo.cleared_at is None
         blockers = await OxydeTicketLimboBlocker.objects.filter(
             limbo_id=limbo.id,

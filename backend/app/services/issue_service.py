@@ -348,10 +348,7 @@ class IssueService:
         intent.cleared_at = now
         intent.cleared_by_id = canceled_by_id
         await intent.save(update_fields={"cleared_at", "cleared_by_id"})
-        try:
-            limbo_type_value = LimboType[intent.limbo_type].value
-        except KeyError:
-            limbo_type_value = intent.limbo_type
+        limbo_type_value = intent.limbo_type.value
         try:
             await OxydeIssueActivity.objects.create(
                 issue_id=intent.issue_id,
@@ -395,7 +392,7 @@ class IssueService:
         """
         existing = await OxydeTicketLimbo.objects.filter(
             issue_id=issue_id,
-            limbo_type=limbo_type.name,
+            limbo_type=limbo_type.name,  # .name for filters: raw query path, stored form
             cleared_at=None,
         ).all()
         if not existing:
@@ -413,7 +410,9 @@ class IssueService:
         if not allow_takeover or not await self._intent_is_stale(intent):
             raise IntentInFlightError(
                 issue_id=issue_id,
-                intent_type=limbo_type.name,
+                # The wire form, like every other enum field (CHT-1353):
+                # clients used to receive "CLOSE" here and "close" everywhere else.
+                intent_type=limbo_type.value,
                 initiator_user_id=initiator,
             )
         await self._cancel_intent(intent, requesting_user_id)
@@ -473,7 +472,7 @@ class IssueService:
                 try:
                     intent = await OxydeTicketLimbo.objects.create(
                         issue_id=issue.id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         requested_by_id=user_id,
                     )
                 except IntegrityError:
@@ -764,7 +763,7 @@ class IssueService:
         )
 
     async def apply_intent_transition(
-        self, issue_id: str, limbo_type_name: str, user_id: str,
+        self, issue_id: str, limbo_type: "LimboType", user_id: str,
     ) -> None:
         """Fire the auto-transition for a fully-cleared intent.
 
@@ -784,10 +783,6 @@ class IssueService:
 
         issue = await OxydeIssue.objects.get_or_none(id=issue_id)
         if issue is None:
-            return
-        try:
-            limbo_type = LimboType[limbo_type_name]
-        except KeyError:
             return
 
         if limbo_type == LimboType.CLAIM:
