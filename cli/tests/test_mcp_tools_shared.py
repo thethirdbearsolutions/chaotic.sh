@@ -35,6 +35,7 @@ from chaotic_mcp_tools import (
     error_envelope,
     validation_payload,
 )
+from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, toolset_diff
 
 
 class FakeBackend:
@@ -377,7 +378,8 @@ def test_team_scoped_tools_derived_from_bodies():
     assert TEAM_SCOPED_TOOLS == {
         t.__name__ for t in ALL_TOOLS if "team" in inspect.signature(t).parameters
     }
-    assert len(TEAM_SCOPED_TOOLS) == 20
+    problem = toolset_diff(TEAM_SCOPED_TOOLS, "TEAM_SCOPED_TOOLS", expected=EXPECTED_TEAM_SCOPED)
+    assert not problem, problem
 
 
 async def test_team_kwarg_is_dropped_when_not_advertised(fake):

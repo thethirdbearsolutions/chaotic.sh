@@ -10,8 +10,8 @@ no SSE framing, no session-id bookkeeping between requests.
 import json
 
 import pytest
-from chaotic_mcp_tools.expected import toolset_diff
 import pytest_asyncio
+from chaotic_mcp_tools.expected import toolset_diff
 
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
@@ -393,7 +393,9 @@ class TestToolsList:
         assert resp.status_code == 200
         tools = resp.json()["result"]["tools"]
         names = {t["name"] for t in tools}
-        problem = toolset_diff(names, "the HTTP server's tools/list")
+        problem = toolset_diff(
+            names, "the HTTP server's tools/list", hint="fix app.mcp_server.tools if a tool was dropped"
+        )
         assert not problem, problem
 
 

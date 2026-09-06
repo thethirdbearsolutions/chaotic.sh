@@ -106,8 +106,8 @@ class TestServerAssembly:
         """
         from chaotic_mcp_tools.expected import toolset_diff
 
-        names = {t.__name__ for t in mcp_mod.ALL_TOOLS}
-        assert not toolset_diff(names, "the stdio server"), toolset_diff(names, "the stdio server")
+        problem = toolset_diff([t.__name__ for t in mcp_mod.ALL_TOOLS], "the stdio server")
+        assert not problem, problem
 
     def test_no_delete_tools(self, mcp_mod):
         """Destructive operations stay off this surface deliberately.

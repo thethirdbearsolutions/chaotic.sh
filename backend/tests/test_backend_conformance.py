@@ -1,7 +1,8 @@
 """Both Backend adapters expose every protocol method with the protocol's
-exact parameters (CHT-1396): the shared tool bodies call one signature and
-must get the same answer on the stdio (REST) and HTTP (in-process)
-transports."""
+parameter names, kinds and defaults (CHT-1396; annotations are out of
+scope, see chaotic_mcp_tools/conformance.py): the shared tool bodies call
+one signature and must get the same answer on the stdio (REST) and HTTP
+(in-process) transports."""
 from chaotic_mcp_tools.conformance import conformance_problems
 
 from app.mcp_server.backend import InProcessBackend

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from chaotic_mcp_tools import RESPONSE_SHAPES, TEAM_SCOPED_TOOLS
-from chaotic_mcp_tools.expected import EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, toolset_diff
+from chaotic_mcp_tools.expected import EDIT_THE_PIN, EXPECTED_TEAM_SCOPED, EXPECTED_TOOLS, REGENERATE_SNAPSHOT, toolset_diff
 
 from app.mcp_server.tools import ALL_TOOLS, BACKEND, build_server
 
@@ -83,12 +83,12 @@ def test_team_scoped_set_is_the_documented_one():
 
 async def test_backend_covers_the_full_toolset(snapshot):
     live = await _live_toolset()
-    for where, names in (
-        ("the HTTP server", set(live)),
-        ("the schema snapshot", set(snapshot)),
-        ("ALL_TOOLS", {t.__name__ for t in ALL_TOOLS}),
+    for where, names, hint in (
+        ("the HTTP server", list(live), "fix app.mcp_server.tools if a tool was dropped"),
+        ("the schema snapshot", list(snapshot), REGENERATE_SNAPSHOT),
+        ("ALL_TOOLS", [t.__name__ for t in ALL_TOOLS], EDIT_THE_PIN),
     ):
-        problem = toolset_diff(names, where)
+        problem = toolset_diff(names, where, hint=hint)
         assert not problem, problem
 
 
