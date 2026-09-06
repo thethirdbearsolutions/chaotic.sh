@@ -1478,9 +1478,12 @@ async def test_round_robin_sprint_group_rotates_across_closes(db, test_project, 
         pending = await rituals.get_pending_rituals(test_project.id, sprint.id)
         assert len(pending) == 1
         gated.append(pending[0].name)
-        # The offer is stable for the whole limbo: listing again, or
-        # validating an attestation, must name the same ritual.
+        # The offer is stable for the whole limbo: listing again must name
+        # the same ritual (nothing advances the pointer before rotation).
         assert (await rituals.get_pending_rituals(test_project.id, sprint.id))[0].name == pending[0].name
+        # AUTO approval: attesting the last pending ritual completes the
+        # limbo itself, so the explicit complete_limbo below is the loser
+        # of that race and must not advance the group a second time.
         await rituals.attest(pending[0], sprint_id=sprint.id, user_id=test_user.id, note="done")
         await sprints.complete_limbo(sprint)
         sprint = await sprints.get_current_sprint(test_project.id)
