@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from app.enums import SelectionMode
 from app.services.ritual_selection import (
     Selection,
+    pointer_after_removal,
     select,
     select_by_percentage,
     select_random_one,
@@ -174,3 +175,33 @@ class TestSeveralGroups:
         result = select([r1, p1, u, r2], groups, "seed")
         assert result.chosen == [u, r2, p1]
         assert result.round_robin_advances == {"rr": "r2"}
+
+
+class TestPointerAfterRemoval:
+    """When the member a ROUND_ROBIN pointer names leaves the group, the
+    pointer moves to the member before it, so the next selection is the
+    one that would have followed (CHT-1405)."""
+
+    def _abc(self):
+        return [ritual("a", group_id="g", order=0), ritual("b", group_id="g", order=1), ritual("c", group_id="g", order=2)]
+
+    def test_middle_member_points_back_to_its_predecessor(self):
+        a, b, c = self._abc()
+        assert pointer_after_removal([a, c], b) == "a"
+        assert select_round_robin(group("g", SelectionMode.ROUND_ROBIN, last="a"), [a, c]) is c
+
+    def test_first_member_clears_the_pointer_and_the_next_is_the_new_first(self):
+        a, b, c = self._abc()
+        assert pointer_after_removal([b, c], a) is None
+        assert select_round_robin(group("g", SelectionMode.ROUND_ROBIN, last=None), [b, c]) is b
+
+    def test_last_member_points_to_the_one_before_so_the_next_wraps(self):
+        a, b, c = self._abc()
+        assert pointer_after_removal([a, b], c) == "b"
+        assert select_round_robin(group("g", SelectionMode.ROUND_ROBIN, last="b"), [a, b]) is a
+
+    def test_ignores_the_removed_member_itself_and_breaks_ties_by_id(self):
+        a = ritual("a", group_id="g", order=0)
+        b = ritual("b", group_id="g", order=0)  # same created_at as a
+        assert pointer_after_removal([a, b], b) == "a"
+        assert pointer_after_removal([a, b], a) is None

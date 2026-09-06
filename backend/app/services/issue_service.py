@@ -662,12 +662,14 @@ class IssueService:
 
     async def _check_ticket_rituals(
         self, issue, user_id: str, is_human_request: bool = False
-    ) -> None:
-        """Check if ticket has pending rituals; open intent + limbo + raise."""
+    ) -> bool:
+        """Check if ticket has pending rituals; open intent + limbo + raise.
+        Returns whether the gate was consulted at all: False when a human
+        bypasses it (`human_rituals_required` off)."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
-                return
+                return False
 
         ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_ticket_rituals(
@@ -678,15 +680,17 @@ class IssueService:
             issue, user_id, is_human_request,
             pending_rituals, LimboType.CLOSE, TicketRitualsError,
         )
+        return True
 
     async def _check_claim_rituals(
         self, issue, user_id: str, is_human_request: bool = False
-    ) -> None:
-        """Check if ticket has pending claim rituals; open intent + limbo + raise."""
+    ) -> bool:
+        """Check if ticket has pending claim rituals; open intent + limbo + raise.
+        Returns whether the gate was consulted, as `_check_ticket_rituals`."""
         if is_human_request:
             project = await OxydeProject.objects.get_or_none(id=issue.project_id)
             if project and not project.human_rituals_required:
-                return
+                return False
 
         ritual_service = RitualService()
         pending_rituals = await ritual_service.get_pending_claim_rituals(
@@ -697,6 +701,7 @@ class IssueService:
             issue, user_id, is_human_request,
             pending_rituals, LimboType.CLAIM, ClaimRitualsError,
         )
+        return True
 
     async def _deduct_from_sprint_budget(self, issue, user_id: str | None = None) -> None:
         """Deduct issue estimate from the current sprint's budget."""
@@ -764,6 +769,7 @@ class IssueService:
 
     async def apply_intent_transition(
         self, issue_id: str, limbo_type: "LimboType", user_id: str,
+        intent_id: str | None = None,
     ) -> None:
         """Fire the auto-transition for a fully-cleared intent.
 
@@ -801,6 +807,7 @@ class IssueService:
             user_id=user_id,
             is_human_request=False,
             skip_ritual_check=True,
+            gate_intent_id=intent_id,
         )
 
         await self._broadcast_issue_updated(updated_issue)
@@ -964,6 +971,7 @@ class IssueService:
         self, issue, issue_in: IssueUpdate, user_id: str | None = None,
         is_human_request: bool = True,
         skip_ritual_check: bool = False,
+        gate_intent_id: str | None = None,
     ) -> OxydeIssue:
         """Update an issue and log activity.
 
@@ -971,7 +979,10 @@ class IssueService:
         an intent's limbo has fully cleared (rituals satisfied by
         attestation/approval), the auto-transition fires by calling this
         method with skip_ritual_check=True. The ritual check is bypassed
-        because the gate has already been resolved by the limbo lifecycle.
+        because the gate has already been resolved by the limbo lifecycle;
+        gate_intent_id names that cleared intent so the ticket-scoped
+        ROUND_ROBIN rotation lands on the ritual it was blocked on
+        (CHT-1405).
         """
         update_data = issue_in.model_dump(exclude_unset=True, exclude={"label_ids", "lease_seconds"})
 
@@ -1024,6 +1035,13 @@ class IssueService:
 
         # Check if status change requires limbo/arrears/ticket ritual checks
         needs_budget_deduction = False
+        # The ticket-scoped ROUND_ROBIN rotation this transition commits
+        # (CHT-1405): computed here, over the pre-transition issue and only
+        # when a ritual gate was actually consulted (the limbo
+        # auto-transition counts; a human bypass with
+        # human_rituals_required off does not, since nothing gated it),
+        # and written inside the transaction below once the status is saved.
+        rotation = None
         if issue_in.status is not None and "status" in update_data:
             new_status = issue_in.status
             old_status = issue.status
@@ -1037,12 +1055,18 @@ class IssueService:
                         raise EstimateRequiredError(
                             "Estimate is required before claiming issues in this project"
                         )
-                if not skip_ritual_check:
-                    await self._check_claim_rituals(issue, user_id, is_human_request)
+                gated = skip_ritual_check or await self._check_claim_rituals(issue, user_id, is_human_request)
+                if gated:
+                    rotation = await RitualService().prepare_ticket_rotation(
+                        issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM, intent_id=gate_intent_id,
+                    )
 
             if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
-                if not skip_ritual_check:
-                    await self._check_ticket_rituals(issue, user_id, is_human_request)
+                gated = skip_ritual_check or await self._check_ticket_rituals(issue, user_id, is_human_request)
+                if gated:
+                    rotation = await RitualService().prepare_ticket_rotation(
+                        issue.project_id, issue.id, RitualTrigger.TICKET_CLOSE, intent_id=gate_intent_id,
+                    )
 
             blocked_statuses = {IssueStatus.DONE, IssueStatus.CANCELED, IssueStatus.IN_PROGRESS}
             if new_status in blocked_statuses and old_status != new_status:
@@ -1128,6 +1152,13 @@ class IssueService:
                         current.assignee_id if current else None,
                     )
             await issue.save(update_fields=set(update_data.keys()))
+
+            # The claim / close happened: ticket-scoped ROUND_ROBIN groups
+            # advance to the ritual that gated it, in this transaction
+            # (CHT-1405). Every status transition, the limbo auto-transition
+            # included, comes through here.
+            if rotation is not None:
+                await RitualService().record_ticket_rotation(rotation)
 
             # Handle labels via junction table
             if issue_in.label_ids is not None:

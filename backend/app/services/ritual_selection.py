@@ -18,8 +18,12 @@ Semantics, per group `selection_mode`:
 * PERCENTAGE  -- each ritual independently, with probability
   `percentage`/100 from `random.Random(f"{seed}:{ritual.id}")`.
 * ROUND_ROBIN -- the sibling after `group.last_selected_ritual_id` in
-  `created_at` order (the first when the pointer is unset or names a
-  ritual no longer in the group; CHT-1405 is about that restart).
+  `created_at` order (the first when the pointer is unset). When a
+  member leaves a group (deleted, regrouped, deactivated) the service
+  moves the pointer to the member before it with `pointer_after_removal`,
+  so the rotation continues from where it was instead of restarting
+  (CHT-1405); a pointer that still names a ritual no longer in the group
+  (a hand edit) restarts at the first.
 
 Ungrouped rituals are passed through as given (the callers list a
 project's active rituals to begin with). A ritual whose group row is gone
@@ -130,3 +134,19 @@ def select(rituals: list, groups: dict, seed: str | None = None) -> Selection:
         elif group.selection_mode == SelectionMode.PERCENTAGE:
             chosen.extend(select_by_percentage(active, seed=seed))
     return Selection(chosen=chosen, round_robin_advances=advances)
+
+
+def _order_key(ritual):
+    return (ritual.created_at, ritual.id)
+
+
+def pointer_after_removal(siblings: list, removed) -> str | None:
+    """Where a ROUND_ROBIN pointer that names `removed` should point once
+    `removed` leaves the group: the member just before it in rotation
+    order, so the next selection is the one that would have followed
+    `removed`. None when nothing precedes it (the next selection is then
+    the first remaining member, which is also what followed it)."""
+    before = [s for s in siblings if s.id != removed.id and _order_key(s) < _order_key(removed)]
+    if not before:
+        return None
+    return max(before, key=_order_key).id
