@@ -117,8 +117,12 @@ winner of `complete_limbo`) also advance every ROUND_ROBIN sprint ritual
 group past the ritual that gated the closing sprint (CHT-1280), so the
 next sprint's close selects the sibling. A group's members must share a
 trigger (CHT-1403): the rotation advances one pointer over one event, so
-`ritual create` / `ritual update` refuse a member whose trigger differs
-from the group's active members. Selection is pure while a sprint
+`ritual create` / `ritual update` refuse joining a group, changing
+trigger, or reactivating into a mismatch with the group's active members.
+A group that already mixed triggers before the rule keeps working (every
+selection path filters by trigger) and its members stay editable; the API
+reports each group's `triggers` and `chaotic ritual group list` flags one
+with more than one so it can be split. Selection is pure while a sprint
 is open, so listing and attestation keep offering the same ritual until
 the rotation. A force-cleared limbo rotates too, and counts as that
 ritual's turn: the skipped ritual is not re-offered next sprint.

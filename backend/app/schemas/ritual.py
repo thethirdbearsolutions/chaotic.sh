@@ -86,6 +86,10 @@ class RitualGroupResponse(BaseModel):
     selection_mode: SelectionMode
     last_selected_ritual_id: str | None = None
     created_at: DateTimeUTC
+    # The distinct triggers of the group's active members (wire form). One
+    # entry is the invariant; more than one is a group that predates the
+    # shared-trigger rule (CHT-1403) and should be split.
+    triggers: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
 

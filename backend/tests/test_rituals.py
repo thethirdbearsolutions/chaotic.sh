@@ -174,10 +174,13 @@ class TestRitualGroupServiceValidation:
             name="report", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
         ), test_project.id)
 
-        with pytest.raises(ValueError, match="must share a trigger.*every_sprint.*'report'.*ticket_close"):
+        with pytest.raises(ValueError) as exc:
             await service.create(RitualCreate(
                 name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=group.id,
             ), test_project.id)
+        msg = str(exc.value)
+        assert "must share a trigger" in msg and "'report'" in msg
+        assert "every_sprint" in msg and "ticket_close" in msg  # wire form, not names
 
         loose = await service.create(RitualCreate(
             name="close-gate", prompt="p", trigger=RitualTrigger.TICKET_CLOSE,
@@ -190,9 +193,55 @@ class TestRitualGroupServiceValidation:
         ), test_project.id)
         with pytest.raises(ValueError, match="must share a trigger"):
             await service.update(second, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
-        # Retriggering the only member, or a member alongside itself, is fine.
-        updated = await service.update(second, RitualUpdate(prompt="q"))
-        assert updated.prompt == "q" and updated.trigger == RitualTrigger.EVERY_SPRINT
+        with pytest.raises(ValueError, match="trigger cannot be null"):
+            await service.update(second, RitualUpdate(trigger=None))
+
+        # Compatible moves are fine: a ticket group takes the loose ticket
+        # ritual, and the only member of a group may change trigger.
+        ticket_group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="ticket-rotation", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        moved = await service.update(loose, RitualUpdate(group_id=ticket_group.id))
+        assert moved.group_id == ticket_group.id
+        alone = await service.update(moved, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+        assert alone.trigger == RitualTrigger.TICKET_CLAIM
+
+        # Reactivating into a mismatch is refused: a soft-deleted ticket
+        # ritual cannot come back to life inside the sprint group.
+        ghost = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="ghost", prompt="p", trigger=RitualTrigger.TICKET_CLOSE,
+            group_id=group.id, is_active=False,
+        )
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(ghost, RitualUpdate(is_active=True))
+
+    async def test_a_legacy_mixed_group_stays_editable_and_is_reported(self, db, test_project):
+        """A group that mixed triggers before the rule (rows written
+        directly, as any pre-CHT-1403 database has) keeps working: editing a
+        member's prompt or weight is not a join and is allowed, and the
+        group reports both triggers so it can be found and split."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+        from app.schemas.ritual import RitualUpdate
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="legacy", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        a = await OxydeRitual.objects.create(
+            project_id=test_project.id, name="a", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="b", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=group.id,
+        )
+        service = RitualService()
+
+        edited = await service.update(a, RitualUpdate(prompt="still mine", weight=2.0))
+        assert edited.prompt == "still mine" and edited.weight == 2.0
+        with pytest.raises(ValueError, match="must share a trigger"):
+            await service.update(edited, RitualUpdate(trigger=RitualTrigger.TICKET_CLAIM))
+
+        (reported,) = [g for g in await service.list_groups_by_project(test_project.id) if g.id == group.id]
+        assert sorted({r.trigger.value for r in reported.rituals}) == ["every_sprint", "ticket_close"]
 
     async def test_create_ritual_in_percentage_group_requires_percentage(self, db, test_project):
         """Test that rituals in PERCENTAGE groups must have percentage > 0."""
@@ -4099,6 +4148,40 @@ class TestPendingGatesAPI:
 @pytest.mark.asyncio
 class TestRitualGroupsAPI:
     """Tests for ritual groups API endpoints."""
+
+    async def test_group_responses_report_their_triggers(self, client, auth_headers, test_project, db):
+        """Every group route carries `triggers`: one entry is the invariant,
+        two is a legacy mixed group to split (CHT-1403)."""
+        from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup
+        from app.enums import SelectionMode
+
+        clean = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="clean", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        mixed = await OxydeRitualGroup.objects.create(
+            project_id=test_project.id, name="mixed", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="s1", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=clean.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="s2", prompt="p", trigger=RitualTrigger.EVERY_SPRINT, group_id=mixed.id,
+        )
+        await OxydeRitual.objects.create(
+            project_id=test_project.id, name="t1", prompt="p", trigger=RitualTrigger.TICKET_CLOSE, group_id=mixed.id,
+        )
+        await OxydeRitual.objects.create(  # inactive members do not count
+            project_id=test_project.id, name="t2", prompt="p", trigger=RitualTrigger.TICKET_CLAIM,
+            group_id=clean.id, is_active=False,
+        )
+
+        response = await client.get(f"/api/rituals/groups?project_id={test_project.id}", headers=auth_headers)
+        assert response.status_code == 200
+        by_name = {g["name"]: g["triggers"] for g in response.json()}
+        assert by_name == {"clean": ["every_sprint"], "mixed": ["every_sprint", "ticket_close"]}
+
+        one = await client.get(f"/api/rituals/groups/{mixed.id}", headers=auth_headers)
+        assert one.json()["triggers"] == ["every_sprint", "ticket_close"]
 
     async def test_create_ritual_group_api(self, client, auth_headers, test_project):
         """Test creating a ritual group via API."""

@@ -364,7 +364,7 @@ def register(cli):
                   help="When ritual is required: every_sprint, ticket_close (when closing), or ticket_claim (when claiming)")
     @click.option("--note-required/--no-note-required", default=True,
                   help="Require a note when attesting (default: required)")
-    @click.option("--group", help="Name of ritual group to add this ritual to (for random/rotation selection)")
+    @click.option("--group", help="Name of ritual group to add this ritual to (for random/rotation selection; members must share a trigger)")
     @click.option("--weight", type=float, default=1.0, help="Weight for random selection in group (default: 1.0)")
     @click.option("--percentage", type=float, help="Percentage chance (0-100) for PERCENTAGE mode groups")
     @_main().require_project
@@ -431,7 +431,7 @@ def register(cli):
                   help="New approval mode")
     @click.option("--note-required/--no-note-required", default=None,
                   help="Require a note when attesting")
-    @click.option("--group", help="Name of ritual group (use empty string '' to remove from group)")
+    @click.option("--group", help="Name of ritual group (members must share a trigger; use empty string '' to remove from group)")
     @click.option("--weight", type=float, help="Weight for random selection in group")
     @click.option("--percentage", type=float, help="Percentage chance (0-100) for PERCENTAGE mode groups")
     @click.option("--conditions", help="JSON conditions for when ritual applies (e.g., '{\"estimate__gte\": 3}'). Use '{}' to clear.")
@@ -871,6 +871,12 @@ def register(cli):
             }.get(group["selection_mode"], group["selection_mode"])
 
             console.print(f"  [cyan]{group['name']}[/cyan] - {mode_desc}")
+            triggers = group.get("triggers") or []
+            if len(triggers) > 1:
+                console.print(
+                    f"    [red]mixed triggers: {', '.join(triggers)} -- members must share a trigger; "
+                    f"move the odd ones out (CHT-1403)[/red]"
+                )
 
             # Show rituals in this group
             rituals = _client().get_rituals(project_id)
