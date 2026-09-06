@@ -247,6 +247,16 @@ Using SQLite with Oxyde ORM and Oxyde migrations.
    oxyde migrate
    ```
 
+`makemigrations` never reads a database: it replays the migration chain
+in memory and diffs that against the models, and raw `ctx.execute(...)`
+SQL is invisible to the replay. If you hand-write a migration (a data
+fix, SQLite's table-rebuild dance), also record its schema state with
+the declarative `ctx.*` calls in a `collect`-mode-only branch, as
+`0017_record_hand_written_schema_state.py` does; otherwise the next
+`makemigrations` proposes your change again (CHT-1410: by 0016 that
+was 51 phantom operations). `tests/test_migration_state.py` fails
+while the replay and the models disagree.
+
 ### How a database comes to exist
 
 - **`chaotic system install` / `upgrade`** run `oxyde migrate` before starting the service; a hand-run `oxyde migrate` (above) does the same. These are the only paths that migrate an *existing* database.
