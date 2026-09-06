@@ -1,7 +1,6 @@
 """Ritual service for managing rituals and attestations."""
 import json
 import logging
-import random
 from datetime import datetime, timezone
 
 from oxyde import IntegrityError, atomic
@@ -15,6 +14,7 @@ from app.enums import (
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
+from app.services.ritual_selection import Selection, select, select_random_one, select_round_robin
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
@@ -83,7 +83,7 @@ class RitualService:
         """For RANDOM_ONE/ROUND_ROBIN groups, only the selected ritual
         may be attested.
 
-        Mirrors the listing logic in `_apply_group_selection` exactly:
+        Mirrors the listing logic in ritual_selection.select exactly:
         same set of siblings (`group=ritual.group_id`, `is_active=True`,
         and — for the RANDOM_ONE path — the same `_evaluate_conditions`
         filter the listing applies). Without this mirroring, the seeded
@@ -120,7 +120,7 @@ class RitualService:
                 # validate against. Allow the attestation through to
                 # avoid false rejection on a degenerate group.
                 return
-            picked = self._select_random_one(siblings, seed=issue_id)
+            picked = select_random_one(siblings, seed=issue_id)
             if picked is not None and picked.id != ritual.id:
                 raise ValueError(
                     f"Ritual '{ritual.name}' is not the selected ritual in "
@@ -130,20 +130,9 @@ class RitualService:
             return
 
         if group.selection_mode == SelectionMode.ROUND_ROBIN:
-            # Listing returns sorted_rituals[(i+1) % N] where i is the
-            # index of last_selected_ritual_id (or 0 if unset). Mirror
-            # that here so we accept the same ritual the listing
-            # presented. Without this match, once a single advance has
-            # fired (e.g. via a sprint-context call sharing the group),
-            # validate rejects the very ritual the listing offers.
-            sorted_rituals = sorted(siblings, key=lambda r: r.created_at)
-            current_index = 0
-            if group.last_selected_ritual_id:
-                for i, r in enumerate(sorted_rituals):
-                    if r.id == group.last_selected_ritual_id:
-                        current_index = (i + 1) % len(sorted_rituals)
-                        break
-            picked = sorted_rituals[current_index]
+            # The same pure function the listing uses, so validate accepts
+            # exactly the ritual the listing offered.
+            picked = select_round_robin(group, siblings)
             if picked.id != ritual.id:
                 raise ValueError(
                     f"Ritual '{ritual.name}' is not the selected ritual in "
@@ -386,116 +375,20 @@ class RitualService:
         await group.delete()
 
     # =========================================================================
-    # Group Selection Logic
+    # Group Selection (the computation is pure, in ritual_selection.py)
     # =========================================================================
 
-    async def _apply_group_selection(
-        self, rituals: list[OxydeRitual], sprint_id: str | None = None,
-        advance_round_robin: bool = False
-    ) -> list[OxydeRitual]:
-        """Apply group selection logic to filter rituals."""
-        if not rituals:
-            return []
+    async def _load_groups(self, rituals: list[OxydeRitual]) -> dict[str, OxydeRitualGroup]:
+        """Every group the rituals belong to, in one query."""
+        group_ids = sorted({r.group_id for r in rituals if r.group_id})
+        if not group_ids:
+            return {}
+        return {g.id: g for g in await OxydeRitualGroup.objects.filter(id__in=group_ids).all()}
 
-        ungrouped = [r for r in rituals if r.group_id is None]
-        grouped = [r for r in rituals if r.group_id is not None]
-
-        if not grouped:
-            return ungrouped
-
-        groups: dict[str, list[OxydeRitual]] = {}
-        for ritual in grouped:
-            if ritual.group_id not in groups:
-                groups[ritual.group_id] = []
-            groups[ritual.group_id].append(ritual)
-
-        selected_from_groups = []
-        for group_id, group_rituals in groups.items():
-            group = await self.get_group_by_id(group_id)
-            if not group:
-                selected_from_groups.extend(group_rituals)
-                continue
-
-            active_rituals = [r for r in group_rituals if r.is_active]
-            if not active_rituals:
-                continue
-
-            if group.selection_mode == SelectionMode.RANDOM_ONE:
-                selected = self._select_random_one(active_rituals, seed=sprint_id)
-                if selected:
-                    selected_from_groups.append(selected)
-
-            elif group.selection_mode == SelectionMode.ROUND_ROBIN:
-                selected = await self._select_round_robin(
-                    group, active_rituals, sprint_id, advance=advance_round_robin
-                )
-                if selected:
-                    selected_from_groups.append(selected)
-
-            elif group.selection_mode == SelectionMode.PERCENTAGE:
-                selected = self._select_by_percentage(active_rituals, seed=sprint_id)
-                selected_from_groups.extend(selected)
-
-        return ungrouped + selected_from_groups
-
-    def _select_random_one(self, rituals: list[OxydeRitual], seed: str | None = None) -> OxydeRitual | None:
-        """Select one ritual randomly, weighted by weight field."""
-        if not rituals:
-            return None
-
-        weights = [r.weight for r in rituals]
-        total_weight = sum(weights)
-        if total_weight <= 0:
-            return None
-
-        if seed:
-            rng = random.Random(seed)
-            selected = rng.choices(rituals, weights=weights, k=1)
-        else:
-            selected = random.choices(rituals, weights=weights, k=1)
-        return selected[0] if selected else None
-
-    async def _select_round_robin(
-        self, group: OxydeRitualGroup, rituals: list[OxydeRitual], sprint_id: str | None,
-        advance: bool = False
-    ) -> OxydeRitual | None:
-        """Select next ritual in round-robin order."""
-        if not rituals:
-            return None
-
-        sorted_rituals = sorted(rituals, key=lambda r: r.created_at)
-
-        current_index = 0
-        if group.last_selected_ritual_id:
-            for i, r in enumerate(sorted_rituals):
-                if r.id == group.last_selected_ritual_id:
-                    current_index = (i + 1) % len(sorted_rituals)
-                    break
-
-        selected = sorted_rituals[current_index]
-
-        if advance and group.last_selected_ritual_id != selected.id:
-            group.last_selected_ritual_id = selected.id
-            await group.save(update_fields={"last_selected_ritual_id"})
-
-        return selected
-
-    def _select_by_percentage(
-        self, rituals: list[OxydeRitual], seed: str | None = None
-    ) -> list[OxydeRitual]:
-        """Select rituals based on their percentage chance."""
-        selected = []
-        for ritual in rituals:
-            if ritual.percentage is not None and ritual.percentage > 0:
-                if seed:
-                    ritual_seed = f"{seed}:{ritual.id}"
-                    rng = random.Random(ritual_seed)
-                    if rng.random() * 100 < ritual.percentage:
-                        selected.append(ritual)
-                else:
-                    if random.random() * 100 < ritual.percentage:
-                        selected.append(ritual)
-        return selected
+    async def _select(self, rituals: list[OxydeRitual], seed: str | None) -> Selection:
+        """The selection for `seed` (a sprint id or an issue id). Reads
+        only; see record_sprint_rotation for the one write."""
+        return select(rituals, await self._load_groups(rituals), seed)
 
     def _is_ritual_pending(self, ritual: OxydeRitual, attestation: OxydeRitualAttestation | None) -> bool:
         """Check if a ritual is still pending based on its attestation state."""
@@ -523,7 +416,12 @@ class RitualService:
         """
         rituals = await self.list_by_project(project_id)
         sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
-        await self._apply_group_selection(sprint_rituals, sprint_id, advance_round_robin=True)
+        groups = await self._load_groups(sprint_rituals)
+        selection = select(sprint_rituals, groups, sprint_id)
+        for group_id, ritual_id in selection.round_robin_advances.items():
+            group = groups[group_id]
+            group.last_selected_ritual_id = ritual_id
+            await group.save(update_fields={"last_selected_ritual_id"})
 
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str
@@ -532,7 +430,7 @@ class RitualService:
         rituals = await self.list_by_project(project_id)
 
         sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
-        selected_rituals = await self._apply_group_selection(sprint_rituals, sprint_id)
+        selected_rituals = (await self._select(sprint_rituals, sprint_id)).chosen
 
         pending = []
         for ritual in selected_rituals:
@@ -646,7 +544,7 @@ class RitualService:
                 continue
             ticket_rituals.append(ritual)
 
-        selected_rituals = await self._apply_group_selection(ticket_rituals, issue_id)
+        selected_rituals = (await self._select(ticket_rituals, issue_id)).chosen
 
         pending = []
         for ritual in selected_rituals:
@@ -674,7 +572,7 @@ class RitualService:
                 continue
             claim_rituals.append(ritual)
 
-        selected_rituals = await self._apply_group_selection(claim_rituals, issue_id)
+        selected_rituals = (await self._select(claim_rituals, issue_id)).chosen
 
         pending = []
         for ritual in selected_rituals:

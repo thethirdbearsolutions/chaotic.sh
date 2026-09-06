@@ -251,14 +251,16 @@ class TestGroupSelectionEnforcedAtAttest:
         )
 
         # RANDOM_ONE selection is a weighted pick seeded by the issue id
-        # (mirrors _apply_group_selection; last_selected_ritual_id only
+        # (mirrors ritual_selection.select; last_selected_ritual_id only
         # drives ROUND_ROBIN). Compute the pick the listing would offer,
         # then attempt to attest the OTHER ritual — must be rejected.
         service = RitualService()
         siblings = await OxydeRitual.objects.filter(
             group_id=group.id, is_active=True,
         ).all()
-        picked = service._select_random_one(siblings, seed=test_issue.id)
+        from app.services.ritual_selection import select_random_one
+
+        picked = select_random_one(siblings, seed=test_issue.id)
         non_selected = r_b if picked.id == r_a.id else r_a
 
         with pytest.raises((ValueError, Exception)) as exc:

@@ -1,5 +1,7 @@
 """Tests for ritual service and API endpoints."""
 import pytest
+
+from app.services.ritual_selection import select_by_percentage, select_random_one
 from datetime import datetime, timezone
 from pydantic import ValidationError
 
@@ -313,7 +315,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        selected = await service._apply_group_selection([ritual1, ritual2], sprint_id="test-sprint")
+        selected = (await service._select([ritual1, ritual2], "test-sprint")).chosen
         assert len(selected) == 2
 
     async def test_random_one_selection_deterministic_with_seed(self, db, test_project):
@@ -341,14 +343,14 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Same seed should give same result
-        result1 = await service._apply_group_selection(rituals, sprint_id="fixed-seed")
-        result2 = await service._apply_group_selection(rituals, sprint_id="fixed-seed")
+        result1 = (await service._select(rituals, "fixed-seed")).chosen
+        result2 = (await service._select(rituals, "fixed-seed")).chosen
         assert len(result1) == 1
         assert len(result2) == 1
         assert result1[0].id == result2[0].id
 
         # Different seed may give different result (probabilistic)
-        result3 = await service._apply_group_selection(rituals, sprint_id="different-seed")
+        result3 = (await service._select(rituals, "different-seed")).chosen
         assert len(result3) == 1
 
     async def test_random_one_selection_respects_weights(self, db, test_project):
@@ -384,14 +386,16 @@ class TestRitualGroupSelectionLogic:
         # Run multiple times - high weight should be selected more often
         high_count = 0
         for i in range(50):
-            result = await service._apply_group_selection([high_weight, low_weight], sprint_id=f"seed-{i}")
+            result = (await service._select([high_weight, low_weight], f"seed-{i}")).chosen
             if result[0].name == "high-weight":
                 high_count += 1
         # With 100:1 ratio, high weight should be selected ~99% of the time
         assert high_count > 40  # Allow some variance
 
-    async def test_round_robin_advances_on_flag(self, db, test_project):
-        """Test that ROUND_ROBIN advances state when advance flag is True."""
+    async def test_round_robin_advances_only_when_a_rotation_is_recorded(self, db, test_project):
+        """select() reports the advance; record_sprint_rotation is the one
+        place that writes it (CHT-1280/CHT-1408). Listing in between does
+        not move the pointer."""
         from app.oxyde_models.ritual import OxydeRitualGroup
         from app.enums import SelectionMode
 
@@ -415,16 +419,19 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
 
-        # First selection with advance
-        result1 = await service._apply_group_selection(rituals, sprint_id="s1", advance_round_robin=True)
-        assert len(result1) == 1
-        first_selected = result1[0].id
+        # Listing reports what a rotation would record, and writes nothing.
+        offered = await service._select(rituals, "s1")
+        assert len(offered.chosen) == 1
+        first_selected = offered.chosen[0].id
+        assert offered.round_robin_advances == {group.id: first_selected}
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id is None
 
-        group = await OxydeRitualGroup.objects.get(id=group.id)  # Re-fetch after mutation
-        assert group.last_selected_ritual_id == first_selected
+        # The rotation is the write.
+        await service.record_sprint_rotation(test_project.id, "s1")
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == first_selected
 
-        # Second selection with advance should get next ritual
-        result2 = await service._apply_group_selection(rituals, sprint_id="s2", advance_round_robin=True)
+        # The next sprint is offered the next sibling.
+        result2 = (await service._select(rituals, "s2")).chosen
         assert len(result2) == 1
         assert result2[0].id != first_selected
 
@@ -450,8 +457,8 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Same seed should give same result
-        result1 = await service._apply_group_selection([ritual], sprint_id="fixed-seed")
-        result2 = await service._apply_group_selection([ritual], sprint_id="fixed-seed")
+        result1 = (await service._select([ritual], "fixed-seed")).chosen
+        result2 = (await service._select([ritual], "fixed-seed")).chosen
         assert result1 == result2
 
     async def test_percentage_selection_respects_percentage(self, db, test_project):
@@ -477,7 +484,7 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         for i in range(10):
-            result = await service._apply_group_selection([always_ritual], sprint_id=f"seed-{i}")
+            result = (await service._select([always_ritual], f"seed-{i}")).chosen
             assert len(result) == 1
 
     async def test_group_selection_skips_inactive_rituals(self, db, test_project):
@@ -511,7 +518,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = await service._apply_group_selection([active, inactive], sprint_id="test")
+        result = (await service._select([active, inactive], "test")).chosen
         assert len(result) == 1
         assert result[0].name == "active"
 
@@ -548,13 +555,13 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         # Should include all rituals from deleted group
-        result = await service._apply_group_selection([ritual1, ritual2], sprint_id="test")
+        result = (await service._select([ritual1, ritual2], "test")).chosen
         assert len(result) == 2
 
     async def test_select_random_one_empty_list(self, db, test_project):
         """Test _select_random_one with empty list returns None."""
         service = RitualService()
-        result = service._select_random_one([])
+        result = select_random_one([])
         assert result is None
 
     async def test_select_random_one_zero_total_weight(self, db, test_project):
@@ -567,7 +574,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = service._select_random_one([ritual])
+        result = select_random_one([ritual])
         assert result is None
 
     async def test_select_by_percentage_zero_percentage(self, db, test_project):
@@ -581,7 +588,7 @@ class TestRitualGroupSelectionLogic:
 
         service = RitualService()
         for i in range(20):
-            result = service._select_by_percentage([ritual], seed=f"seed-{i}")
+            result = select_by_percentage([ritual], seed=f"seed-{i}")
             assert len(result) == 0
 
     async def test_select_by_percentage_null_percentage(self, db, test_project):
@@ -594,7 +601,7 @@ class TestRitualGroupSelectionLogic:
         )
 
         service = RitualService()
-        result = service._select_by_percentage([ritual], seed="test")
+        result = select_by_percentage([ritual], seed="test")
         assert len(result) == 0
 
 
