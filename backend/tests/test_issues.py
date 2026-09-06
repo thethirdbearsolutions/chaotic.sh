@@ -4236,3 +4236,63 @@ async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, tes
     assert detail["unattested"] == [] and detail["awaiting_approval"] == []
     assert "1 gate ritual only a human can complete (claim-gate)" in detail["message"]
     assert "a human must complete the gate ritual before claiming" in detail["message"]
+
+
+@pytest.mark.asyncio
+class TestBlockingCycleCheckIsAtomic:
+    """CHT-1311: the cycle check runs inside the insert's transaction,
+    after the writer lock, so an inverse BLOCKS edge committed by a
+    concurrent writer is seen and refused."""
+
+    async def _issue(self, project, user, title):
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create(IssueCreate(title=title, project_id=project.id), project, user.id)
+
+    async def test_an_edge_landing_before_the_lock_is_seen_by_the_check(self, db, test_project, test_user):
+        from unittest.mock import patch
+        from app.enums import IssueRelationType
+        from app.oxyde_models.issue import OxydeIssueRelation
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService, RelationCycleError
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        service = IssueService()
+        original = IssueService._take_relation_write_lock
+
+        async def rival_wins_the_lock(self_):
+            # What a concurrent "Y blocks X" that got the writer lock first
+            # leaves behind by the time our lock is granted.
+            await OxydeIssueRelation.objects.create(
+                issue_id=y.id, related_issue_id=x.id, relation_type=IssueRelationType.BLOCKS,
+            )
+            await original(self_)
+
+        with patch.object(IssueService, "_take_relation_write_lock", rival_wins_the_lock):
+            with pytest.raises(RelationCycleError, match="blocking cycle"):
+                await service.create_relation(
+                    x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+                )
+        rows = await OxydeIssueRelation.objects.filter(issue_id=x.id, related_issue_id=y.id).all()
+        assert rows == [], "the refused edge must not have landed"
+
+    async def test_the_check_and_the_insert_share_one_transaction(self, db, test_project, test_user):
+        """A failure after the lock rolls back everything, including the
+        lock's own (zero-row) write; a success commits the edge once."""
+        from app.enums import IssueRelationType
+        from app.oxyde_models.issue import OxydeIssueRelation
+        from app.schemas.issue import IssueRelationCreate
+        from app.services.issue_service import IssueService
+
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        service = IssueService()
+        first = await service.create_relation(
+            x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+        )
+        again = await service.create_relation(
+            x.id, IssueRelationCreate(related_issue_id=y.id, relation_type=IssueRelationType.BLOCKS),
+        )
+        assert again.id == first.id
+        assert len(await OxydeIssueRelation.objects.filter(issue_id=x.id).all()) == 1
