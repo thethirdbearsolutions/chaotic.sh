@@ -130,6 +130,20 @@ form back to a member on read. So:
 - **Never** `str(member)` or f-string a member: that yields a third form,
   `"IssueStatus.BACKLOG"`, which nothing expects (the frontend's `cleanValue`
   still strips that prefix as legacy defense).
+- **Filtering or `QuerySet.update()`?** Pass the member:
+  `.filter(status=SprintStatus.ACTIVE)`, `.update(status=SprintStatus.ACTIVE)`.
+  Neither path goes through pydantic; Oxyde serialises those values through
+  its own `TYPE_REGISTRY`, and `DbEnum` registers every enum class there so a
+  member means its stored `.name` on both (CHT-1398). Before that, a member
+  on those paths packed as its `.value`: a filter matched nothing and an
+  `.update()` would have stored `"active"`. That is why older code spells
+  `.filter(status=X.name)`; it still works and need not be rewritten, but do
+  not add a `.name` for a filter that "isn't matching": it is matching, and
+  the missing row is something else. The registration is per enum class,
+  not per column: a member passed for a plain `str` column (the activity
+  table's `old_value`/`new_value`) also becomes its `.name`, and those
+  columns store whatever was written (CHT-1347). Still hand-written
+  `.name`: `execute_raw` params, and a member inside an `F()` expression.
 
 This is guarded, not just documented: `backend/tests/test_dbenum_contract.py`
 pins the contract for every `DbEnum` field (registry-derived, so new models are

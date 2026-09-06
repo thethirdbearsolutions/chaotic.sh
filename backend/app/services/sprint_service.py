@@ -331,6 +331,5 @@ class SprintService:
         """List sprints for a project."""
         qs = OxydeSprint.objects.filter(project_id=project_id)
         if status:
-            # .name for filter (bypasses model_dump, goes to msgpack raw)
-            qs = qs.filter(status=status.name if hasattr(status, 'name') else status)
+            qs = qs.filter(status=status)
         return await qs.order_by("-created_at").offset(skip).limit(limit).all()

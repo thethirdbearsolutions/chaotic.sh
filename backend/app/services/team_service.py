@@ -156,7 +156,7 @@ class TeamService:
     ) -> list[OxydeTeamInvitation]:
         """Get all pending invitations for a team."""
         return await OxydeTeamInvitation.objects.filter(
-            team_id=team_id, status=InvitationStatus.PENDING.name  # .name for filter
+            team_id=team_id, status=InvitationStatus.PENDING
         ).all()
 
     async def accept_invitation(

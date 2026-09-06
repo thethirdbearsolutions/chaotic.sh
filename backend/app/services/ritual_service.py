@@ -989,7 +989,7 @@ class RitualService:
         async with atomic():
             existing_intent = await OxydeTicketLimbo.objects.filter(
                 issue_id=issue_id,
-                limbo_type=limbo_type.name,
+                limbo_type=limbo_type,
                 cleared_at=None,
             ).first()
 
@@ -1050,7 +1050,7 @@ class RitualService:
                     # past a real intent and should fire.
                     rechecked = await OxydeTicketLimbo.objects.filter(
                         issue_id=issue_id,
-                        limbo_type=limbo_type.name,
+                        limbo_type=limbo_type,
                         cleared_at=None,
                     ).first()
                     if rechecked is not None:
@@ -1692,9 +1692,7 @@ class RitualService:
         active_rituals = {r.id: r for r in await OxydeRitual.objects.filter(
             project_id=project_id,
             is_active=True,
-            # DbEnum columns store .name; a raw enum member binds its
-            # .value ('gate') and matches nothing.
-            approval_mode=ApprovalMode.GATE.name,
+            approval_mode=ApprovalMode.GATE,
         ).all()}
 
         # Get uncleared limbo records and their unresolved blockers,
@@ -1778,7 +1776,7 @@ class RitualService:
         done_statuses = {IssueStatus.DONE, IssueStatus.CANCELED}
         review_rituals = await OxydeRitual.objects.filter(
             project_id=project_id,
-            approval_mode=ApprovalMode.REVIEW.name,  # .name for filter
+            approval_mode=ApprovalMode.REVIEW,
             is_active=True,
         ).all()
 
