@@ -4150,3 +4150,89 @@ async def test_issue_response_resolves_foreign_key_names(client, auth_headers, t
     row = next(i for i in listed if i["id"] == created["id"])
     assert row["assignee_name"] == test_user.name and row["project_key"] == test_project.key
 
+
+
+# ============================================================================
+# Claim/close refusal payload carries attestation state (CHT-1360)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_claim_refusal_reports_attestation_state(client, auth_headers, test_project, test_issue, db):
+    """The 409 for pending claim rituals must let the caller tell "attest
+    this" from "attested, awaiting a human": rows are the PendingRitualResponse
+    shape (approval_mode + attestation), and `unattested` / `awaiting_approval`
+    plus the message say which is which (CHT-1360)."""
+    from app.enums import ApprovalMode, RitualTrigger
+    from app.oxyde_models.ritual import OxydeRitual
+
+    ritual = await OxydeRitual.objects.create(
+        project_id=test_project.id,
+        name="design-review",
+        prompt="Write the design.",
+        trigger=RitualTrigger.TICKET_CLAIM,
+        approval_mode=ApprovalMode.REVIEW,
+    )
+
+    # Non-interactive human (no X-Chaotic-Interactive header) is gated like an agent.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "claim_rituals_pending"
+    (row,) = detail["pending_rituals"]
+    assert row["name"] == "design-review" and row["prompt"] == "Write the design."
+    assert row["approval_mode"] == "review" and row["trigger"] == "ticket_claim"
+    assert row["attestation"] is None
+    assert detail["unattested"] == ["design-review"] and detail["awaiting_approval"] == []
+    assert detail["gate"] == []
+    assert "1 unattested (design-review)" in detail["message"]
+    assert "Attest the unattested ones before claiming." in detail["message"]
+
+    # Attest (review mode records it and waits for a human)...
+    attest = await client.post(
+        f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
+        headers=auth_headers, json={"note": "Design written."},
+    )
+    assert attest.status_code == 200
+
+    # ...and the same claim is still refused, but the payload now says why.
+    response = await client.patch(
+        f"/api/issues/{test_issue.id}", headers=auth_headers, json={"status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    (row,) = detail["pending_rituals"]
+    assert row["attestation"] is not None
+    assert row["attestation"]["note"] == "Design written."
+    assert row["attestation"]["approved_at"] is None
+    assert detail["unattested"] == [] and detail["awaiting_approval"] == ["design-review"]
+    assert "1 attested, awaiting human approval (design-review)" in detail["message"]
+    assert "Nothing more to attest; a human must approve the attested ones before claiming." in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_create_refusal_rows_carry_approval_mode(client, auth_headers, test_project, db):
+    """The create-as-in_progress refusal has no issue yet, so attestation is
+    None for every row, but approval_mode still travels (CHT-1360)."""
+    from app.enums import ApprovalMode, RitualTrigger
+    from app.oxyde_models.ritual import OxydeRitual
+
+    await OxydeRitual.objects.create(
+        project_id=test_project.id, name="claim-gate", prompt="Gate.",
+        trigger=RitualTrigger.TICKET_CLAIM, approval_mode=ApprovalMode.GATE,
+    )
+    response = await client.post(
+        f"/api/projects/{test_project.id}/issues", headers=auth_headers,
+        json={"title": "Straight to work", "status": "in_progress"},
+    )
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    (row,) = detail["pending_rituals"]
+    assert row["approval_mode"] == "gate" and row["attestation"] is None
+    # A GATE ritual is never "attest this": only a human can complete it.
+    assert detail["gate"] == ["claim-gate"]
+    assert detail["unattested"] == [] and detail["awaiting_approval"] == []
+    assert "1 gate ritual only a human can complete (claim-gate)" in detail["message"]
+    assert "a human must complete the gate ritual before claiming" in detail["message"]

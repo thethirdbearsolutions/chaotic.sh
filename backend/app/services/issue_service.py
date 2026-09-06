@@ -78,14 +78,27 @@ class SprintInLimboError(Exception):
 
 
 class TicketRitualsError(Exception):
-    """Raised when ticket has pending rituals and cannot be closed."""
+    """Raised when a ticket has pending rituals and cannot be closed.
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    Carries the pending ``OxydeRitual`` rows and (when the issue exists)
+    its id so the API layer can report each ritual's approval_mode and
+    attestation state (CHT-1360); ``pending_rituals`` is the derived
+    name/prompt list kept for compatibility. This message is the
+    service-level log line; the wire-form message, which says what is
+    attestable and what only a human can do, is built by the API layer.
+    """
+
+    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
-        self.pending_rituals = pending_rituals
-        ritual_names = [r.get("name", "unknown") for r in pending_rituals]
+        self.rituals = list(rituals or [])
+        self.pending_rituals = pending_rituals if pending_rituals is not None else [
+            {"name": r.name, "prompt": r.prompt} for r in self.rituals
+        ]
+        self.issue_pk = issue_pk
+        ritual_names = [r.get("name", "unknown") for r in self.pending_rituals]
         super().__init__(
-            f"Ticket has pending rituals. Complete them before closing: {', '.join(ritual_names)}"
+            f"Ticket has pending rituals: {', '.join(ritual_names)} "
+            "(see the API error detail for each one's attestation state)."
         )
 
 
@@ -110,14 +123,27 @@ class IntentInFlightError(Exception):
 
 
 class ClaimRitualsError(Exception):
-    """Raised when ticket has pending claim rituals and cannot be claimed."""
+    """Raised when a ticket has pending claim rituals and cannot be claimed.
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    Carries the pending ``OxydeRitual`` rows and (when the issue exists)
+    its id so the API layer can report each ritual's approval_mode and
+    attestation state (CHT-1360); ``pending_rituals`` is the derived
+    name/prompt list kept for compatibility. This message is the
+    service-level log line; the wire-form message, which says what is
+    attestable and what only a human can do, is built by the API layer.
+    """
+
+    def __init__(self, issue_id: str, pending_rituals: list[dict] | None = None, rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
-        self.pending_rituals = pending_rituals
-        ritual_names = [r.get("name", "unknown") for r in pending_rituals]
+        self.rituals = list(rituals or [])
+        self.pending_rituals = pending_rituals if pending_rituals is not None else [
+            {"name": r.name, "prompt": r.prompt} for r in self.rituals
+        ]
+        self.issue_pk = issue_pk
+        ritual_names = [r.get("name", "unknown") for r in self.pending_rituals]
         super().__init__(
-            f"Ticket has pending claim rituals. Complete them before claiming: {', '.join(ritual_names)}"
+            f"Ticket has pending claim rituals: {', '.join(ritual_names)} "
+            "(see the API error detail for each one's attestation state)."
         )
 
 
@@ -466,11 +492,7 @@ class IssueService:
                         # Race resolved by the other writer clearing
                         # the intent before we re-checked. Treat as no
                         # active intent; nothing more to do here.
-                        pending_info = [
-                            {"name": r.name, "prompt": r.prompt}
-                            for r in pending_rituals
-                        ]
-                        raise error_class(issue.identifier, pending_info)
+                        raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
                 else:
                     for ritual in pending_rituals:
                         await OxydeTicketLimboBlocker.objects.create(
@@ -537,8 +559,7 @@ class IssueService:
                     "Failed to fan out gate-pending inbox/email for issue=%s", issue.id,
                 )
 
-        pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-        raise error_class(issue.identifier, pending_info)
+        raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
 
     async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
         """CHT-1250/CHT-1251: a GATE ritual just became blocking on
@@ -848,16 +869,14 @@ class IssueService:
                 rituals = await ritual_service.list_by_project(project_id)
                 claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
                 if claim_rituals:
-                    pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
-                    raise ClaimRitualsError("NEW", pending_info)
+                    raise ClaimRitualsError("NEW", rituals=claim_rituals)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
             rituals = await ritual_service.list_by_project(project_id)
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
-                pending_info = [{"name": r.name, "prompt": r.prompt} for r in close_rituals]
-                raise TicketRitualsError("NEW", pending_info)
+                raise TicketRitualsError("NEW", rituals=close_rituals)
 
         max_retries = 5
         last_error = None

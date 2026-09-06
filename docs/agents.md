@@ -201,7 +201,14 @@ can show or reason over, `error_code` is present whenever the failure has
 a stable name (`sprint_in_arrears`, `claim_rituals_pending`,
 `tool_input`, `validation_error`, `unexpected`, ...), and governance
 errors keep their structure (`pending_rituals`, `arrears_by`, `override`
-hints) so you can act on them without parsing prose. Both transports
+hints) so you can act on them without parsing prose. A claim/close refused
+for pending ticket rituals lists each ritual with its `approval_mode` and
+any recorded `attestation` (the same rows `ritual_pending` returns), plus
+three name lists -- `unattested` (attest these), `awaiting_approval`
+(attested; a human approves) and `gate` (a human completes; attesting a
+gate ritual is refused) -- and its message says which you are looking at.
+Re-attesting something that is only waiting on a human is never the right
+move (CHT-1360). Both transports
 produce the identical envelope. (The CLI's own `--json` mode keeps its
 flat `{"error": "..."}` string -- that contract is for shells and exit
 codes, this one is for models.)

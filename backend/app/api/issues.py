@@ -27,6 +27,7 @@ from app.schemas.issue import (
 )
 from app.schemas.document import DocumentResponse
 from app.services.document_service import DocumentService
+from app.api.rituals import pending_ritual_responses
 from app.services.issue_service import (
     IssueService,
     SprintInArrearsError,
@@ -45,7 +46,7 @@ from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssueRelation
-from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
+from app.enums import ApprovalMode, IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import DocumentActivityType, IssueRelationType
 
 
@@ -253,6 +254,62 @@ async def issue_response(issue: Issue) -> IssueResponse:
     return (await issues_to_responses([issue]))[0]
 
 
+async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> dict:
+    """The 409 detail for a claim/close refused by pending ticket rituals
+    (CHT-1360). Rows are the same PendingRitualResponse shape ritual_pending
+    returns -- approval_mode and attestation included -- and three name
+    lists plus the message separate what the caller can still do from what
+    only a human can:
+
+      * ``unattested``: AUTO/REVIEW rituals with no attestation -> attest.
+      * ``awaiting_approval``: attested, REVIEW -> a human approves.
+      * ``gate``: GATE rituals -> a human completes (attesting is refused).
+
+        "Ticket has pending claim rituals: 1 unattested (work-on-branch);
+         1 attested, awaiting human approval (design-review). Attest the
+         unattested ones before claiming."
+
+    Cost: one attestation lookup per ritual (plus two user lookups per
+    attested one) on top of the gating queries the service already ran;
+    fine at today's ritual counts, revisit if projects grow dozens.
+    """
+    rows = await pending_ritual_responses(e.issue_pk, e.rituals) if e.rituals else []
+    if rows:
+        gate = [r.name for r in rows if r.approval_mode == ApprovalMode.GATE and r.attestation is None]
+        awaiting = [r.name for r in rows if r.attestation is not None]
+        unattested = [r.name for r in rows if r.attestation is None and r.approval_mode != ApprovalMode.GATE]
+        pending = [r.model_dump(mode="json") for r in rows]
+    else:  # a raiser without rows: keep the minimal name/prompt list
+        unattested = [r.get("name", "unknown") for r in e.pending_rituals]
+        awaiting, gate = [], []
+        pending = e.pending_rituals
+    parts = []
+    if unattested:
+        parts.append(f"{len(unattested)} unattested ({', '.join(unattested)})")
+    if awaiting:
+        parts.append(f"{len(awaiting)} attested, awaiting human approval ({', '.join(awaiting)})")
+    if gate:
+        parts.append(f"{len(gate)} gate ritual{'s' if len(gate) != 1 else ''} only a human can complete ({', '.join(gate)})")
+    if unattested:
+        action = f"Attest the unattested ones before {verb}."
+    else:
+        human = []
+        if awaiting:
+            human.append("approve the attested ones")
+        if gate:
+            human.append(f"complete the gate ritual{'s' if len(gate) != 1 else ''}")
+        action = f"Nothing more to attest; a human must {' and '.join(human) or 'act'} before {verb}."
+    return {
+        "error_code": error_code,
+        "message": f"{lead}: {'; '.join(parts)}. {action}",
+        "issue_id": e.issue_id,
+        "pending_rituals": pending,
+        "unattested": unattested,
+        "awaiting_approval": awaiting,
+        "gate": gate,
+    }
+
+
 async def create_issue(
     project_id: str,
     issue_in: IssueCreate,
@@ -338,22 +395,17 @@ async def create_issue(
     except TicketRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "ticket_rituals_pending",
-                "message": "Cannot create issue as done - ticket has pending rituals.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(
+                e, "ticket_rituals_pending", "Cannot create issue as done - ticket has pending rituals", "closing",
+            ),
         )
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "claim_rituals_pending",
-                "message": "Cannot create issue as in_progress - ticket has pending claim rituals.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(
+                e, "claim_rituals_pending",
+                "Cannot create issue as in_progress - ticket has pending claim rituals", "claiming",
+            ),
         )
     except IntentInFlightError as e:
         raise HTTPException(
@@ -1023,22 +1075,12 @@ async def update_issue(
     except TicketRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "ticket_rituals_pending",
-                "message": "Ticket has pending rituals. Complete them before closing.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(e, "ticket_rituals_pending", "Ticket has pending rituals", "closing"),
         )
     except ClaimRitualsError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": "claim_rituals_pending",
-                "message": "Ticket has pending claim rituals. Complete them before claiming.",
-                "issue_id": e.issue_id,
-                "pending_rituals": e.pending_rituals,
-            },
+            detail=await _ritual_refusal_detail(e, "claim_rituals_pending", "Ticket has pending claim rituals", "claiming"),
         )
     except IntentInFlightError as e:
         raise HTTPException(
