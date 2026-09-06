@@ -830,3 +830,29 @@ class TestIssueUpdateJson:
         assert result.exit_code == 1
         data = json.loads(result.stdout)
         assert 'no-such-label' in data['error'].lower()
+
+
+
+class TestZeroEstimateDisplays:
+    """CHT-1406: 0 is a real estimate in every CLI display, not "-"."""
+
+    def test_issue_show_renders_a_zero_point_estimate(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+        client.get_issue_by_identifier = MagicMock(return_value={**mock_issue, "estimate": 0})
+        client.get_sub_issues = MagicMock(return_value=[
+            {**mock_issue, "id": "sub-1", "identifier": "CHT-2", "title": "Sub", "estimate": 0},
+        ])
+        result = cli_runner.invoke(cli, ["issue", "show", mock_issue["identifier"]])
+        assert result.exit_code == 0, result.output
+        assert "Estimate: 0 points" in result.output
+        assert "- points" not in result.output
+
+    def test_sprint_show_renders_a_zero_point_estimate(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+        client.get_sprints = MagicMock(return_value=[{"id": "s1", "name": "Sprint 1", "status": "active"}])
+        client.get_sprint = MagicMock(return_value={"id": "s1", "name": "Sprint 1", "status": "active", "budget": 10, "points_spent": 0})
+        client.get_issues = MagicMock(return_value=[{**mock_issue, "estimate": 0}])
+        result = cli_runner.invoke(cli, ["sprint", "show", "Sprint 1"])
+        assert result.exit_code == 0, result.output
+        row = next((line for line in result.output.splitlines() if mock_issue["identifier"] in line), "")
+        assert row and " 0 " in row and " - " not in row

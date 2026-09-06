@@ -10,6 +10,7 @@ import sys
 
 import click
 from rich.console import Console
+from chaotic_mcp_tools.estimates import off_scale_warning
 
 
 # ── Duration parsing ─────────────────────────────────────────────────────────
@@ -511,3 +512,19 @@ def resolve_team_id(team_value: str) -> str:
 
     # No match found
     raise click.ClickException(f"Team '{team_value}' not found. Use 'chaotic team list' to see available teams.")
+
+
+def _warn_off_scale_estimate(project_id, estimate):
+    """Print (to stderr, so --json stays clean) when an estimate is off the
+    project's declared estimate_scale (CHT-1365). Advisory: the write has
+    already happened, and a failed lookup must not turn it into an error.
+    Shared by `issue create/update` and `epic create` (CHT-1407)."""
+    if estimate is None or not project_id:
+        return
+    try:
+        scale = _client().get_project(project_id).get("estimate_scale")
+    except Exception:  # noqa: BLE001 -- advisory only
+        return
+    warning = off_scale_warning(estimate, scale)
+    if warning:
+        click.echo(click.style(f"Warning: {warning}", fg="yellow"), err=True)

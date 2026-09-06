@@ -140,7 +140,8 @@ export function getEstimateOptions(projectId) {
  * @returns {string} Formatted estimate
  */
 export function formatEstimate(value, projectId) {
-  if (!value) return 'No estimate';
+  // 0 is a real (zero-point) estimate, not "unset" (CHT-1397, CHT-1406).
+  if (value === null || value === undefined) return 'No estimate';
   const options = getEstimateOptions(projectId);
   const option = options.find((o) => o.value === value);
   return option ? option.label : `${value} points`;
@@ -153,7 +154,8 @@ export function formatEstimate(value, projectId) {
  * @returns {boolean} True if value is set but not in the scale
  */
 export function isOutOfScale(value, projectId) {
-  if (!value) return false;
+  // 0 is a zero-point estimate, never off-scale (mirrors chaotic_mcp_tools/estimates.py).
+  if (value === null || value === undefined || value === 0) return false;
   const options = getEstimateOptions(projectId);
   return !options.some((o) => o.value === value);
 }

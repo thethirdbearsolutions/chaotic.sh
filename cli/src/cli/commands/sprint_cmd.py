@@ -260,7 +260,7 @@ def register(cli):
                 i["title"][:50] + ("..." if len(i["title"]) > 50 else ""),
                 i["status"].replace("_", " ").title(),
                 i["priority"].replace("_", " ").title(),
-                str(i.get("estimate") or "-")
+                "-" if i.get("estimate") is None else str(i["estimate"]),
             )
 
         console.print(table)

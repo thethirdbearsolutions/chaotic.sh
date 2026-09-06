@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, resolve_content_value
+from .shared import _client, _warn_off_scale_estimate, console, resolve_content_value
 
 
 def _main():
@@ -77,6 +77,7 @@ def register(cli):
                 data["sprint_id"] = m.resolve_sprint_id(sprint, project_id)
 
         result = _client().create_issue(project_id, title, **data)
+        _warn_off_scale_estimate(project_id, data.get("estimate"))
         console.print(f"[green]Epic created: {result['identifier']} - {result['title']}[/green]")
         console.print(f"\n[dim]Add sub-issues with:[/dim]")
         console.print(f"  chaotic issue create --parent {result['identifier']} \"Sub-issue title\"")
@@ -131,7 +132,7 @@ def register(cli):
                 ep["title"][:50] + ("..." if len(ep["title"]) > 50 else ""),
                 ep["status"].replace("_", " ").title(),
                 ep["priority"].replace("_", " ").title(),
-                str(ep.get("estimate") or "-"),
+                "-" if ep.get("estimate") is None else str(ep["estimate"]),
             )
 
         console.print(table)
@@ -169,7 +170,7 @@ def register(cli):
             f"[bold]{issue['title']}[/bold]\n",
             f"[dim]Status:[/dim] {issue['status'].replace('_', ' ').title()}",
             f"[dim]Priority:[/dim] {issue['priority'].replace('_', ' ').title()}",
-            f"[dim]Estimate:[/dim] {issue.get('estimate') or '-'} points",
+            f"[dim]Estimate:[/dim] {'-' if issue.get('estimate') is None else issue['estimate']} points",
         ]
 
         console.print(Panel("\n".join(panel_lines), title=f"Epic {issue['identifier']}"))
@@ -209,7 +210,7 @@ def register(cli):
                     (s.get("title", "")[:45] + ("..." if len(s.get("title", "")) > 45 else "")),
                     s["status"].replace("_", " ").title(),
                     s["priority"].replace("_", " ").title(),
-                    str(s.get("estimate") or "-"),
+                    "-" if s.get("estimate") is None else str(s["estimate"]),
                 )
 
             console.print(table)
