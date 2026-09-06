@@ -14,7 +14,7 @@ from app.enums import (
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType
 from app.enums import LimboType
 from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, RitualGroupUpdate
-from app.services.ritual_selection import Selection, select
+from app.services.ritual_selection import Selection, pointer_after_removal, select
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
@@ -273,6 +273,13 @@ class RitualService:
             if update_data["conditions"] is not None:
                 update_data["conditions"] = json.dumps(update_data["conditions"])
 
+        # Leaving a group (regroup, ungroup) or going inactive through update
+        # moves the group's ROUND_ROBIN pointer off this ritual (CHT-1405).
+        leaving = bool(ritual.group_id) and new_group_id != ritual.group_id
+        deactivating = update_data.get("is_active") is False and ritual.is_active
+        if leaving or deactivating:
+            await self._repoint_group_past(ritual)
+
         for field, value in update_data.items():
             setattr(ritual, field, value)
         ritual.updated_at = datetime.now(timezone.utc)
@@ -300,6 +307,7 @@ class RitualService:
         # orphan cleanup (which requires an approved attestation) can
         # never recover.
         async with atomic():
+            await self._repoint_group_past(ritual)
             ritual.is_active = False
             await ritual.save(update_fields={"is_active"})
 
@@ -443,12 +451,52 @@ class RitualService:
         """
         rituals = await self.list_by_project(project_id)
         sprint_rituals = [r for r in rituals if r.trigger == RitualTrigger.EVERY_SPRINT]
-        groups = await self._load_groups(sprint_rituals)
-        selection = select(sprint_rituals, groups, sprint_id)
+        await self._record_rotation(sprint_rituals, sprint_id)
+
+    async def record_ticket_rotation(self, project_id: str, issue_id: str, trigger: RitualTrigger) -> None:
+        """Advance every ROUND_ROBIN group of `trigger` past the ritual that
+        gated this ticket's claim (TICKET_CLAIM) or close (TICKET_CLOSE),
+        once the transition has actually happened (CHT-1405).
+
+        Same rule as the sprint rotation: selection is pure while the
+        transition is pending, and the pointer moves exactly once, here,
+        computed over the identical input the ticket listing used (the
+        trigger's rituals whose conditions match the issue, seeded by the
+        issue id), so it lands on the ritual the ticket was gated on.
+        Called by IssueService.update inside the transition's transaction.
+        """
+        issue = await OxydeIssue.objects.prefetch("labels").filter(id=issue_id).first()
+        if issue is None:
+            return
+        rituals = await self.list_by_project(project_id)
+        ticket_rituals = [
+            r for r in rituals if r.trigger == trigger and self._evaluate_conditions(r, issue)
+        ]
+        await self._record_rotation(ticket_rituals, issue_id)
+
+    async def _record_rotation(self, rituals: list[OxydeRitual], seed: str) -> None:
+        groups = await self._load_groups(rituals)
+        selection = select(rituals, groups, seed)
         for group_id, ritual_id in selection.round_robin_advances.items():
             group = groups[group_id]
             group.last_selected_ritual_id = ritual_id
             await group.save(update_fields={"last_selected_ritual_id"})
+
+    async def _repoint_group_past(self, ritual: OxydeRitual, *, leaving_group_id: str | None = None) -> None:
+        """A member is leaving its group (deleted, deactivated, regrouped):
+        if the group's ROUND_ROBIN pointer names it, move the pointer to
+        the member before it so the rotation continues (CHT-1405).
+        `leaving_group_id` is the group being left when the ritual's own
+        group_id has already been changed in memory."""
+        group_id = leaving_group_id or ritual.group_id
+        if not group_id:
+            return
+        group = await OxydeRitualGroup.objects.get_or_none(id=group_id)
+        if group is None or group.last_selected_ritual_id != ritual.id:
+            return
+        siblings = await OxydeRitual.objects.filter(group_id=group_id, is_active=True).all()
+        group.last_selected_ritual_id = pointer_after_removal(siblings, ritual)
+        await group.save(update_fields={"last_selected_ritual_id"})
 
     async def get_pending_rituals(
         self, project_id: str, sprint_id: str

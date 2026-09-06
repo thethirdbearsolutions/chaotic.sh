@@ -6444,3 +6444,91 @@ class TestRitualSchemaValidation:
         }
         resp = CompletedRitualResponse(**data)
         assert resp.conditions == {"labels__contains": "urgent"}
+
+
+@pytest.mark.asyncio
+class TestRoundRobinContinuity:
+    """CHT-1405: the rotation neither restarts when a member leaves nor
+    stalls for ticket-scoped groups."""
+
+    async def _rr_group(self, project_id, trigger, names):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.enums import SelectionMode
+
+        group = await OxydeRitualGroup.objects.create(
+            project_id=project_id, name=f"rr-{trigger.value}", selection_mode=SelectionMode.ROUND_ROBIN,
+        )
+        members = []
+        for name in names:
+            members.append(await OxydeRitual.objects.create(
+                project_id=project_id, name=name, prompt="p", trigger=trigger, group_id=group.id,
+                approval_mode=ApprovalMode.AUTO, note_required=False,
+            ))
+        return group, members
+
+    async def test_deleting_the_pointed_member_continues_the_rotation(self, db, test_project):
+        """[a, b, c] with the pointer on b: deleting b used to restart at a;
+        now the pointer moves to a and the next sprint is gated on c."""
+        from app.oxyde_models.ritual import OxydeRitualGroup
+
+        group, (a, b, c) = await self._rr_group(test_project.id, RitualTrigger.EVERY_SPRINT, ["a", "b", "c"])
+        group.last_selected_ritual_id = b.id
+        await group.save(update_fields={"last_selected_ritual_id"})
+        service = RitualService()
+
+        await service.delete(b)
+
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+        offered = await service.get_pending_rituals(test_project.id, "sprint-x")
+        assert [r.name for r in offered] == ["c"]
+
+    async def test_regrouping_or_deactivating_the_pointed_member_repoints_too(self, db, test_project):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.schemas.ritual import RitualUpdate
+
+        group, (a, b, c) = await self._rr_group(test_project.id, RitualTrigger.EVERY_SPRINT, ["a", "b", "c"])
+        group.last_selected_ritual_id = c.id
+        await group.save(update_fields={"last_selected_ritual_id"})
+        service = RitualService()
+
+        await service.update(c, RitualUpdate(group_id=""))  # ungroup
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == b.id
+
+        # Now b is pointed at; deactivating it through update repoints to a.
+        await service.update(b, RitualUpdate(is_active=False))
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+        # Deleting the first member clears the pointer: the next is the new first.
+        await service.delete(a)
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id is None
+
+    async def test_ticket_scoped_round_robin_advances_when_the_ticket_transitions(
+        self, db, test_project, test_user,
+    ):
+        """Two claim rituals in a ROUND_ROBIN group: the first ticket is
+        gated on `a`; once its claim actually happens the pointer moves,
+        and the next ticket is gated on `b`. Before CHT-1405 nothing
+        advanced ticket-scoped groups, so every ticket got `a`."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        from app.schemas.issue import IssueCreate, IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        first = await issues.create(IssueCreate(title="first", project_id=test_project.id), test_project, test_user.id)
+        second = await issues.create(IssueCreate(title="second", project_id=test_project.id), test_project, test_user.id)
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["a"]
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        claimed = await issues.update(
+            first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+        )
+        assert claimed.status == IssueStatus.IN_PROGRESS
+        assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, second.id)] == ["b"]
+        # The listing is a pre-transition gate: it is consulted when a ticket
+        # is about to be claimed, not afterwards. Re-listing the already
+        # claimed first ticket now reflects the moved pointer (`b`), which
+        # is only what it would be gated on if it were claimed again.
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["b"]

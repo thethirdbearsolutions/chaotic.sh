@@ -1129,6 +1129,16 @@ class IssueService:
                     )
             await issue.save(update_fields=set(update_data.keys()))
 
+            # The claim / close happened: ticket-scoped ROUND_ROBIN groups
+            # advance past the ritual that gated it, in this transaction
+            # (CHT-1405). Every status transition, the limbo auto-transition
+            # included, comes through here.
+            if issue_in.status is not None and "status" in update_data:
+                if new_status == IssueStatus.IN_PROGRESS and old_status != IssueStatus.IN_PROGRESS:
+                    await RitualService().record_ticket_rotation(issue.project_id, issue.id, RitualTrigger.TICKET_CLAIM)
+                if new_status == IssueStatus.DONE and old_status != IssueStatus.DONE:
+                    await RitualService().record_ticket_rotation(issue.project_id, issue.id, RitualTrigger.TICKET_CLOSE)
+
             # Handle labels via junction table
             if issue_in.label_ids is not None:
                 await OxydeIssueLabel.objects.filter(issue_id=issue.id).delete()
