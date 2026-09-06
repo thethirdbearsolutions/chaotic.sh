@@ -7,6 +7,7 @@ import re
 import random
 from datetime import datetime, timedelta, timezone
 from oxyde import atomic, execute_raw, IntegrityError
+from oxyde.db.transaction import get_active_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,11 @@ class ClaimRitualsError(Exception):
             f"Ticket has pending claim rituals: {', '.join(ritual_names)} "
             "(see the API error detail for each one's attestation state)."
         )
+
+
+class RelationCycleError(Exception):
+    """Creating the relation would close a BLOCKS cycle (CHT-298), or the
+    BLOCKS graph is too large to check (possible pre-existing cycle)."""
 
 
 class EstimateRequiredError(Exception):
@@ -2153,38 +2159,118 @@ class IssueService:
         ).order_by("name").offset(skip).limit(limit).all()
 
     # Issue Relations
+    BLOCKS_GRAPH_LIMIT = 5000
+
+    async def _take_relation_write_lock(self) -> None:
+        """Take SQLite's database-wide writer lock now, before reading.
+
+        Oxyde's atomic() begins a deferred transaction, so a transaction
+        that reads first only gets the writer lock at its first write; two
+        transactions can both read the same graph and both insert. A
+        zero-row UPDATE is a write statement, so it takes the lock (or
+        waits, up to the pool's busy_timeout, for the holder to commit)
+        without changing anything, and every read after it sees the
+        previous writer's commit (CHT-1311).
+
+        This only waits when it is the transaction's FIRST statement. A
+        transaction that has already read holds a snapshot, and SQLite
+        refuses to upgrade it once another writer has committed
+        (SQLITE_BUSY_SNAPSHOT, immediately, no wait: the CHT-1411 case),
+        so the caller must open the transaction itself, which
+        create_relation does and asserts.
+        """
+        await execute_raw("UPDATE issue_relations SET relation_type = relation_type WHERE 0")
+
+    async def _reject_blocking_cycle(self, issue_id: str, related_issue_id: str) -> None:
+        """A new "X blocks Y" edge closes a cycle iff Y already
+        (transitively) blocks X -- and any BLOCKS cycle is a permanent
+        deadlock, because list_ready_issues treats an issue with a
+        non-DONE incoming BLOCKS as never-ready, so no issue in the cycle
+        can ever start (CHT-298). Walk the existing BLOCKS graph forward
+        from Y; if it reaches X, refuse. Visited-guarded and bounded so
+        pre-existing corruption cannot loop forever.
+
+        The edge list is fetched in one query and walked in memory: this
+        runs under the database-wide writer lock (every other writer
+        waits behind it), so the walk must not cost a round trip per
+        node."""
+        rows = await execute_raw(
+            "SELECT issue_id, related_issue_id FROM issue_relations WHERE relation_type = ?",
+            [IssueRelationType.BLOCKS.name],
+        )
+        blocks: dict[str, list[str]] = {}
+        for row in rows:
+            blocks.setdefault(row["issue_id"], []).append(row["related_issue_id"])
+        frontier = [related_issue_id]
+        visited: set[str] = set()
+        while frontier:
+            if len(visited) > self.BLOCKS_GRAPH_LIMIT:
+                raise RelationCycleError(
+                    "Blocks graph too large to validate (possible pre-existing cycle)"
+                )
+            node = frontier.pop()
+            if node == issue_id:
+                raise RelationCycleError("Cannot create relation: would close a blocking cycle")
+            if node in visited:
+                continue
+            visited.add(node)
+            frontier.extend(blocks.get(node, ()))
+
     async def create_relation(
         self, issue_id: str, relation_in: IssueRelationCreate
     ) -> OxydeIssueRelation:
-        """Create a relationship between two issues, idempotently.
+        """Create a relationship between two issues, idempotently, refusing
+        a BLOCKS edge that would close a cycle.
 
         The (issue_id, related_issue_id) pair has a UNIQUE constraint, and
         common CLI flows (e.g. `issue update --blocked-by X` re-run against
         an issue already blocked by X) call this with duplicates. Treat a
         pre-existing pair as a no-op and return the existing row instead
         of surfacing an IntegrityError as a 500.
+
+        The cycle check and the insert are one transaction that takes the
+        writer lock before the check (CHT-1311): two concurrent inverse
+        BLOCKS edges used to both pass a check made against the same
+        snapshot and both land, closing exactly the cycle the check
+        exists to prevent. Now the second waits for the first to commit
+        and then sees its edge.
         """
-        existing = await OxydeIssueRelation.objects.filter(
-            issue_id=issue_id,
-            related_issue_id=relation_in.related_issue_id,
-        ).first()
-        if existing is not None:
-            return existing
-        try:
-            return await OxydeIssueRelation.objects.create(
-                issue_id=issue_id,
-                related_issue_id=relation_in.related_issue_id,
-                relation_type=relation_in.relation_type,
-            )
-        except IntegrityError:
-            # Lost a race with a concurrent insert of the same pair.
+        if get_active_transaction() is not None:
+            # See _take_relation_write_lock: inside a transaction that has
+            # already read, the lock cannot wait, it fails.
+            raise RuntimeError("create_relation must open its own transaction (CHT-1311)")
+        async with atomic():
+            await self._take_relation_write_lock()
+            # The duplicate check comes before the walk: a re-run of the
+            # same pair is a no-op without a walk, and without a cycle
+            # error for a pre-existing cycle elsewhere in the graph.
             existing = await OxydeIssueRelation.objects.filter(
                 issue_id=issue_id,
                 related_issue_id=relation_in.related_issue_id,
             ).first()
             if existing is not None:
                 return existing
-            raise
+            if relation_in.relation_type == IssueRelationType.BLOCKS:
+                await self._reject_blocking_cycle(issue_id, relation_in.related_issue_id)
+            try:
+                return await OxydeIssueRelation.objects.create(
+                    issue_id=issue_id,
+                    related_issue_id=relation_in.related_issue_id,
+                    relation_type=relation_in.relation_type,
+                )
+            except IntegrityError:
+                # Under the writer lock, after the check above, the unique
+                # pair cannot fail; Oxyde retries nothing. Any
+                # IntegrityError here is something else (NOT NULL, a
+                # foreign key) and propagates; the re-query is a defensive
+                # no-op kept so a duplicate would still read as one.
+                existing = await OxydeIssueRelation.objects.filter(
+                    issue_id=issue_id,
+                    related_issue_id=relation_in.related_issue_id,
+                ).first()
+                if existing is not None:
+                    return existing
+                raise
 
     async def get_relation_by_id(self, relation_id: str) -> OxydeIssueRelation | None:
         """Get relation by ID."""

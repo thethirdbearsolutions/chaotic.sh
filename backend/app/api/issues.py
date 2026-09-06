@@ -30,6 +30,7 @@ from app.services.document_service import DocumentService
 from app.api.rituals import pending_ritual_responses
 from app.services.issue_service import (
     IssueService,
+    RelationCycleError,
     SprintInArrearsError,
     SprintInLimboError,
     TicketRitualsError,
@@ -45,9 +46,8 @@ from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
-from app.oxyde_models.issue import OxydeIssueRelation
 from app.enums import ApprovalMode, IssueStatus, IssuePriority, IssueType, ActivityType
-from app.enums import DocumentActivityType, IssueRelationType
+from app.enums import DocumentActivityType
 
 
 def _activity_type_value(raw, enum_cls):
@@ -1687,44 +1687,14 @@ async def create_relation(
             detail="An issue cannot have a relation to itself",
         )
 
-    # CHT-298: reject blocking cycles. A new "X blocks Y" edge closes a
-    # cycle iff Y already (transitively) blocks X — and any BLOCKS cycle
-    # is a permanent deadlock, because list_ready_issues treats an issue
-    # with a non-DONE incoming BLOCKS as never-ready, so no issue in the
-    # cycle can ever start. Walk the existing BLOCKS graph FORWARD from Y;
-    # if it reaches X, reject. Only BLOCKS affects readiness, so only
-    # BLOCKS is cycle-checked (self-relation above already covers every
-    # type). Visited-guarded + bounded so pre-existing corruption can't
-    # loop forever. relation_type is stored as the enum NAME, so compare
-    # via the name (IssueRelationType is a str-Enum, hence the explicit
-    # isinstance-against-the-enum branch, not `str`).
-    def _is_blocks(rt) -> bool:
-        name = rt.name if isinstance(rt, IssueRelationType) else str(rt)
-        return name.upper() == IssueRelationType.BLOCKS.name
-
-    if _is_blocks(relation_in.relation_type):
-        frontier = [relation_in.related_issue_id]
-        visited: set[str] = set()
-        while frontier:
-            if len(visited) > 5000:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Blocks graph too large to validate (possible pre-existing cycle)",
-                )
-            node = frontier.pop()
-            if node == issue_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot create relation: would close a blocking cycle",
-                )
-            if node in visited:
-                continue
-            visited.add(node)
-            for edge in await OxydeIssueRelation.objects.filter(issue_id=node).all():
-                if _is_blocks(edge.relation_type):
-                    frontier.append(edge.related_issue_id)
-
-    relation = await issue_service.create_relation(issue_id, relation_in)
+    # CHT-298: a BLOCKS edge that would close a cycle is refused. The
+    # check lives in the service, inside the insert's transaction and
+    # behind the writer lock, so two concurrent inverse edges cannot both
+    # pass it (CHT-1311).
+    try:
+        relation = await issue_service.create_relation(issue_id, relation_in)
+    except RelationCycleError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     await broadcast_relation_event(
         project.team_id,
         "created",
