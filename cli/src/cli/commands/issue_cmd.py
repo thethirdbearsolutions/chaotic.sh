@@ -485,7 +485,7 @@ def register(cli):
                 )
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": issue_type}
-        if estimate:
+        if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
         if parent and epic:
             raise click.UsageError("Cannot use both --parent and --epic")

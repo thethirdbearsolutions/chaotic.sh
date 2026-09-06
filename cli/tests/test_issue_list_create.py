@@ -427,6 +427,21 @@ class TestIssueCreate:
         result = cli_runner.invoke(cli, ['issue', 'create', 'T', '--estimate', '5'])
         assert result.exit_code == 0 and "Warning" not in result.output
 
+    def test_zero_point_estimate_is_sent_not_dropped(self, cli_runner):
+        """`--estimate 0` used to vanish behind `if estimate:`, so an explicit
+        zero-point ticket became "unestimated" and charged 1 point on close
+        (CHT-1397). It must reach the API as 0, and it is not off-scale."""
+        from cli.main import cli, client
+
+        client.create_issue = MagicMock(return_value={"id": "new-id", "identifier": "CHT-200", "title": "T"})
+        client.get_project = MagicMock(return_value={"id": "proj-1", "estimate_scale": "fibonacci"})
+
+        result = cli_runner.invoke(cli, ['issue', 'create', 'T', '--estimate', '0'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args[1]["estimate"] == 0
+        assert "Warning" not in result.output
+
     def test_off_scale_warning_goes_to_stderr_so_json_stays_parseable(self, cli_runner):
         """The warning must never land in stdout: a caller piping --json
         output into a parser would break on it (PR #283 review)."""

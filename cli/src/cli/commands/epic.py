@@ -57,7 +57,7 @@ def register(cli):
                 raise SystemExit(1)
 
         data = {"description": description or None, "status": status, "priority": priority, "issue_type": "epic"}
-        if estimate:
+        if estimate is not None:  # 0 is a real (zero-point) estimate, not "unset" (CHT-1397)
             data["estimate"] = estimate
         if labels:
             team_id = m.get_current_team()
