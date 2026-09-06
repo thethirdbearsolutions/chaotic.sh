@@ -158,6 +158,24 @@ name↔value translation at some boundary — stop. That is how this bug class
 survived from CHT-974 to CHT-1333; the fix belongs at the serializer or the
 schema, not at a seventh boundary. Background: CHT-1345.
 
+## Running the backend tests
+
+```bash
+cd backend && uv run pytest -q          # sharded across cores (-n auto in pytest.ini)
+cd backend && uv run pytest -q -n 0     # serial: for -s/print debugging (worker stdout is
+                                        # not relayed) or ordering questions; --pdb already
+                                        # drops to serial on its own
+```
+
+The full backend suite takes about half a minute on four cores (CHT-1413):
+it was nine minutes serial until the test environment set `BCRYPT_ROUNDS=4`
+(both `backend/tests/conftest.py` and `e2e/conftest.py`), which made each
+fixture user cost ~1 ms instead of ~250 ms, and pytest-xdist spread the
+rest across cores. Coverage is combined across workers before the 90%
+gate. Run the full suite locally before every push -- CI should see a head
+only once. The cli suite is ~15 seconds, e2e about a minute, frontend
+under two.
+
 ## Project Structure
 
 - `backend/` - FastAPI backend (Python)
