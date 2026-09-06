@@ -156,19 +156,37 @@ class SprintService:
                 [next_sprint.id, sprint.id] + incomplete_statuses,
             )
 
+            # Both transitions below are claimed with a conditional UPDATE
+            # ... RETURNING, the same guard complete_limbo uses (CHT-1404):
+            # the ACTIVE/limbo=0 checks above ran on this caller's copy of
+            # the row, and two closes that both read it ACTIVE would both
+            # get here. Only the caller whose UPDATE matched the row may
+            # advance round-robin groups and activate the next sprint; a
+            # loser would otherwise move the pointer a second time (A -> B
+            # -> A, skipping a sibling) and run _activate_next_sprint twice.
+            # The loser refreshes and returns the row as the winner left it.
             if has_rituals:
                 # Enter limbo - sprint stays ACTIVE but blocked
-                sprint.limbo = True
-                await sprint.save(update_fields={"limbo"})
+                won = await execute_raw(
+                    "UPDATE sprints SET limbo = 1 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [sprint.id, SprintStatus.ACTIVE.name],
+                )
             else:
                 # Full rotation - complete and activate next sprint
-                sprint.status = SprintStatus.COMPLETED
-                sprint.limbo = False
-                sprint.closed_at = datetime.now(timezone.utc)
-                await sprint.save(update_fields={"status", "limbo", "closed_at"})
-                # The sprint rotated: round-robin groups move on (CHT-1280).
-                await RitualService().record_sprint_rotation(project_id, sprint.id)
-                await self._activate_next_sprint(next_sprint)
+                won = await execute_raw(
+                    "UPDATE sprints SET status = ?, limbo = 0 WHERE id = ? AND status = ? AND limbo = 0 RETURNING id",
+                    [SprintStatus.COMPLETED.name, sprint.id, SprintStatus.ACTIVE.name],
+                )
+                if won:
+                    # closed_at rides in the same transaction as the status
+                    # flip (CHT-1366), saved through the ORM so the datetime
+                    # is stored the way every other path stores it.
+                    await sprint.refresh()
+                    sprint.closed_at = datetime.now(timezone.utc)
+                    await sprint.save(update_fields={"closed_at"})
+                    # The sprint rotated: round-robin groups move on (CHT-1280).
+                    await RitualService().record_sprint_rotation(project_id, sprint.id)
+                    await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
         return sprint
