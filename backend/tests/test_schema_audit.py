@@ -1,184 +1,134 @@
-"""Schema audit: production migrations vs. tests/conftest._SCHEMA_SQL.
+"""Schema audit: what the migration chain actually builds (CHT-1208).
 
-The test suite hand-maintains its own SQLite schema in
-`tests/conftest.py::_SCHEMA_SQL`. If production migrations diverge from
-the hand-rolled schema, tests pass against an unrealistic structure
-while production behavior diverges. The unique-index gap on
-`ritual_attestations` (review finding #15) is exactly this kind of drift
-masked by tests.
+The test database is a copy of a template built by applying every
+migration (tests/conftest.py), so the schema under test IS the production
+schema. These checks read that schema back from sqlite_master rather than
+grepping migration text, and assert the invariants the code relies on:
 
-This module asserts:
-
-1. The unique constraints required by the unified intent+limbo model
-   exist in BOTH the production migration AND the test schema. These
-   are new and currently missing — tests fail until the migration is
-   added and conftest schema is updated to match.
-
-2. A best-effort drift check between the two schemas, surfacing tables
-   or constraints present in one but not the other.
-
-When the refactor lands, the new migration and the conftest update must
-go together.
+1. The unique constraints the unified intent+limbo model depends on
+   (review finding #15 in the ritual refactor was exactly one of these
+   missing from production while the hand-written test schema had it).
+2. Every Oxyde model has a table, and every model field has a column, so a
+   model change without a migration fails here instead of on the first
+   query in production.
 """
-import re
-from pathlib import Path
+import glob
+import os
+
+import pytest
+from oxyde import execute_raw
+
+MIGRATIONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "migrations"))
 
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-MIGRATIONS_DIR = REPO_ROOT / "backend" / "migrations"
-CONFTEST_PATH = Path(__file__).resolve().parent / "conftest.py"
-
-
-def _load_conftest_schema() -> str:
-    """Extract _SCHEMA_SQL from conftest as a single string."""
-    text = CONFTEST_PATH.read_text()
-    m = re.search(r'_SCHEMA_SQL\s*=\s*"""(.*?)"""', text, re.DOTALL)
-    assert m, "Could not locate _SCHEMA_SQL in conftest.py"
-    return m.group(1)
-
-
-def _load_all_migrations() -> str:
-    """Concatenate every migration file's text for substring searches."""
-    parts = []
-    for p in sorted(MIGRATIONS_DIR.glob("*.py")):
-        parts.append(p.read_text())
-    return "\n".join(parts)
+async def _unique_indexes(table: str) -> list[dict]:
+    """Every unique index on `table` as {"columns": frozenset, "partial": bool},
+    read from SQLite's own catalogue (index_list / index_info) rather than
+    substring-matched out of the CREATE INDEX text, so an index name or a
+    WHERE clause that happens to mention a column cannot satisfy the check."""
+    found = []
+    for ix in await execute_raw(f'PRAGMA index_list("{table}")'):
+        if not ix["unique"]:
+            continue
+        cols = frozenset(c["name"] for c in await execute_raw(f'PRAGMA index_info("{ix["name"]}")'))
+        found.append({"columns": cols, "partial": bool(ix["partial"])})
+    return found
 
 
-# ---------------------------------------------------------------------------
-# Required unique constraints for the unified model
-# ---------------------------------------------------------------------------
+async def _unique_on(table: str, *columns: str, partial: bool = False) -> bool:
+    """True if `table` has a unique index on exactly `columns`, partial
+    (carrying a WHERE clause) iff `partial`."""
+    return any(
+        ix["columns"] == frozenset(columns) and ix["partial"] == partial
+        for ix in await _unique_indexes(table)
+    )
 
 
+@pytest.mark.asyncio
 class TestRequiredUniqueConstraintsPresent:
-    """The unified intent+limbo model requires DB-level uniqueness on:
+    """DB-level uniqueness the intent+limbo model relies on:
 
-    * ritual_attestations(ritual_id, sprint_id) — sprint attestations
-    * ritual_attestations(ritual_id, issue_id)  — issue attestations
+    * ritual_attestations(ritual_id, sprint_id) and (ritual_id, issue_id)
     * ticket_limbo(issue_id, limbo_type) WHERE cleared_at IS NULL
-      — exclusive intent lock (one open intent per issue+type)
-    * ticket_limbo_blockers(limbo_id, ritual_id) — one blocker row
-      per ritual under a given intent
+      (the exclusive intent lock; stale-intent takeover depends on it)
+    * ticket_limbo_blockers(limbo_id, ritual_id)
     """
 
-    def test_ticket_limbo_blocker_unique_per_ritual(self):
-        """Each (intent, ritual) pair appears at most once as a blocker."""
-        schema = _load_conftest_schema()
-        pattern = re.compile(
-            r"UNIQUE\s+INDEX[^(]*\(\s*[\"']?limbo_id[\"']?\s*,"
-            r"\s*[\"']?ritual_id[\"']?\s*\)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        assert pattern.search(schema), (
-            "Test schema must declare UNIQUE(limbo_id, ritual_id) on "
-            "ticket_limbo_blockers to prevent duplicate blocker rows."
-        )
+    async def test_ticket_limbo_blocker_unique_per_ritual(self, db):
+        assert await _unique_on("ticket_limbo_blockers", "limbo_id", "ritual_id")
 
-    def test_ritual_attestations_unique_on_ritual_and_issue(self):
-        schema = _load_conftest_schema()
-        # Look for any unique index covering (ritual_id, issue_id).
-        pattern = re.compile(
-            r"UNIQUE\s*(?:INDEX[^(]*)?\(\s*[\"']?ritual_id[\"']?\s*,"
-            r"\s*[\"']?issue_id[\"']?\s*\)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        assert pattern.search(schema), (
-            "Test schema must declare UNIQUE(ritual_id, issue_id) on "
-            "ritual_attestations to prevent duplicate attestation rows."
-        )
+    async def test_ritual_attestations_unique_on_ritual_and_issue(self, db):
+        assert await _unique_on("ritual_attestations", "ritual_id", "issue_id", partial=True)
 
-    def test_ritual_attestations_unique_on_ritual_and_sprint(self):
-        schema = _load_conftest_schema()
-        pattern = re.compile(
-            r"UNIQUE\s*(?:INDEX[^(]*)?\(\s*[\"']?ritual_id[\"']?\s*,"
-            r"\s*[\"']?sprint_id[\"']?\s*\)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        assert pattern.search(schema), (
-            "Test schema must declare UNIQUE(ritual_id, sprint_id) on "
-            "ritual_attestations."
-        )
+    async def test_ritual_attestations_unique_on_ritual_and_sprint(self, db):
+        assert await _unique_on("ritual_attestations", "ritual_id", "sprint_id", partial=True)
 
-    def test_ticket_limbo_exclusive_intent_lock(self):
-        """Exclusive lock per (issue, intent-type) for unresolved limbo
-        rows. Implementation can be a partial unique index or equivalent.
-        """
-        schema = _load_conftest_schema()
-        # Accept any of: partial unique index on (issue_id, limbo_type)
-        # filtered by cleared_at IS NULL, OR equivalent constraint name.
-        partial_pattern = re.compile(
-            r"UNIQUE\s+INDEX[^(]*\(\s*[\"']?issue_id[\"']?\s*,"
-            r"\s*[\"']?limbo_type[\"']?\s*\)\s*WHERE\s+cleared_at\s+IS\s+NULL",
-            re.IGNORECASE | re.DOTALL,
-        )
-        assert partial_pattern.search(schema), (
-            "Test schema must declare a partial UNIQUE index on "
-            "ticket_limbo(issue_id, limbo_type) WHERE cleared_at IS NULL "
-            "to enforce the exclusive intent lock."
-        )
+    async def test_ticket_limbo_exclusive_intent_lock(self, db):
+        """Partial (WHERE cleared_at IS NULL) is load-bearing: cleared intents
+        stay in the table and a new open intent for the same (issue, type)
+        must be allowed, so a plain unique index here would be a bug."""
+        assert await _unique_on("ticket_limbo", "issue_id", "limbo_type", partial=True)
 
-    def test_production_migrations_include_unique_constraints(self):
-        """The production migration text must add the same constraints
-        the test schema declares. Otherwise tests pass on a schema
-        production doesn't have.
-        """
-        migrations = _load_all_migrations()
-        assert (
-            "ritual_attestations" in migrations
-            and re.search(
-                r"UNIQUE.*ritual_id.*issue_id", migrations, re.IGNORECASE
-            )
-        ), (
-            "A migration must add UNIQUE(ritual_id, issue_id) on "
-            "ritual_attestations. None of the existing migrations do."
-        )
-        assert re.search(
-            r"UNIQUE.*ritual_id.*sprint_id", migrations, re.IGNORECASE
-        ), (
-            "A migration must add UNIQUE(ritual_id, sprint_id) on "
-            "ritual_attestations."
-        )
-        assert re.search(
-            r"ticket_limbo.*issue_id.*limbo_type.*cleared_at",
-            migrations, re.IGNORECASE | re.DOTALL,
-        ), (
-            "A migration must add the partial UNIQUE index on ticket_limbo "
-            "for the exclusive intent lock."
-        )
+    async def test_idempotency_backstops(self, db):
+        """CHT-1223 / CHT-1259: the unique indexes behind create_project,
+        create_label and TemplateService.create's duplicate checks."""
+        assert await _unique_on("projects", "team_id", "key")
+        assert await _unique_on("labels", "team_id", "name")
+        assert await _unique_on("templates", "team_id", "name")
+
+    async def test_exactness(self, db):
+        """The helper compares the column set exactly: a superset or subset
+        of the columns, or the wrong partial flag, is not a match."""
+        assert not await _unique_on("projects", "team_id")
+        assert not await _unique_on("projects", "team_id", "key", "name")
+        assert not await _unique_on("ticket_limbo", "issue_id", "limbo_type", partial=False)
 
 
-# ---------------------------------------------------------------------------
-# Best-effort drift check
-# ---------------------------------------------------------------------------
+def _is_virtual(meta) -> bool:
+    """The three relation kinds Oxyde's own schema extractor skips
+    (oxyde/migrations/extract.py): a field typed as a Model (the real column
+    is the synthetic `<name>_id`), a reverse FK, and a many-to-many through
+    a join table. Mirrored here so a new relation field is not reported as
+    a missing column on a correct schema."""
+    from oxyde import Model
+
+    pt = meta.python_type
+    if isinstance(pt, type) and issubclass(pt, Model):
+        return True
+    extra = meta.extra or {}
+    return bool(extra.get("reverse_fk") or extra.get("m2m"))
 
 
-class TestSchemaDriftBestEffort:
-    """Surfaces tables that exist in test schema but not in production
-    migrations (or vice versa). Best-effort because the migration files
-    are Python ctx.create_table() calls, not raw SQL — we just check
-    for the table name token in either source.
-    """
+@pytest.mark.asyncio
+class TestModelsMatchTheMigratedSchema:
+    """A model field without a column is a migration somebody forgot to
+    generate. This is the check `oxyde makemigrations` would make; it runs
+    on every test run instead."""
 
-    # Oxyde manages its own bookkeeping table; not part of any app migration.
-    OXYDE_INTERNAL_TABLES = {"oxyde_migrations"}
+    async def test_every_model_table_and_column_exists(self, db):
+        import app.oxyde_models  # noqa: F401
+        from oxyde.models.registry import registered_tables
 
-    def test_all_test_schema_tables_appear_in_migrations(self):
-        schema = _load_conftest_schema()
-        tables_in_test = set(
-            m.group(1)
-            for m in re.finditer(
-                r"CREATE TABLE IF NOT EXISTS\s+(\w+)", schema
-            )
-        )
-        migrations = _load_all_migrations()
+        tables = {r["name"] for r in await execute_raw("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        missing = []
+        for cls in registered_tables().values():
+            table = cls.get_table_name()
+            if table not in tables:
+                missing.append(f"{table} (whole table)")
+                continue
+            columns = {r["name"] for r in await execute_raw(f'PRAGMA table_info("{table}")')}
+            for fname, meta in cls._db_meta.field_metadata.items():
+                if _is_virtual(meta):
+                    continue
+                col = meta.db_column or fname
+                if col not in columns:
+                    missing.append(f"{table}.{col}")
+        assert not missing, f"model fields with no column in the migrated schema: {missing}"
 
-        missing = [
-            t for t in tables_in_test
-            if t not in migrations and t not in self.OXYDE_INTERNAL_TABLES
-        ]
-        assert not missing, (
-            f"Tables present in test schema but not referenced by any "
-            f"migration: {missing}. Hand-rolled test schema has drifted "
-            f"from production."
-        )
+    async def test_every_migration_in_the_repo_was_applied(self, db):
+        applied = {r["name"] for r in await execute_raw("SELECT name FROM oxyde_migrations")}
+        code = {
+            os.path.splitext(os.path.basename(f))[0]
+            for f in glob.glob(os.path.join(MIGRATIONS_DIR, "[0-9]*.py"))
+        }
+        assert applied == code

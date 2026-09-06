@@ -4,6 +4,7 @@ Uses Oxyde ORM for all database operations. Each test gets a fresh
 file-based SQLite database to ensure isolation.
 """
 import os
+import pytest
 import pytest_asyncio
 from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
@@ -12,383 +13,87 @@ from app.utils.security import get_password_hash, create_access_token
 from app.enums import TeamRole
 
 
-# SQL schema extracted from production chaotic.db — all tables needed by
-# the Oxyde models.  Order matters: tables referenced by FKs come first.
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS teams (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    "key" VARCHAR(10) NOT NULL,
-    description VARCHAR(1000),
-    logo_url VARCHAR(500),
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_teams_key ON teams ("key");
+# The test database is built by the real migration chain, once per session,
+# into a template file that every test copies (CHT-1208). Until then the
+# suite hand-maintained ~360 lines of CREATE TABLE that declared 44 ON DELETE
+# CASCADE clauses production's migrations never had, so services could rely
+# on cascades in tests that left orphans in production, and migrations
+# 0001-0005 and 0009-0016 were never executed by any test.
+_MIGRATIONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "migrations"))
 
-CREATE TABLE IF NOT EXISTS users (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    email VARCHAR(255) NOT NULL,
-    hashed_password VARCHAR(255) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    avatar_url VARCHAR(500),
-    is_active BOOLEAN NOT NULL DEFAULT 1,
-    is_superuser BOOLEAN NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    is_agent BOOLEAN NOT NULL DEFAULT 0,
-    parent_user_id VARCHAR(36) REFERENCES users(id) ON DELETE CASCADE,
-    agent_team_id VARCHAR(36) REFERENCES teams(id) ON DELETE CASCADE,
-    agent_project_id VARCHAR(36)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email);
 
-CREATE TABLE IF NOT EXISTS projects (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    "key" VARCHAR(10) NOT NULL,
-    description VARCHAR(2000),
-    color VARCHAR(7) NOT NULL DEFAULT '#6366f1',
-    icon VARCHAR(50),
-    lead_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    issue_count INTEGER NOT NULL DEFAULT 0,
-    estimate_scale VARCHAR(11) NOT NULL DEFAULT 'FIBONACCI',
-    unestimated_handling VARCHAR(21) NOT NULL DEFAULT 'DEFAULT_ONE_POINT',
-    default_sprint_budget INTEGER,
-    human_rituals_required BOOLEAN NOT NULL DEFAULT 0,
-    require_estimate_on_claim BOOLEAN NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ix_projects_key ON projects ("key");
--- CHT-1223 (migration 0008): backstop for create_project's idempotency fix.
-CREATE UNIQUE INDEX IF NOT EXISTS projects_team_id_key_idx ON projects (team_id, "key");
+def _build_schema_template(path: str) -> None:
+    """Apply every migration to an empty SQLite file at `path` on a private
+    event loop in a worker thread, so the session's Oxyde registry and the
+    per-test loops never see the connection used to build it.
 
-CREATE TABLE IF NOT EXISTS labels (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    color VARCHAR(7) NOT NULL DEFAULT '#6366f1',
-    description VARCHAR(500),
-    created_at DATETIME NOT NULL
-);
--- CHT-1223 (migration 0008): backstop for create_label's idempotency fix.
-CREATE UNIQUE INDEX IF NOT EXISTS labels_team_id_name_idx ON labels (team_id, name);
+    Oxyde's registry is process-global: the builder registers `default`
+    with overwrite=True and tears everything down with disconnect_all().
+    That is only safe because it runs before any test has registered a
+    connection (the template is a session fixture the `db` fixture depends
+    on); a test that registers its own connection without going through
+    `db` must call disconnect_all() itself, as test_bootstrap_empty_db does.
+    """
+    import asyncio
+    import threading
 
-CREATE TABLE IF NOT EXISTS sprints (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    description VARCHAR(2000),
-    status VARCHAR(9) NOT NULL DEFAULT 'PLANNED',
-    activated_at DATETIME,
-    closed_at DATETIME,
-    budget INTEGER,
-    points_spent INTEGER NOT NULL DEFAULT 0,
-    limbo BOOLEAN NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
+    async def _apply():
+        from oxyde import AsyncDatabase, PoolSettings, disconnect_all
+        from oxyde.migrations.executor import apply_migrations
 
-CREATE TABLE IF NOT EXISTS team_invitations (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    email VARCHAR(255) NOT NULL,
-    role VARCHAR(6) NOT NULL DEFAULT 'MEMBER',
-    token VARCHAR(64) NOT NULL,
-    invited_by_id VARCHAR(36) NOT NULL REFERENCES users(id),
-    status VARCHAR(8) NOT NULL DEFAULT 'PENDING',
-    created_at DATETIME NOT NULL,
-    expires_at DATETIME NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ix_team_invitations_email ON team_invitations (email);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_team_invitations_token ON team_invitations (token);
+        _db = AsyncDatabase(f"sqlite:///{path}", overwrite=True, settings=PoolSettings(max_connections=1))
+        await _db.connect()
+        import app.oxyde_models  # noqa: F401 -- register models before migrating
+        try:
+            await apply_migrations(migrations_dir=_MIGRATIONS_DIR)
+        finally:
+            await disconnect_all()
 
-CREATE TABLE IF NOT EXISTS team_members (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role VARCHAR(6) NOT NULL DEFAULT 'MEMBER',
-    joined_at DATETIME NOT NULL
-);
+    failure: list[BaseException] = []
 
-CREATE TABLE IF NOT EXISTS api_keys (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    key_prefix VARCHAR(12) NOT NULL,
-    key_hash VARCHAR(255) NOT NULL,
-    created_at DATETIME NOT NULL,
-    last_used_at DATETIME,
-    expires_at DATETIME,
-    is_active BOOLEAN NOT NULL DEFAULT 1,
-    agent_user_id VARCHAR(36) REFERENCES users(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS ix_api_keys_key_prefix ON api_keys (key_prefix);
-CREATE INDEX IF NOT EXISTS ix_api_keys_user_id ON api_keys (user_id);
+    def _run():
+        try:
+            asyncio.run(_apply())
+        except BaseException as e:  # surfaced below, on the calling thread
+            failure.append(e)
 
-CREATE TABLE IF NOT EXISTS documents (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    author_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    project_id VARCHAR(36) REFERENCES projects(id) ON DELETE SET NULL,
-    sprint_id VARCHAR(36) REFERENCES sprints(id) ON DELETE SET NULL,
-    title VARCHAR(500) NOT NULL,
-    content TEXT,
-    icon VARCHAR(50),
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
+    t = threading.Thread(target=_run, name="schema-template")
+    t.start()
+    t.join()
+    if failure:
+        raise failure[0]
 
-CREATE TABLE IF NOT EXISTS issues (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    identifier VARCHAR(20) NOT NULL,
-    number INTEGER NOT NULL,
-    title VARCHAR(500) NOT NULL,
-    description TEXT,
-    status VARCHAR(11) NOT NULL DEFAULT 'BACKLOG',
-    priority VARCHAR(11) NOT NULL DEFAULT 'NO_PRIORITY',
-    issue_type VARCHAR(9) NOT NULL DEFAULT 'TASK',
-    estimate INTEGER,
-    assignee_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    creator_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    sprint_id VARCHAR(36) REFERENCES sprints(id) ON DELETE SET NULL,
-    parent_id VARCHAR(36) REFERENCES issues(id) ON DELETE SET NULL,
-    due_date DATETIME,
-    completed_at DATETIME,
-    -- CHT-1246 (migration 0009): claim lease expiry.
-    lease_expires_at DATETIME,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_issues_identifier ON issues (identifier);
 
-CREATE TABLE IF NOT EXISTS ritual_groups (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    selection_mode VARCHAR(11) NOT NULL DEFAULT 'ALL',
-    last_selected_ritual_id VARCHAR(36),
-    created_at DATETIME NOT NULL
-);
+@pytest.fixture(scope="session")
+def schema_template(tmp_path_factory) -> str:
+    """Path of a SQLite file carrying the fully migrated, empty schema."""
+    path = str(tmp_path_factory.mktemp("schema") / "template.db")
+    _build_schema_template(path)
+    return path
 
-CREATE TABLE IF NOT EXISTS rituals (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    prompt TEXT NOT NULL,
-    "trigger" VARCHAR(12) NOT NULL,
-    approval_mode VARCHAR(6) NOT NULL DEFAULT 'NONE',
-    note_required BOOLEAN NOT NULL DEFAULT 0,
-    conditions TEXT,
-    group_id VARCHAR(36) REFERENCES ritual_groups(id) ON DELETE SET NULL,
-    weight FLOAT NOT NULL DEFAULT 1.0,
-    percentage FLOAT,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT 1
-);
 
-CREATE TABLE IF NOT EXISTS budget_transactions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    sprint_id VARCHAR(36) NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    issue_id VARCHAR(36) REFERENCES issues(id) ON DELETE SET NULL,
-    user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    points INTEGER NOT NULL,
-    tokens INTEGER,
-    created_at DATETIME NOT NULL,
-    issue_identifier VARCHAR(20) NOT NULL,
-    issue_title VARCHAR(500) NOT NULL,
-    sprint_name VARCHAR(255) NOT NULL
-);
+def _copy_database(src: str, dst: str) -> None:
+    """Snapshot `src` into `dst` through SQLite's backup API, so a WAL left by
+    the builder is folded in rather than copied alongside."""
+    import sqlite3
+    from contextlib import closing
 
-CREATE TABLE IF NOT EXISTS document_activities (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    document_id VARCHAR(36) REFERENCES documents(id) ON DELETE CASCADE,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    activity_type VARCHAR(9) NOT NULL,
-    document_title VARCHAR(500),
-    document_icon VARCHAR(50),
-    created_at DATETIME NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS document_comments (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    author_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS document_issues (
-    document_id VARCHAR(36) NOT NULL,
-    issue_id VARCHAR(36) NOT NULL,
-    created_at DATETIME,
-    PRIMARY KEY (document_id, issue_id),
-    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
-    FOREIGN KEY(issue_id) REFERENCES issues(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS document_labels (
-    document_id VARCHAR(36) NOT NULL,
-    label_id VARCHAR(36) NOT NULL,
-    PRIMARY KEY (document_id, label_id),
-    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
-    FOREIGN KEY(label_id) REFERENCES labels(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS document_revisions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT,
-    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    created_at DATETIME NOT NULL,
-    UNIQUE (document_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS issue_description_revisions (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL,
-    description TEXT,
-    author_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    created_at DATETIME NOT NULL,
-    UNIQUE (issue_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS issue_activities (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    activity_type VARCHAR(19) NOT NULL,
-    field_name VARCHAR(50),
-    old_value VARCHAR(500),
-    new_value VARCHAR(500),
-    created_at DATETIME NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS issue_comments (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    author_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS issue_labels (
-    issue_id VARCHAR(36) NOT NULL,
-    label_id VARCHAR(36) NOT NULL,
-    PRIMARY KEY (issue_id, label_id),
-    FOREIGN KEY(issue_id) REFERENCES issues(id) ON DELETE CASCADE,
-    FOREIGN KEY(label_id) REFERENCES labels(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS issue_relations (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    related_issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    relation_type VARCHAR(10) NOT NULL DEFAULT 'RELATES_TO',
-    created_at DATETIME NOT NULL,
-    CONSTRAINT uq_issue_relation UNIQUE (issue_id, related_issue_id)
-);
-
-CREATE TABLE IF NOT EXISTS ticket_limbo (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    issue_id VARCHAR(36) NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    limbo_type VARCHAR(5) NOT NULL,
-    requested_by_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    requested_at DATETIME NOT NULL,
-    cleared_at DATETIME,
-    cleared_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_open_intent
-    ON ticket_limbo (issue_id, limbo_type)
-    WHERE cleared_at IS NULL;
-
-CREATE TABLE IF NOT EXISTS ticket_limbo_blockers (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    limbo_id VARCHAR(36) NOT NULL REFERENCES ticket_limbo(id) ON DELETE CASCADE,
-    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
-    resolved_at DATETIME,
-    resolved_by_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_limbo_blocker
-    ON ticket_limbo_blockers (limbo_id, ritual_id);
-
-CREATE TABLE IF NOT EXISTS ritual_attestations (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    ritual_id VARCHAR(36) NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
-    sprint_id VARCHAR(36) REFERENCES sprints(id) ON DELETE CASCADE,
-    issue_id VARCHAR(36) REFERENCES issues(id) ON DELETE CASCADE,
-    attested_by VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    attested_at DATETIME NOT NULL,
-    note TEXT,
-    approved_by VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
-    approved_at DATETIME
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_issue
-    ON ritual_attestations (ritual_id, issue_id)
-    WHERE issue_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ritual_attestation_per_sprint
-    ON ritual_attestations (ritual_id, sprint_id)
-    WHERE sprint_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS inbox_entries (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    recipient_user_id VARCHAR(36) NOT NULL,
-    kind VARCHAR(17) NOT NULL,
-    team_id VARCHAR(36) NOT NULL,
-    project_id VARCHAR(36),
-    issue_id VARCHAR(36),
-    document_id VARCHAR(36),
-    ritual_id VARCHAR(36),
-    source_user_id VARCHAR(36),
-    title VARCHAR(500) NOT NULL,
-    body TEXT,
-    created_at DATETIME NOT NULL,
-    read_at DATETIME,
-    archived_at DATETIME
-);
-CREATE INDEX IF NOT EXISTS inbox_entries_recipient_user_id_idx ON inbox_entries (recipient_user_id);
-CREATE INDEX IF NOT EXISTS inbox_entries_team_id_idx ON inbox_entries (team_id);
-
-CREATE TABLE IF NOT EXISTS templates (
-    id VARCHAR(36) NOT NULL PRIMARY KEY,
-    team_id VARCHAR(36) NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    description VARCHAR(1000),
-    body TEXT NOT NULL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
-);
--- CHT-1259 (migration 0013): backstop for TemplateService.create's
--- duplicate-name check, same shape as labels_team_id_name_idx.
-CREATE UNIQUE INDEX IF NOT EXISTS templates_team_id_name_idx ON templates (team_id, name);
-
-CREATE TABLE IF NOT EXISTS oxyde_migrations (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    applied_at TIMESTAMP NOT NULL
-);
-"""
+    with closing(sqlite3.connect(src)) as source, closing(sqlite3.connect(dst)) as target:
+        source.backup(target)
 
 
 @pytest_asyncio.fixture
-async def db(tmp_path):
-    """Initialize Oxyde with a fresh temp database for each test.
+async def db(tmp_path, schema_template):
+    """Initialize Oxyde with a fresh temp database for each test: a copy of
+    the migrated template, so the schema under test IS the production
+    schema (CHT-1208).
 
     Yields None (kept as a fixture param for test signatures that
     reference 'db' even though Oxyde manages connections globally).
     """
     db_path = str(tmp_path / "test.db")
     db_url = f"sqlite:///{db_path}"
+    _copy_database(schema_template, db_path)
 
     # Set env var so get_settings() picks it up for any code that reads it
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
@@ -397,7 +102,7 @@ async def db(tmp_path):
     from app.config import get_settings
     get_settings.cache_clear()
 
-    from oxyde import AsyncDatabase, PoolSettings, execute_raw, disconnect_all
+    from oxyde import AsyncDatabase, PoolSettings, disconnect_all
 
     # Single connection: session-scoped PRAGMAs (foreign_keys OFF/ON in FK-corruption
     # tests) must hit the same connection as the statements they bracket.
@@ -406,12 +111,6 @@ async def db(tmp_path):
 
     # Import models so they register with Oxyde
     import app.oxyde_models  # noqa: F401
-
-    # Create all tables using the schema SQL
-    for statement in _SCHEMA_SQL.split(";"):
-        statement = statement.strip()
-        if statement:
-            await execute_raw(statement, [])
 
     # Monkey-patch QueryManager.create to re-fetch after insert so enum fields
     # are properly coerced by DbEnum validators (objects.create returns
