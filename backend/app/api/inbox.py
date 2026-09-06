@@ -5,52 +5,48 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser
 from app.schemas.inbox import InboxEntryResponse, MarkAllReadResponse, UnreadCountResponse
+from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.inbox_service import InboxService
-from app.services.issue_service import IssueService
-from app.services.document_service import DocumentService
-from app.services.user_service import UserService
 from app.websocket import broadcast_inbox_event
 
 router = APIRouter()
 
 
-async def _build_response(entry) -> InboxEntryResponse:
+async def _build_responses(entries: list[OxydeInboxEntry]) -> list[InboxEntryResponse]:
     """Fill in display fields (issue identifier, document title, source
-    user name) that aren't stored on the entry itself.
-    """
-    issue_identifier = None
-    if entry.issue_id:
-        issue = await IssueService().get_by_id(entry.issue_id)
-        issue_identifier = issue.identifier if issue else None
+    user name) that aren't stored on the entry itself. Three queries for
+    the whole page, not several per entry: InboxService resolves the
+    referents in bulk (CHT-1399)."""
+    issues, documents, users = await InboxService().resolve_display_fields(entries)
 
-    document_title = None
-    if entry.document_id:
-        document = await DocumentService().get_by_id(entry.document_id)
-        document_title = document.title if document else None
+    def one(entry: OxydeInboxEntry) -> InboxEntryResponse:
+        issue = issues.get(entry.issue_id) if entry.issue_id else None
+        document = documents.get(entry.document_id) if entry.document_id else None
+        source_user = users.get(entry.source_user_id) if entry.source_user_id else None
+        return InboxEntryResponse(
+            id=entry.id,
+            recipient_user_id=entry.recipient_user_id,
+            kind=entry.kind,
+            team_id=entry.team_id,
+            project_id=entry.project_id,
+            issue_id=entry.issue_id,
+            issue_identifier=issue.identifier if issue else None,
+            document_id=entry.document_id,
+            document_title=document.title if document else None,
+            ritual_id=entry.ritual_id,
+            source_user_id=entry.source_user_id,
+            source_user_name=source_user.name if source_user else None,
+            title=entry.title,
+            body=entry.body,
+            created_at=entry.created_at,
+            read_at=entry.read_at,
+        )
 
-    source_user_name = None
-    if entry.source_user_id:
-        source_user = await UserService().get_by_id(entry.source_user_id)
-        source_user_name = source_user.name if source_user else None
+    return [one(e) for e in entries]
 
-    return InboxEntryResponse(
-        id=entry.id,
-        recipient_user_id=entry.recipient_user_id,
-        kind=entry.kind,
-        team_id=entry.team_id,
-        project_id=entry.project_id,
-        issue_id=entry.issue_id,
-        issue_identifier=issue_identifier,
-        document_id=entry.document_id,
-        document_title=document_title,
-        ritual_id=entry.ritual_id,
-        source_user_id=entry.source_user_id,
-        source_user_name=source_user_name,
-        title=entry.title,
-        body=entry.body,
-        created_at=entry.created_at,
-        read_at=entry.read_at,
-    )
+
+async def _build_response(entry: OxydeInboxEntry) -> InboxEntryResponse:
+    return (await _build_responses([entry]))[0]
 
 
 @router.get("", response_model=list[InboxEntryResponse])
@@ -65,7 +61,7 @@ async def list_inbox(
     entries = await InboxService().list_for_user(
         current_user.id, team_id=team_id, unread_only=unread, skip=skip, limit=limit,
     )
-    return [await _build_response(e) for e in entries]
+    return await _build_responses(entries)
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
