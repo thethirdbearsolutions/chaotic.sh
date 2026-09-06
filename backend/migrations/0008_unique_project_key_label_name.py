@@ -88,11 +88,19 @@ def report_renames(ctx, echo=print):
     Split out from upgrade() so tests can drive it directly; `echo` is
     injectable for the same reason.
 
-    Oxyde runs every upgrade() twice: once to execute, and once more in
-    a "collect" context that records operations for replay and has no
-    connection at all. There is nothing to scan on that pass, so it
-    stays silent instead of printing the cannot-pre-scan caveat after
-    the real pass already reported (CHT-1402).
+    Oxyde also drives upgrade() through a connection-less "collect"
+    MigrationContext that only records schema operations: once right
+    after the real pass (executor.py), and again for every
+    already-applied migration whenever a later one is migrated, rolled
+    back, or inspected by makemigrations / sqlmigrate. There is nothing
+    to scan on any of those passes, so report_renames stays silent there
+    instead of printing the cannot-pre-scan caveat, which it used to do
+    on every such run, indefinitely (CHT-1402).
+
+    `_mode` is a private attribute of MigrationContext (oxyde 0.7; there
+    is no public accessor). If it is renamed the guard falls through to
+    "execute" and the caveat merely returns -- the dedupe below never
+    depends on this -- and test_collect_pass_is_silent says so.
     """
     if getattr(ctx, "_mode", "execute") == "collect":
         return
