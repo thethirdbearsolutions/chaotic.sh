@@ -20,7 +20,7 @@ from app.enums import (
     RitualTrigger,
     TeamRole,
 )
-from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+from app.oxyde_models.issue import OxydeTicketLimbo
 from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.oxyde_models.team import OxydeTeamMember
 from app.schemas.issue import IssueUpdate

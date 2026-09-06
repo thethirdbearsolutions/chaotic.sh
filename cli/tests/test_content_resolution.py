@@ -4,7 +4,6 @@ Covers the helper in isolation (unit tests) and the wiring on a representative
 sample of commands (integration tests).
 """
 import io
-import sys
 from unittest.mock import MagicMock, patch
 
 import click

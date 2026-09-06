@@ -40,6 +40,7 @@ dev = [
     "pytest>=7.4.4",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.3",
+    "ruff>=0.15",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -47,3 +48,19 @@ packages = ["app"]
 
 [tool.uv.sources]
 chaotic-cli = { path = "../cli", editable = true }
+
+# Pyflakes-equivalent checks only (CHT-1362): undefined names, unused
+# imports/variables, shadowed redefinitions. Not a style gate. Runs in CI
+# (`uv run ruff check .`) and as a pre-commit hook.
+[tool.ruff]
+# Oxyde's generated model stubs are not ours to lint.
+extend-exclude = ["app/oxyde_models/*.pyi", "migrations"]
+
+[tool.ruff.lint]
+select = ["F401", "F811", "F821", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests bind results they never read on purpose (`_ = await ...` would be
+# noise); F401/F811/F821 still apply -- F811 is how CHT-1373's ten
+# shadowed tests were found.
+"tests/*" = ["F841"]

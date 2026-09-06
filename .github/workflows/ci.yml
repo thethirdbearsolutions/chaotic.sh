@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Lint (pyflakes rules)
+        run: uv run ruff check .
+
       - name: Run tests with coverage
         run: uv run pytest --cov=app --cov-report=term-missing -v
 
@@ -53,6 +56,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --extra dev
+
+      - name: Lint (pyflakes rules)
+        run: uv run ruff check .
 
       - name: Run tests with coverage
         run: uv run pytest --cov=cli --cov=chaotic_mcp_tools --cov-report=term-missing -v

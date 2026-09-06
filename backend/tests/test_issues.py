@@ -1970,48 +1970,14 @@ async def test_delete_relation_wrong_issue(client, auth_headers, test_project, t
 # ============================================
 
 
-@pytest.mark.asyncio
-async def test_get_issue_documents(client, auth_headers, test_issue, test_document, db):
-    """Test getting documents linked to an issue."""
-
-    # Link document to issue via raw SQL
-    from oxyde import execute_raw
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    await execute_raw(
-        "INSERT INTO document_issues (document_id, issue_id, created_at) VALUES (?, ?, ?)",
-        [test_document.id, test_issue.id, now],
-    )
-
-    response = await client.get(
-        f"/api/issues/{test_issue.id}/documents",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    # We linked exactly one document
-    assert len(data) == 1
-    assert data[0]["id"] == test_document.id
-
-
-@pytest.mark.asyncio
-async def test_get_issue_documents_not_found(client, auth_headers):
-    """Test getting documents for non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000/documents",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # Issue Activities API Tests
 # ============================================
 
 
 @pytest.mark.asyncio
-async def test_list_issue_activities(client, auth_headers, test_issue, db, test_user):
-    """Test listing activities for an issue."""
+async def test_list_issue_activities_status_change_via_service(client, auth_headers, test_issue, db, test_user):
+    """A service-level status change produces exactly one status_changed activity."""
     from app.services.issue_service import IssueService
     from app.schemas.issue import IssueUpdate
     from app.enums import IssueStatus
@@ -2031,76 +1997,9 @@ async def test_list_issue_activities(client, auth_headers, test_issue, db, test_
     assert data[0]["activity_type"] == "status_changed"
 
 
-@pytest.mark.asyncio
-async def test_list_issue_activities_not_found(client, auth_headers):
-    """Test listing activities for non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000/activities",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # List Issues Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_list_issues_by_team(client, auth_headers, test_team, test_project, test_user, db):
-    """Test listing issues by team."""
-    from app.oxyde_models.issue import OxydeIssue
-
-    issue = await OxydeIssue.objects.create(
-        project_id=test_project.id,
-        identifier=f"{test_project.key}-1500",
-        number=1500,
-        title="Team Issue",
-        creator_id=test_user.id,
-    )
-
-    response = await client.get(
-        f"/api/issues?team_id={test_team.id}",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) >= 1
-
-
-@pytest.mark.asyncio
-async def test_list_issues_by_sprint_only(client, auth_headers, test_project, test_user, db):
-    """Test listing issues by sprint only (without project_id or team_id)."""
-    from app.oxyde_models.issue import OxydeIssue
-    from app.oxyde_models.sprint import OxydeSprint
-    from app.enums import SprintStatus
-
-    # Create sprint
-    sprint = await OxydeSprint.objects.create(
-        project_id=test_project.id,
-        name="Sprint Only Test",
-        status=SprintStatus.ACTIVE,
-    )
-
-    # Create issue in sprint
-    issue = await OxydeIssue.objects.create(
-        project_id=test_project.id,
-        sprint_id=sprint.id,
-        identifier=f"{test_project.key}-1600",
-        number=1600,
-        title="Sprint Only Issue",
-        creator_id=test_user.id,
-    )
-
-    response = await client.get(
-        f"/api/issues?sprint_id={sprint.id}",
-        headers=auth_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    # We created exactly one issue in this sprint
-    assert len(data) == 1
-    assert data[0]["title"] == "Sprint Only Issue"
 
 
 @pytest.mark.asyncio
@@ -2247,17 +2146,6 @@ async def test_batch_update_issues_add_labels(client, auth_headers, test_project
 # ============================================
 # Update Issue Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_update_issue_not_found(client, auth_headers):
-    """Test updating non-existent issue."""
-    response = await client.patch(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-        json={"title": "Updated"},
-    )
-    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2604,39 +2492,9 @@ async def test_delete_comment_not_author(client, auth_headers2, test_issue, db, 
 # ============================================
 
 
-@pytest.mark.asyncio
-async def test_get_issue_not_found(client, auth_headers):
-    """Test getting non-existent issue."""
-    response = await client.get(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_get_issue_by_identifier_not_found(client, auth_headers):
-    """Test getting issue by non-existent identifier."""
-    response = await client.get(
-        "/api/issues/identifier/NONEXISTENT-999",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
-
-
 # ============================================
 # Delete Issue Edge Cases
 # ============================================
-
-
-@pytest.mark.asyncio
-async def test_delete_issue_not_found(client, auth_headers):
-    """Test deleting non-existent issue."""
-    response = await client.delete(
-        "/api/issues/00000000-0000-0000-0000-000000000000",
-        headers=auth_headers,
-    )
-    assert response.status_code == 404
 
 
 # ============================================
@@ -2948,9 +2806,11 @@ async def test_get_issue_documents(client, auth_headers, test_issue, test_team, 
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    assert len(data) >= 1
-    assert any(d["id"] == doc.id for d in data)
-    assert any(d["title"] == "Linked Document" for d in data)
+    # Exactly the one document we linked (the deleted shadowed twin of this
+    # test pinned the count; CHT-1373).
+    assert len(data) == 1
+    assert data[0]["id"] == doc.id
+    assert data[0]["title"] == "Linked Document"
 
 
 @pytest.mark.asyncio

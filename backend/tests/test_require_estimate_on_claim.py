@@ -8,7 +8,6 @@ an interactive (TTY) caller. A human account driving the API non-interactively
 (no X-Chaotic-Interactive header) is gated exactly like an agent.
 """
 import pytest
-from app.enums import IssueStatus
 
 
 @pytest.mark.asyncio

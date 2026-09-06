@@ -43,7 +43,6 @@ require-team/project checks with await's exit-code semantics.
 import json
 import os
 import random
-import re
 import signal
 import subprocess
 import sys
@@ -53,7 +52,7 @@ from datetime import datetime, timedelta, timezone
 import click
 import httpx
 
-from .shared import _client, console, parse_duration
+from .shared import _client, parse_duration
 from ..client import APIError
 
 

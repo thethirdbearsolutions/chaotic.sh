@@ -9,7 +9,6 @@ Targets uncovered lines:
 """
 import pytest
 import pytest_asyncio
-from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock
 
 from app.oxyde_models.ritual import (
@@ -17,11 +16,10 @@ from app.oxyde_models.ritual import (
     OxydeRitualGroup,
 )
 from app.oxyde_models.issue import OxydeIssue
-from app.oxyde_models.issue import OxydeTicketLimbo
 from app.oxyde_models.user import OxydeUser
-from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
+from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.project import OxydeProject
-from app.enums import RitualTrigger, ApprovalMode, SelectionMode, IssueStatus, LimboType, TeamRole
+from app.enums import RitualTrigger, ApprovalMode, SelectionMode, TeamRole
 from app.oxyde_models.sprint import OxydeSprint
 
 
@@ -31,7 +29,7 @@ from app.oxyde_models.sprint import OxydeSprint
 @pytest_asyncio.fixture
 async def agent_user(db, test_team):
     """Agent user scoped to test_team."""
-    from app.utils.security import get_password_hash, create_access_token
+    from app.utils.security import get_password_hash
     user = await OxydeUser.objects.create(
         email="agent-ritual@example.com",
         hashed_password=get_password_hash("agentpass"),
@@ -109,7 +107,6 @@ async def test_issue_955(db, test_project, test_user):
         "UPDATE projects SET issue_count = issue_count + 1 WHERE id = ?",
         [test_project.id],
     )
-    from app.oxyde_models.project import OxydeProject
     project = await OxydeProject.objects.get(id=test_project.id)
     issue = await OxydeIssue.objects.create(
         project_id=project.id,

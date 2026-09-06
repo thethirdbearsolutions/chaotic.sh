@@ -4,9 +4,8 @@ Uses Oxyde ORM for all database operations. Each test gets a fresh
 file-based SQLite database to ensure isolation.
 """
 import os
-import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
 
 from app.utils.security import get_password_hash, create_access_token

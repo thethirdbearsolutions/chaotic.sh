@@ -10,9 +10,7 @@ server looked "running" at every checkpoint. Covers:
 - `chaotic system status`: now calls get_health() and surfaces a
   Health: ok/degraded/unreachable line distinct from Status: running.
 """
-import io
 import json
-import socket
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch, MagicMock

@@ -3,7 +3,7 @@ IssueService/RitualService/DocumentService, and the /inbox API routes.
 """
 import pytest
 
-from app.enums import ApprovalMode, InboxEntryKind, IssueStatus, TeamRole
+from app.enums import InboxEntryKind, IssueStatus, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.oxyde_models.team import OxydeTeamMember
 from app.schemas.document import DocumentCommentCreate

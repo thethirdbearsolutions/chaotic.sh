@@ -10,7 +10,7 @@ Tests that alias commands correctly delegate to their targets:
 - doc get -> doc show
 - doc read -> doc show
 """
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import pytest
 
 

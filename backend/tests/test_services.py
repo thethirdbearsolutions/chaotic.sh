@@ -6,11 +6,11 @@ from app.services.project_service import ProjectService
 from app.services.issue_service import IssueService
 from app.services.document_service import DocumentService
 from app.schemas.user import UserCreate, UserUpdate
-from app.schemas.team import TeamCreate, TeamUpdate, TeamInvitationCreate
-from app.schemas.project import ProjectCreate, ProjectUpdate
+from app.schemas.team import TeamCreate
+from app.schemas.project import ProjectCreate
 from app.schemas.issue import IssueCreate, IssueUpdate, IssueCommentCreate, LabelCreate
-from app.schemas.document import DocumentCreate, DocumentUpdate
-from app.enums import TeamRole, IssueStatus, IssuePriority
+from app.schemas.document import DocumentCreate
+from app.enums import IssueStatus, IssuePriority
 
 
 # User Service Tests

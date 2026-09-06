@@ -1515,7 +1515,6 @@ class TestTeamIdForProjectHelper:
 
 class TestResolveDocumentIdAgentBranches:
     async def test_team_scoped_agent_fuzzy_match(self, db, test_team):
-        from app.enums import TeamRole
         from app.oxyde_models.user import OxydeUser
         from app.utils.security import get_password_hash
 

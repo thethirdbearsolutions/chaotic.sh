@@ -21,7 +21,6 @@ queried directly from the OxydeIssueActivity table.
 import pytest
 
 from app.enums import (
-    ActivityType,
     ApprovalMode,
     IssueStatus,
     RitualTrigger,
@@ -79,7 +78,6 @@ class TestIntentOpenedEmitsEvents:
     async def test_close_intent_opens_emits_activity_and_broadcast(
         self, db, test_project, test_user, gate_close_ritual, captured_broadcasts
     ):
-        from app.oxyde_models.issue import OxydeIssue
         issue = await OxydeIssue.objects.create(
             project_id=test_project.id,
             identifier="PROJ-500",

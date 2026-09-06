@@ -10,7 +10,7 @@ from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.sprint import OxydeSprint
 from app.oxyde_models.user import OxydeUser
 from app.enums import TeamRole
-from app.utils.security import get_password_hash, create_access_token
+from app.utils.security import get_password_hash
 
 
 @pytest_asyncio.fixture

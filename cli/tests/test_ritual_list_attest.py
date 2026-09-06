@@ -3,7 +3,7 @@
 Tests cover: ritual list (default, --pending, --ticket, --deleted),
 ritual create, ritual attest.
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 import pytest
 
 

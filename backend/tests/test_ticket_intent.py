@@ -29,7 +29,6 @@ from app.enums import (
     RitualTrigger,
 )
 from app.oxyde_models.issue import OxydeTicketLimbo
-from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.schemas.issue import IssueUpdate
 from app.services.issue_service import IssueService, ClaimRitualsError, TicketRitualsError
 from app.services.ritual_service import RitualService

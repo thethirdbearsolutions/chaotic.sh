@@ -10,7 +10,6 @@ from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.enums import RitualTrigger, ApprovalMode, SprintStatus, LimboType
 from app.services.ritual_service import RitualService
-from app.services.project_service import ProjectService
 from app.schemas.ritual import RitualCreate, RitualUpdate
 
 
@@ -1787,38 +1786,41 @@ class TestRitualNameValidation:
 
 
 @pytest.mark.asyncio
-class TestRitualAPIEndpoints:
-    """Tests for ritual API endpoints with edge cases."""
+class TestRitualAPIEndpointsNullProject:
+    """The ticket-ritual endpoints' "issue exists but its project does not"
+    404 branch.
+
+    These four tests were shadowed by the later TestRitualAPIEndpoints class
+    and never collected (CHT-1373). Revived, they failed: they created an
+    issue with a bogus project_id, which the schema's FOREIGN KEY constraint
+    now rejects, so the branch is unreachable through the database. The
+    branch still exists in app/api/rituals.py (each endpoint re-fetches the
+    project after the issue), so it is exercised by making the project
+    lookup come back empty instead.
+    """
+
+    @pytest.fixture
+    def project_lookup_returns_none(self, monkeypatch):
+        from app.services.project_service import ProjectService
+
+        async def _none(self, project_id):
+            return None
+
+        monkeypatch.setattr(ProjectService, "get_by_id", _none)
 
     async def test_get_pending_ticket_rituals_null_project(
-        self, client, auth_headers, db, test_team, test_user
+        self, client, auth_headers, test_issue, project_lookup_returns_none
     ):
-        """Test get_pending_ticket_rituals returns 404 when issue's project doesn't exist."""
-        # Create an issue with a non-existent project_id
-        # This simulates an orphaned issue scenario (e.g., race condition, data corruption)
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-1",
-            number=1,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Call the endpoint - should get 404 for project not found
         response = await client.get(
-            f"/api/rituals/issue/{orphaned_issue.id}/pending",
+            f"/api/rituals/issue/{test_issue.id}/pending",
             headers=auth_headers,
         )
         assert response.status_code == 404
         assert "Project not found" in response.json()["detail"]
 
     async def test_attest_ritual_for_issue_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test attest_ritual_for_issue returns 404 when issue's project doesn't exist."""
-        # Create a ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="test-ritual",
@@ -1826,21 +1828,8 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.AUTO,
         )
-
-        # Create an orphaned issue (references non-existent project)
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-2",
-            number=2,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to attest - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/attest-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/attest-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test note"},
         )
@@ -1848,10 +1837,8 @@ class TestRitualAPIEndpoints:
         assert "Project not found" in response.json()["detail"]
 
     async def test_complete_gate_ritual_for_issue_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test complete_gate_ritual_for_issue returns 404 when issue's project doesn't exist."""
-        # Create a GATE mode ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="gate-ritual",
@@ -1859,21 +1846,8 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.GATE,
         )
-
-        # Create an orphaned issue
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-3",
-            number=3,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to complete - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/complete-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/complete-issue/{test_issue.id}",
             headers=auth_headers,
             json={"note": "Test note"},
         )
@@ -1881,10 +1855,8 @@ class TestRitualAPIEndpoints:
         assert "Project not found" in response.json()["detail"]
 
     async def test_approve_issue_attestation_null_project(
-        self, client, auth_headers, db, test_project, test_user
+        self, client, auth_headers, db, test_project, test_issue, project_lookup_returns_none
     ):
-        """Test approve_issue_attestation returns 404 when issue's project doesn't exist."""
-        # Create a REVIEW mode ritual for a valid project
         ritual = await OxydeRitual.objects.create(
             project_id=test_project.id,
             name="review-ritual",
@@ -1892,28 +1864,14 @@ class TestRitualAPIEndpoints:
             trigger=RitualTrigger.TICKET_CLOSE,
             approval_mode=ApprovalMode.REVIEW,
         )
-
-        # Create an orphaned issue
-        orphaned_issue = await OxydeIssue.objects.create(
-            project_id="non-existent-project-id",
-            identifier="ORPHAN-4",
-            number=4,
-            title="Orphaned Issue",
-            status="backlog",
-            priority="no_priority",
-            creator_id=test_user.id,
-        )
-
-        # Try to approve - should get 404 for project not found
         response = await client.post(
-            f"/api/rituals/{ritual.id}/approve-issue/{orphaned_issue.id}",
+            f"/api/rituals/{ritual.id}/approve-issue/{test_issue.id}",
             headers=auth_headers,
         )
         assert response.status_code == 404
         assert "Project not found" in response.json()["detail"]
 
 
-@pytest.mark.asyncio
 class TestRitualConditions:
     """Tests for ritual condition evaluation (CHT-473)."""
 
@@ -3143,7 +3101,6 @@ class TestTicketLimbo:
         from app.services.ritual_service import RitualService
         from app.oxyde_models.issue import OxydeTicketLimbo
         from app.enums import LimboType
-        from datetime import datetime, timezone
 
         # Create issue
         issue = await OxydeIssue.objects.create(

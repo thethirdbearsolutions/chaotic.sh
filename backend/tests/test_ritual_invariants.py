@@ -15,11 +15,8 @@ from app.enums import (
     IssueStatus,
     RitualTrigger,
 )
-from app.oxyde_models.user import OxydeUser
-from app.oxyde_models.team import OxydeTeamMember
 from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.services.ritual_service import RitualService
-from app.utils.security import get_password_hash
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +356,7 @@ class TestSoftDeleteHandling:
         """
         from app.services.issue_service import IssueService, TicketRitualsError
         from app.schemas.issue import IssueUpdate
-        from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+        from app.oxyde_models.issue import OxydeTicketLimbo
 
         # Make the issue closeable so we can intend close.
         test_issue.status = IssueStatus.IN_PROGRESS

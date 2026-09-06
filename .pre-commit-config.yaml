@@ -30,5 +30,21 @@ repos:
         entry: cli/.venv/bin/python -m pytest cli/tests/test_mcp_toolset_sync.py -q --no-cov -p no:cacheprovider
         language: system
         pass_filenames: false
-        files: ^(cli/src/cli/mcp_server\.py|backend/app/mcp_server/.*\.py|docs/mcp-toolset-schema\.json)$
+        files: ^(cli/src/(cli/mcp_server|cli/mcp_backend|chaotic_mcp_tools/.*)\.py|backend/app/mcp_server/.*\.py|docs/mcp-toolset-schema\.json)$
         types_or: [python, json]
+
+      # Pyflakes-equivalent rules only (CHT-1362): undefined names, unused
+      # imports/variables, shadowed redefinitions. Same config CI runs
+      # (`ruff check .` in backend/ and cli/, from each pyproject).
+      - id: ruff-backend
+        name: ruff (backend, F-rules)
+        entry: backend/.venv/bin/ruff check backend
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: ruff-cli
+        name: ruff (cli, F-rules)
+        entry: cli/.venv/bin/ruff check cli
+        language: system
+        pass_filenames: false
+        files: ^cli/.*\.py$
