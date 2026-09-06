@@ -1443,3 +1443,87 @@ async def test_sprint_create_and_update_ignore_dates(client, auth_headers, test_
     assert body["budget"] == 21
     assert "start_date" not in body and "end_date" not in body
     assert "activated_at" in body and "closed_at" in body
+
+
+@pytest.mark.asyncio
+async def test_round_robin_sprint_group_rotates_across_closes(db, test_project, test_user):
+    """CHT-1280: a ROUND_ROBIN EVERY_SPRINT group gates a different sibling
+    on each successive sprint close. Observed live for four closes running
+    before this: the first sibling every time, the second never, because no
+    rotation path ever advanced the group's pointer."""
+    from app.enums import RitualTrigger, SelectionMode
+    from app.oxyde_models.ritual import OxydeRitualGroup, OxydeRitual
+    from app.services.ritual_service import RitualService
+    from app.services.sprint_service import SprintService
+
+    group = await OxydeRitualGroup.objects.create(
+        project_id=test_project.id, name="Deep Work Rotation", selection_mode=SelectionMode.ROUND_ROBIN,
+    )
+    first = await OxydeRitual.objects.create(
+        project_id=test_project.id, name="architecture-review", prompt="review", weight=1,
+        trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+    )
+    second = await OxydeRitual.objects.create(
+        project_id=test_project.id, name="document-feature", prompt="document", weight=1,
+        trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+    )
+    sprint = await OxydeSprint.objects.create(project_id=test_project.id, name="S1", status=SprintStatus.ACTIVE)
+    await OxydeSprint.objects.create(project_id=test_project.id, name="S2", status=SprintStatus.PLANNED)
+    rituals, sprints = RitualService(), SprintService()
+
+    gated = []
+    for _ in range(3):
+        closed = await sprints.close_sprint(sprint)
+        assert closed.limbo is True
+        pending = await rituals.get_pending_rituals(test_project.id, sprint.id)
+        assert len(pending) == 1
+        gated.append(pending[0].name)
+        # The offer is stable for the whole limbo: listing again must name
+        # the same ritual (nothing advances the pointer before rotation).
+        assert (await rituals.get_pending_rituals(test_project.id, sprint.id))[0].name == pending[0].name
+        # AUTO approval: attesting the last pending ritual completes the
+        # limbo itself, so the explicit complete_limbo below is the loser
+        # of that race and must not advance the group a second time.
+        await rituals.attest(pending[0], sprint_id=sprint.id, user_id=test_user.id, note="done")
+        await sprints.complete_limbo(sprint)
+        sprint = await sprints.get_current_sprint(test_project.id)
+
+    assert gated == ["architecture-review", "document-feature", "architecture-review"], gated
+    group = await OxydeRitualGroup.objects.get(id=group.id)
+    assert group.last_selected_ritual_id == first.id
+    assert second.id != first.id
+
+
+@pytest.mark.asyncio
+async def test_round_robin_advances_on_an_immediate_rotation_too(db, test_project, test_user):
+    """A sprint whose selected ritual was attested before the close rotates
+    without limbo; the group still moves on, so the next sprint is gated on
+    the other sibling rather than the same one again."""
+    from app.enums import RitualTrigger, SelectionMode
+    from app.oxyde_models.ritual import OxydeRitualGroup, OxydeRitual
+    from app.services.ritual_service import RitualService
+    from app.services.sprint_service import SprintService
+
+    group = await OxydeRitualGroup.objects.create(
+        project_id=test_project.id, name="rr", selection_mode=SelectionMode.ROUND_ROBIN,
+    )
+    a = await OxydeRitual.objects.create(
+        project_id=test_project.id, name="a", prompt="a", weight=1,
+        trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+    )
+    b = await OxydeRitual.objects.create(
+        project_id=test_project.id, name="b", prompt="b", weight=1,
+        trigger=RitualTrigger.EVERY_SPRINT, group_id=group.id,
+    )
+    sprint = await OxydeSprint.objects.create(project_id=test_project.id, name="S1", status=SprintStatus.ACTIVE)
+    await OxydeSprint.objects.create(project_id=test_project.id, name="S2", status=SprintStatus.PLANNED)
+    rituals, sprints = RitualService(), SprintService()
+
+    await rituals.attest(a, sprint_id=sprint.id, user_id=test_user.id, note="early")  # pre-close attestation
+    closed = await sprints.close_sprint(sprint)
+    assert closed.limbo is False and closed.status == SprintStatus.COMPLETED
+
+    nxt = await sprints.get_current_sprint(test_project.id)
+    assert [r.name for r in await rituals.get_pending_rituals(test_project.id, nxt.id)] == ["b"]
+    assert (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id == a.id
+    assert b.id != a.id

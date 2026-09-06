@@ -103,6 +103,14 @@ all pending rituals are attested. It's the actual transition to
 `UPDATE ... WHERE limbo = 1` guards against two racing callers both
 trying to activate the next sprint (CHT-1278).
 
+Both rotation paths (the immediate one in `close_sprint` and the
+winner of `complete_limbo`) also advance every ROUND_ROBIN sprint ritual
+group past the ritual that gated the closing sprint (CHT-1280), so the
+next sprint's close selects the sibling. Selection is pure while a sprint
+is open, so listing and attestation keep offering the same ritual until
+the rotation. A force-cleared limbo rotates too, and counts as that
+ritual's turn: the skipped ritual is not re-offered next sprint.
+
 So: **`close_sprint` is the only advance mechanism**, and it either
 completes-and-rotates immediately, or parks the sprint in limbo until
 `complete_limbo` (triggered by ritual completion) finishes the job.

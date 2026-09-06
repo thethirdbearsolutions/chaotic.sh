@@ -166,6 +166,8 @@ class SprintService:
                 sprint.limbo = False
                 sprint.closed_at = datetime.now(timezone.utc)
                 await sprint.save(update_fields={"status", "limbo", "closed_at"})
+                # The sprint rotated: round-robin groups move on (CHT-1280).
+                await RitualService().record_sprint_rotation(project_id, sprint.id)
                 await self._activate_next_sprint(next_sprint)
 
         await sprint.refresh()
@@ -233,6 +235,12 @@ class SprintService:
                 await sprint.refresh()
                 sprint.closed_at = datetime.now(timezone.utc)
                 await sprint.save(update_fields={"closed_at"})
+                # The winner also moves round-robin groups past the ritual
+                # that gated this limbo (CHT-1280); until now the pointer was
+                # never advanced on any path, so the first sibling gated
+                # every sprint and the others were never selected.
+                from app.services.ritual_service import RitualService
+                await RitualService().record_sprint_rotation(sprint.project_id, sprint.id)
         if not result:
             # Lost the race (or sprint wasn't in limbo): another request
             # already cleared limbo and owns next-sprint activation.
