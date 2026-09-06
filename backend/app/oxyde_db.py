@@ -1,5 +1,6 @@
 """Oxyde ORM database configuration."""
 import glob
+import logging
 import os
 import typing
 import uuid
@@ -218,6 +219,61 @@ async def init_oxyde() -> AsyncDatabase:
     return _db
 
 
+MIGRATIONS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "migrations"))
+
+
+async def bootstrap_if_empty() -> list[str]:
+    """Create the schema on a brand-new database by applying the whole
+    migration chain (CHT-1195). Returns the migrations applied, [] when
+    the database already had tables.
+
+    "Empty" means no tables at all, or only an oxyde_migrations table with
+    no rows in it: a first bootstrap that was interrupted before any
+    migration committed leaves exactly that behind (Oxyde creates the
+    bookkeeping table in autocommit first), and it provably holds no data.
+    Once a single migration has been recorded the file is a partial schema,
+    which is left to verify_migrations_current to refuse with the fix.
+
+    This is the one state where applying migrations at startup cannot lose
+    data or serve new code against an old schema, so a self-hoster who
+    points uvicorn at a fresh DATABASE_URL gets a working server instead
+    of "no such table" on the first request. It cannot corrupt, but it is
+    not serialised either: SQLite has no migration lock in Oxyde, so two
+    processes starting against the same empty file race, one applies the
+    chain and the other fails loudly (a table that already exists, or the
+    BEHIND refusal). Start one process first. Every database that already
+    has a schema is left to verify_migrations_current: behind the code
+    must be migrated deliberately, by an operator, before the new code
+    serves it (the CHT-1317 incident). SQLite only, like the migrations
+    themselves; any other dialect is left alone.
+    """
+    from oxyde import execute_raw
+
+    if not _get_oxyde_url().startswith("sqlite"):
+        return []
+    tables = {
+        r["name"] for r in await execute_raw(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    if tables - {"oxyde_migrations"}:
+        return []
+    if "oxyde_migrations" in tables:
+        recorded = await execute_raw("SELECT count(*) AS n FROM oxyde_migrations")
+        if recorded and recorded[0]["n"]:
+            return []  # a partial chain: the guard below says what to do
+    from oxyde.migrations.executor import apply_migrations
+
+    applied = await apply_migrations(migrations_dir=MIGRATIONS_DIR)
+    # WARNING, not INFO: nothing configures app loggers in production, so
+    # INFO is dropped, and an operator should see that a schema was created.
+    logging.getLogger(__name__).warning(
+        "Empty database at %s: created the schema by applying %d migration(s) (CHT-1195)",
+        _get_oxyde_url(), len(applied),
+    )
+    return applied
+
+
 async def verify_migrations_current() -> None:
     """Fail loud at startup if the DB is BEHIND (or AHEAD of) the code's
     migrations (CHT-1318).
@@ -248,10 +304,9 @@ async def verify_migrations_current() -> None:
         raise
 
     applied = {r["name"] for r in rows}
-    mig_dir = os.path.join(os.path.dirname(__file__), os.pardir, "migrations")
     code = {
         os.path.splitext(os.path.basename(f))[0]
-        for f in glob.glob(os.path.join(mig_dir, "[0-9]*.py"))
+        for f in glob.glob(os.path.join(MIGRATIONS_DIR, "[0-9]*.py"))
     }
     pending = sorted(code - applied)
     ahead = sorted(applied - code)

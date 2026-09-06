@@ -11,7 +11,7 @@ from fastapi import Request
 import os
 
 from app.config import get_settings
-from app.oxyde_db import init_oxyde, close_oxyde, verify_migrations_current
+from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
 from app.websocket import manager
 from app.utils.security import decode_token
@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
     await init_oxyde()
+    # CHT-1195: a brand-new database gets its schema from the migration
+    # chain here, the one case where migrating at startup cannot hurt.
+    await bootstrap_if_empty()
     # CHT-1318: refuse to serve if the DB is behind the code's migrations,
     # rather than 500 at runtime on the first query of a not-yet-added
     # column (the CHT-1317 incident). No-op on a non-migration-managed DB.
