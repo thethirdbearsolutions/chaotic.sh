@@ -144,14 +144,15 @@ async def db(tmp_path, schema_template):
     # Restore original create
     QueryManager.create = _original_create
 
-    await _assert_revision_history_current()
+    try:
+        await _assert_revision_history_current()
+    finally:
+        # disconnect_all clears the registry so the next test can register 'default'
+        await disconnect_all()
 
-    # disconnect_all clears the registry so the next test can register 'default'
-    await disconnect_all()
-
-    # Clean up env
-    os.environ.pop("DATABASE_URL", None)
-    get_settings.cache_clear()
+        # Clean up env
+        os.environ.pop("DATABASE_URL", None)
+        get_settings.cache_clear()
 
 
 REVISION_INVARIANTS = (
@@ -192,8 +193,10 @@ async def _assert_revision_history_current() -> None:
     for what, sql in REVISION_INVARIANTS:
         try:
             rows = await execute_raw(sql)
-        except Exception:  # noqa: BLE001 - a test that dropped or never had the tables
-            continue
+        except Exception as e:
+            if "no such table" in str(e):  # a test that dropped the tables
+                continue
+            raise
         stale.extend(f"{what} of {row['ref']} is ahead of revision v{row['version']}" for row in rows)
     assert not stale, (
         "Revision history is stale (CHT-1340): a write changed the body without "
