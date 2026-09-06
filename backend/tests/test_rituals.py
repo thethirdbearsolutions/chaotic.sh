@@ -6532,3 +6532,119 @@ class TestRoundRobinContinuity:
         # claimed first ticket now reflects the moved pointer (`b`), which
         # is only what it would be gated on if it were claimed again.
         assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, first.id)] == ["b"]
+
+    async def _issue(self, project, user, title, **fields):
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+        return await IssueService().create(IssueCreate(title=title, project_id=project.id, **fields), project, user.id)
+
+    async def _pointer(self, group):
+        from app.oxyde_models.ritual import OxydeRitualGroup
+        return (await OxydeRitualGroup.objects.get(id=group.id)).last_selected_ritual_id
+
+    async def test_close_rotation_is_computed_over_the_pre_transition_issue(
+        self, db, test_project, test_user,
+    ):
+        """Members conditioned on `status == todo` gate a todo ticket's
+        close. The rotation must be computed before the status flips to
+        done, or the conditions match nothing and the pointer never moves
+        (review finding on the first cut of CHT-1405)."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLOSE, ["a", "b"])
+        for member in (a, b):
+            member.conditions = '{"status__eq": "todo"}'
+            await member.save(update_fields={"conditions"})
+        rituals, issues = RitualService(), IssueService()
+        first = await self._issue(test_project, test_user, "first", status=IssueStatus.TODO)
+        second = await self._issue(test_project, test_user, "second", status=IssueStatus.TODO)
+
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, first.id)] == ["a"]
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        closed = await issues.update(
+            first, IssueUpdate(status=IssueStatus.DONE), user_id=test_user.id, is_human_request=False,
+        )
+        assert closed.status == IssueStatus.DONE
+        assert await self._pointer(group) == a.id
+        assert [r.name for r in await rituals.get_pending_ticket_rituals(test_project.id, second.id)] == ["b"]
+
+    async def test_a_blocked_claim_leaves_the_pointer_and_the_limbo_transition_moves_it(
+        self, db, test_project, test_user,
+    ):
+        """Nothing advances until the transition happens: a claim refused
+        by the gate leaves the pointer alone; the attestation that clears
+        the intent fires the auto-transition, which is what moves it."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.issue import OxydeIssue
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import ClaimRitualsError, IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        first = await self._issue(test_project, test_user, "first")
+
+        with pytest.raises(ClaimRitualsError):
+            await issues.update(
+                first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+            )
+        assert await self._pointer(group) is None
+
+        await rituals.attest_for_issue(a, first.id, test_user.id, note="done")
+        assert (await OxydeIssue.objects.get(id=first.id)).status == IssueStatus.IN_PROGRESS
+        assert await self._pointer(group) == a.id
+
+    async def test_concurrent_tickets_stay_pinned_to_the_member_they_were_offered(
+        self, db, test_project, test_user,
+    ):
+        """Two tickets are refused on `a` before either is attested. The
+        first attestation moves the pointer to `a`; the second ticket's
+        listing, validation and rotation still say `a` -- its intent
+        records what it was offered -- so `b` is refused for it and
+        nothing is orphaned. The third ticket is the one gated on `b`."""
+        from app.enums import IssueStatus
+        from app.oxyde_models.issue import OxydeIssue, OxydeTicketLimbo
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import ClaimRitualsError, IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        rituals, issues = RitualService(), IssueService()
+        x = await self._issue(test_project, test_user, "x")
+        y = await self._issue(test_project, test_user, "y")
+        z = await self._issue(test_project, test_user, "z")
+        for ticket in (x, y):
+            with pytest.raises(ClaimRitualsError):
+                await issues.update(
+                    ticket, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=False,
+                )
+
+        await rituals.attest_for_issue(a, x.id, test_user.id, note="x")
+        assert await self._pointer(group) == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, y.id)] == ["a"]
+        with pytest.raises(ValueError, match="choose 'a' instead"):
+            await rituals.attest_for_issue(b, y.id, test_user.id, note="y")
+        await rituals.attest_for_issue(a, y.id, test_user.id, note="y")
+        assert (await OxydeIssue.objects.get(id=y.id)).status == IssueStatus.IN_PROGRESS
+        assert await OxydeTicketLimbo.objects.filter(issue_id=y.id, cleared_at=None).all() == []
+        assert await self._pointer(group) == a.id
+
+        assert [r.name for r in await rituals.get_pending_claim_rituals(test_project.id, z.id)] == ["b"]
+
+    async def test_a_human_bypassing_the_gate_does_not_advance(self, db, test_project, test_user):
+        """With human_rituals_required off (the default) a human claim
+        consults no gate, so no member gated it and the rotation stays."""
+        from app.enums import IssueStatus
+        from app.schemas.issue import IssueUpdate
+        from app.services.issue_service import IssueService
+
+        group, (a, b) = await self._rr_group(test_project.id, RitualTrigger.TICKET_CLAIM, ["a", "b"])
+        assert test_project.human_rituals_required is False
+        first = await self._issue(test_project, test_user, "first")
+
+        claimed = await IssueService().update(
+            first, IssueUpdate(status=IssueStatus.IN_PROGRESS), user_id=test_user.id, is_human_request=True,
+        )
+        assert claimed.status == IssueStatus.IN_PROGRESS
+        assert await self._pointer(group) is None
