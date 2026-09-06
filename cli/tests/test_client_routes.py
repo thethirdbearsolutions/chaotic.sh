@@ -1,7 +1,8 @@
 """The client reaches every API route and passes pagination through
-(CHT-1383). The route-by-route coverage guard lives in the backend suite
-(backend/tests/test_client_routes.py), which can import both packages;
-these pin the request each new or widened method actually sends."""
+(CHT-1383). The route-by-route coverage guard is e2e's
+test_client_route_coverage.py, which records what every client method
+sends and matches it against the live OpenAPI document; these pin the
+exact request each new or widened method sends."""
 from unittest.mock import patch
 
 import pytest
@@ -11,8 +12,7 @@ from cli.client import Client
 
 @pytest.fixture
 def sent():
-    with patch.object(Client, "_request", return_value=None) as request, \
-         patch("cli.client.get_api_url", return_value="http://test"):
+    with patch.object(Client, "_request", return_value=None) as request:
         yield request
 
 
@@ -27,6 +27,7 @@ class TestWithQuery:
         assert Client._with_query("/x", skip=None, limit=None) == "/x"
         assert Client._with_query("/x", skip=0, limit=None) == "/x?skip=0"
         assert Client._with_query("/x", project_id="p 1", skip=10, limit=5) == "/x?project_id=p+1&skip=10&limit=5"
+        assert Client._with_query("/x", include_inactive=True, mine=False) == "/x?include_inactive=true&mine=false"
 
 
 class TestPaginationIsSent:
@@ -84,8 +85,6 @@ class TestNewRoutes:
         assert _call(sent)[:2] == ("POST", "/inbox/e1/archive")
         c.get_label("l1")
         assert _call(sent)[:2] == ("GET", "/labels/l1")
-        c.get_pending_gates()
-        assert _call(sent)[:2] == ("GET", "/rituals/pending-gates")
         c.get_pending_gates("p1")
         assert _call(sent)[:2] == ("GET", "/rituals/pending-gates?project_id=p1")
         c.get_user("u1")

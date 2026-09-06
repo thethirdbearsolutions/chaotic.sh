@@ -48,6 +48,20 @@ class Client:
         headers["X-Chaotic-Interactive"] = "1" if interactive else "0"
         return headers
 
+    @staticmethod
+    def _with_query(path: str, **params) -> str:
+        """`path` with the params that are not None as a query string, so a
+        list method's `skip`/`limit` (and any other optional filter) is
+        sent only when the caller set it and the server default applies
+        otherwise (CHT-1383). A bool is sent as `true`/`false`, the form
+        the API's query flags use; everything else as urlencode renders it."""
+        rendered = {
+            k: (str(v).lower() if isinstance(v, bool) else v)
+            for k, v in params.items() if v is not None
+        }
+        query = urlencode(rendered)
+        return f"{path}?{query}" if query else path
+
     def _request(self, method: str, path: str, data: dict = None) -> dict | None:
         """Make API request."""
         url = f"{get_api_url()}{path}"
@@ -196,15 +210,6 @@ class Client:
         return "\n".join(lines)
 
     # Auth
-    @staticmethod
-    def _with_query(path: str, **params) -> str:
-        """`path` with the params that are not None as a query string, so a
-        list method's `skip`/`limit` (and any other optional filter) is
-        sent only when the caller set it and the server default applies
-        otherwise (CHT-1383)."""
-        query = urlencode({k: v for k, v in params.items() if v is not None})
-        return f"{path}?{query}" if query else path
-
     def signup(self, name: str, email: str, password: str) -> dict:
         return self._request("POST", "/auth/signup", {"name": name, "email": email, "password": password})
 
@@ -522,7 +527,7 @@ class Client:
 
     def get_documents(
         self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None,
-        limit: int = None, skip: int | None = None,
+        limit: int | None = None, skip: int | None = None,
     ) -> list:
         return self._request("GET", self._with_query(
             f"/teams/{team_id}/documents",
@@ -589,7 +594,7 @@ class Client:
         data = {"name": name, **kwargs}
         return self._request("POST", f"/teams/{team_id}/labels", data)
 
-    def get_labels(self, team_id: str, limit: int = None, skip: int | None = None) -> list:
+    def get_labels(self, team_id: str, limit: int | None = None, skip: int | None = None) -> list:
         return self._request("GET", self._with_query(f"/teams/{team_id}/labels", skip=skip, limit=limit))
 
     def get_label(self, label_id: str) -> dict:
@@ -626,7 +631,7 @@ class Client:
         # CHT-1223: project_id moved from a query param to the URL path.
         return self._request("GET", self._with_query(
             f"/projects/{project_id}/rituals",
-            include_inactive="true" if include_inactive else None, skip=skip, limit=limit,
+            include_inactive=True if include_inactive else None, skip=skip, limit=limit,
         ))
 
     def get_ritual_history(self, project_id: str, skip: int = 0, limit: int = 50) -> list:
@@ -635,9 +640,9 @@ class Client:
     def get_limbo_status(self, project_id: str) -> dict:
         return self._request("GET", f"/rituals/limbo?project_id={project_id}")
 
-    def get_pending_gates(self, project_id: str | None = None) -> list:
-        """Issues with an open GATE ritual awaiting a human (CHT-1383)."""
-        return self._request("GET", self._with_query("/rituals/pending-gates", project_id=project_id))
+    def get_pending_gates(self, project_id: str) -> list:
+        """A project's issues with an open GATE ritual awaiting a human (CHT-1383)."""
+        return self._request("GET", f"/rituals/pending-gates?project_id={project_id}")
 
     def force_clear_limbo(self, project_id: str) -> dict:
         return self._request("POST", f"/rituals/force-clear-limbo?project_id={project_id}", {})
