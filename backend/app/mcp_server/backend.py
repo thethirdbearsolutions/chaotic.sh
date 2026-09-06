@@ -427,6 +427,14 @@ class InProcessBackend:
     # -- projects / activity ----------------------------------------------------
 
     @_translated
+    async def server_info(self) -> dict:
+        # The /api/version handler is the one place that assembles this
+        # payload; app.main imports this package's server, so the import
+        # is deferred to call time rather than made at module level.
+        from app.main import version_info
+        return await version_info()
+
+    @_translated
     async def list_projects(self, team_id: str, limit: int) -> list:
         return _dump_list(await projects_api.list_projects(team_id=team_id, current_user=self._user, limit=limit))
 

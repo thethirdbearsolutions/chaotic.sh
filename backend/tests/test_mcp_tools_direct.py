@@ -1113,6 +1113,7 @@ class TestNoLeakedEnumNames:
             "activity_recent": await tools.activity_recent(),
             "project_list": await tools.project_list(),
             "inbox_list": await tools.inbox_list(detail=True),
+            "server_info": await tools.server_info(),
         }
 
         # A tool that raised comes back as {"error": ...} and would sweep
@@ -1190,6 +1191,7 @@ class TestNoLeakedInternalFields:
             "sprint_list": await tools.sprint_list(),
             "label_list": await tools.label_list(),
             "ritual_list": await tools.ritual_list(),
+            "server_info": await tools.server_info(),
         }
 
         errored = {n: o["error"] for n, o in outputs.items() if isinstance(o, dict) and "error" in o}

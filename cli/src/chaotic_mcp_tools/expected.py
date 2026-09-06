@@ -51,6 +51,7 @@ EXPECTED_TOOLS: dict[str, bool] = {
     "ritual_complete": True,
     "ritual_list": True,
     "ritual_pending": True,
+    "server_info": False,
     "sprint_add": True,
     "sprint_close": True,
     "sprint_current": True,
@@ -68,7 +69,7 @@ EXPECTED_TEAM_SCOPED: frozenset[str] = frozenset(n for n, takes_team in EXPECTED
 # made here, not a row silently filed under "other".
 GROUP_ORDER: tuple[str, ...] = ("issues", "docs", "sprints", "rituals", "inbox", "other")
 _PREFIX_TO_GROUP = {"issue": "issues", "doc": "docs", "sprint": "sprints", "ritual": "rituals", "inbox": "inbox"}
-OTHER_TOOLS: frozenset[str] = frozenset({"label_list", "activity_recent", "project_list"})
+OTHER_TOOLS: frozenset[str] = frozenset({"label_list", "activity_recent", "project_list", "server_info"})
 
 
 def group_of(name: str) -> str:

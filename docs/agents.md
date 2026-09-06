@@ -208,7 +208,9 @@ one of them (there is deliberately no count here to rot, CHT-1395):
   an admin -- the human-to-agent handoff channel, CHT-1338)
 - **other:** `label_list`, `activity_recent`, `project_list` (enumerate
   the team's projects -- every other tool filters by project, this one
-  tells you which projects exist)
+  tells you which projects exist), `server_info` (which commit, version
+  and toolset the server is running -- the check to make when a field
+  looks stale or a tool is missing, CHT-1401)
 
 The sprint and ritual groups exist because governance state can block
 the rest of this surface: arrears stops ticket transitions project-wide

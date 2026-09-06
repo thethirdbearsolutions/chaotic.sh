@@ -201,6 +201,13 @@ class Backend(Protocol):
 
     async def complete_gate_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str | None) -> dict: ...
 
+    # -- server (CHT-1401) ------------------------------------------------------
+
+    async def server_info(self) -> dict:
+        """What the server is: git sha, app version, MCP toolset fingerprint
+        and tool count (the /api/version payload). Lets a caller notice
+        it is talking to a deploy behind the code it has checked out."""
+
     # -- projects / activity ------------------------------------------------
 
     async def list_projects(self, team_id: str, limit: int) -> list: ...

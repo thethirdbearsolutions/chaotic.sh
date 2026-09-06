@@ -1427,6 +1427,14 @@
         "type": "object"
       }
     },
+    "server_info": {
+      "description": "Which server this surface is talking to: git commit, app version,\n    MCP toolset fingerprint and tool count.\n\n    Call it when a field looks stale or a tool is missing: a tracker can\n    run a commit older than the repository you have checked out, and\n    nothing else on this surface says so (CHT-1401). Compare `git_sha`\n    with `git rev-parse origin/main`; `mcp_toolset_fingerprint` changes\n    whenever the toolset's shape does.\n    ",
+      "inputSchema": {
+        "properties": {},
+        "title": "server_infoArguments",
+        "type": "object"
+      }
+    },
     "sprint_add": {
       "description": "Add issues to a sprint.\n\n    Sprint membership does not by itself charge budget -- only closing a\n    ticket does, and it charges whichever sprint is active at that\n    moment.\n    ",
       "inputSchema": {

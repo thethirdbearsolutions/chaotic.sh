@@ -30,6 +30,26 @@ async def project_list(
     return listing("projects", projects, 1000, COMPACT_PROJECT_FIELDS, detail)
 
 
+async def server_info(backend: Backend) -> dict:
+    """Which server this surface is talking to: git commit, app version,
+    MCP toolset fingerprint and tool count.
+
+    Call it when a field looks stale or a tool is missing: a tracker can
+    run a commit older than the repository you have checked out, and
+    nothing else on this surface says so (CHT-1401). Compare `git_sha`
+    with `git rev-parse origin/main`; `mcp_toolset_fingerprint` changes
+    whenever the toolset's shape does.
+    """
+    info = await backend.server_info()
+    return {
+        key: info.get(key)
+        for key in (
+            "git_sha", "git_sha_short", "git_commit_time", "git_dirty",
+            "app_version", "start_time", "mcp_toolset_fingerprint", "mcp_tool_count",
+        )
+    }
+
+
 async def activity_recent(
     backend: Backend,
     limit: Annotated[int, Field(description="Maximum number of activity entries to return.", ge=1, le=200)] = 20,
