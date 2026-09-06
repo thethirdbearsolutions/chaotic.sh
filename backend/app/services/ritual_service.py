@@ -18,7 +18,10 @@ from app.schemas.ritual import RitualCreate, RitualUpdate, RitualGroupCreate, Ri
 from app.services.ritual_selection import Selection, pointer_after_removal, select
 from app.services.sprint_service import SprintService
 from app.oxyde_models.sprint import OxydeSprint
+from urllib.parse import urlsplit
+
 from app.oxyde_models.document import OxydeDocument
+from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
@@ -68,21 +71,32 @@ class RitualService:
         self, ritual: "OxydeRitual", user_id: str, *,
         document_id: str | None, url: str | None,
         since: "datetime | None", since_label: str,
+        scope: tuple[str, str],
     ) -> str | None:
         """The reference an attestation records for the ritual's artifact,
         once it is checked to be the real thing (CHT-1359).
 
         Before this an attestation was a note: "wrote the retro" cleared
         the ritual whether or not a retro existed. A ritual with
-        `artifact` set now binds the attestation to it: a DOCUMENT must
-        exist, be by the attester, and be created after `since` (the
-        sprint's activation, the ticket's creation), so a document from a
-        previous sprint cannot be attested twice; a URL must at least be
-        one. A ritual without `artifact` keeps whatever reference the
-        caller offered, unverified.
+        `artifact` set binds the attestation to it. A DOCUMENT must exist
+        in the ritual's team (a document elsewhere is "not found", so
+        neither its existence nor its title is confirmed across teams),
+        be by the attester, be created after `since` (the sprint's
+        activation, the ticket's creation) so a document from a previous
+        sprint cannot be attested twice, and not already be the artifact
+        of another attestation (`scope` names the attestation being made,
+        so an idempotent retry of the same one passes) so one document
+        cannot close every ticket of the sprint. A URL must have an http
+        or https scheme and a host; it is not checked for reuse, since
+        one PR legitimately closes several tickets. A ritual without
+        `artifact` records nothing, so `artifact_ref` is always verified.
+
+        This runs before the idempotent "already attested" return, like
+        the note check: a caller does not learn "already done" by sending
+        nothing.
         """
         if ritual.artifact is None:
-            return document_id or url
+            return None
         if ritual.artifact == RitualArtifact.DOCUMENT:
             if not document_id:
                 raise ValueError(
@@ -90,7 +104,8 @@ class RitualService:
                     f"document you wrote for it. Prompt: {ritual.prompt}"
                 )
             document = await OxydeDocument.objects.get_or_none(id=document_id)
-            if document is None:
+            project = await OxydeProject.objects.get_or_none(id=ritual.project_id)
+            if document is None or project is None or document.team_id != project.team_id:
                 raise ValueError(
                     f"Document '{document_id}' not found; ritual '{ritual.name}' "
                     "requires the document you wrote for it."
@@ -105,15 +120,32 @@ class RitualService:
                     f"Document '{document.title}' predates {since_label}; ritual "
                     f"'{ritual.name}' requires one written for it."
                 )
+            await self._require_unused_artifact(document, ritual, scope)
             return document.id
         if ritual.artifact == RitualArtifact.URL:
-            if not url or not url.strip().startswith(("http://", "https://")):
+            parts = urlsplit((url or "").strip())
+            if parts.scheme not in ("http", "https") or not parts.netloc:
                 raise ValueError(
                     f"Ritual '{ritual.name}' requires a URL (http:// or https://) to "
                     f"the artifact. Prompt: {ritual.prompt}"
                 )
             return url.strip()
         raise ValueError(f"Ritual '{ritual.name}' has an unknown artifact kind")
+
+    async def _require_unused_artifact(
+        self, document: "OxydeDocument", ritual: "OxydeRitual", scope: tuple[str, str],
+    ) -> None:
+        """A document is the artifact of at most one attestation, the one
+        `scope` (("sprint_id", id) or ("issue_id", id)) names when it is
+        being retried."""
+        field, value = scope
+        for used in await OxydeRitualAttestation.objects.filter(artifact_ref=document.id).all():
+            if used.ritual_id == ritual.id and getattr(used, field) == value:
+                continue
+            raise ValueError(
+                f"Document '{document.title}' is already the artifact of another attestation; "
+                f"ritual '{ritual.name}' requires one written for it."
+            )
 
     async def _sprint_artifact(
         self, ritual: "OxydeRitual", sprint_id: str, user_id: str,
@@ -128,7 +160,7 @@ class RitualService:
             since = sprint.activated_at if sprint is not None else None
         return await self._validate_artifact(
             ritual, user_id, document_id=document_id, url=url,
-            since=since, since_label="the sprint's activation",
+            since=since, since_label="the sprint's activation", scope=("sprint_id", sprint_id),
         )
 
     async def _validate_conditions_match(
@@ -952,7 +984,7 @@ class RitualService:
         await self._validate_group_selection(ritual, issue_id, issue)
         artifact_ref = await self._validate_artifact(
             ritual, user_id, document_id=document_id, url=url,
-            since=issue.created_at if issue is not None else None, since_label="the ticket",
+            since=issue.created_at, since_label="the ticket", scope=("issue_id", issue_id),
         )
 
         ritual_id = ritual.id
@@ -1234,7 +1266,7 @@ class RitualService:
         await self._validate_group_selection(ritual, issue_id, issue)
         artifact_ref = await self._validate_artifact(
             ritual, user_id, document_id=document_id, url=url,
-            since=issue.created_at if issue is not None else None, since_label="the ticket",
+            since=issue.created_at, since_label="the ticket", scope=("issue_id", issue_id),
         )
 
         ritual_id = ritual.id

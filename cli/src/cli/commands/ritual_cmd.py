@@ -6,7 +6,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value
+from .shared import _client, console, format_ritual_line, print_ritual_prompt, resolve_content_value, resolve_document_id
 
 
 def _main():
@@ -190,6 +190,8 @@ def register(cli):
         # Note required
         note_req = rit.get("note_required", True)
         console.print(f"  Note required: {'yes' if note_req else 'no'}")
+        if rit.get("artifact"):
+            console.print(f"  Artifact: {rit['artifact']} (attestations are bound to one)")
 
         # Prompt
         console.print(f"  Prompt: \"{rit.get('prompt', '')}\"")
@@ -288,11 +290,11 @@ def register(cli):
     @click.argument("ritual_name")
     @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
-    @click.option("--document", "document_id", help="For a ritual whose artifact is a document: the id of the document you wrote for it")
+    @click.option("--document", "document_ref", help="For a ritual whose artifact is a document: the document you wrote for it (id, id prefix, or title)")
     @click.option("--url", help="For a ritual whose artifact is a URL: the link to it (a PR review comment, a report)")
     @_main().require_project
     @_main().handle_error
-    def ritual_attest(ritual_name, note, ticket_id, document_id, url):
+    def ritual_attest(ritual_name, note, ticket_id, document_ref, url):
         """Attest to a ritual (confirm you did it).
 
         RITUAL_NAME is the name of the ritual to attest.
@@ -312,6 +314,7 @@ def register(cli):
             console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
+        document_id = resolve_document_id(document_ref, m.get_current_team()) if document_ref else None
 
         # Check if note is required (reject empty/whitespace-only notes)
         if rit.get("note_required", True) and not (note and note.strip()):
@@ -370,12 +373,14 @@ def register(cli):
                   help="When ritual is required: every_sprint, ticket_close (when closing), or ticket_claim (when claiming)")
     @click.option("--note-required/--no-note-required", default=True,
                   help="Require a note when attesting (default: required)")
+    @click.option("--artifact", type=click.Choice(["document", "url"]),
+                  help="Bind attestations to an artifact: a document the attester wrote for it, or a URL (CHT-1359)")
     @click.option("--group", help="Name of ritual group to add this ritual to (for random/rotation selection; members must share a trigger)")
     @click.option("--weight", type=float, default=1.0, help="Weight for random selection in group (default: 1.0)")
     @click.option("--percentage", type=float, help="Percentage chance (0-100) for PERCENTAGE mode groups")
     @_main().require_project
     @_main().handle_error
-    def ritual_create(name, ritual_prompt, mode, trigger, note_required, group, weight, percentage):
+    def ritual_create(name, ritual_prompt, mode, trigger, note_required, artifact, group, weight, percentage):
         """Create a new ritual for the project.
 
         Triggers:
@@ -421,13 +426,15 @@ def register(cli):
             approval_mode=mode,
             trigger=trigger,
             note_required=note_required,
+            artifact=artifact,
             group_id=group_id,
             weight=weight,
             percentage=percentage,
         )
         trigger_desc = {"every_sprint": "sprint-close", "ticket_close": "ticket-close", "ticket_claim": "ticket-claim"}.get(trigger, trigger)
         group_info = f" (group: {group})" if group else ""
-        console.print(f"[green]Ritual created: {result['name']} ({trigger_desc}){group_info}[/green]")
+        artifact_info = f", attestations bound to a {artifact}" if artifact else ""
+        console.print(f"[green]Ritual created: {result['name']} ({trigger_desc}){group_info}{artifact_info}[/green]")
 
     @ritual.command("update")
     @click.argument("ritual_name")
@@ -437,13 +444,15 @@ def register(cli):
                   help="New approval mode")
     @click.option("--note-required/--no-note-required", default=None,
                   help="Require a note when attesting")
+    @click.option("--artifact", type=click.Choice(["document", "url", "none"]),
+                  help="Bind attestations to a document or a URL; 'none' removes the binding (CHT-1359)")
     @click.option("--group", help="Name of ritual group (members must share a trigger; use empty string '' to remove from group)")
     @click.option("--weight", type=float, help="Weight for random selection in group")
     @click.option("--percentage", type=float, help="Percentage chance (0-100) for PERCENTAGE mode groups")
     @click.option("--conditions", help="JSON conditions for when ritual applies (e.g., '{\"estimate__gte\": 3}'). Use '{}' to clear.")
     @_main().require_project
     @_main().handle_error
-    def ritual_update(ritual_name, new_prompt, new_name, mode, note_required, group, weight, percentage, conditions):
+    def ritual_update(ritual_name, new_prompt, new_name, mode, note_required, artifact, group, weight, percentage, conditions):
         """Update a ritual's prompt, name, mode, or group.
 
         RITUAL_NAME is the current name of the ritual to update.
@@ -476,6 +485,8 @@ def register(cli):
             kwargs["approval_mode"] = mode
         if note_required is not None:
             kwargs["note_required"] = note_required
+        if artifact is not None:
+            kwargs["artifact"] = None if artifact == "none" else artifact
         if weight is not None:
             kwargs["weight"] = weight
         if percentage is not None:
@@ -686,11 +697,11 @@ def register(cli):
     @click.argument("ritual_name")
     @click.option("--note", help="Optional note about completion", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
-    @click.option("--document", "document_id", help="For a ritual whose artifact is a document: the id of the document you wrote for it")
+    @click.option("--document", "document_ref", help="For a ritual whose artifact is a document: the document you wrote for it (id, id prefix, or title)")
     @click.option("--url", help="For a ritual whose artifact is a URL: the link to it")
     @_main().require_project
     @_main().handle_error
-    def ritual_complete(ritual_name, note, ticket_id, document_id, url):
+    def ritual_complete(ritual_name, note, ticket_id, document_ref, url):
         """Complete a GATE mode ritual (human-only, admin only).
 
         For ticket-level rituals (close or claim), use --ticket to specify the issue.
@@ -706,6 +717,7 @@ def register(cli):
             console.print(f"[red]Ritual '{ritual_name}' not found.[/red]")
             console.print("Run `chaotic ritual list` to see available rituals.")
             raise SystemExit(1)
+        document_id = resolve_document_id(document_ref, m.get_current_team()) if document_ref else None
 
         # Check if this is a ticket-level ritual (close or claim)
         if rit.get("trigger") in ("ticket_close", "ticket_claim"):

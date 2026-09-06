@@ -99,3 +99,16 @@ class TestNewRoutes:
         assert _call(sent) == (
             "POST", "/issues/batch-update", {"issue_ids": ["a", "b"], "priority": "high", "add_label_ids": ["l1"]},
         )
+
+
+class TestRitualArtifactBodies:
+    def test_update_ritual_sends_an_explicit_null_artifact(self, sent):
+        Client().update_ritual("r1", artifact=None, name=None)
+        assert _call(sent) == ("PATCH", "/rituals/r1", {"artifact": None})
+
+    def test_attestation_bodies_carry_the_artifact(self, sent):
+        c = Client()
+        c.attest_ritual("r1", "p1", "n", document_id="d1")
+        assert _call(sent)[2] == {"note": "n", "document_id": "d1"}
+        c.complete_gate_ritual_for_issue("r1", "i1", None, url="https://x/y")
+        assert _call(sent)[2] == {"url": "https://x/y"}

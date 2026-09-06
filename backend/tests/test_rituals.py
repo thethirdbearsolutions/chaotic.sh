@@ -6657,7 +6657,6 @@ class TestArtifactBinding:
     ritual whether or not a retro existed."""
 
     async def _ritual(self, project_id, trigger, artifact, name="bound"):
-        from app.enums import RitualArtifact  # noqa: F401 - documents the member type
         return await OxydeRitual.objects.create(
             project_id=project_id, name=name, prompt="p", trigger=trigger,
             approval_mode=ApprovalMode.AUTO, note_required=False, artifact=artifact,
@@ -6777,14 +6776,77 @@ class TestArtifactBinding:
         done = await service.complete_gate_ritual(sprint, test_sprint.id, test_user.id, note="ok", document_id=mine.id)
         assert done.artifact_ref == mine.id
 
-    async def test_an_unbound_ritual_keeps_an_offered_reference_unverified(
-        self, db, test_project, test_user, test_sprint,
-    ):
+    async def test_an_unbound_ritual_records_no_artifact(self, db, test_project, test_user, test_sprint):
+        """artifact_ref is always a verified reference: a ritual without an
+        artifact stores nothing, whatever the caller offered."""
         ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, None)
         attestation = await RitualService().attest(ritual, test_sprint.id, test_user.id, note="n", url="https://x/y")
-        assert attestation.artifact_ref == "https://x/y"
-        plain = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, None, name="plain")
-        assert (await RitualService().attest(plain, test_sprint.id, test_user.id, note="n")).artifact_ref is None
+        assert attestation.artifact_ref is None
+
+    async def test_a_document_from_another_team_is_not_found(
+        self, db, test_project, test_user, test_sprint,
+    ):
+        """Neither existence nor title of another team's document is
+        confirmed: the error is the same as for an unknown id."""
+        from app.enums import RitualArtifact
+        from app.oxyde_models.team import OxydeTeam
+
+        other = await OxydeTeam.objects.create(name="Other", key="OTH")
+        theirs = await self._document(other.id, test_user.id, title="secret plan")
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.DOCUMENT)
+        with pytest.raises(ValueError, match="not found") as refused:
+            await RitualService().attest(ritual, test_sprint.id, test_user.id, document_id=theirs.id)
+        assert "secret plan" not in str(refused.value)
+
+    async def test_a_document_is_the_artifact_of_one_attestation_only(
+        self, db, test_project, test_team, test_user, test_issue,
+    ):
+        """One closing-notes document cannot close every ticket; retrying
+        the same attestation with the same document still passes."""
+        from app.enums import RitualArtifact
+        from app.schemas.issue import IssueCreate
+        from app.services.issue_service import IssueService
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT)
+        other_ritual = await self._ritual(
+            test_project.id, RitualTrigger.TICKET_CLOSE, RitualArtifact.DOCUMENT, name="also-bound",
+        )
+        second = await IssueService().create(
+            IssueCreate(title="second", project_id=test_project.id), test_project, test_user.id,
+        )
+        notes = await self._document(test_team.id, test_user.id, title="closing notes")
+        service = RitualService()
+        first = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=notes.id)
+        assert first.artifact_ref == notes.id
+        again = await service.attest_for_issue(ritual, test_issue.id, test_user.id, document_id=notes.id)
+        assert again.id == first.id
+        with pytest.raises(ValueError, match="already the artifact of another attestation"):
+            await service.attest_for_issue(ritual, second.id, test_user.id, document_id=notes.id)
+        with pytest.raises(ValueError, match="already the artifact of another attestation"):
+            await service.attest_for_issue(other_ritual, test_issue.id, test_user.id, document_id=notes.id)
+
+    async def test_a_url_needs_a_scheme_and_a_host(self, db, test_project, test_user, test_sprint):
+        from app.enums import RitualArtifact
+
+        ritual = await self._ritual(test_project.id, RitualTrigger.EVERY_SPRINT, RitualArtifact.URL)
+        for bad in ("https://", "http://  ", "https://#", "ftp://host/x", "example.com/pr/1"):
+            with pytest.raises(ValueError, match="requires a URL"):
+                await RitualService().attest(ritual, test_sprint.id, test_user.id, url=bad)
+
+    async def test_an_explicit_null_unsets_the_artifact(self, client, auth_headers, db, test_project):
+        created = await client.post(
+            f"/api/projects/{test_project.id}/rituals", headers=auth_headers,
+            json={"name": "retro", "prompt": "write it", "artifact": "document"},
+        )
+        cleared = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"artifact": None},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["artifact"] is None
+        untouched = await client.patch(
+            f"/api/rituals/{created.json()['id']}", headers=auth_headers, json={"name": "retro2"},
+        )
+        assert untouched.json()["artifact"] is None
 
     async def test_the_api_carries_the_artifact_both_ways(
         self, client, auth_headers, db, test_project, test_team, test_user, test_issue,

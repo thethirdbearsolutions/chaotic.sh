@@ -373,6 +373,7 @@ class TestRitualCreate:
             approval_mode='auto',
             trigger='every_sprint',
             note_required=True,
+            artifact=None,
             group_id=None,
             weight=1.0,
             percentage=None,
@@ -409,7 +410,44 @@ class TestRitualCreate:
             approval_mode='gate',
             trigger='ticket_close',
             note_required=True,
+            artifact=None,
             group_id=None,
             weight=1.0,
             percentage=None,
         )
+
+
+
+class TestRitualArtifact:
+    """CHT-1359: the CLI declares an artifact and resolves --document."""
+
+    def test_create_declares_the_artifact(self, cli_runner):
+        from cli.main import cli, client
+        client.create_ritual = MagicMock(return_value={"name": "retro", "id": "r1"})
+        result = cli_runner.invoke(cli, ["ritual", "create", "retro", "Write it", "--artifact", "document"])
+        assert result.exit_code == 0, result.output
+        assert client.create_ritual.call_args[1]["artifact"] == "document"
+        assert "bound to a document" in result.output
+
+    def test_update_none_unsets_the_artifact(self, cli_runner):
+        from cli.main import cli, client
+        client.get_rituals = MagicMock(return_value=[{"id": "r1", "name": "retro", "trigger": "every_sprint"}])
+        client.update_ritual = MagicMock(return_value={"name": "retro"})
+        result = cli_runner.invoke(cli, ["ritual", "update", "retro", "--artifact", "none"])
+        assert result.exit_code == 0, result.output
+        assert client.update_ritual.call_args[1]["artifact"] is None
+        result = cli_runner.invoke(cli, ["ritual", "update", "retro", "--artifact", "url"])
+        assert client.update_ritual.call_args[1]["artifact"] == "url"
+
+    def test_attest_resolves_document_like_every_document_argument(self, cli_runner):
+        from cli.main import cli, client
+        client.get_rituals = MagicMock(return_value=[
+            {"id": "r1", "name": "retro", "trigger": "every_sprint", "note_required": False, "artifact": "document"},
+        ])
+        client.attest_ritual = MagicMock(return_value={"approved_at": "now"})
+        client.get_limbo_status = MagicMock(return_value={"in_limbo": False, "pending_rituals": []})
+        with patch("cli.commands.ritual_cmd.resolve_document_id", return_value="doc-42") as resolve:
+            result = cli_runner.invoke(cli, ["ritual", "attest", "retro", "--document", "Sprint 9 retro"])
+        assert result.exit_code == 0, result.output
+        assert resolve.call_args[0][0] == "Sprint 9 retro"
+        assert client.attest_ritual.call_args[1] == {"document_id": "doc-42", "url": None}

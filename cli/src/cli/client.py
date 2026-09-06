@@ -656,8 +656,9 @@ class Client:
         return self._request("POST", f"/projects/{project_id}/rituals", data)
 
     def update_ritual(self, ritual_id: str, **kwargs) -> dict:
-        """Update a ritual. Accepts prompt, name, approval_mode, trigger."""
-        data = {k: v for k, v in kwargs.items() if v is not None}
+        """Update a ritual. Accepts prompt, name, approval_mode, trigger,
+        artifact (None unsets it: it is the one field where null is a value)."""
+        data = {k: v for k, v in kwargs.items() if v is not None or k == "artifact"}
         return self._request("PATCH", f"/rituals/{ritual_id}", data)
 
     def delete_ritual(self, ritual_id: str) -> None:

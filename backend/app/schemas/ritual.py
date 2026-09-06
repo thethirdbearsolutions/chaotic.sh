@@ -153,7 +153,7 @@ class RitualUpdate(BaseModel):
     trigger: RitualTrigger | None = None
     approval_mode: ApprovalMode | None = None
     note_required: bool | None = None
-    artifact: RitualArtifact | None = None  # CHT-1359; there is no "unset" through update yet
+    artifact: RitualArtifact | None = None  # CHT-1359; an explicit null unsets it
     conditions: dict | None = None  # Django-style conditions e.g. {"estimate__gte": 3}
     group_id: str | None = None  # Optional group membership (use "" to remove from group)
     weight: float | None = Field(default=None, ge=0)  # Weight for random selection
