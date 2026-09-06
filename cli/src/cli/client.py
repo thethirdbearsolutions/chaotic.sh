@@ -196,6 +196,15 @@ class Client:
         return "\n".join(lines)
 
     # Auth
+    @staticmethod
+    def _with_query(path: str, **params) -> str:
+        """`path` with the params that are not None as a query string, so a
+        list method's `skip`/`limit` (and any other optional filter) is
+        sent only when the caller set it and the server default applies
+        otherwise (CHT-1383)."""
+        query = urlencode({k: v for k, v in params.items() if v is not None})
+        return f"{path}?{query}" if query else path
+
     def signup(self, name: str, email: str, password: str) -> dict:
         return self._request("POST", "/auth/signup", {"name": name, "email": email, "password": password})
 
@@ -205,9 +214,19 @@ class Client:
     def get_me(self) -> dict:
         return self._request("GET", "/auth/me")
 
+    # Users (CHT-1383)
+    def get_user(self, user_id: str) -> dict:
+        return self._request("GET", f"/users/{user_id}")
+
+    def update_me(self, **kwargs) -> dict:
+        return self._request("PATCH", "/users/me", kwargs)
+
+    def delete_me(self):
+        return self._request("DELETE", "/users/me")
+
     # API keys
-    def list_api_keys(self) -> list:
-        return self._request("GET", "/api-keys")
+    def list_api_keys(self, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query("/api-keys", skip=skip, limit=limit))
 
     def create_api_key(self, name: str, expires_at: str | None = None) -> dict:
         data = {"name": name}
@@ -238,8 +257,8 @@ class Client:
         return self._request("DELETE", f"/teams/{team_id}")
 
     # Team members
-    def get_team_members(self, team_id: str) -> list:
-        return self._request("GET", f"/teams/{team_id}/members")
+    def get_team_members(self, team_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/teams/{team_id}/members", skip=skip, limit=limit))
 
     def remove_member(self, team_id: str, user_id: str):
         return self._request("DELETE", f"/teams/{team_id}/members/{user_id}")
@@ -251,8 +270,8 @@ class Client:
     def invite_member(self, team_id: str, email: str, role: str = "member") -> dict:
         return self._request("POST", f"/teams/{team_id}/invitations", {"email": email, "role": role})
 
-    def get_invitations(self, team_id: str) -> list:
-        return self._request("GET", f"/teams/{team_id}/invitations")
+    def get_invitations(self, team_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/teams/{team_id}/invitations", skip=skip, limit=limit))
 
     def accept_invitation(self, token: str) -> dict:
         return self._request("POST", f"/teams/invitations/{token}/accept")
@@ -266,11 +285,8 @@ class Client:
         data = {"name": name, "key": key, **kwargs}
         return self._request("POST", f"/teams/{team_id}/projects", data)
 
-    def get_projects(self, team_id: str, limit: int = None) -> list:
-        path = f"/teams/{team_id}/projects"
-        if limit is not None:
-            path = f"{path}?{urlencode({'limit': limit})}"
-        return self._request("GET", path)
+    def get_projects(self, team_id: str, limit: int | None = None, skip: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/teams/{team_id}/projects", skip=skip, limit=limit))
 
     def get_project(self, project_id: str) -> dict:
         return self._request("GET", f"/projects/{project_id}")
@@ -385,7 +401,10 @@ class Client:
     def get_issue_by_identifier(self, identifier: str) -> dict:
         return self._request("GET", f"/issues/identifier/{identifier}")
 
-    def search_issues(self, team_id: str, query: str, project_id: str = None, limit: int = None, status: str = None) -> list:
+    def search_issues(
+        self, team_id: str, query: str, project_id: str = None, limit: int = None, status: str = None,
+        skip: int | None = None,
+    ) -> list:
         url = f"/issues/search?team_id={team_id}&q={quote(query)}"
         if project_id:
             url += f"&project_id={project_id}"
@@ -393,34 +412,40 @@ class Client:
             url += f"&limit={limit}"
         if status:
             url += f"&issue_status={quote(status)}"
+        if skip is not None:
+            url += f"&skip={skip}"
         return self._request("GET", url)
 
     def update_issue(self, issue_id: str, **kwargs) -> dict:
         return self._request("PATCH", f"/issues/{issue_id}", kwargs)
 
+    def batch_update_issues(self, issue_ids: list[str], **fields) -> list:
+        """POST /issues/batch-update: the safe fields (priority, estimate,
+        label_ids, add_label_ids) on up to 200 issues at once (CHT-1383).
+        Status, assignee and sprint changes go through update_issue."""
+        return self._request("POST", "/issues/batch-update", {"issue_ids": issue_ids, **fields})
+
     def delete_issue(self, issue_id: str):
         return self._request("DELETE", f"/issues/{issue_id}")
 
     # Description revisions
-    def get_issue_description_revisions(self, issue_id: str, limit: int | None = None) -> list:
-        path = f"/issues/{issue_id}/description-revisions"
-        if limit is not None:
-            path += f"?limit={limit}"
-        return self._request("GET", path)
+    def get_issue_description_revisions(
+        self, issue_id: str, limit: int | None = None, skip: int | None = None,
+    ) -> list:
+        return self._request(
+            "GET", self._with_query(f"/issues/{issue_id}/description-revisions", skip=skip, limit=limit),
+        )
 
     def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
         return self._request("GET", f"/issues/{issue_id}/description-revisions/{version}")
 
     # Sub-issues
-    def get_sub_issues(self, issue_id: str, limit: int | None = None) -> list:
-        path = f"/issues/{issue_id}/sub-issues"
-        if limit is not None:
-            path = f"{path}?{urlencode({'limit': limit})}"
-        return self._request("GET", path)
+    def get_sub_issues(self, issue_id: str, limit: int | None = None, skip: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/issues/{issue_id}/sub-issues", skip=skip, limit=limit))
 
     # Relations
-    def get_relations(self, issue_id: str) -> list:
-        return self._request("GET", f"/issues/{issue_id}/relations")
+    def get_relations(self, issue_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/issues/{issue_id}/relations", skip=skip, limit=limit))
 
     def create_relation(self, issue_id: str, related_issue_id: str, relation_type: str = "blocks") -> dict:
         return self._request("POST", f"/issues/{issue_id}/relations", {
@@ -435,11 +460,8 @@ class Client:
     def create_comment(self, issue_id: str, content: str) -> dict:
         return self._request("POST", f"/issues/{issue_id}/comments", {"content": content})
 
-    def get_comments(self, issue_id: str, limit: int | None = None) -> list:
-        path = f"/issues/{issue_id}/comments"
-        if limit is not None:
-            path = f"{path}?{urlencode({'limit': limit})}"
-        return self._request("GET", path)
+    def get_comments(self, issue_id: str, limit: int | None = None, skip: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/issues/{issue_id}/comments", skip=skip, limit=limit))
 
     def update_comment(self, issue_id: str, comment_id: str, content: str) -> dict:
         return self._request("PATCH", f"/issues/{issue_id}/comments/{comment_id}", {"content": content})
@@ -448,6 +470,10 @@ class Client:
         return self._request("DELETE", f"/issues/{issue_id}/comments/{comment_id}")
 
     # Activities
+    def get_issue_activities(self, issue_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        """The activity log of one issue (CHT-1383)."""
+        return self._request("GET", self._with_query(f"/issues/{issue_id}/activities", skip=skip, limit=limit))
+
     def get_team_activities(
         self, team_id: str, skip: int = 0, limit: int = 20,
         project_id: str | None = None,
@@ -464,12 +490,13 @@ class Client:
         return self._request("GET", f"/issues/comments?{params}")
 
     # Sprints
-    def get_sprints(self, project_id: str, status: str = None) -> list:
+    def get_sprints(
+        self, project_id: str, status: str = None, skip: int | None = None, limit: int | None = None,
+    ) -> list:
         # CHT-1223: project_id moved from a query param to the URL path.
-        url = f"/projects/{project_id}/sprints"
-        if status:
-            url += f"?sprint_status={status}"
-        return self._request("GET", url)
+        return self._request("GET", self._with_query(
+            f"/projects/{project_id}/sprints", sprint_status=status or None, skip=skip, limit=limit,
+        ))
 
     def create_sprint(self, project_id: str, name: str, **kwargs) -> dict:
         data = {"name": name, **kwargs}
@@ -484,8 +511,8 @@ class Client:
     def close_sprint(self, sprint_id: str) -> dict:
         return self._request("POST", f"/sprints/{sprint_id}/close")
 
-    def get_sprint_transactions(self, sprint_id: str) -> list:
-        return self._request("GET", f"/sprints/{sprint_id}/transactions")
+    def get_sprint_transactions(self, sprint_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/sprints/{sprint_id}/transactions", skip=skip, limit=limit))
 
     # Documents
     def create_document(self, team_id: str, title: str, **kwargs) -> dict:
@@ -493,20 +520,15 @@ class Client:
         data = {"title": title, **kwargs}
         return self._request("POST", f"/teams/{team_id}/documents", data)
 
-    def get_documents(self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None, limit: int = None) -> list:
-        url = f"/teams/{team_id}/documents"
-        params = []
-        if project_id:
-            params.append(f"project_id={project_id}")
-        if sprint_id:
-            params.append(f"sprint_id={sprint_id}")
-        if search:
-            params.append(f"search={search}")
-        if limit is not None:
-            params.append(f"limit={limit}")
-        if params:
-            url += "?" + "&".join(params)
-        return self._request("GET", url)
+    def get_documents(
+        self, team_id: str, project_id: str = None, sprint_id: str = None, search: str = None,
+        limit: int = None, skip: int | None = None,
+    ) -> list:
+        return self._request("GET", self._with_query(
+            f"/teams/{team_id}/documents",
+            project_id=project_id or None, sprint_id=sprint_id or None, search=search or None,
+            skip=skip, limit=limit,
+        ))
 
     def get_document(self, document_id: str) -> dict:
         return self._request("GET", f"/documents/{document_id}")
@@ -518,11 +540,10 @@ class Client:
         return self._request("DELETE", f"/documents/{document_id}")
 
     # Document revisions
-    def get_document_revisions(self, document_id: str, limit: int | None = None) -> list:
-        path = f"/documents/{document_id}/revisions"
-        if limit is not None:
-            path += f"?limit={limit}"
-        return self._request("GET", path)
+    def get_document_revisions(
+        self, document_id: str, limit: int | None = None, skip: int | None = None,
+    ) -> list:
+        return self._request("GET", self._with_query(f"/documents/{document_id}/revisions", skip=skip, limit=limit))
 
     def get_document_revision(self, document_id: str, version: int) -> dict:
         return self._request("GET", f"/documents/{document_id}/revisions/{version}")
@@ -537,8 +558,8 @@ class Client:
     def unlink_document_from_issue(self, document_id: str, issue_id: str):
         return self._request("DELETE", f"/documents/{document_id}/issues/{issue_id}")
 
-    def get_document_comments(self, document_id: str) -> list:
-        return self._request("GET", f"/documents/{document_id}/comments")
+    def get_document_comments(self, document_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/documents/{document_id}/comments", skip=skip, limit=limit))
 
     def create_document_comment(self, document_id: str, content: str) -> dict:
         return self._request("POST", f"/documents/{document_id}/comments", {"content": content})
@@ -552,15 +573,27 @@ class Client:
     def get_issue_documents(self, issue_id: str) -> list:
         return self._request("GET", f"/issues/{issue_id}/documents")
 
+    # Document labels (CHT-1383)
+    def get_document_labels(self, document_id: str) -> list:
+        return self._request("GET", f"/documents/{document_id}/labels")
+
+    def add_label_to_document(self, document_id: str, label_id: str) -> dict:
+        return self._request("POST", f"/documents/{document_id}/labels/{label_id}")
+
+    def remove_label_from_document(self, document_id: str, label_id: str):
+        return self._request("DELETE", f"/documents/{document_id}/labels/{label_id}")
+
     # Labels
     def create_label(self, team_id: str, name: str, **kwargs) -> dict:
         # CHT-1223: team_id moved from a query param to the URL path.
         data = {"name": name, **kwargs}
         return self._request("POST", f"/teams/{team_id}/labels", data)
 
-    def get_labels(self, team_id: str, limit: int = None) -> list:
-        params = f"?limit={limit}" if limit is not None else ""
-        return self._request("GET", f"/teams/{team_id}/labels{params}")
+    def get_labels(self, team_id: str, limit: int = None, skip: int | None = None) -> list:
+        return self._request("GET", self._with_query(f"/teams/{team_id}/labels", skip=skip, limit=limit))
+
+    def get_label(self, label_id: str) -> dict:
+        return self._request("GET", f"/labels/{label_id}")
 
     def update_label(self, label_id: str, **kwargs) -> dict:
         return self._request("PATCH", f"/labels/{label_id}", kwargs)
@@ -586,18 +619,25 @@ class Client:
     def approve_issue_attestation(self, ritual_id: str, issue_id: str) -> dict:
         return self._request("POST", f"/rituals/{ritual_id}/approve-issue/{issue_id}", {})
 
-    def get_rituals(self, project_id: str, include_inactive: bool = False) -> list:
+    def get_rituals(
+        self, project_id: str, include_inactive: bool = False,
+        skip: int | None = None, limit: int | None = None,
+    ) -> list:
         # CHT-1223: project_id moved from a query param to the URL path.
-        url = f"/projects/{project_id}/rituals"
-        if include_inactive:
-            url += "?include_inactive=true"
-        return self._request("GET", url)
+        return self._request("GET", self._with_query(
+            f"/projects/{project_id}/rituals",
+            include_inactive="true" if include_inactive else None, skip=skip, limit=limit,
+        ))
 
     def get_ritual_history(self, project_id: str, skip: int = 0, limit: int = 50) -> list:
         return self._request("GET", f"/rituals/history?project_id={project_id}&skip={skip}&limit={limit}")
 
     def get_limbo_status(self, project_id: str) -> dict:
         return self._request("GET", f"/rituals/limbo?project_id={project_id}")
+
+    def get_pending_gates(self, project_id: str | None = None) -> list:
+        """Issues with an open GATE ritual awaiting a human (CHT-1383)."""
+        return self._request("GET", self._with_query("/rituals/pending-gates", project_id=project_id))
 
     def force_clear_limbo(self, project_id: str) -> dict:
         return self._request("POST", f"/rituals/force-clear-limbo?project_id={project_id}", {})
@@ -650,8 +690,8 @@ class Client:
         return self._request("POST", f"/rituals/{ritual_id}/complete-issue/{issue_id}", data)
 
     # Ritual Groups
-    def get_ritual_groups(self, project_id: str) -> list:
-        return self._request("GET", f"/rituals/groups?project_id={project_id}")
+    def get_ritual_groups(self, project_id: str, skip: int | None = None, limit: int | None = None) -> list:
+        return self._request("GET", self._with_query("/rituals/groups", project_id=project_id, skip=skip, limit=limit))
 
     def get_ritual_group(self, group_id: str) -> dict:
         return self._request("GET", f"/rituals/groups/{group_id}")
@@ -717,6 +757,9 @@ class Client:
 
     def mark_inbox_read(self, entry_id: str) -> dict:
         return self._request("POST", f"/inbox/{entry_id}/read", {})
+
+    def archive_inbox_entry(self, entry_id: str) -> dict:
+        return self._request("POST", f"/inbox/{entry_id}/archive", {})
 
     def mark_all_inbox_read(self, team_id: str | None = None) -> dict:
         path = "/inbox/mark-all-read"
