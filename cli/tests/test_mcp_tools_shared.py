@@ -717,6 +717,25 @@ class TestSprintBody:
         result = await _tools(fake)["sprint_close"]()
         assert result["limbo_pending"] == [] and result["unattested"] == []
         assert fake.calls_to("get_limbo_status") == []
+        assert "lookup_error" not in result
+
+    async def test_failed_limbo_lookup_after_a_close_still_reports_the_close(self):
+        """The close committed before the lookup; a timeout on the lookup
+        must not read as "the close failed" (PR #278 review)."""
+        fake = FakeBackend(fail_on={"get_limbo_status": TransportError("timed out", "timeout")})
+        fake.limbo = {"in_limbo": True, "pending_rituals": [{"name": "retro"}]}
+        result = await _tools(fake)["sprint_close"]()
+        assert "error" not in result
+        assert result["entered_limbo"] is True
+        assert result["limbo_pending"] is None and result["unattested"] is None
+        assert result["lookup_error"] == {"message": "timed out", "error_code": "timeout"}
+
+    async def test_failed_now_active_lookup_after_a_rotation_still_reports_the_close(self):
+        fake = FakeBackend(fail_on={"get_current_sprint": BackendError("gone", 503, "gone")})
+        result = await _tools(fake)["sprint_close"]()
+        assert "error" not in result
+        assert result["entered_limbo"] is False and result["now_active"] is None
+        assert result["lookup_error"]["http_status"] == 503
 
     async def test_sprint_add_reports_partial_failure_in_the_envelope_shape(self, fake):
         result = await _tools(fake)["sprint_add"](identifiers=["CHT-1", "CHT-404"])

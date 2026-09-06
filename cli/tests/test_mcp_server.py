@@ -1299,9 +1299,9 @@ class TestSprintTools:
         client.close_sprint = MagicMock(return_value={
             "id": "sp-1", "name": "Sprint 1", "limbo": True, "budget": 5, "points_spent": 5,
         })
-        client.get_limbo_status = MagicMock(return_value={
+        monkeypatch.setattr(client, "get_limbo_status", MagicMock(return_value={
             "in_limbo": True, "pending_rituals": [{"name": "retro", "attestation": None}],
-        })
+        }))
         result = await mcp_mod.sprint_close()
         assert result["entered_limbo"] is True
         # ...and names what limbo is waiting on (CHT-1381).

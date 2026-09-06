@@ -7,7 +7,7 @@ from pydantic import Field
 
 from ..backend import Backend
 from ..constants import SPRINT_STATUS_VALUES, TEAM_FIELD_DESC
-from ..errors import BackendError, ToolInputError, backend_error_payload
+from ..errors import BackendError, ToolInputError, TransportError, backend_error_payload
 from ..shapes import with_budget_state
 
 
@@ -77,7 +77,10 @@ async def sprint_close(
     approval_mode, any attestation) with the not-yet-attested names in
     `unattested`, so the next step -- ritual_attest / ritual_complete --
     needs no second lookup. Check `entered_limbo` rather than assuming
-    the rotation happened.
+    the rotation happened. The close itself is the write; the follow-up
+    lookups (`now_active`, `limbo_pending`) are advisory, so if one fails
+    after a successful close the result still reports the close, with
+    those fields null and the failure under `lookup_error`.
 
     Rotating sprints is a project-wide state change that affects
     everyone's budget accounting, so prefer sprint_current first and
@@ -94,20 +97,32 @@ async def sprint_close(
     # is active AFTER the rotation, so report that separately rather than
     # leaving `in_arrears: true` on a successful close to be misread as
     # "still blocked" (CHT-1351).
-    if not result["entered_limbo"]:
-        active = await backend.get_current_sprint(project_id)
-        result["now_active"] = with_budget_state(active) if active else None
-        result["limbo_pending"] = []
-        result["unattested"] = []
-    else:
-        result["now_active"] = None
-        # Name what limbo is waiting on here, so the caller's next step
-        # (attest/complete those rituals) is in the same result instead of
-        # behind a second call to ritual_pending (CHT-1381).
-        status = await backend.get_limbo_status(project_id) or {}
-        rituals = status.get("pending_rituals", []) or []
-        result["limbo_pending"] = rituals
-        result["unattested"] = [r["name"] for r in rituals if not r.get("attestation")]
+    # Everything below is a lookup AFTER the close committed. A timeout or
+    # error here must not come back as an error envelope: the caller would
+    # read "the close failed", retry, and get "already in limbo" with no
+    # sign that the first call worked (PR #278 review). Degrade the
+    # advisory fields to null and say why under `lookup_error`.
+    result["now_active"] = None
+    result["limbo_pending"] = None
+    result["unattested"] = None
+    try:
+        if not result["entered_limbo"]:
+            active = await backend.get_current_sprint(project_id)
+            result["now_active"] = with_budget_state(active) if active else None
+            result["limbo_pending"] = []
+            result["unattested"] = []
+        else:
+            # Name what limbo is waiting on here, so the caller's next step
+            # (attest/complete those rituals) is in the same result instead
+            # of behind a second call to ritual_pending (CHT-1381).
+            status = await backend.get_limbo_status(project_id) or {}
+            rituals = status.get("pending_rituals", []) or []
+            result["limbo_pending"] = rituals
+            result["unattested"] = [r["name"] for r in rituals if not r.get("attestation")]
+    except BackendError as e:
+        result["lookup_error"] = backend_error_payload(e)
+    except TransportError as e:
+        result["lookup_error"] = {"message": str(e), "error_code": e.error_code}
     return result
 
 
