@@ -17,6 +17,7 @@ import re
 import secrets
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -577,13 +578,48 @@ def list_backups() -> list[Path]:
     return backups
 
 
+def _sidecars(db_path: Path) -> list[Path]:
+    """The WAL-mode companions of a SQLite file (`<db>-wal`, `<db>-shm`)."""
+    return [db_path.with_name(db_path.name + suffix) for suffix in ("-wal", "-shm")]
+
+
 def create_backup() -> Path | None:
-    """Create a backup of the database. Returns backup path or None if no db."""
+    """Create a backup of the database. Returns backup path or None if no db.
+
+    Uses SQLite's online backup API rather than copying the file: the
+    server runs the database in WAL mode, so committed rows can live in
+    `chaotic.db-wal` until the next checkpoint, and a plain copy of
+    `chaotic.db` taken while the server is up silently misses them
+    (CHT-1207). The backup API reads through the WAL and produces a
+    single self-contained, consistent file, whether or not the server is
+    running. The result is verified with `PRAGMA quick_check` before it
+    is reported as a backup.
+    """
     if not DATABASE_PATH.exists():
         return None
 
     backup_path = get_backup_path()
-    shutil.copy2(DATABASE_PATH, backup_path)
+    try:
+        src = sqlite3.connect(f"file:{DATABASE_PATH}?mode=ro", uri=True)
+        try:
+            dst = sqlite3.connect(backup_path)
+            try:
+                src.backup(dst)
+                # The copy inherits the WAL flag from the live file; flip the
+                # backup to a rollback journal so it is one self-contained
+                # file that never grows -wal/-shm sidecars of its own.
+                dst.execute("PRAGMA journal_mode=DELETE")
+                ok = dst.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            finally:
+                dst.close()
+        finally:
+            src.close()
+    except Exception:
+        backup_path.unlink(missing_ok=True)  # never leave a half-written backup behind
+        raise
+    if not ok:
+        backup_path.unlink(missing_ok=True)
+        return None
     return backup_path
 
 
@@ -592,10 +628,18 @@ def restore_backup(backup_path: Path) -> bool:
 
     Note: This is a pure file operation. Callers are responsible for
     stopping the server before calling and restarting after.
+
+    A backup made by create_backup is a single self-contained file, so
+    restoring is a copy -- but the live database's `-wal`/`-shm` sidecars
+    belong to the file being replaced, and a stale WAL left next to the
+    restored file would be replayed onto it at the next open (CHT-1207).
+    They are removed first.
     """
     if not backup_path.exists():
         return False
 
+    for sidecar in _sidecars(DATABASE_PATH):
+        sidecar.unlink(missing_ok=True)
     shutil.copy2(backup_path, DATABASE_PATH)
     return True
 
@@ -1564,12 +1608,10 @@ def system_backup(list_mode, restore_timestamp):
         console.print("[yellow]No database to backup.[/yellow]")
         return
 
-    # Warn if server is running (backup may be inconsistent)
+    # The backup API snapshots through the WAL, so a running server is
+    # fine (CHT-1207); say so rather than asking the operator to stop it.
     if is_service_running():
-        console.print("[yellow]Warning: Server is running. For a consistent backup, stop the server first:[/yellow]")
-        console.print("  chaotic system stop && chaotic system backup && chaotic system start")
-        if not _confirm_action("Create backup anyway?"):
-            raise SystemExit(0)
+        console.print("[dim]Server is running; taking a consistent snapshot with SQLite's online backup.[/dim]")
 
     console.print("Creating backup...")
     backup_path = create_backup()
