@@ -51,34 +51,55 @@ from oxyde.core.types import TYPE_REGISTRY, TypeDescriptor
 from pydantic import BeforeValidator, PlainSerializer, SerializationInfo
 
 
-def _register_for_filters(enum_cls) -> None:
-    """Make a member mean its ``.name`` on Oxyde's FILTER path too (CHT-1398).
+def _register_with_oxyde(enum_cls) -> None:
+    """Make a member mean its ``.name`` everywhere Oxyde serialises a bare
+    value itself, not only on writes that go through pydantic (CHT-1398).
 
-    Writes go through pydantic (``model_dump``, python mode -> ``.name``).
-    Filter values do not: ``Q``/``filter(...)`` run each value through
+    ``objects.create`` / ``save`` / ``bulk_update`` dump the model in
+    python mode, so a member becomes its ``.name`` there. Two paths do
+    not touch pydantic at all: filter values (``filter`` / ``exclude`` /
+    ``Q``) and ``QuerySet.update(**values)``. Both run each value through
     ``oxyde.core.types.serialize_value``, which consults ``TYPE_REGISTRY``
     by exact type and otherwise hands the object to msgpack as is. Our
     enums subclass ``str``, so an unregistered member packs as its
-    ``.value`` ("close") and matches no stored row ("CLOSE"). Until this
-    hook every filter had to spell ``member.name`` by hand, and the one
-    that forgot silently matched nothing (test_stale_intent_takeover
-    found it through a unique-index collision). Registering the class
-    makes ``filter(status=SprintStatus.ACTIVE)`` compare against the
-    stored form, the same as ``.name`` strings still do.
+    ``.value``: a filter sent "close" against rows holding "CLOSE" and
+    matched nothing (test_stale_intent_takeover found it through a
+    unique-index collision), and ``.update(status=SprintStatus.ACTIVE)``
+    would have stored "active", a row no ``.name`` filter finds. Every
+    filter spelled ``member.name`` by hand until now; registering the
+    class makes the member correct on both paths, and ``.name`` strings
+    still pass through unchanged.
 
     Two more things read the registry, and both must see what they saw
     before: the migration autodetector records a column's type as
     ``get_ir_type(python_type)`` or, for an unregistered class, its
     lowercased ``__name__`` ("sprintstatus"), so the descriptor's
     ``ir_name`` is exactly that fallback and the recorded schema does not
-    change (registering as "str" produced fifteen spurious alter_column
-    operations); and the lookup category becomes "string", which allows
-    ``status__in`` / ``status__icontains`` on the column as on any TEXT
-    column.
+    change (registering as "str" made every enum column an alter_column);
+    and the lookup category becomes "string", which newly permits the
+    string lookups (``__contains`` and friends; ``__in`` was always
+    allowed). The Rust core tolerates the unfamiliar type hint on row
+    decoding and on F() expressions.
+
+    Still hand-written ``.name``: ``execute_raw`` params (msgpack packs a
+    str-subclass natively, the registry hook never sees it) and a member
+    inside an ``F()`` expression, which nobody writes.
+
+    This is keyed by class, not by column: a member passed for a plain
+    ``str`` column (the activity table's ``old_value`` / ``new_value``)
+    now serialises to ``.name`` too, and those columns store whatever
+    was written (CHT-1347).
     """
-    TYPE_REGISTRY.setdefault(
-        enum_cls, TypeDescriptor(enum_cls.__name__.lower(), "string", lambda v: v.name)
-    )
+    existing = TYPE_REGISTRY.get(enum_cls)
+    if existing is not None:
+        probe = next(iter(enum_cls))
+        if existing.serialize(probe) != probe.name:
+            raise RuntimeError(
+                f"{enum_cls.__name__} is already registered with Oxyde with a serializer that does not "
+                f"produce .name ({existing.serialize(probe)!r}); DbEnum needs the stored form"
+            )
+        return
+    TYPE_REGISTRY[enum_cls] = TypeDescriptor(enum_cls.__name__.lower(), "string", lambda v: v.name)
 
 
 def DbEnum(enum_cls):
@@ -88,7 +109,7 @@ def DbEnum(enum_cls):
         class OxydeSprint(Model):
             status: DbEnum(SprintStatus) = Field(default=SprintStatus.PLANNED)
     """
-    _register_for_filters(enum_cls)
+    _register_with_oxyde(enum_cls)
     def coerce(v):
         if isinstance(v, enum_cls):
             return v

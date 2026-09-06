@@ -249,15 +249,21 @@ def test_a_member_filters_by_its_stored_form(cls, fname, enum_cls, annotated):
 
 
 @pytest.mark.parametrize("cls,fname,enum_cls,annotated", ENUM_FIELDS, ids=IDS)
-def test_registration_does_not_change_the_recorded_column_type(cls, fname, enum_cls, annotated):
+def test_registered_ir_name_is_the_autodetectors_fallback_name(cls, fname, enum_cls, annotated):
     """The migration autodetector records a column's type as
     get_ir_type(python_type), falling back to the class's lowercased
     __name__ for an unregistered class. The descriptor's ir_name must be
     exactly that fallback, or every enum column shows up as an
-    alter_column in `oxyde makemigrations` (it did, as "str": fifteen of
-    them)."""
+    alter_column in `oxyde makemigrations` (it did, as "str": every one).
+
+    This pins the literal only -- that nobody changes the ir_name to
+    "str" -- not that the migration chain agrees with the models; that
+    comparison is CHT-1412 (ticket_limbo.limbo_type is recorded as
+    'str' in 0001 today)."""
+    from oxyde.core.types import TYPE_REGISTRY
     from oxyde.migrations.extract import _get_python_type_name
 
+    assert TYPE_REGISTRY[enum_cls].ir_name == enum_cls.__name__.lower()
     assert _get_python_type_name(enum_cls) == enum_cls.__name__.lower()
 
 
@@ -280,6 +286,24 @@ async def test_filtering_by_member_finds_the_row(db, test_issue, test_user):
     assert await OxydeTicketLimbo.objects.filter(issue_id=issue.id, limbo_type__in=[LimboType.CLOSE]).count() == 1
 
 
+@pytest.mark.asyncio
+async def test_queryset_update_by_member_stores_the_name(db, test_project):
+    """QuerySet.update(**values) bypasses pydantic the same way filters do;
+    an unregistered member used to be STORED as its .value ("active"), a
+    row no .name filter would ever find again."""
+    from oxyde import execute_raw
+
+    from app.enums import SprintStatus
+    from app.oxyde_models.sprint import OxydeSprint
+
+    sprint = await OxydeSprint.objects.create(project_id=test_project.id, name="S", status=SprintStatus.PLANNED)
+    await OxydeSprint.objects.filter(id=sprint.id).update(status=SprintStatus.ACTIVE)
+
+    rows = await execute_raw("SELECT status FROM sprints WHERE id = ?", [sprint.id])
+    assert rows[0]["status"] == SprintStatus.ACTIVE.name
+    assert (await OxydeSprint.objects.get(id=sprint.id)).status is SprintStatus.ACTIVE
+
+
 def test_without_registration_a_member_filters_by_its_wire_value():
     """Pin the mechanism this guards against, so the registration cannot
     be removed as 'unused': with the class absent from TYPE_REGISTRY a
@@ -288,7 +312,8 @@ def test_without_registration_a_member_filters_by_its_wire_value():
 
     from app.enums import LimboType
 
-    saved = TYPE_REGISTRY.pop(LimboType)
+    saved = TYPE_REGISTRY.pop(LimboType, None)
+    assert saved is not None, "LimboType is not registered with Oxyde; DbEnum stopped registering"
     try:
         assert serialize_value(LimboType.CLOSE) == "close"
     finally:
