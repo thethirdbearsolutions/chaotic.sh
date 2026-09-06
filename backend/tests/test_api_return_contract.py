@@ -1,8 +1,8 @@
 """The API layer's return contract, pinned (CHT-1348; ADR-0005).
 
 Since CHT-1266 the functions in ``app/api`` have two callers: FastAPI's
-router, and in-process consumers (the backend-hosted MCP transport in
-``app/mcp_server/tools.py``). The router applies each route's
+router, and in-process consumers (the backend-hosted MCP transport's
+data-access adapter, ``app/mcp_server/backend.py``; ADR-0007). The router applies each route's
 ``response_model`` -- which both *filters* the payload to the schema's
 fields and *serialises* it -- but an in-process caller gets whatever the
 function actually returns. When that was a raw Oxyde row, the tool
@@ -40,7 +40,7 @@ from pydantic import BaseModel
 import app.api as api_pkg
 
 _API_DIR = pathlib.Path(api_pkg.__file__).parent
-_TOOLS_PATH = _API_DIR.parent / "mcp_server" / "tools.py"
+_TOOLS_PATH = _API_DIR.parent / "mcp_server" / "backend.py"
 
 # Auth dependencies, not API functions: they return the current user row,
 # a bool, or an auth-method string, and are never a tool's output.

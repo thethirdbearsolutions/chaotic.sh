@@ -37,18 +37,17 @@ def _live_toolset() -> dict:
     return asyncio.run(_collect())
 
 
-def test_every_tool_is_async_or_sync_by_design():
+def test_every_tool_is_async():
     """mcp 2.x runs `def` tool handlers on worker threads (no event-loop
-    affinity). The stdio server's tools are deliberately synchronous --
-    they call the blocking httpx client -- so pin that they ALL are, and
-    that none touches asyncio. A mixed set would silently change which
-    thread a tool runs on (CHT-1367)."""
+    affinity) and `async def` ones on the loop. Since CHT-1374 every tool
+    is a shared coroutine body bound to this server's RestBackend (which
+    offloads the blocking httpx client itself), so pin that the objects
+    handed to add_tool are ALL coroutine functions, and that the wrapper
+    agrees with the body it wraps (CHT-1367)."""
     import inspect
     from cli.mcp_server import ALL_TOOLS
-    # Check the object handed to add_tool (the wrapper), which is what the
-    # SDK inspects to pick a worker thread vs the event loop.
-    mixed = [t.__name__ for t in ALL_TOOLS if inspect.iscoroutinefunction(t)]
-    assert mixed == [], f"stdio tools must be plain `def` (they block on httpx): {mixed}"
+    sync = [t.__name__ for t in ALL_TOOLS if not inspect.iscoroutinefunction(t)]
+    assert sync == [], f"stdio tools must be `async def`: {sync}"
     disagree = [
         t.__name__ for t in ALL_TOOLS
         if hasattr(t, "__wrapped__")

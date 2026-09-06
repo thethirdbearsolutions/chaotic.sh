@@ -242,12 +242,16 @@ If you'd rather point a *hosted* client at your chaotic instance instead
 of running `chaotic mcp` as a local subprocess -- claude.ai's custom
 connectors, Claude Code web, or Claude Code CLI's `--transport http` --
 the backend also speaks MCP directly over Streamable HTTP at `/mcp`.
-Same 11 tools, same names (see Toolset below); six of them
-(`issue_list`, `issue_create`, `doc_list`, `doc_create`,
-`activity_recent`, `project_list`) additionally accept an optional
-`team` parameter,
-because a hosted server has no single active profile to inherit context
-from -- see "Auth and scoping" below.
+Same tools, same names, same behaviour: since CHT-1374 both servers
+register the one toolset defined in `chaotic_mcp_tools` (ADR-0007), each
+bound to its own data-access backend, so the two cannot drift. The one
+documented difference is that the team-scoped tools (listed under
+`_meta.team_scoped_tools` in `docs/mcp-toolset-schema.json`: `issue_list`,
+`issue_create`, `issue_ready`, `doc_list`, `doc_create`, `doc_update`,
+`label_list`, `project_list`, `activity_recent`, the `sprint_*` tools
+except `sprint_remove`, and the `ritual_*` tools) additionally accept an
+optional `team` parameter here, because a hosted server has no single
+active profile to inherit context from -- see "Auth and scoping" below.
 
 Protocol notes: the server is built on mcp 2.x, so it negotiates both
 the 2025-06-18 protocol revision and the 2026-07-28 "modern" era --

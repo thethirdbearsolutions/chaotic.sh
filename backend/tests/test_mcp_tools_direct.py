@@ -1568,7 +1568,8 @@ class TestBoundaryUnexpectedException:
         async def _boom(*args, **kwargs):
             raise RuntimeError("kaboom")
 
-        monkeypatch.setattr(tools.issues_api, "list_issues", _boom)
+        import app.api.issues as issues_api
+        monkeypatch.setattr(issues_api, "list_issues", _boom)
         result = await tools.issue_list()
         assert "error" in result
         assert "kaboom" in result["error"]["message"]
@@ -1794,7 +1795,8 @@ class TestErrorEnvelope:
     async def test_unexpected_exception(self, test_project, monkeypatch):
         async def boom(*a, **k):
             raise RuntimeError("kaboom")
-        monkeypatch.setattr(tools.issues_api, "get_issue_by_identifier", boom)
+        import app.api.issues as issues_api
+        monkeypatch.setattr(issues_api, "get_issue_by_identifier", boom)
         err = self._check(await tools.issue_view("CHT-1"))
         assert err["error_code"] == "unexpected"
 
