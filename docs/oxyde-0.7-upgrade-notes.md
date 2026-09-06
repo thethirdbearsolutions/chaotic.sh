@@ -183,10 +183,13 @@ members with tz-aware timestamps.
   0001 (document_issues) plus 0005's ticket_limbo tables — so mass
   IntegrityError on legacy dangling rows is unlikely. The real change:
   declared `ON DELETE CASCADE`/`SET NULL` clauses now actually fire (latent
-  today; rituals are only soft-deleted). Separately, the test schema
-  (`tests/conftest.py` `_SCHEMA_SQL`) declares ~55 FK clauses production
-  doesn't have — pre-existing test/prod schema skew that FK enforcement
-  makes behavior-relevant. Ticket fodder alongside the makemigrations skew.
+  today; rituals are only soft-deleted). (An earlier version of this note
+  claimed the hand-written test schema declared ~55 FK clauses production
+  lacked. Measured for CHT-1208: the migration chain produces the same 61
+  foreign keys and 44 cascades; the count came from grepping migration
+  text, where `ctx.create_table` declares FKs as dicts. Since CHT-1208 the
+  test database is built by the migrations themselves, so there is no
+  second schema to skew.)
 - **`update()` return-type change**: any future code (or plugins) written
   against 0.3.1 examples that inspects the return of queryset `.update()`
   gets an int now. Chaotic's two call sites discard it.

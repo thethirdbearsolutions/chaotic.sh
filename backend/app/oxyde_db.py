@@ -285,8 +285,9 @@ async def verify_migrations_current() -> None:
     those silent runtime 500s into one loud boot failure with the fix.
 
     Skips a DB that wasn't built via migrations (no oxyde_migrations table,
-    e.g. the test harness's static conftest schema) -- there's nothing to
-    compare against there.
+    i.e. a hand-built schema) -- there's nothing to compare against there.
+    The test database is built by the migration chain (CHT-1208), so under
+    tests this guard runs for real rather than taking that skip.
     """
     from oxyde import execute_raw
 
@@ -294,7 +295,7 @@ async def verify_migrations_current() -> None:
         rows = await execute_raw("SELECT name FROM oxyde_migrations")
     except Exception as e:
         # A MISSING oxyde_migrations table means this DB wasn't built via
-        # migrations (test static schema / hand-built) -> nothing to verify,
+        # migrations (hand-built) -> nothing to verify,
         # skip. But any OTHER error (a real DB problem, a corrupted/dropped
         # table) must surface loudly at startup, not be silently swallowed
         # (PR #254 review).
