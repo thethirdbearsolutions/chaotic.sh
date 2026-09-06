@@ -1872,6 +1872,7 @@ class TestRitualAPIEndpointsNullProject:
         assert "Project not found" in response.json()["detail"]
 
 
+@pytest.mark.asyncio
 class TestRitualConditions:
     """Tests for ritual condition evaluation (CHT-473)."""
 

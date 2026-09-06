@@ -2628,7 +2628,9 @@ async def test_list_issues_by_sprint_only(client, auth_headers, test_sprint, tes
     )
     assert response.status_code == 200
     data = response.json()
-    assert len(data) >= 1
+    # Exactly the one issue we put in the sprint (the deleted shadowed twin
+    # of this test pinned the count; CHT-1373).
+    assert len(data) == 1
     assert any(i["id"] == test_issue.id for i in data)
 
 

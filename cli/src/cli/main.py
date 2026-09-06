@@ -24,7 +24,7 @@ from .config import (
 # `sys.modules['cli.main']` (and tests patch them there), so they are part
 # of this module's surface.
 from .config import (  # noqa: F401 - re-exported for late-binding command modules
-    has_local_config, load_global_config, save_global_config,
+    load_global_config, save_global_config,
     get_profile, list_profiles, ProfileError,
 )
 from .client import client, APIError

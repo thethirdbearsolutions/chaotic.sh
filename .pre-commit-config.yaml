@@ -41,10 +41,10 @@ repos:
         entry: backend/.venv/bin/ruff check backend
         language: system
         pass_filenames: false
-        files: ^backend/.*\.py$
+        files: ^backend/(.*\.py|pyproject\.toml)$
       - id: ruff-cli
         name: ruff (cli, F-rules)
         entry: cli/.venv/bin/ruff check cli
         language: system
         pass_filenames: false
-        files: ^cli/.*\.py$
+        files: ^cli/(.*\.py|pyproject\.toml)$
