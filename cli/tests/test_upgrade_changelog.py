@@ -133,3 +133,21 @@ class TestUpgradeChangelog:
             result = cli_runner.invoke(system, ["upgrade"])
 
         assert "Already on the latest version" in result.output
+
+
+class TestUpgradeMcpReconnectNote:
+    """A successful upgrade reminds operators that MCP clients cache the toolset (CHT-1364)."""
+
+    def test_success_path_prints_reconnect_reminder(self, cli_runner, base_patches):
+        with patch("cli.system.is_service_running", return_value=False), \
+             patch("cli.system.run_command", return_value=MagicMock(returncode=0, stdout="")), \
+             patch("cli.system.checkout_version", return_value=(True, None)), \
+             patch("cli.system.run_migrations", return_value=(True, "ok")), \
+             patch("cli.system.rebuild_frontend", return_value=(True, "built")):
+            from cli.system import system
+            result = cli_runner.invoke(system, ["upgrade", "--yes", "--no-backup"])
+
+        assert result.exit_code == 0, result.output
+        assert "Upgraded to" in result.output
+        assert "MCP clients cache the toolset" in result.output
+        assert "mcp_toolset_fingerprint" in result.output

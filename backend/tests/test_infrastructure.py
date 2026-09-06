@@ -156,6 +156,26 @@ class TestVersionEndpoint:
         assert "T" in body["start_time"]
 
     @pytest.mark.asyncio
+    async def test_version_reports_the_mcp_toolset_fingerprint(self, client):
+        """CHT-1364: the surface a connector may have cached is identifiable
+        in one unauthenticated request. Stable across calls, and equal to
+        an independent hash of the live toolset."""
+        import hashlib, json
+
+        from app.mcp_server.tools import ALL_TOOLS, build_server
+
+        first = (await client.get("/api/version")).json()
+        second = (await client.get("/api/version")).json()
+        fp = first["mcp_toolset_fingerprint"]
+        assert len(fp) == 64 and int(fp, 16) >= 0
+        assert second["mcp_toolset_fingerprint"] == fp
+        assert first["mcp_tool_count"] == len(ALL_TOOLS) == 30
+
+        tools = await build_server().list_tools()
+        surface = {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
+        expected = hashlib.sha256(json.dumps(surface, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        assert fp == expected
+
     async def test_version_is_unauthenticated(self, client):
         # Deploy metadata, not secrets -- must not require a token.
         response = await client.get("/api/version")

@@ -260,6 +260,20 @@ except `sprint_remove`, and the `ritual_*` tools) additionally accept an
 optional `team` parameter here, because a hosted server has no single
 active profile to inherit context from -- see "Auth and scoping" below.
 
+**Clients cache the toolset; reconnect after a server upgrade.** MCP
+clients fetch `tools/list` when they connect and keep it. This transport is
+stateless by design (every request is its own session), so the server
+cannot push `notifications/tools/list_changed` to a client that connected
+before an upgrade -- a claude.ai connector or a `claude mcp add --transport
+http` session opened against an older server keeps advertising the old
+tools until it reconnects (CHT-1364: an a18 deploy went from 11 to 30
+tools and a live connector still showed 11). After `chaotic system
+upgrade`, remove and re-add the connector (or restart the Claude Code
+session). To check what a running server serves without reconnecting:
+`GET /api/version` reports `mcp_tool_count` and `mcp_toolset_fingerprint`
+(SHA-256 over every tool's name, description and schema); if the client's
+tool list does not match the count, it is stale.
+
 Protocol notes: the server is built on mcp 2.x, so it negotiates both
 the 2025-06-18 protocol revision and the 2026-07-28 "modern" era --
 any current client works, no version pinning needed. Request bodies are

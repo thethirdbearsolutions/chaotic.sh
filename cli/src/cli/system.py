@@ -1433,6 +1433,11 @@ def system_upgrade(target_version, no_backup, yes, fake_initial):
     new_version = get_current_version()
     console.print()
     console.print(f"[bold green]Upgraded to {new_version}[/bold green]")
+    console.print(
+        "[dim]MCP clients cache the toolset at connect time. If this upgrade changed any "
+        "tool, reconnect them (compare mcp_toolset_fingerprint from /api/version before and "
+        "after; see docs/agents.md).[/dim]"
+    )
 
 
 @system.command("backup")

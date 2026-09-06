@@ -21,6 +21,9 @@ direct tests can ``await`` it with the auth contextvar set by hand.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
 from mcp.server.mcpserver import MCPServer
 
 from chaotic_mcp_tools import (  # noqa: F401 - re-exported for tests
@@ -61,6 +64,35 @@ for _tool in ALL_TOOLS:
 del _tool
 
 __all__ = ["ALL_TOOLS", "BACKEND", "ToolContextError", "build_server", *[t.__name__ for t in ALL_TOOLS]]
+
+
+_fingerprint: str | None = None
+
+
+async def toolset_fingerprint() -> str:
+    """SHA-256 over the served toolset (every tool's name, description and
+    inputSchema, sorted), so a client -- or a human debugging one -- can
+    tell in one request whether the surface it cached is the one this
+    server serves (CHT-1364). Exposed as `mcp_toolset_fingerprint` on
+    /api/version. Computed once per process from a throwaway server;
+    the toolset is fixed at import.
+
+    Why this rather than `notifications/tools/list_changed`: that
+    notification travels over a live session, and this transport is
+    deliberately stateless (asgi.py) -- every request is its own throwaway
+    session, so there is no client connection to notify. Clients that
+    cached a toolset at connect time (claude.ai connectors, Claude Code's
+    `--transport http`) have to reconnect; the fingerprint is how anyone
+    can see that they should.
+    """
+    global _fingerprint
+    if _fingerprint is None:
+        tools = await build_server().list_tools()
+        surface = {t.name: {"description": t.description, "inputSchema": t.input_schema} for t in tools}
+        _fingerprint = hashlib.sha256(
+            json.dumps(surface, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    return _fingerprint
 
 
 def build_server() -> MCPServer:

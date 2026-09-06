@@ -193,7 +193,19 @@ async def version_info():
     stamped onto the JS/CSS. Unauthenticated on purpose -- it's deploy
     metadata, not secrets -- and fail-soft (unknown/missing, never 500).
     """
-    return {**_version_info(), "app_version": app.version}
+    from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
+
+    return {
+        **_version_info(),
+        "app_version": app.version,
+        # The MCP surface this process serves (CHT-1364). MCP clients cache
+        # the toolset at connect time and this transport is stateless (no
+        # session to send tools/list_changed over), so after an upgrade a
+        # connector may still advertise the old tools until it reconnects;
+        # comparing this against what the client shows says whether it must.
+        "mcp_toolset_fingerprint": await toolset_fingerprint(),
+        "mcp_tool_count": len(ALL_TOOLS),
+    }
 
 
 @app.get("/health")
