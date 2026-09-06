@@ -78,11 +78,20 @@ class SprintInLimboError(Exception):
 
 
 class TicketRitualsError(Exception):
-    """Raised when ticket has pending rituals and cannot be closed."""
+    """Raised when ticket has pending rituals and cannot be closed.
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    ``pending_rituals`` is the minimal name/prompt list this message is
+    built from; ``rituals`` carries the OxydeRitual rows and ``issue_pk``
+    the issue's id so the API layer can report each ritual's
+    approval_mode and attestation state (CHT-1360) -- an agent has to be
+    able to tell "attest this" from "already attested, awaiting a human".
+    """
+
+    def __init__(self, issue_id: str, pending_rituals: list[dict], rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
         self.pending_rituals = pending_rituals
+        self.rituals = list(rituals or [])
+        self.issue_pk = issue_pk
         ritual_names = [r.get("name", "unknown") for r in pending_rituals]
         super().__init__(
             f"Ticket has pending rituals. Complete them before closing: {', '.join(ritual_names)}"
@@ -110,11 +119,14 @@ class IntentInFlightError(Exception):
 
 
 class ClaimRitualsError(Exception):
-    """Raised when ticket has pending claim rituals and cannot be claimed."""
+    """Raised when ticket has pending claim rituals and cannot be claimed.
+    Same extra fields as TicketRitualsError (CHT-1360)."""
 
-    def __init__(self, issue_id: str, pending_rituals: list[dict]):
+    def __init__(self, issue_id: str, pending_rituals: list[dict], rituals=None, issue_pk: str | None = None):
         self.issue_id = issue_id
         self.pending_rituals = pending_rituals
+        self.rituals = list(rituals or [])
+        self.issue_pk = issue_pk
         ritual_names = [r.get("name", "unknown") for r in pending_rituals]
         super().__init__(
             f"Ticket has pending claim rituals. Complete them before claiming: {', '.join(ritual_names)}"
@@ -470,7 +482,7 @@ class IssueService:
                             {"name": r.name, "prompt": r.prompt}
                             for r in pending_rituals
                         ]
-                        raise error_class(issue.identifier, pending_info)
+                        raise error_class(issue.identifier, pending_info, rituals=pending_rituals, issue_pk=issue.id)
                 else:
                     for ritual in pending_rituals:
                         await OxydeTicketLimboBlocker.objects.create(
@@ -538,7 +550,7 @@ class IssueService:
                 )
 
         pending_info = [{"name": r.name, "prompt": r.prompt} for r in pending_rituals]
-        raise error_class(issue.identifier, pending_info)
+        raise error_class(issue.identifier, pending_info, rituals=pending_rituals, issue_pk=issue.id)
 
     async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
         """CHT-1250/CHT-1251: a GATE ritual just became blocking on
@@ -849,7 +861,7 @@ class IssueService:
                 claim_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLAIM and r.is_active]
                 if claim_rituals:
                     pending_info = [{"name": r.name, "prompt": r.prompt} for r in claim_rituals]
-                    raise ClaimRitualsError("NEW", pending_info)
+                    raise ClaimRitualsError("NEW", pending_info, rituals=claim_rituals)
 
         if issue_in.status == IssueStatus.DONE and not is_human_request:
             ritual_service = RitualService()
@@ -857,7 +869,7 @@ class IssueService:
             close_rituals = [r for r in rituals if r.trigger == RitualTrigger.TICKET_CLOSE and r.is_active]
             if close_rituals:
                 pending_info = [{"name": r.name, "prompt": r.prompt} for r in close_rituals]
-                raise TicketRitualsError("NEW", pending_info)
+                raise TicketRitualsError("NEW", pending_info, rituals=close_rituals)
 
         max_retries = 5
         last_error = None

@@ -377,3 +377,45 @@ class TestInteractiveHeader:
         mock_sys.stdin.isatty.return_value = False
         mock_sys.stdout.isatty.return_value = False
         assert Client()._headers()["X-Chaotic-Interactive"] == "0"
+
+
+class TestTicketRitualErrorRendering:
+    """_format_ticket_ritual_error distinguishes rituals still to attest from
+    ones already attested and waiting on a human (CHT-1360)."""
+
+    def _detail(self, *rows):
+        return {"error_code": "claim_rituals_pending", "issue_id": "CHT-9", "pending_rituals": list(rows)}
+
+    def test_unattested_ritual_gets_the_attest_hint(self):
+        text = Client()._format_ticket_ritual_error(self._detail(
+            {"name": "work-on-branch", "prompt": "Name the branch.", "approval_mode": "auto", "attestation": None},
+        ))
+        assert "Pending ritual: work-on-branch" in text
+        assert "Name the branch." in text
+        assert 'chaotic ritual attest work-on-branch --ticket CHT-9' in text
+        assert "awaiting" not in text
+
+    def test_attested_awaiting_approval_is_not_asked_for_again(self):
+        text = Client()._format_ticket_ritual_error(self._detail(
+            {"name": "design-review", "prompt": "Write it.", "approval_mode": "review",
+             "attestation": {"attested_by_name": "ethan", "approved_at": None}},
+        ))
+        assert "Attested by ethan, awaiting human approval (review): design-review" in text
+        assert "Nothing more to attest" in text
+        assert "Usage:" not in text
+
+    def test_mixed_rows_show_state_then_the_next_thing_to_do(self):
+        text = Client()._format_ticket_ritual_error(self._detail(
+            {"name": "design-review", "prompt": "Write it.", "approval_mode": "review",
+             "attestation": {"attested_by_name": "ethan"}},
+            {"name": "work-on-branch", "prompt": "Name the branch.", "approval_mode": "auto"},
+            {"name": "third", "prompt": "x"},
+        ))
+        assert text.index("awaiting human approval") < text.index("Pending ritual: work-on-branch")
+        assert "chaotic ritual attest work-on-branch --ticket CHT-9" in text
+        assert "(1 more ritual(s) pending after this one)" in text
+
+    def test_legacy_string_rows_still_render(self):
+        text = Client()._format_ticket_ritual_error(self._detail("old-style"))
+        assert "Pending ritual: old-style" in text
+        assert "chaotic ritual attest old-style --ticket CHT-9" in text

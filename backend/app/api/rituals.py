@@ -54,6 +54,30 @@ async def _build_attestation_response(att) -> RitualAttestationResponse:
     )
 
 
+async def pending_ritual_responses(issue_id: str | None, rituals) -> list[PendingRitualResponse]:
+    """One PendingRitualResponse per ritual, with its attestation state for
+    `issue_id` (None when the issue does not exist yet, e.g. a create
+    refused as in_progress/done). The same rows get_pending_ticket_rituals
+    returns; the claim/close refusal payloads in app/api/issues.py reuse
+    them so a caller can tell "attest this" from "attested, awaiting a
+    human" from the 409 alone (CHT-1360)."""
+    ritual_service = RitualService()
+    rows = []
+    for ritual in rituals:
+        att = await ritual_service.get_issue_attestation(ritual.id, issue_id) if issue_id else None
+        rows.append(PendingRitualResponse(
+            id=ritual.id,
+            name=ritual.name,
+            prompt=ritual.prompt,
+            trigger=ritual.trigger,
+            approval_mode=ritual.approval_mode,
+            note_required=ritual.note_required,
+            conditions=ritual.conditions,
+            attestation=(await _build_attestation_response(att)) if att else None,
+        ))
+    return rows
+
+
 async def create_ritual(
     project_id: str,
     ritual_in: RitualCreate,
@@ -482,20 +506,7 @@ async def get_pending_ticket_rituals(
     claim_rituals = await ritual_service.get_pending_claim_rituals(issue.project_id, issue_id)
     pending = close_rituals + claim_rituals
 
-    # Build pending ritual responses with attestation status
-    pending_responses = []
-    for ritual in pending:
-        att = await ritual_service.get_issue_attestation(ritual.id, issue_id)
-        pending_responses.append(PendingRitualResponse(
-            id=ritual.id,
-            name=ritual.name,
-            prompt=ritual.prompt,
-            trigger=ritual.trigger,
-            approval_mode=ritual.approval_mode,
-            note_required=ritual.note_required,
-            conditions=ritual.conditions,
-            attestation=(await _build_attestation_response(att)) if att else None,
-        ))
+    pending_responses = await pending_ritual_responses(issue_id, pending)
 
     # Get completed rituals
     all_rituals = await ritual_service.list_by_project(issue.project_id)

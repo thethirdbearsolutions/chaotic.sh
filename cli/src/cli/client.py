@@ -141,27 +141,44 @@ class Client:
         if not pending:
             return "Ticket has pending rituals."
 
-        # Only show the first pending ritual — subsequent ones are revealed
-        # after the first is attested, to avoid overwhelming the user.
-        r = pending[0]
-        lines = []
-        if isinstance(r, dict):
-            name = r.get("name", "unknown")
-            prompt = r.get("prompt", "")
-            lines.append(f"Pending ritual: {name}")
-            if prompt:
-                lines.append(f"  {prompt}")
-            lines.append(
-                f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
-            )
-        else:
-            lines.append(f"Pending ritual: {r}")
-            lines.append(
-                f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
-            )
+        # Since CHT-1360 each row carries its attestation state: an attested
+        # ritual awaiting a human's approval is reported as such rather than
+        # as something to attest again.
+        awaiting = [r for r in pending if isinstance(r, dict) and r.get("attestation")]
+        todo = [r for r in pending if not (isinstance(r, dict) and r.get("attestation"))]
 
-        if len(pending) > 1:
-            lines.append(f"\n({len(pending) - 1} more ritual(s) pending after this one)")
+        lines = []
+        for r in awaiting:
+            by = (r.get("attestation") or {}).get("attested_by_name") or "you"
+            mode = r.get("approval_mode") or "review"
+            lines.append(f"Attested by {by}, awaiting human approval ({mode}): {r.get('name', 'unknown')}")
+
+        if todo:
+            # Only show the first unattested ritual — subsequent ones are
+            # revealed after the first is attested, to avoid overwhelming
+            # the user.
+            r = todo[0]
+            if isinstance(r, dict):
+                name = r.get("name", "unknown")
+                prompt = r.get("prompt", "")
+                lines.append(f"Pending ritual: {name}")
+                if prompt:
+                    lines.append(f"  {prompt}")
+                lines.append(
+                    f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
+                )
+            else:
+                lines.append(f"Pending ritual: {r}")
+                lines.append(
+                    f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
+                )
+            if len(todo) > 1:
+                lines.append(f"\n({len(todo) - 1} more ritual(s) pending after this one)")
+        else:
+            lines.append(
+                "\nNothing more to attest -- a human must approve the attestation(s) above "
+                "before this transition can proceed."
+            )
 
         return "\n".join(lines)
 
