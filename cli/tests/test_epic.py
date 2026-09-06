@@ -58,6 +58,20 @@ class TestEpicCreate:
         call_kwargs = client.create_issue.call_args
         assert call_kwargs[1]['issue_type'] == 'epic'
 
+    def test_zero_point_estimate_is_sent_not_dropped(self, cli_runner):
+        """`epic create --estimate 0` used to vanish behind `if estimate:`
+        (CHT-1397), the same way `issue create` did. It must reach the API
+        as 0."""
+        from cli.main import cli, client
+
+        created = {"id": "new-epic", "identifier": "CHT-60", "title": "Search Feature", "issue_type": "epic"}
+        client.create_issue = MagicMock(return_value=created)
+
+        result = cli_runner.invoke(cli, ['epic', 'create', 'Search Feature', '--estimate', '0'])
+
+        assert result.exit_code == 0, result.output
+        assert client.create_issue.call_args[1]["estimate"] == 0
+
     def test_create_epic_shows_next_step_hint(self, cli_runner):
         """epic create shows hint about adding sub-issues."""
         from cli.main import cli, client

@@ -58,6 +58,30 @@ class TestIssueList:
         assert 'CHT-101' in result.output
         assert 'Sprint 45' in result.output
 
+    def test_list_table_shows_a_zero_point_estimate_as_0(self, cli_runner):
+        """The Est column printed "-" for both None and 0 (`estimate or "-"`);
+        a zero-point ticket charges 0 on close and an unestimated one
+        charges 1, so the table must tell them apart (CHT-1397)."""
+        import re
+
+        from cli.main import cli, client
+
+        client.get_issues = MagicMock(return_value=[
+            {"identifier": "CHT-100", "title": "Zero", "status": "backlog", "priority": "low",
+             "issue_type": "task", "estimate": 0, "sprint_id": None},
+            {"identifier": "CHT-101", "title": "Unset", "status": "backlog", "priority": "low",
+             "issue_type": "task", "estimate": None, "sprint_id": None},
+        ])
+        client.get_sprints = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['issue', 'list', '--sort', 'created'])
+
+        assert result.exit_code == 0, result.output
+        zero_row = next(line for line in result.output.splitlines() if "CHT-100" in line)
+        unset_row = next(line for line in result.output.splitlines() if "CHT-101" in line)
+        assert re.search(r"\b0\b", zero_row), zero_row
+        assert "-" in unset_row and not re.search(r"\b0\b", unset_row), unset_row
+
     def test_list_empty(self, cli_runner):
         """issue list with no issues shows message."""
         from cli.main import cli, client

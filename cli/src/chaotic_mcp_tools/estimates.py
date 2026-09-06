@@ -25,7 +25,8 @@ def off_scale_warning(estimate: int | None, scale: str | None) -> str | None:
 
     Unknown scales (a value this copy of the table has never heard of)
     produce no warning: the point is to catch drift, not to shout about
-    a newer server.
+    a newer server. 0 is never off-scale: it is a zero-point estimate
+    (charges nothing on close), not a typo for the nearest value.
     """
     if estimate is None:
         return None
