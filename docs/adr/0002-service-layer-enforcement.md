@@ -117,17 +117,20 @@ ADRs are append-only, so the text above is unchanged. Two parts of it no longer 
 
 The Decision reads as covering all enforcement. What PR #178 actually moved to the service layer was **ritual and gate invariants** (`RitualService`, and later the human-and-interactive gate exemption, CHT-1302).
 
-**Authorization did not move.** Whether a principal may act on a team or project is still enforced only at the API edge. On `main` at 65a1426, `check_user_team_access` / `check_user_project_access` appear:
+**Authorization did not move.** Whether a principal may act on a team or project is enforced above the service layer, in two separately maintained places. On `main` at 65a1426:
 
-- 112 times under `backend/app/api/`,
-- twice under `backend/app/mcp_server/`,
-- never under `backend/app/services/`.
+- `backend/app/api/` makes **95** `await check_user_team_access(...)` / `await check_user_project_access(...)` calls.
+- `backend/app/mcp_server/scope.py` (`resolve_team`, `resolve_project`) **reimplements the equivalent checks by hand** for the remote MCP transport, comparing `agent_team_id` / `agent_project_id` and calling `TeamService().get_user_teams(...)`. It mentions the two API functions only in its docstring and calls neither.
+- `backend/app/services/` makes **no** such calls, and many service write methods don't receive the acting principal at all.
 
-Many service write methods don't receive the acting principal at all.
+So **for access control, the API and MCP layers are the security boundary today**:
 
-So **for access control, the API layer is the security boundary today**, and a non-HTTP caller would bypass it: the exact risk this ADR was written about. The "other services likely have similar holes" follow-up below applies here.
+- a non-HTTP caller that goes straight to services would bypass it, which is the exact risk this ADR was written about;
+- the two hand-maintained copies can drift, the same class of risk.
 
-Read the Decision as the **target for all enforcement**. Today it's met for ritual and gate invariants, not for access control. The plan to close the gap without threading the principal through every service signature is tracked in CHT-1439: every write in `app.api` authorizes explicitly, and service write methods refuse to run without an authenticated actor context.
+The "other services likely have similar holes" follow-up below applies here.
+
+Read the Decision as the **target for all enforcement**. Today it's met for ritual and gate invariants, not for access control. The plan to close the gap without threading the principal through every service signature is tracked in CHT-1439: one authorization path used by both `app.api` and the MCP scope resolution, and service write methods that refuse to run without an authenticated actor context.
 
 ### 2. The `foreign_keys` follow-up is stale, and the hazard is the reverse
 
