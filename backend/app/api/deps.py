@@ -131,8 +131,8 @@ async def get_api_key_record(
     validated the token."""
     if not credentials or not credentials.credentials.startswith("ck_"):
         return None
-    service = APIKeyService()
-    return await service.get_by_prefix(service._get_prefix(credentials.credentials))
+    api_key, _legacy = await APIKeyService().find_by_key(credentials.credentials)
+    return api_key
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
