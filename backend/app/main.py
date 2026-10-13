@@ -5,6 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi import Request
 import os
@@ -17,6 +18,7 @@ from app.utils.security import decode_token
 from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
+from app.mcp_server.auth import warn_if_capability_url_enabled
 from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
 from app.oauth.cors import OAuthAwareCORS
 from app.oauth.discovery import router as oauth_discovery_router
@@ -49,6 +51,8 @@ async def lifespan(app: FastAPI):
                 "Set the SECRET_KEY environment variable to a secure random value: "
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
+    # CHT-1522: the /mcp/<key> capability URL is deprecated.
+    warn_if_capability_url_enabled()
     await init_oxyde()
     # CHT-1195: a brand-new database gets its schema from the migration
     # chain here, the one case where migrating at startup cannot hurt.
@@ -162,6 +166,14 @@ app.include_router(oauth_discovery_router)
 # The authorization server's own endpoints (CHT-1518..), same gating.
 app.include_router(oauth_router)
 app.add_exception_handler(OAuthHTTPError, oauth_error_handler)
+
+# Client address from a trusted reverse proxy's X-Forwarded-For (CHT-1586).
+# Added last, so it is the outermost middleware and everything inside it,
+# the OAuth per-address limits included, sees the real client. Only the
+# addresses in FORWARDED_ALLOW_IPS are believed (validated in Settings);
+# serve-prod passes --no-proxy-headers so uvicorn does not apply its own
+# list as well.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
 
 # Get the directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

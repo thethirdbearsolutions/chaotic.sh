@@ -256,11 +256,64 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   address, and at most `OAUTH_DCR_MAX_PENDING_CLIENTS` (default 500)
   clients that have never been used to authorize. Those are refused 24
   hours after they register and deleted shortly after. A "source
-  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy every request has the
-  proxy's address, so the per-address limit becomes a server-wide one
-  unless uvicorn is run with `--proxy-headers` and `--forwarded-allow-ips`.
+  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy it
+  is the client the proxy names in `X-Forwarded-For`, provided the proxy
+  is listed in `FORWARDED_ALLOW_IPS` (see "Behind a reverse proxy"
+  below); otherwise every request has the proxy's address and the
+  per-address limit becomes a server-wide one.
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
   use metadata documents don't need it.
+
+## Behind a reverse proxy: `FORWARDED_ALLOW_IPS`
+
+A request that reaches the app through a reverse proxy arrives from the
+proxy's address. The app believes the proxy's `X-Forwarded-For` (the
+client's address) and `X-Forwarded-Proto` only when the request comes
+from an address in `FORWARDED_ALLOW_IPS` (CHT-1586): a comma-separated
+list of IP addresses and CIDR networks, default `127.0.0.1,::1`.
+
+- **Proxy on the same machine** (the recommended setup above): nothing
+  to set. Each client is counted under its own address by the OAuth
+  limits.
+- **Proxy elsewhere** (another host, a container network): set
+  `FORWARDED_ALLOW_IPS` to the proxy's address or network, e.g.
+  `FORWARDED_ALLOW_IPS=10.0.0.5` or `172.18.0.0/16`.
+- **No proxy, served directly**: set `FORWARDED_ALLOW_IPS=` (empty) if
+  anything on the machine itself could otherwise claim an address.
+
+The client address is the right-most entry in `X-Forwarded-For` that is
+not itself a listed proxy, so a value a client sent ahead of the
+proxy's own is ignored. The proxy must set or append the header (nginx:
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` Caddy
+does it by default). `*` and a `/0` network are refused at startup:
+trusting every sender would let any client choose the address its limits
+are counted against. A host name or a network with host bits set
+(`10.0.0.1/8`) is refused too, rather than silently never matching.
+
+`just serve-prod` and `just serve` run uvicorn with `--no-proxy-headers`
+so the app applies this list itself. uvicorn reads a variable of the
+same name; if you run uvicorn by hand without that flag, both apply the
+same list.
+
+## The capability URL: `MCP_CAPABILITY_URL_ENABLED`
+
+`/mcp/<api-key>` takes an API key in the URL, for MCP clients that can
+send only a URL (see `docs/agents.md`). It is deprecated in favour of
+OAuth (CHT-1522; design doc "MCP OAuth and token service: design" §5):
+
+- `MCP_CAPABILITY_URL_ENABLED=true` (the default for now): served as
+  before, every response carries `Deprecation: @1791849600` (RFC 9745;
+  2026-10-13), and the server logs a warning at startup.
+- `MCP_CAPABILITY_URL_ENABLED=false`: `/mcp/<key>` answers 404 whether
+  or not the key is valid. The key is still scrubbed from the logged
+  request path, so a client still using a stale URL never puts its key
+  in this server's logs. `/mcp` with an `Authorization` header is
+  unaffected.
+
+The default becomes `false` in the release that ships OAuth for MCP,
+and the route is removed two releases after that. Moving a connector
+off it: add it again by URL and authorize, then revoke the old key
+(`chaotic auth keys revoke <key-id>`).
 
 ## OAuth tokens
 

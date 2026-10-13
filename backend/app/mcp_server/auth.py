@@ -26,6 +26,11 @@ Two modes (no JWT on either):
    and revoke (``chaotic auth keys revoke``) without touching any other
    integration. ***
 
+   Deprecated (CHT-1522): served only while
+   ``MCP_CAPABILITY_URL_ENABLED`` is on (default on for now, off once
+   OAuth ships), with a ``Deprecation`` header on every response. Off,
+   it is a 404; the redaction below stays installed either way.
+
    One leak channel IS closed server-side: ``CapabilityPathRedaction``
    below rewrites ``scope["path"]`` to a redacted form before anything
    downstream can log it, so *this* server's access log and error log
@@ -49,7 +54,9 @@ in ``context.current_mcp_principal`` for the life of the request; the
 """
 from __future__ import annotations
 
-from starlette.datastructures import Headers
+import logging
+
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -61,9 +68,12 @@ from app.auth.credentials import (
     capability_url_resolver,
     mcp_resolver,
 )
+from app.config import get_settings
 from app.mcp_server.context import current_mcp_principal
 from app.oauth.discovery import www_authenticate_challenge
 from app.services.token_service import ALL_SECRET_PREFIXES
+
+logger = logging.getLogger(__name__)
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 
@@ -76,6 +86,26 @@ _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 _SCOPE_KEY = "chaotic_mcp_capability_key"
 
 _MCP_PREFIX = "/mcp/"
+
+# RFC 9745 ``Deprecation`` value for the capability URL (CHT-1522): the
+# date it was deprecated, 2026-10-13T00:00:00Z, as a structured-field Date.
+CAPABILITY_URL_DEPRECATION = "@1791849600"
+
+
+def capability_url_enabled() -> bool:
+    """``MCP_CAPABILITY_URL_ENABLED``, read at call time."""
+    return get_settings().mcp_capability_url_enabled
+
+
+def warn_if_capability_url_enabled() -> None:
+    """Startup warning while the deprecated capability URL is served
+    (CHT-1522). Called from app.main's lifespan."""
+    if capability_url_enabled():
+        logger.warning(
+            "MCP_CAPABILITY_URL_ENABLED is on: /mcp/<api-key> still accepts an API key in the URL. "
+            "It is deprecated and will be off by default once OAuth for MCP ships; move connectors "
+            "to /mcp with an Authorization header or OAuth, then set MCP_CAPABILITY_URL_ENABLED=false."
+        )
 
 
 def _redact_key(key: str) -> str:
@@ -141,6 +171,13 @@ class CapabilityPathRedaction:
         await self._app(scope, receive, send)
 
 
+def _missing_key_message() -> str:
+    """Only point at the capability URL while it is served (CHT-1522)."""
+    if capability_url_enabled():
+        return "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."
+    return "Missing API key. Send `Authorization: Bearer ck_...`."
+
+
 async def _resolve(
     api_key: str | None,
     challenge: dict[str, str] = _WWW_AUTHENTICATE,
@@ -162,7 +199,7 @@ async def _resolve(
     except CredentialError as exc:
         if exc.failure is CredentialFailure.MISSING:
             return None, JSONResponse(
-                {"error": "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."},
+                {"error": _missing_key_message()},
                 status_code=401,
                 headers=challenge,
             )
@@ -241,7 +278,27 @@ class BearerHeaderAuth(_AuthWrapperBase):
 class CapabilityURLAuth(_AuthWrapperBase):
     """Mode 2: /mcp/{api_key} -- the path segment IS the key, read from
     where CapabilityPathRedaction stashed it (NOT from path_params, which
-    only ever contains the already-redacted form -- see _SCOPE_KEY)."""
+    only ever contains the already-redacted form -- see _SCOPE_KEY).
+
+    Deprecated (CHT-1522): with ``MCP_CAPABILITY_URL_ENABLED`` off it
+    answers 404 before looking at the key, so a stale URL learns nothing
+    about whether its key is still valid. On, every response it sends,
+    errors included, carries ``Deprecation``. The setting is read per
+    request, like ``OAUTH_ENABLED``, so it needs no remount.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if not capability_url_enabled():
+            await JSONResponse({"detail": "Not Found"}, status_code=404)(scope, receive, send)
+            return
+
+        async def send_with_deprecation(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["Deprecation"] = CAPABILITY_URL_DEPRECATION
+            await send(message)
+
+        await super().__call__(scope, receive, send_with_deprecation)
 
     def _extract_key(self, scope: Scope) -> str | None:
         return scope.get(_SCOPE_KEY)

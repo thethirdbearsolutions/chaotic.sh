@@ -2,7 +2,9 @@
 import os
 from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, Field, ValidationError, model_validator
+import ipaddress
+
+from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -54,6 +56,20 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 24267
 
+    # Reverse proxies whose X-Forwarded-For / X-Forwarded-Proto headers are
+    # believed (CHT-1586): a comma-separated list of IP addresses and CIDR
+    # networks. A request from one of them is treated as coming from the
+    # client the proxy names, so the OAuth per-address limits key on the
+    # real client rather than on the proxy. Requests from anywhere else
+    # keep their socket address and their forwarded headers are ignored.
+    # The default trusts a proxy on the same machine, the topology
+    # docs/self-hosting-security.md recommends. Empty trusts nobody. "*"
+    # and a /0 network are refused: trusting every sender would let any
+    # client pick the address its limits are counted against. The same
+    # name as uvicorn's own variable on purpose; serve-prod turns uvicorn's
+    # handling off and this app applies the list itself (app.main).
+    forwarded_allow_ips: str = "127.0.0.1,::1"
+
     # Public base URL, used to build absolute links in outbound email
     # (invitation accept links). No scheme/host detection from requests --
     # explicit env var, same as everything else here.
@@ -70,6 +86,14 @@ class Settings(BaseSettings):
     # When off, /mcp and both discovery paths behave as before CHT-1517
     # except that the discovery paths 404 instead of serving the SPA.
     oauth_enabled: bool = False
+    # The capability URL /mcp/<api-key> (CHT-1522; design doc §5). It puts
+    # a long-lived key in a URL, so it is deprecated in favour of OAuth:
+    # while on, its responses carry a `Deprecation` header and startup
+    # logs a warning. Off, /mcp/<key> answers 404; the key is still
+    # scrubbed from the logged path (CapabilityPathRedaction stays
+    # installed). The default flips to false in the release that ships
+    # OAuth (decision D8) and the route is removed two releases later.
+    mcp_capability_url_enabled: bool = True
     # Dynamic client registration (RFC 7591) at /oauth/register, the
     # fallback for MCP clients without CIMD support. On by default (design
     # decision D5); while on, the AS metadata advertises the endpoint.
@@ -135,6 +159,21 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env")
 
+    @field_validator("forwarded_allow_ips")
+    @classmethod
+    def _check_forwarded_allow_ips(cls, value: str) -> str:
+        """Every entry must be an IP address or a CIDR network, and none
+        may cover every address (CHT-1586). Checked here rather than left
+        to uvicorn's parser, which silently turns a typo into a literal
+        that never matches, and would accept "*"."""
+        parse_trusted_proxies(value)
+        return value
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        """FORWARDED_ALLOW_IPS as the list ProxyHeadersMiddleware takes."""
+        return [str(net) for net in parse_trusted_proxies(self.forwarded_allow_ips)]
+
     @model_validator(mode="after")
     def _check_oauth_issuer(self) -> "Settings":
         """With OAUTH_ENABLED, APP_BASE_URL becomes the OAuth issuer, so it
@@ -155,6 +194,31 @@ class Settings(BaseSettings):
     def oauth_issuer(self) -> str:
         """APP_BASE_URL exactly, minus any trailing slash (CHT-1517)."""
         return self.app_base_url.rstrip("/")
+
+
+def parse_trusted_proxies(value: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """Parse FORWARDED_ALLOW_IPS: comma-separated IP addresses and CIDR
+    networks, blanks ignored. Raises ValueError on anything else, on "*",
+    and on a network of prefix length 0, any of which would let every
+    sender set its own client address."""
+    parsed = []
+    for raw in value.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        if entry == "*":
+            raise ValueError(
+                'FORWARDED_ALLOW_IPS must not be "*": trusting forwarded headers from every sender '
+                "lets any client choose the address its rate limits count against. List your proxies' addresses."
+            )
+        try:
+            item = ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry)
+        except ValueError as exc:
+            raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} is not an IP address or CIDR network: {exc}") from None
+        if isinstance(item, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and item.prefixlen == 0:
+            raise ValueError(f"FORWARDED_ALLOW_IPS entry {entry!r} covers every address; list your proxies' addresses.")
+        parsed.append(item)
+    return parsed
 
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})

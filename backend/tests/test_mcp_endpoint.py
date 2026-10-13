@@ -471,6 +471,23 @@ class TestCapabilityPathRedaction:
         assert api_key not in caplog.text
         assert f"ck_...{api_key[-4:]}" in caplog.text
 
+    async def test_scope_path_redacted_when_capability_url_disabled(self, recording_client, api_key, monkeypatch):
+        """CHT-1522: with the capability URL off, a stale URL's request
+        still never logs its key."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            resp = await ac.post(f"/mcp/{api_key}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code == 404
+        (scope,) = recorder.scopes
+        assert api_key not in scope["path"]
+        assert api_key.encode() not in scope["raw_path"]
+
     async def test_bearer_mode_path_untouched(self, recording_client, api_key):
         ac, recorder = recording_client
         headers = {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
@@ -478,6 +495,88 @@ class TestCapabilityPathRedaction:
         assert resp.status_code == 200
         (scope,) = recorder.scopes
         assert scope["path"] == "/mcp"
+
+
+class TestCapabilityURLFlag:
+    """CHT-1522: /mcp/<key> is deprecated and sits behind
+    MCP_CAPABILITY_URL_ENABLED (design doc §5)."""
+
+    @pytest.fixture
+    def capability_url(self, monkeypatch):
+        from app.config import get_settings
+
+        def _set(enabled: bool):
+            monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+            get_settings.cache_clear()
+
+        yield _set
+        get_settings.cache_clear()
+
+    def test_on_by_default(self):
+        from app.config import Settings
+
+        assert Settings().mcp_capability_url_enabled is True
+
+    async def test_enabled_responses_carry_deprecation(self, client, api_key, capability_url):
+        capability_url(True)
+        init = _rpc("initialize", _init_params())
+        ok = await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)
+        assert ok.status_code == 200
+        assert ok.headers["deprecation"] == "@1791849600"
+        # Errors from the capability route are deprecated too.
+        bad = await client.post("/mcp/ck_" + "0" * 64, json=init, headers=_MCP_HEADERS)
+        assert bad.status_code == 401
+        assert bad.headers["deprecation"] == "@1791849600"
+
+    async def test_bearer_mode_is_not_deprecated(self, client, bearer_headers, capability_url):
+        capability_url(True)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=bearer_headers)
+        assert resp.status_code == 200
+        assert "deprecation" not in resp.headers
+
+    @pytest.mark.parametrize("valid", [True, False])
+    async def test_disabled_is_404_whether_or_not_the_key_is_valid(self, client, api_key, capability_url, valid):
+        """A stale URL learns nothing about its key."""
+        capability_url(False)
+        key = api_key if valid else "ck_" + "0" * 64
+        resp = await client.post(f"/mcp/{key}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Not Found"}
+        assert "deprecation" not in resp.headers
+        assert "www-authenticate" not in resp.headers
+
+    async def test_disabled_keeps_bearer_mode(self, client, bearer_headers, capability_url):
+        capability_url(False)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=bearer_headers)
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_missing_key_hint_follows_the_setting(self, client, capability_url, enabled):
+        capability_url(enabled)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        assert resp.status_code == 401
+        assert ("capability URL" in resp.json()["error"]) is enabled
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_startup_warning(self, capability_url, caplog, enabled):
+        import logging
+
+        from app.mcp_server.auth import warn_if_capability_url_enabled
+
+        capability_url(enabled)
+        with caplog.at_level(logging.WARNING, logger="app.mcp_server.auth"):
+            warn_if_capability_url_enabled()
+        assert ("MCP_CAPABILITY_URL_ENABLED is on" in caplog.text) is enabled
+
+    async def test_lifespan_calls_the_startup_warning(self, monkeypatch):
+        """app.main's lifespan runs the check before anything else that
+        can fail (the lifespan itself is only driven by a real server)."""
+        import inspect
+
+        import app.main as main
+
+        source = inspect.getsource(main.lifespan)
+        assert "warn_if_capability_url_enabled()" in source
 
 
 class TestToolsList:
