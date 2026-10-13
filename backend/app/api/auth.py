@@ -1,5 +1,6 @@
 """Authentication API routes."""
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser
 from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
 from app.services.user_service import UserService
@@ -9,6 +10,7 @@ router = APIRouter()
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def signup(user_in: UserCreate):
     """Register a new user."""
     user_service = UserService()
@@ -25,6 +27,7 @@ async def signup(user_in: UserCreate):
 
 
 @router.post("/login", response_model=Token)
+@writes
 async def login(user_in: UserLogin):
     """Login and get access token."""
     user_service = UserService()
@@ -42,6 +45,7 @@ async def login(user_in: UserLogin):
 
 
 @router.get("/me", response_model=UserResponse)
+@reads
 async def get_me(current_user: CurrentUser):
     """Get current user info."""
     parent_user_name = None

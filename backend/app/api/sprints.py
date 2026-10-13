@@ -1,5 +1,6 @@
 """Sprint API routes."""
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.sprint import SprintCreate, SprintUpdate, SprintResponse
 from app.schemas.budget_transaction import BudgetTransactionResponse
@@ -12,6 +13,7 @@ from app.websocket import broadcast_sprint_event
 router = APIRouter()
 
 
+@reads
 async def list_sprints(
     project_id: str,
     current_user: CurrentUser,
@@ -44,6 +46,7 @@ async def list_sprints(
     return [SprintResponse.model_validate(sprint) for sprint in sprints]
 
 
+@writes
 async def create_sprint(
     project_id: str,
     current_user: CurrentUser,
@@ -91,6 +94,7 @@ async def create_sprint(
 
 # NOTE: /current must come BEFORE /{sprint_id} for route matching to work
 @router.get("/current", response_model=SprintResponse)
+@reads
 async def get_current_sprint(
     project_id: str,
     current_user: CurrentUser,
@@ -117,6 +121,7 @@ async def get_current_sprint(
 
 
 @router.get("/{sprint_id}", response_model=SprintResponse)
+@reads
 async def get_sprint(sprint_id: str, current_user: CurrentUser) -> SprintResponse:
     """Get sprint by ID."""
     sprint_service = SprintService()
@@ -140,6 +145,7 @@ async def get_sprint(sprint_id: str, current_user: CurrentUser) -> SprintRespons
 
 
 @router.patch("/{sprint_id}", response_model=SprintResponse)
+@writes
 async def update_sprint(
     sprint_id: str,
     sprint_in: SprintUpdate,
@@ -170,6 +176,7 @@ async def update_sprint(
 
 
 @router.post("/{sprint_id}/close", response_model=SprintResponse)
+@writes
 async def close_sprint(sprint_id: str, current_user: CurrentUser) -> SprintResponse:
     """Close the current sprint.
 
@@ -217,6 +224,7 @@ async def close_sprint(sprint_id: str, current_user: CurrentUser) -> SprintRespo
 
 
 @router.get("/{sprint_id}/transactions", response_model=list[BudgetTransactionResponse])
+@reads
 async def list_transactions(
     sprint_id: str,
     current_user: CurrentUser,

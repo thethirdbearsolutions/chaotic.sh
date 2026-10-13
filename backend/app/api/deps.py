@@ -3,50 +3,12 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
+from app.auth.access import refuse_registrar_write
 from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 
 security = HTTPBearer(auto_error=False)
-
-
-# Methods a registrar may use on any route (CHT-1498).
-_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
-
-def registrar_may_call(endpoint):
-    """Mark a write route a registrar may call: POST /agents/register.
-    Every other non-GET route refuses one (``refuse_registrar_write``)."""
-    endpoint.registrar_may_call = True
-    return endpoint
-
-
-def is_registrar(user: User) -> bool:
-    """An agent with the registrar capability (CHT-1498)."""
-    return bool(user.is_agent and user.can_register)
-
-
-REGISTRAR_CANNOT_WRITE = {
-    "error_code": "registrar_cannot_write",
-    "message": (
-        "This agent is a registrar: it may register session identities (POST /api/agents/register) "
-        "and read, nothing else. Write with a registered identity's key instead."
-    ),
-}
-
-
-def refuse_registrar_write(user: User, method: str, endpoint) -> None:
-    """Registrars are register-only (CHT-1498, spec I8: fail closed). If
-    registration fails, nothing may quietly fall back to writing as the
-    shared harness identity, which is the collapse registration exists to
-    end. A registrar may read (GET/HEAD/OPTIONS) and call the routes
-    marked ``registrar_may_call``; anything else is 403. The MCP backend
-    applies the same rule per tool (app/mcp_server/backend.py)."""
-    if not is_registrar(user) or method.upper() in _READ_METHODS:
-        return
-    if endpoint is not None and getattr(endpoint, "registrar_may_call", False):
-        return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(REGISTRAR_CANNOT_WRITE))
 
 
 async def get_current_user(
@@ -63,9 +25,10 @@ async def get_current_user(
     user = principal.user
 
     # The matched route's endpoint function (Starlette puts it in the
-    # scope when routing). Every authenticated REST route depends on this
-    # function, so this is the one place the registrar rule needs.
-    refuse_registrar_write(user, request.method, request.scope.get("endpoint"))
+    # scope when routing), classified @reads/@writes/@registers
+    # (app.auth.access, CHT-1561). Every authenticated REST route depends
+    # on this function, so this is the one place the registrar rule needs.
+    refuse_registrar_write(user, request.scope.get("endpoint"))
     return user
 
 

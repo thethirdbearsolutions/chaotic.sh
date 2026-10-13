@@ -40,7 +40,7 @@ from app.api import projects as projects_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
 from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, SprintStatus
-from app.api.deps import refuse_registrar_write
+from app.auth.access import REGISTRAR_MAY, Access, access_of, refuse_registrar_write
 from app.mcp_server import scope
 from app.mcp_server.context import get_current_mcp_user
 from app.schemas.document import DocumentCreate, DocumentUpdate
@@ -76,35 +76,39 @@ def http_error_payload(e: HTTPException) -> dict:
     return backend_error_payload(translate_http_exception(e))
 
 
-# Backend methods that read. (Not strictly side-effect free:
-# get_current_sprint, like its REST GET, may create the project's first
-# sprints through ensure_sprints_exist -- unattributed bookkeeping,
-# CHT-1557.) A registrar may call these and nothing
-# else (CHT-1498): every other method is treated as a write, so a new
-# method is refused to a registrar until it is named a read here or by
-# its get_/list_ prefix. tests/test_agent_register.py pins the split.
-READ_METHODS = frozenset({"server_info"})
+def _translated(api_fn):
+    """Wrap a backend method that calls the API function ``api_fn``: the
+    registrar rule, then error translation.
 
+    The rule is REST's (``app.auth.access``, CHT-1561): a registrar may
+    call the method if ``api_fn`` is classified ``@reads`` or
+    ``@registers``, the same marker its REST route is judged by. An
+    unclassified ``api_fn`` is an error here, at import, rather than a
+    refusal on every call. ``api_fn`` may instead be an ``Access`` for a
+    method that calls no ``app.api`` function (``server_info``).
+    tests/test_agent_register.py checks each method calls the function it
+    names.
+    """
+    access = api_fn if isinstance(api_fn, Access) else access_of(api_fn)
+    if access is None:
+        raise TypeError(f"{api_fn.__module__}.{api_fn.__qualname__} has no @reads/@writes classification")
+    registrar_may = access in REGISTRAR_MAY
 
-def is_read_method(name: str) -> bool:
-    return name in READ_METHODS or name.startswith(("get_", "list_"))
-
-
-def _translated(fn):
-    read_only = is_read_method(fn.__name__)
-
-    @functools.wraps(fn)
-    async def wrapper(self, *args, **kwargs):
-        try:
-            if not read_only:
-                # The same rule as REST's get_current_user, per tool.
-                refuse_registrar_write(self._user, "POST", None)
-            return await fn(self, *args, **kwargs)
-        except HTTPException as e:
-            raise translate_http_exception(e) from e
-        except PydanticValidationError as e:
-            raise translate_validation_error(e) from e
-    return wrapper
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapper(self, *args, **kwargs):
+            try:
+                if not registrar_may:
+                    refuse_registrar_write(self._user, None)
+                return await fn(self, *args, **kwargs)
+            except HTTPException as e:
+                raise translate_http_exception(e) from e
+            except PydanticValidationError as e:
+                raise translate_validation_error(e) from e
+        wrapper.api_access = access
+        wrapper.api_fn = None if isinstance(api_fn, Access) else api_fn
+        return wrapper
+    return decorate
 
 
 def _dump(obj):
@@ -198,11 +202,11 @@ class InProcessBackend:
 
     # -- issues --------------------------------------------------------------
 
-    @_translated
+    @_translated(issues_api.get_issue_by_identifier)
     async def get_issue(self, identifier: str) -> dict:
         return _dump(await issues_api.get_issue_by_identifier(identifier, self._user))
 
-    @_translated
+    @_translated(issues_api.list_issues)
     async def list_issues(
         self, *, project_id, team_id, statuses, priorities, assignee_id, label, search,
         sprint_id, parent_id, limit, sort_by, order, skip=None,
@@ -226,7 +230,7 @@ class InProcessBackend:
         )
         return _dump_list(rows)
 
-    @_translated
+    @_translated(issues_api.list_ready_issues)
     async def list_ready_issues(self, *, project_id, team_id, mine, include_assigned, limit) -> list:
         rows = await issues_api.list_ready_issues(
             current_user=self._user,
@@ -238,7 +242,7 @@ class InProcessBackend:
         )
         return _dump_list(rows)
 
-    @_translated
+    @_translated(issues_api.create_issue)
     async def create_issue(
         self, project_id, *, title, description, status, priority, issue_type, estimate, parent_id,
     ) -> dict:
@@ -254,7 +258,7 @@ class InProcessBackend:
         created = await issues_api.create_issue(project_id=project_id, issue_in=issue_in, current_user=self._user)
         return _dump(created)
 
-    @_translated
+    @_translated(issues_api.update_issue)
     async def update_issue(self, issue_id: str, **fields) -> dict:
         # Build with only the caller's fields set: the service keys off
         # model_dump(exclude_unset=True).
@@ -267,26 +271,26 @@ class InProcessBackend:
         )
         return _dump(updated)
 
-    @_translated
+    @_translated(issues_api.create_comment)
     async def create_comment(self, issue_id: str, content: str) -> dict:
         comment = await issues_api.create_comment(
             issue_id=issue_id, comment_in=IssueCommentCreate(content=content), current_user=self._user,
         )
         return _dump(comment)
 
-    @_translated
+    @_translated(issues_api.list_comments)
     async def list_comments(self, issue_id: str, limit: int) -> list:
         return _dump_list(await issues_api.list_comments(issue_id, self._user, limit=limit))
 
-    @_translated
+    @_translated(issues_api.list_sub_issues)
     async def list_sub_issues(self, issue_id: str, limit: int) -> list:
         return _dump_list(await issues_api.list_sub_issues(issue_id, self._user, limit=limit))
 
-    @_translated
+    @_translated(issues_api.list_relations)
     async def list_relations(self, issue_id: str) -> list:
         return _dump_list(await issues_api.list_relations(issue_id=issue_id, current_user=self._user))
 
-    @_translated
+    @_translated(issues_api.create_relation)
     async def create_relation(self, issue_id: str, related_issue_id: str, relation_type: str) -> dict:
         created = await issues_api.create_relation(
             issue_id=issue_id,
@@ -298,46 +302,46 @@ class InProcessBackend:
         )
         return _dump(created)
 
-    @_translated
+    @_translated(issues_api.delete_relation)
     async def delete_relation(self, issue_id: str, relation_id: str) -> None:
         await issues_api.delete_relation(issue_id=issue_id, relation_id=relation_id, current_user=self._user)
 
-    @_translated
+    @_translated(issues_api.add_label_to_issue)
     async def add_label(self, issue_id: str, label_id: str) -> None:
         await issues_api.add_label_to_issue(
             issue_id=issue_id, body=AddLabelRequest(label_id=label_id), current_user=self._user,
         )
 
-    @_translated
+    @_translated(issues_api.remove_label_from_issue)
     async def remove_label(self, issue_id: str, label_id: str) -> None:
         await issues_api.remove_label_from_issue(issue_id=issue_id, label_id=label_id, current_user=self._user)
 
-    @_translated
+    @_translated(labels_api.list_labels)
     async def list_labels(self, team_id: str, limit: int) -> list:
         return _dump_list(await labels_api.list_labels(team_id=team_id, current_user=self._user, limit=limit))
 
     # -- documents ----------------------------------------------------------
 
-    @_translated
+    @_translated(documents_api.list_documents)
     async def list_documents(self, team_id: str, *, project_id, search, limit) -> list:
         rows = await documents_api.list_documents(
             team_id=team_id, current_user=self._user, project_id=project_id, search=search, limit=limit,
         )
         return _dump_list(rows)
 
-    @_translated
+    @_translated(documents_api.get_document)
     async def get_document(self, document_id: str) -> dict:
         return _dump(await documents_api.get_document(document_id, self._user))
 
-    @_translated
+    @_translated(documents_api.list_comments)
     async def list_document_comments(self, document_id: str) -> list:
         return _dump_list(await documents_api.list_comments(document_id, self._user))
 
-    @_translated
+    @_translated(documents_api.get_document_issues)
     async def list_document_issues(self, document_id: str) -> list:
         return _dump_list(await documents_api.get_document_issues(document_id, self._user))
 
-    @_translated
+    @_translated(documents_api.create_document)
     async def create_document(self, team_id: str, *, title, content, icon, project_id) -> dict:
         document_in = DocumentCreate(title=title, content=content, icon=icon, project_id=project_id)
         created = await documents_api.create_document(
@@ -345,7 +349,7 @@ class InProcessBackend:
         )
         return _dump(created)
 
-    @_translated
+    @_translated(documents_api.update_document)
     async def update_document(self, document_id: str, **fields) -> dict:
         # Only the caller's fields set: DocumentService.update() keys off
         # model_dump(exclude_unset=True), and that same dict decides
@@ -355,13 +359,13 @@ class InProcessBackend:
         )
         return _dump(updated)
 
-    @_translated
+    @_translated(documents_api.link_document_to_issue)
     async def link_document(self, document_id: str, issue_id: str) -> None:
         await documents_api.link_document_to_issue(
             document_id=document_id, issue_id=issue_id, current_user=self._user,
         )
 
-    @_translated
+    @_translated(documents_api.unlink_document_from_issue)
     async def unlink_document(self, document_id: str, issue_id: str) -> None:
         await documents_api.unlink_document_from_issue(
             document_id=document_id, issue_id=issue_id, current_user=self._user,
@@ -369,11 +373,11 @@ class InProcessBackend:
 
     # -- sprints --------------------------------------------------------------
 
-    @_translated
+    @_translated(sprints_api.get_current_sprint)
     async def get_current_sprint(self, project_id: str) -> dict:
         return _dump(await sprints_api.get_current_sprint(project_id=project_id, current_user=self._user))
 
-    @_translated
+    @_translated(sprints_api.list_sprints)
     async def list_sprints(self, project_id: str, status: str | None) -> list:
         rows = await sprints_api.list_sprints(
             project_id=project_id,
@@ -382,33 +386,33 @@ class InProcessBackend:
         )
         return _dump_list(rows)
 
-    @_translated
+    @_translated(sprints_api.get_sprint)
     async def get_sprint(self, sprint_id: str) -> dict:
         return _dump(await sprints_api.get_sprint(sprint_id=sprint_id, current_user=self._user))
 
-    @_translated
+    @_translated(sprints_api.close_sprint)
     async def close_sprint(self, sprint_id: str) -> dict:
         return _dump(await sprints_api.close_sprint(sprint_id=sprint_id, current_user=self._user))
 
-    @_translated
+    @_translated(sprints_api.list_transactions)
     async def list_transactions(self, sprint_id: str) -> list:
         return _dump_list(await sprints_api.list_transactions(sprint_id=sprint_id, current_user=self._user))
 
     # -- rituals --------------------------------------------------------------
 
-    @_translated
+    @_translated(rituals_api.list_rituals)
     async def list_rituals(self, project_id: str, include_inactive: bool = False) -> list:
         rows = await rituals_api.list_rituals(
             project_id=project_id, current_user=self._user, include_inactive=include_inactive,
         )
         return _dump_list(rows)
 
-    @_translated
+    @_translated(rituals_api.get_limbo_status)
     async def get_limbo_status(self, project_id: str) -> dict:
         status = await rituals_api.get_limbo_status(project_id=project_id, current_user=self._user)
         return _dump(status) if status else {}
 
-    @_translated
+    @_translated(rituals_api.attest_ritual)
     async def attest_ritual(
         self, ritual_id: str, project_id: str, note: str | None,
         document_id: str | None = None, url: str | None = None,
@@ -420,7 +424,7 @@ class InProcessBackend:
         )
         return _dump(result)
 
-    @_translated
+    @_translated(rituals_api.complete_gate_ritual)
     async def complete_gate_ritual(
         self, ritual_id: str, project_id: str, note: str | None,
         document_id: str | None = None, url: str | None = None,
@@ -432,11 +436,11 @@ class InProcessBackend:
         )
         return _dump(result)
 
-    @_translated
+    @_translated(rituals_api.get_pending_ticket_rituals)
     async def get_pending_issue_rituals(self, issue_id: str) -> dict:
         return _dump(await rituals_api.get_pending_ticket_rituals(issue_id=issue_id, current_user=self._user))
 
-    @_translated
+    @_translated(rituals_api.attest_ritual_for_issue)
     async def attest_ritual_for_issue(
         self, ritual_id: str, issue_id: str, note: str | None,
         document_id: str | None = None, url: str | None = None,
@@ -448,7 +452,7 @@ class InProcessBackend:
         )
         return _dump(result)
 
-    @_translated
+    @_translated(rituals_api.complete_gate_ritual_for_issue)
     async def complete_gate_ritual_for_issue(
         self, ritual_id: str, issue_id: str, note: str | None,
         document_id: str | None = None, url: str | None = None,
@@ -462,7 +466,7 @@ class InProcessBackend:
 
     # -- projects / activity ----------------------------------------------------
 
-    @_translated
+    @_translated(Access.READ)
     async def server_info(self) -> dict:
         # The /api/version handler is the one place that assembles this
         # payload (it needs the MCP toolset fingerprint, which lives in
@@ -473,35 +477,35 @@ class InProcessBackend:
         from app.main import version_info
         return await version_info()
 
-    @_translated
+    @_translated(projects_api.list_projects)
     async def list_projects(self, team_id: str, limit: int) -> list:
         return _dump_list(await projects_api.list_projects(team_id=team_id, current_user=self._user, limit=limit))
 
-    @_translated
+    @_translated(projects_api.get_project)
     async def get_project(self, project_id: str) -> dict:
         return _dump(await projects_api.get_project(project_id=project_id, current_user=self._user))
 
     # -- revision history (CHT-1335) ------------------------------------------
 
-    @_translated
+    @_translated(documents_api.list_document_revisions)
     async def list_document_revisions(self, document_id: str, *, limit: int) -> list:
         return _dump_list(await documents_api.list_document_revisions(
             document_id=document_id, current_user=self._user, skip=0, limit=limit,
         ))
 
-    @_translated
+    @_translated(documents_api.get_document_revision)
     async def get_document_revision(self, document_id: str, version: int) -> dict:
         return _dump(await documents_api.get_document_revision(
             document_id=document_id, version=version, current_user=self._user,
         ))
 
-    @_translated
+    @_translated(issues_api.list_description_revisions)
     async def list_issue_description_revisions(self, issue_id: str, *, limit: int) -> list:
         return _dump_list(await issues_api.list_description_revisions(
             issue_id=issue_id, current_user=self._user, skip=0, limit=limit,
         ))
 
-    @_translated
+    @_translated(issues_api.get_description_revision)
     async def get_issue_description_revision(self, issue_id: str, version: int) -> dict:
         return _dump(await issues_api.get_description_revision(
             issue_id=issue_id, version=version, current_user=self._user,
@@ -509,21 +513,21 @@ class InProcessBackend:
 
     # -- inbox (CHT-1338) ------------------------------------------------------
 
-    @_translated
+    @_translated(inbox_api.list_inbox)
     async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list:
         return _dump_list(await inbox_api.list_inbox(
             current_user=self._user, team_id=team_id, unread=unread, skip=0, limit=limit,
         ))
 
-    @_translated
+    @_translated(inbox_api.mark_inbox_read)
     async def mark_inbox_read(self, entry_id: str) -> dict:
         return _dump(await inbox_api.mark_inbox_read(entry_id=entry_id, current_user=self._user))
 
-    @_translated
+    @_translated(inbox_api.mark_all_inbox_read)
     async def mark_all_inbox_read(self, team_id: str | None) -> dict:
         return _dump(await inbox_api.mark_all_inbox_read(current_user=self._user, team_id=team_id))
 
-    @_translated
+    @_translated(issues_api.list_team_activities)
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         rows = await issues_api.list_team_activities(
             team_id=team_id, current_user=self._user, limit=limit, project_id=project_id,

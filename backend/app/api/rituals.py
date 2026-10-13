@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
+from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.ritual import (
     RitualCreate,
@@ -82,6 +83,7 @@ async def pending_ritual_responses(issue_id: str | None, rituals) -> list[Pendin
     return await fill_principals(rows)
 
 
+@writes
 async def create_ritual(
     project_id: str,
     ritual_in: RitualCreate,
@@ -119,6 +121,7 @@ async def create_ritual(
         )
 
 
+@reads
 async def list_rituals(
     project_id: str,
     current_user: CurrentUser,
@@ -152,6 +155,7 @@ async def list_rituals(
 
 
 @router.get("/history", response_model=list[RitualAttestationHistoryItem])
+@reads
 async def list_attestation_history(
     project_id: str,
     current_user: CurrentUser,
@@ -200,6 +204,7 @@ async def list_attestation_history(
 
 
 @router.get("/limbo", response_model=LimboStatusResponse)
+@reads
 async def get_limbo_status(
     project_id: str,
     current_user: CurrentUser,
@@ -278,6 +283,7 @@ async def get_limbo_status(
 
 
 @router.get("/pending-gates", response_model=list[PendingGateIssueResponse])
+@reads
 async def get_issues_with_pending_gates(
     project_id: str,
     current_user: CurrentUser,
@@ -304,6 +310,7 @@ async def get_issues_with_pending_gates(
 
 
 @router.get("/pending-approvals", response_model=list[PendingApprovalIssueResponse])
+@reads
 async def get_issues_with_pending_approvals(
     project_id: str,
     current_user: CurrentUser,
@@ -330,6 +337,7 @@ async def get_issues_with_pending_approvals(
 
 
 @router.post("/force-clear-limbo", response_model=LimboClearedResponse, status_code=status.HTTP_200_OK)
+@writes
 async def force_clear_limbo(
     project_id: str,
     current_user: CurrentUser,
@@ -372,6 +380,7 @@ async def force_clear_limbo(
 
 
 @router.post("/force-clear-ticket-limbo", response_model=TicketLimboClearedResponse, status_code=status.HTTP_200_OK)
+@writes
 async def force_clear_ticket_limbo(
     issue_id: str,
     current_user: CurrentUser,
@@ -478,6 +487,7 @@ async def force_clear_ticket_limbo(
 
 
 @router.get("/issue/{issue_id}/pending", response_model=TicketRitualsStatusResponse)
+@reads
 async def get_pending_ticket_rituals(
     issue_id: str,
     current_user: CurrentUser,
@@ -546,6 +556,7 @@ async def get_pending_ticket_rituals(
 
 
 @router.post("/{ritual_id}/attest-issue/{issue_id}", response_model=RitualAttestationResponse)
+@writes
 async def attest_ritual_for_issue(
     ritual_id: str,
     issue_id: str,
@@ -632,6 +643,7 @@ async def attest_ritual_for_issue(
 
 
 @router.post("/{ritual_id}/complete-issue/{issue_id}", response_model=RitualAttestationResponse)
+@writes
 async def complete_gate_ritual_for_issue(
     ritual_id: str,
     issue_id: str,
@@ -723,6 +735,7 @@ async def complete_gate_ritual_for_issue(
 
 
 @router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
+@writes
 async def approve_issue_attestation(
     ritual_id: str,
     issue_id: str,
@@ -827,6 +840,7 @@ def _group_response(group) -> RitualGroupResponse:
 
 
 @router.post("/groups", response_model=RitualGroupResponse, status_code=status.HTTP_201_CREATED)
+@writes
 async def create_ritual_group(
     project_id: str,
     group_in: RitualGroupCreate,
@@ -861,6 +875,7 @@ async def create_ritual_group(
 
 
 @router.get("/groups", response_model=list[RitualGroupResponse])
+@reads
 async def list_ritual_groups(
     project_id: str,
     current_user: CurrentUser,
@@ -889,6 +904,7 @@ async def list_ritual_groups(
 
 
 @router.get("/groups/{group_id}", response_model=RitualGroupResponse)
+@reads
 async def get_ritual_group(
     group_id: str,
     current_user: CurrentUser,
@@ -921,6 +937,7 @@ async def get_ritual_group(
 
 
 @router.patch("/groups/{group_id}", response_model=RitualGroupResponse)
+@writes
 async def update_ritual_group(
     group_id: str,
     group_in: RitualGroupUpdate,
@@ -956,6 +973,7 @@ async def update_ritual_group(
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_ritual_group(
     group_id: str,
     current_user: CurrentUser,
@@ -994,6 +1012,7 @@ async def delete_ritual_group(
 
 
 @router.get("/{ritual_id}", response_model=RitualResponse)
+@reads
 async def get_ritual(
     ritual_id: str,
     current_user: CurrentUser,
@@ -1026,6 +1045,7 @@ async def get_ritual(
 
 
 @router.patch("/{ritual_id}", response_model=RitualResponse)
+@writes
 async def update_ritual(
     ritual_id: str,
     ritual_in: RitualUpdate,
@@ -1067,6 +1087,7 @@ async def update_ritual(
 
 
 @router.delete("/{ritual_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
 async def delete_ritual(
     ritual_id: str,
     current_user: CurrentUser,
@@ -1104,6 +1125,7 @@ async def delete_ritual(
 
 
 @router.post("/{ritual_id}/attest", response_model=RitualAttestationResponse)
+@writes
 async def attest_ritual(
     ritual_id: str,
     attestation_in: RitualAttestationCreate,
@@ -1201,6 +1223,7 @@ async def attest_ritual(
 
 
 @router.post("/{ritual_id}/approve", response_model=RitualAttestationResponse)
+@writes
 async def approve_attestation(
     ritual_id: str,
     current_user: CurrentUser,
@@ -1275,6 +1298,7 @@ async def approve_attestation(
 
 
 @router.post("/{ritual_id}/complete", response_model=RitualAttestationResponse)
+@writes
 async def complete_gate_ritual(
     ritual_id: str,
     attestation_in: RitualAttestationCreate,
