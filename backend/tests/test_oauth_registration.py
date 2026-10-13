@@ -651,13 +651,37 @@ class TestGarbageCollection:
         await service.register(_registration(), source_ip="198.51.100.2")
         assert await OxydeOAuthClient.objects.filter(id=old.id).count() == 0
 
-    async def test_gc_never_touches_cimd_clients(self, db, oauth_settings, monkeypatch):
+    async def test_unused_cimd_clients_go_once_their_cache_is_long_expired(self, db, oauth_settings, monkeypatch):
+        """Any unauthenticated authorize can create a CIMD row by naming a
+        new URL, so unused ones are collected too, but never one whose
+        cache is current (a consent may be in progress) or that ever
+        authorized."""
         monkeypatch.setattr(cimd, "fetch", _FakeFetch())
-        await OAuthClientService().resolve(CIMD_URL)
-        await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(
-            created_at=datetime.now(timezone.utc) - timedelta(days=30),
+        service = OAuthClientService()
+        await service.resolve(CIMD_URL)
+        await service.resolve(CLAUDE_CODE)
+        now = datetime.now(timezone.utc)
+        await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(created_at=now - timedelta(days=30))
+        assert await service.gc_unused() == 0  # cache still current
+        await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(cache_expires_at=now - timedelta(minutes=10))
+        assert await service.gc_unused() == 0  # within the grace
+        await OxydeOAuthClient.objects.filter(id=CIMD_URL).update(cache_expires_at=now - timedelta(minutes=16))
+        await OxydeOAuthClient.objects.filter(id=CLAUDE_CODE).update(
+            created_at=now - timedelta(days=30), cache_expires_at=now - timedelta(days=1),
         )
-        assert await OAuthClientService().gc_unused() == 0
+        await service.mark_authorized(CLAUDE_CODE)
+        assert await service.gc_unused() == 1
+        assert {r.id for r in await OxydeOAuthClient.objects.all()} == {CLAUDE_CODE}
+
+    async def test_creating_a_cimd_row_sweeps_first(self, db, oauth_settings, monkeypatch):
+        monkeypatch.setattr(cimd, "fetch", _FakeFetch())
+        service = OAuthClientService()
+        stale, _ = await service.register(_registration(), source_ip="198.51.100.1")
+        await OxydeOAuthClient.objects.filter(id=stale.id).update(
+            created_at=datetime.now(timezone.utc) - timedelta(days=2),
+        )
+        await service.resolve(CIMD_URL)
+        assert await OxydeOAuthClient.objects.filter(id=stale.id).count() == 0
 
 
 # --- CHT-1564: no cookie or session auth on the public OAuth endpoints ----

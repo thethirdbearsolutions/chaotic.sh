@@ -14,7 +14,7 @@ client_id itself:
   a ``dcr_<random>`` client_id for an unauthenticated caller. Rate
   limited per source IP and capped globally on clients never used to
   authorize; those are deleted 24 h after registering (``gc_unused``,
-  run lazily by ``register``) and refused by ``resolve`` past that age
+  run lazily whenever a row is created) and refused by ``resolve`` past that age
   even before the sweep reaches them.
 * Built-in names (``app.oauth.clients.KNOWN_CLIENTS``): advisory, a
   "recognized" badge on consent; no rows.
@@ -49,6 +49,8 @@ from app.oxyde_models.oauth import OxydeOAuthClient
 DCR_PREFIX = "dcr_"
 DCR_UNUSED_TTL = timedelta(hours=24)
 DCR_RATE_WINDOW = timedelta(hours=1)
+# Longer than an authorization request lives (10 minutes, CHT-1519).
+CIMD_GC_CACHE_GRACE = timedelta(minutes=15)
 CLIENT_SECRET_PREFIX = "ccs_"
 DCR_GRANT_TYPES = ("authorization_code", "refresh_token")
 DCR_AUTH_METHODS = ("none", "client_secret_post")
@@ -166,6 +168,9 @@ class OAuthClientService:
             cache_expires_at=now + timedelta(seconds=cimd.cache_seconds(fetched.cache_control)),
         )
         if row is None:
+            # A new row: sweep stale unused ones first, so naming fresh
+            # URLs can't grow the table without bound.
+            await self.gc_unused(now=now)
             try:
                 return await OxydeOAuthClient.objects.create(id=client_id, **fields)
             except IntegrityError:
@@ -300,13 +305,25 @@ class OAuthClientService:
         }
 
     async def gc_unused(self, *, now: datetime | None = None) -> int:
-        """Delete DCR clients that have not been used to authorize within
-        DCR_UNUSED_TTL of registering. Only never-authorized DCR rows: a
-        client that ever authorized has sessions that CASCADE from it."""
+        """Delete clients never used to authorize within DCR_UNUSED_TTL of
+        their creation. Only never-authorized rows: a client that ever
+        authorized may have sessions that CASCADE from it.
+
+        CIMD rows too, since any unauthenticated /oauth/authorize can
+        create one by naming a new URL, but only once their cache has been
+        expired for longer than a consent request lives
+        (CIMD_GC_CACHE_GRACE), so no consent in progress loses its
+        request to the cascade. A collected CIMD client is simply fetched
+        again next time."""
         now = now or _now()
         rows = await execute_raw(
-            "DELETE FROM oauth_clients WHERE registration = ? AND last_authorized_at IS NULL "
-            "AND created_at <= ? RETURNING id",
-            [OAuthClientRegistration.DCR.name, now - DCR_UNUSED_TTL],
+            "DELETE FROM oauth_clients WHERE last_authorized_at IS NULL AND created_at <= ? "
+            "AND (registration = ? OR (registration = ? AND cache_expires_at <= ?)) RETURNING id",
+            [
+                now - DCR_UNUSED_TTL,
+                OAuthClientRegistration.DCR.name,
+                OAuthClientRegistration.CIMD.name,
+                now - CIMD_GC_CACHE_GRACE,
+            ],
         )
         return len(rows)
