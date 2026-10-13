@@ -288,8 +288,10 @@ their CLI equivalents.
 
 If you'd rather point a *hosted* client at your chaotic instance instead
 of running `chaotic mcp` as a local subprocess -- claude.ai's custom
-connectors, Claude Code web, or Claude Code CLI's `--transport http` --
-the backend also speaks MCP directly over Streamable HTTP at `/mcp`.
+connectors, Claude Desktop, ChatGPT, or Claude Code's `--transport
+http` -- the backend also speaks MCP directly over Streamable HTTP at
+`/mcp`. You add it by URL and approve it in your browser (OAuth; see
+"Connecting" below).
 Same tools, same names, same behaviour: since CHT-1374 both servers
 register the one toolset defined in `chaotic_mcp_tools` (ADR-0007), each
 bound to its own data-access backend, so the two cannot drift. The one
@@ -331,74 +333,232 @@ capped at 4 MiB per call (a 413 if exceeded); the only tools that can
 plausibly approach that are `doc_create`/`doc_update` with a very large
 `content`, so split enormous documents rather than sending one body.
 
-**Auth v1 is API-key only.** There's no OAuth flow yet (dynamic client
-registration + the paste-a-URL-and-authorize connector UX is tracked
-separately, CHT-1266's follow-up); an existing `ck_...` API key is
-sufficient. Create one with:
+### Connecting: add by URL and authorize (OAuth)
 
-```bash
-chaotic auth keys create "claude.ai connector" --expires-in 90d
+Every hosted client connects the same way: you give it the server URL,
+
+```
+https://your-chaotic-host/mcp
 ```
 
-`--expires-in` (e.g. `90d`, `12h`) is optional -- omit it for a
-non-expiring key -- but recommended for any key that leaves your
-machine. An expired key gets the same 401 as an invalid one.
+and nothing else. No key goes in the URL or a header. The client finds
+Chaotic's sign-in on its own (the MCP authorization spec: a 401 from
+`/mcp` points at `/.well-known/oauth-protected-resource/mcp`, which
+names this server's `/.well-known/oauth-authorization-server`), sends
+you to a Chaotic consent page in your browser, and gets a token for the
+agent you pick there. The server has to have OAuth turned on first (see
+"Turning OAuth on" below).
 
-### Connecting Claude Code (`--transport http`)
+**claude.ai (web).** Settings > Connectors > *Add custom connector*.
+Name it, paste the URL, leave *Advanced settings* (OAuth client ID and
+secret) empty, and click *Add*, then *Connect*. claude.ai identifies
+itself with a client metadata document (CIMD) when the server supports
+them, as Chaotic does, and otherwise registers itself; either way
+nothing is registered by hand. Its redirect is
+`https://claude.ai/api/mcp/auth_callback`. On a Team or Enterprise plan an owner adds the connector under the
+organization's settings and each member connects it for themselves.
+The server must be reachable from the public internet over https
+(claude.ai's requests come from Anthropic's addresses,
+`160.79.104.0/21`); a server on `localhost` or a private network can't
+be added here.
+
+**Claude Desktop (and mobile).** Connectors you add on claude.ai appear
+in Desktop and the mobile apps under the same account; *Connect* each
+one from Settings > Connectors there if it asks. Desktop can also add a
+custom connector itself, the same way as the web. The traffic still
+comes from Anthropic's servers, not your machine, so the same
+public-https requirement applies.
+
+**Claude Code.**
 
 ```bash
+claude mcp add --transport http chaotic https://your-chaotic-host/mcp
+```
+
+then run `/mcp` in a session and choose *Authenticate* for `chaotic`.
+Claude Code identifies itself with its own metadata document
+(`https://claude.ai/oauth/claude-code-client-metadata`) and receives the
+code on a loopback listener (`http://localhost:<port>/callback` or
+`http://127.0.0.1:<port>/callback`, on whatever port it got; the server
+accepts any port there, as RFC 8252 requires). Because the browser hands
+the code to your own machine, this also works against a server on
+`http://localhost`. The header form,
+`--header "Authorization: Bearer ck_..."`, still works and is what
+headless or CI sessions should use (see "API keys" below).
+
+**ChatGPT.** In Settings > Apps & Connectors, turn on developer mode
+under *Advanced settings*, then *Create* a connector: give it a name,
+paste the URL as the *MCP server URL*, and choose *OAuth* for
+authentication. ChatGPT prefers a metadata document when the server
+supports one (Chaotic does) and its shared redirect
+`https://chatgpt.com/connector_platform_oauth_redirect`, because Chaotic
+returns the RFC 9207 `iss` parameter; it also sends the RFC 8707
+`resource` parameter, which Chaotic checks. The menu names above move
+between ChatGPT releases; the fields don't.
+
+**MCP Inspector and other clients.** In the Inspector, pick *Streamable
+HTTP*, paste the URL, and use its OAuth flow. A client that doesn't do
+metadata documents (older MCP Inspector builds, for example) registers
+itself with dynamic client registration (`POST /oauth/register`, RFC
+7591) instead. On the consent page such a client shows as *Unverified
+app (registered itself)*: the name is whatever the client sent, so
+check the redirect host before approving.
+
+#### What the consent page shows
+
+Connecting opens `https://your-chaotic-host/oauth/consent/<id>`. Sign in
+to the web app first if asked (a CLI login doesn't count: consent takes
+the web app's own login). The page shows:
+
+- **the app**, with a badge: *Recognized app* (a client Chaotic knows by
+  its exact metadata-document URL, e.g. Claude Code), *Identified by its
+  website · host* (any other metadata document, e.g. `claude.ai`,
+  `chatgpt.com`), or *Unverified app (registered itself)* (DCR);
+- **where the approval goes**: the redirect host, in large type, with an
+  extra warning when it is a program on this computer (a loopback
+  redirect, as for Claude Code);
+- **Team**: which of your teams the connection works in;
+- **Acts as**: *Create a new agent* (the default, named after the app
+  and you, and owned by you) or an existing agent you manage. The app
+  works as that agent, never as you; everything it does is attributed to
+  the agent. Reconnecting the same app suggests the agent you picked
+  last time;
+- **Projects**: leave all unchecked for every project in the team, or
+  limit it to some;
+- **Access**: `write` today; the narrower policies are shown greyed out
+  until they ship;
+- **staying connected**, when the app asked for `offline_access`: how
+  long it can keep refreshing without you.
+
+*Approve* sends the code back to the app; *Deny* tells it you said no.
+Every connection asks again: nothing is approved silently, not even for
+a recognized app.
+
+Tokens are short-lived: an access token lasts 10 minutes and the app
+refreshes it on its own (Claude does so a few minutes before expiry). A
+connection keeps refreshing while it is used at least once every 30
+days, for at most 90 days, and then you approve it again.
+
+#### Disconnecting
+
+Settings > *Connected Apps* (CHT-1523) in the web app lists every connection you
+approved: the app, the agent it acts as, and its team. *Disconnect*
+ends it; the app's next request fails and it can't refresh. The same
+from the CLI:
+
+```bash
+chaotic auth connections list
+chaotic auth connections revoke <id>
+```
+
+Removing the connector in claude.ai or ChatGPT stops that client from
+using it, but don't count on it ending the connection on the server:
+disconnect it here too. Connections also end on their own when what
+they depend on goes: the agent is deactivated or deleted, you leave or
+are removed from the team, or your account is deleted (see "Connected
+apps and revocation" in `docs/self-hosting-security.md`). Disconnecting
+an app does not touch the agent's API keys, and revoking a key does not
+disconnect an app you approved on the consent page, even one acting as
+the same agent. (The exception: a connection *claimed with* a key, not
+approved on the consent page, ends when that key is revoked.)
+
+#### Turning OAuth on (self-hosting)
+
+OAuth is off by default. Two settings turn it on:
+
+- `OAUTH_ENABLED=true`
+- `APP_BASE_URL=https://your-chaotic-host`: the public origin people and
+  clients reach the server at. It becomes the OAuth issuer and every
+  advertised URL, so it must be exact: `https`, a bare origin with no
+  path (a trailing slash is stripped), in canonical form (lower-case
+  host, no default port). Plain `http` is allowed only on `localhost`,
+  `127.0.0.1` or `[::1]`, which is enough for Claude Code on the same
+  machine but not for claude.ai or ChatGPT. The server refuses to start if the value can't be an issuer,
+  and says why.
+
+Usually also:
+
+- `FORWARDED_ALLOW_IPS`, when a reverse proxy terminates TLS on another
+  machine (the default trusts one on the same machine), so the OAuth
+  rate limits see real client addresses. See "Behind a reverse proxy"
+  in `docs/self-hosting-security.md`.
+- `MCP_CAPABILITY_URL_ENABLED=false`, once nothing uses the deprecated
+  capability URL (below).
+- Leave `OAUTH_DCR_ENABLED` on (the default). Only Claude Code's use
+  of a metadata document is confirmed so far; claude.ai falls back to
+  registering itself (DCR) when it can't use one, and ChatGPT and MCP
+  Inspector may do either. Turning DCR off is worth revisiting once the
+  per-client checks on CHT-1521 are recorded: a client that connects
+  without registering shows a badge other than *Unverified* on the
+  consent page.
+
+The server needs direct outbound https to fetch client metadata
+documents (from `claude.ai`, `chatgpt.com`, ...); it ignores
+`HTTPS_PROXY` for those fetches.
+
+Where to set them: the server reads its environment and a `.env` file
+in the directory it runs from. For a `chaotic system install` server
+that is `~/.chaotic/server/backend/.env` (under `$CHAOTIC_HOME` if you
+set it), one `NAME=value` per line; then `chaotic system stop` and
+`chaotic system start`. Prefer that file to adding `Environment=` lines
+to the service unit: `chaotic system reconfigure` regenerates the unit
+without them, and `chaotic system upgrade` won't rewrite a unit that has
+variables it doesn't know, so it would stop updating it (CHT-1592 tracks
+setting these through `system install` itself). To check:
+`curl https://your-chaotic-host/.well-known/oauth-authorization-server`
+returns JSON whose `issuer` is exactly your `APP_BASE_URL`, and an
+unauthenticated `POST /mcp` answers 401 with a `WWW-Authenticate`
+header that names `resource_metadata`.
+
+### API keys (CLI, scripts, headless sessions)
+
+A `ck_...` API key in an `Authorization: Bearer` header works on `/mcp`
+whether or not OAuth is on, for anything that can send a header and has
+no browser to approve in: scripts, CI, headless Claude Code sessions.
+
+```bash
+chaotic auth keys create "ci agent" --expires-in 90d
 claude mcp add --transport http chaotic https://your-chaotic-host/mcp \
   --header "Authorization: Bearer ck_..."
 ```
 
-### Connecting claude.ai's web custom-connector UI (capability URL)
+`--expires-in` (e.g. `90d`, `12h`) is optional -- omit it for a
+non-expiring key -- but recommended for any key that leaves your
+machine. An expired key gets the same 401 as an invalid one. For an
+agent of its own rather than your account, use `chaotic agent create`.
 
-> **Deprecated (CHT-1522).** The capability URL is served only while
-> `MCP_CAPABILITY_URL_ENABLED` is on. It is on by default for now, with
-> a `Deprecation` header on every response and a startup warning; it
-> turns off by default once OAuth for MCP ships, and is then removed.
-> See `docs/self-hosting-security.md`.
+### The capability URL (deprecated)
 
-As of when this was written, claude.ai's web "Add custom connector"
-dialog takes a server URL plus, in Advanced settings, an OAuth client
-id/secret pair -- there's no field for a Bearer token or a custom
-header (confirmed against the current Claude Help Center docs and a
-still-open upstream feature request, anthropics/claude-ai-mcp#112;
-Claude Code, both CLI and web, does support `--header` / custom
-headers, so prefer the header mode above there). Since the box only
-takes a URL, put the key directly in the path instead:
+> **Deprecated (CHT-1522). Use "add by URL and authorize" above.** The
+> capability URL is served only while `MCP_CAPABILITY_URL_ENABLED` is
+> on. It is on by default for now, with a `Deprecation` header on every
+> response and a startup warning; it turns off by default in a coming
+> release (`/mcp/<key>` then answers 404) and is removed after that. See
+> `docs/self-hosting-security.md`.
+
+Before OAuth, claude.ai's connector dialog had no way to send a key, so
+the key went in the path:
 
 ```
 https://your-chaotic-host/mcp/ck_...
 ```
 
-Paste that into the connector's "server URL" field. Functionally
-identical to the header mode -- same key, same auth check -- but
-**strictly worse for secret hygiene**: the key ends up in browser
-history, any proxy/CDN access logs *upstream* of chaotic, and anywhere
-the URL gets copy-pasted (bug reports, chat transcripts, Slack).
-Chaotic's own logs are covered -- the backend scrubs the key out of the
-request path before its access log or error log can record it (you'll
-see `/mcp/ck_...1a2b` in log lines, enough to correlate with `chaotic
-auth keys list`, never the full key) -- but nothing upstream of the
-process is. Mint a **dedicated, expiring** key for it so it's easy to
-tell apart, ages out on its own, and can be revoked independently of
-anything else:
-
-```bash
-chaotic auth keys create "claude.ai connector" --expires-in 90d
-chaotic auth keys list                # find its id
-chaotic auth keys revoke <key-id>      # revoke it early, any time
-```
-
-This is a gap in claude.ai's connector UI, not an MCP or chaotic
-limitation -- re-check the current docs before relying on this staying
-true; it's exactly the kind of thing that gets fixed. Real OAuth
-support (so the header/URL question goes away entirely, replaced by a
-paste-URL-and-authorize flow) is tracked separately as CHT-1266's
-follow-up.
+That puts a long-lived secret in browser history, in the logs of any
+proxy or CDN in front of Chaotic, and anywhere the URL is pasted
+(Chaotic's own logs scrub it to `/mcp/ck_...1a2b`). To move a connector
+off it: turn OAuth on, remove the old connector in claude.ai, add it
+again by the plain `/mcp` URL and approve it (pick the agent the old key
+belonged to under *Acts as* to keep its history in one place), then
+revoke the old key (`chaotic auth keys list`, `chaotic auth keys revoke
+<key-id>`, or `chaotic agent keys revoke` for an agent's key) and set
+`MCP_CAPABILITY_URL_ENABLED=false`.
 
 ### Auth and scoping
+
+An OAuth connection acts as the agent chosen on the consent page, and
+only in the team (and projects, if you limited it) chosen there; the
+rules below apply to it as to that agent's key. An OAuth access token
+works only on `/mcp`: REST answers it with 401.
 
 An API key belongs to a user (human or agent), and every tool call
 resolves its team/project context from *that user's memberships* --
