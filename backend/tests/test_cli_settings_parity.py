@@ -77,3 +77,22 @@ def test_ordinary_issuers_are_accepted_by_both(url):
 def test_dotenv_reading_matches_python_dotenv(line):
     expected = {k.upper(): v for k, v in dotenv_values(stream=io.StringIO(line)).items()}
     assert cli_settings.parse_dotenv_names(line) == expected
+
+
+_VAPID_SAMPLES = [
+    "7gD3QmEeDDHi0Ywv7QqzKn5Up9IGI1DSUoUyRmTAH7c", "7gD3QmEeDDHi0Ywv7QqzKn5Up9IGI1DSUoUyRmTAH7c=",
+    "A" * 43, "A" * 42 + "B", "_" * 43, "/" * 43, "+" * 43, "A" * 44, "A" * 42, "A" * 43 + "==",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE", "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVA",
+    "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVE", " 7gD3QmEeDDHi0Ywv7QqzKn5Up9IGI1DSUoUyRmTAH7c ",
+]
+
+
+@pytest.mark.parametrize("value", _VAPID_SAMPLES)
+def test_cli_vapid_key_subset_of_server(value):
+    """Every VAPID_PRIVATE_KEY the CLI accepts, the server starts with
+    (CHT-1604)."""
+    from app.utils import vapid
+
+    stored, problem = cli_settings.normalize("VAPID_PRIVATE_KEY", value)
+    if problem is None and stored:
+        vapid._from_setting(stored)

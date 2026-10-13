@@ -42,6 +42,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from app.auth.access import ALL, ALL_SCOPES  # noqa: F401  (defined with the rule that reads them)
 from app.config import get_settings
@@ -91,6 +92,10 @@ class Principal:
     credential_id: str | None = None
     # The holder session an OAuth access token belongs to (CHT-1576).
     holder_session_id: str | None = None
+    # When the credential itself expires, where it says (CHT-1604): a
+    # session JWT's `exp`, an API key's `expires_at` (None: never). None
+    # for an OAuth token, whose holder session carries its own expiry.
+    credential_expires_at: datetime | None = None
 
     def __post_init__(self):
         # Scopes granted to a token are strings off the wire, and the
@@ -158,7 +163,9 @@ async def _verify_session_jwt(token: str, audience: str | None) -> Principal:
         raise CredentialError(CredentialFailure.INVALID, "User not found", kind=kind)
     if not user.is_active:
         raise CredentialError(CredentialFailure.INACTIVE, "User is inactive", kind=kind)
-    return Principal(user=user, holder_user_id=user.id, kind=kind)
+    exp = payload.get("exp")
+    expires_at = datetime.fromtimestamp(exp, timezone.utc) if isinstance(exp, (int, float)) else None
+    return Principal(user=user, holder_user_id=user.id, kind=kind, credential_expires_at=expires_at)
 
 
 async def _verify_api_key(token: str, audience: str | None) -> Principal:
@@ -198,6 +205,7 @@ async def _verify_api_key(token: str, audience: str | None) -> Principal:
         holder_user_id=key_record.holder_user_id,
         kind=kind,
         credential_id=key_record.id,
+        credential_expires_at=key_record.expires_at,
     )
 
 

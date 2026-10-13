@@ -5,7 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
 from app.auth.access import authorize
 from app.config import get_settings
-from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
+from app.auth.credentials import CredentialError, CredentialKind, Principal, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 from app.utils.security import is_web_login
@@ -30,6 +30,9 @@ async def get_current_user(
     # on this function, so this is the one place the registrar rule and
     # the scope rule (CHT-1562) need.
     authorize(principal, request.scope.get("endpoint"))
+    # For a route that needs more than the user: which credential this
+    # request came with (CurrentPrincipal).
+    request.state.principal = principal
     return principal.user
 
 
@@ -63,6 +66,16 @@ async def get_api_key_record(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_current_principal(request: Request, user: CurrentUser) -> Principal:
+    """The resolved credential behind CurrentUser: the session or key
+    the request came with, as well as its user. Resolved once, by
+    get_current_user, which this depends on."""
+    return request.state.principal
+
+
+CurrentPrincipal = Annotated[Principal, Depends(get_current_principal)]
 
 
 async def check_user_team_access(user: User, team_id: str) -> bool:

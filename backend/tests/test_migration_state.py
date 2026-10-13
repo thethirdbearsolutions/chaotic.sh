@@ -204,6 +204,10 @@ USER_FKS_ALLOWED_TO_CASCADE = {
     ("team_members", "user_id"),
     ("team_invitations", "invited_by_id"),
     ("ticket_limbo", "requested_by_id"),
+    # A person's push registrations and notification choices are theirs
+    # alone, and nothing else refers to them (CHT-1604, 0026).
+    ("push_devices", "user_id"),
+    ("push_preferences", "user_id"),
 }
 
 

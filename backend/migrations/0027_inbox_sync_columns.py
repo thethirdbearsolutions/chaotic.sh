@@ -24,7 +24,7 @@ next sync after an upgrade rebuilds from scratch.
 Created: 2026-10-13 22:10:43
 """
 
-depends_on = "0025_ritual_rejections"
+depends_on = "0026_push_devices"
 
 
 def upgrade(ctx):

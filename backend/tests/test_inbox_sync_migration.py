@@ -12,7 +12,7 @@ import pytest
 
 from .test_parent_user_fk_migration import _migrate
 
-PREVIOUS = "0025_ritual_rejections"
+PREVIOUS = "0026_push_devices"
 THIS = "0027_inbox_sync_columns"
 
 # id -> (created_at, read_at, archived_at), in the text form Oxyde stores.

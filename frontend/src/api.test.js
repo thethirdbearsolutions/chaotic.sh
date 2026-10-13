@@ -1278,6 +1278,26 @@ describe('ApiClient', () => {
         );
       });
     });
+
+    describe('getPushDevices', () => {
+      it('sends GET request', async () => {
+        await client.getPushDevices();
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/push/devices',
+          expect.objectContaining({ method: 'GET' })
+        );
+      });
+    });
+
+    describe('deletePushDevice', () => {
+      it('sends DELETE request with the id encoded', async () => {
+        await client.deletePushDevice('a b');
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/push/devices/a%20b',
+          expect.objectContaining({ method: 'DELETE' })
+        );
+      });
+    });
   });
 
   describe('Agent Endpoints', () => {

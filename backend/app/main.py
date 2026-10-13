@@ -26,6 +26,7 @@ from app.api.oauth import public_router as oauth_router
 from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
 from app import log_redaction
+from app.utils import vapid
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -58,6 +59,12 @@ async def lifespan(app: FastAPI):
                 "Set the SECRET_KEY environment variable to a secure random value: "
                 "python -c \"import secrets; print(secrets.token_hex(32))\""
             )
+    # CHT-1604: a VAPID_PRIVATE_KEY that is set must be a usable key, or
+    # every push would fail; refuse to start, as for the secret key.
+    try:
+        vapid.check_setting()
+    except vapid.VapidKeyError as exc:
+        raise RuntimeError(f"Refusing to start: {exc}") from exc
     # CHT-1522: the /mcp/<key> capability URL is deprecated.
     warn_if_capability_url_enabled()
     await init_oxyde()

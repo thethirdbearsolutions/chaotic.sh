@@ -140,6 +140,20 @@ class Settings(BaseSettings):
     # or a member removed from the team, is closed at the next check.
     ws_auth_recheck_seconds: float = Field(30, gt=0)
 
+    # Push notifications (CHT-1604). The server signs Web Push requests
+    # with a VAPID key (RFC 8292). Empty derives one from SECRET_KEY, so a
+    # server pushes with no setup; set this (a P-256 private key, PEM or
+    # the raw 32 bytes base64url) to keep the key across a SECRET_KEY
+    # rotation. Whichever it is, the app reads its public half from
+    # GET /api/push/vapid-public-key; changing it means devices register
+    # again.
+    vapid_private_key: str = ""
+    # The server POSTs to every registered push endpoint, so by default an
+    # endpoint must be an https URL whose host resolves only to public
+    # addresses (SSRF). True also accepts loopback, private and link-local
+    # hosts: for a self-host whose ntfy runs on the same machine or LAN.
+    push_allow_private_endpoints: bool = False
+
     # Email (SMTP) -- CHT-1251. Empty smtp_host means "unconfigured": the
     # mutating paths that would send email (gate-pending, invitations) log
     # and skip rather than erroring. See EmailService.is_configured().

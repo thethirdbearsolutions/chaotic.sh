@@ -902,3 +902,30 @@ def test_malformed_install_config_is_not_echoed(tmp_path):
         result = CliRunner().invoke(cli, ["system", "install", "--yes", "--config", f"SMTP_PASSWORD {PASSWORD}"])
     assert result.exit_code == 1
     assert "expected NAME=VALUE" in result.output and PASSWORD not in result.output
+
+
+class TestVapidSetting:
+    """VAPID_PRIVATE_KEY (CHT-1604): checked as the server checks a raw key."""
+
+    GOOD = "7gD3QmEeDDHi0Ywv7QqzKn5Up9IGI1DSUoUyRmTAH7c"
+
+    def test_accepts_a_raw_key_and_keeps_it_secret(self):
+        assert ss.normalize("VAPID_PRIVATE_KEY", f" {self.GOOD} ") == (self.GOOD, None)
+        assert ss.is_secret("VAPID_PRIVATE_KEY")
+        assert ss.normalize("VAPID_PRIVATE_KEY", "") == ("", None)
+
+    @pytest.mark.parametrize("value", [
+        "short", "!!!" * 15, "A" * 44, "_" * 43, "A" * 43 + "%",
+        "-----BEGIN-PRIVATE-KEY-----",
+    ])
+    def test_refuses_what_the_server_would(self, value):
+        _value, problem = ss.normalize("VAPID_PRIVATE_KEY", value)
+        assert problem and "P-256" in problem and value not in problem
+
+    def test_check_reports_a_bad_stored_key(self):
+        errors, _ = ss.check({"settings": {"VAPID_PRIVATE_KEY": "nope"}})
+        assert any("VAPID_PRIVATE_KEY" in e for e in errors)
+
+    def test_private_endpoints_is_a_bool(self):
+        assert ss.normalize("PUSH_ALLOW_PRIVATE_ENDPOINTS", "YES") == ("true", None)
+        assert ss.normalize("PUSH_ALLOW_PRIVATE_ENDPOINTS", "maybe")[1]
