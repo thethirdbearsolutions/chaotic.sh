@@ -4,7 +4,7 @@ Covers uncovered lines in app/api/deps.py:
 - JWT with missing 'sub' claim (L50)
 - Inactive user via JWT (L67)
 - Invalid API key (L85)
-- Agent not found via API key (L97)
+- Agent not found via API key (same 401 as a missing user since CHT-1537)
 - User not found via API key (L105)
 - Inactive user via API key (L113)
 - get_auth_method function (L176-181)
@@ -92,7 +92,7 @@ async def test_invalid_api_key(client):
 
 @pytest.mark.asyncio
 async def test_api_key_agent_not_found(client, db, test_user):
-    """API key with agent_user_id pointing to non-existent agent returns 401."""
+    """An agent key (held by a human) whose agent is gone returns 401."""
     api_key_service = APIKeyService()
 
     # Create a valid API key for test_user
@@ -100,12 +100,12 @@ async def test_api_key_agent_not_found(client, db, test_user):
         test_user.id, APIKeyCreate(name="Ghost Agent Key")
     )
 
-    # Modify it to point to a non-existent agent
+    # Modify it to sign in as a non-existent agent
     # Disable FK checks since we're deliberately setting an invalid FK
     from oxyde import execute_raw
     await execute_raw("PRAGMA foreign_keys = OFF")
-    api_key_record.agent_user_id = "00000000-0000-0000-0000-000000000001"
-    await api_key_record.save(update_fields={"agent_user_id"})
+    api_key_record.principal_user_id = "00000000-0000-0000-0000-000000000001"
+    await api_key_record.save(update_fields={"principal_user_id"})
     await execute_raw("PRAGMA foreign_keys = ON")
 
     response = await client.get(
@@ -113,12 +113,12 @@ async def test_api_key_agent_not_found(client, db, test_user):
         headers={"Authorization": f"Bearer {full_key}"},
     )
     assert response.status_code == 401
-    assert "Agent not found" in response.json()["detail"]
+    assert response.json()["detail"] == "User not found"
 
 
 @pytest.mark.asyncio
 async def test_api_key_user_not_found(client, db, test_user):
-    """API key with user_id pointing to non-existent user returns 401."""
+    """A human's own API key whose user is gone returns 401."""
     api_key_service = APIKeyService()
 
     # Create a valid API key for test_user
@@ -130,9 +130,9 @@ async def test_api_key_user_not_found(client, db, test_user):
     # Disable FK checks since we're deliberately setting an invalid FK
     from oxyde import execute_raw
     await execute_raw("PRAGMA foreign_keys = OFF")
-    api_key_record.user_id = "00000000-0000-0000-0000-00000000000c"
-    api_key_record.agent_user_id = None
-    await api_key_record.save(update_fields={"user_id", "agent_user_id"})
+    api_key_record.principal_user_id = "00000000-0000-0000-0000-00000000000c"
+    api_key_record.holder_user_id = "00000000-0000-0000-0000-00000000000c"
+    await api_key_record.save(update_fields={"principal_user_id", "holder_user_id"})
     await execute_raw("PRAGMA foreign_keys = ON")
 
     response = await client.get(

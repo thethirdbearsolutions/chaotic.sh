@@ -123,7 +123,7 @@ async def test_refusal_reports_counts_and_keeps_keys(test_user, test_team, test_
 
     assert refused.value.counts["issue comments"] == 2
     assert refused.value.counts["issues"] == 0
-    assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id).count() == 1
+    assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == 1
 
 
 @pytest.mark.asyncio

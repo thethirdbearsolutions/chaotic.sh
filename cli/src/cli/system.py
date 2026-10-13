@@ -1370,13 +1370,17 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         # Run Oxyde migrations. --frozen (here and above): use the env
         # `just sync` just built from the committed uv.lock; a plain
         # `uv run` would re-resolve and rewrite a stale lock (CHT-1201).
-        run_command(
+        result = run_command(
             ["uv", "run", "--frozen", "oxyde", "migrate"],
             cwd=backend_dir,
             timeout=120,
             env=migration_env,
         )
-        return True, "Migrations applied"
+        # What oxyde printed: the migrations it applied, and anything a
+        # migration reports as it runs (0021 lists the dead API keys it
+        # deletes, CHT-1537), so it stays in the upgrade's output.
+        output = result.stdout.strip() if isinstance(result.stdout, str) else ""
+        return True, "Migrations applied" + (f"\n{output}" if output else "")
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
     except subprocess.CalledProcessError as e:
@@ -1394,7 +1398,18 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
                 "To fix, re-run with --fake-initial:\n"
                 "  chaotic system upgrade --fake-initial --yes"
             )
-        return False, f"Migration failed: {e.stderr}"
+        return False, f"Migration failed:\n{_command_output(e)}"
+
+
+def _command_output(error: subprocess.CalledProcessError) -> str:
+    """Everything a failed command printed. `oxyde migrate` reports its
+    errors (a migration's refusal and what to fix) on stdout, not stderr,
+    so reporting stderr alone showed an operator nothing (CHT-1548)."""
+    parts = [
+        text.strip() for text in (error.stdout, error.stderr)
+        if isinstance(text, str) and text.strip()
+    ]
+    return "\n".join(parts) or f"exit status {error.returncode}"
 
 
 def rebuild_frontend() -> tuple[bool, str]:
@@ -1587,9 +1602,10 @@ def system_install(git_version, host, port, no_start, repo, yes):
     console.print("Installing dependencies and running migrations...")
     success, message = run_migrations()
     if not success:
-        console.print(f"[red]{message}[/red]")
+        # escape(): the message carries the command's own output.
+        console.print(f"[red]{escape(message)}[/red]")
         raise SystemExit(1)
-    console.print(f"  [dim]{message}[/dim]")
+    console.print(f"  [dim]{escape(message)}[/dim]")
 
     # Generate secure secret key
     console.print("Generating secure SECRET_KEY...")
@@ -2239,7 +2255,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print("Syncing dependencies and running migrations...")
     success, message = run_migrations(fake_initial=fake_initial)
     if not success:
-        console.print(f"[red]{message}[/red]")
+        # escape(): the message carries the command's own output.
+        console.print(f"[red]{escape(message)}[/red]")
         console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
         console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
         if was_running:
@@ -2248,6 +2265,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         _print_service_state(port, host)
         raise SystemExit(1)
+    console.print(f"  [dim]{escape(message)}[/dim]")
 
     # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
     # committed bundle (if a PR remembered to commit it) is still served.

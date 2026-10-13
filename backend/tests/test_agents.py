@@ -153,7 +153,7 @@ class TestAgentServiceCreateKey:
     """Tests for minting a new API key for an existing agent."""
 
     async def test_create_key_returns_agent_linked_key(self, db, test_user, test_team):
-        """Should mint a new key with agent_user_id set on the agent."""
+        """Should mint a new key that signs in as the agent, held by its minter."""
         from app.services.api_key_service import APIKeyService
 
         service = AgentService()
@@ -167,7 +167,7 @@ class TestAgentServiceCreateKey:
 
         api_key_service = APIKeyService()
         api_key = await api_key_service.get_by_id(api_key_id)
-        assert api_key.agent_user_id == agent.id
+        assert (api_key.principal_user_id, api_key.holder_user_id) == (agent.id, test_user.id)
 
     async def test_create_key_authenticates_as_agent(self, db, test_user, test_team):
         """A newly minted key should resolve auth to the agent."""
@@ -184,7 +184,7 @@ class TestAgentServiceCreateKey:
         key_record = await api_key_service.validate_key(full_key)
 
         assert key_record is not None
-        assert key_record.agent_user_id == agent.id
+        assert key_record.principal_user_id == agent.id
 
     async def test_create_key_agent_not_found(self, db, test_user):
         """Should raise ValueError for a non-existent agent."""
@@ -201,7 +201,7 @@ class TestAgentAuthentication:
     """Tests for agent authentication."""
 
     async def test_agent_api_key_authenticates_as_agent(self, db, test_user, test_team):
-        """API key with agent_user_id should authenticate as the agent."""
+        """An API key whose principal is the agent authenticates as it."""
         from app.services.api_key_service import APIKeyService
 
         agent_service = AgentService()
@@ -216,7 +216,7 @@ class TestAgentAuthentication:
         key_record = await api_key_service.validate_key(full_key)
 
         assert key_record is not None
-        assert key_record.agent_user_id == agent.id
+        assert key_record.principal_user_id == agent.id
 
 
 @pytest.mark.asyncio
@@ -759,8 +759,8 @@ async def test_agent_service_list_by_parent(client, test_team, db, test_user, au
 
 
 @pytest.mark.asyncio
-async def test_agent_service_get_agent_api_keys(client, test_team, db, test_user, auth_headers):
-    """Test AgentService.get_agent_api_keys (covers agent_service.py L124-129)."""
+async def test_agent_service_list_keys(client, test_team, db, test_user, auth_headers):
+    """AgentService.list_keys returns the key agent creation minted."""
     from app.services.agent_service import AgentService
 
     # Create an agent via API (auto-creates an API key)
@@ -773,6 +773,6 @@ async def test_agent_service_get_agent_api_keys(client, test_team, db, test_user
     agent_id = response.json()["id"]
 
     service = AgentService()
-    keys = await service.get_agent_api_keys(agent_id)
+    keys = await service.list_keys(agent_id)
     assert len(keys) == 1
-    assert keys[0].agent_user_id == agent_id
+    assert (keys[0].principal_user_id, keys[0].holder_user_id) == (agent_id, test_user.id)

@@ -11,7 +11,7 @@ from oxyde.queries import Query, QueryManager
 
 import uuid
 from datetime import datetime, timezone
-from oxyde import Model, Field
+from oxyde import Model, Field, Index
 from app.utils.datetimes import DateTimeUTC
 
 class OxydeAPIKey(Model):
@@ -19,15 +19,15 @@ class OxydeAPIKey(Model):
         is_table: bool
         table_name: str
     id: str
-    user_id: str
+    principal_user_id: str
+    holder_user_id: str | None
     name: str
     key_prefix: str
     key_hash: str
     created_at: datetime
-    last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
-    expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None
+    last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None
+    expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None
     is_active: bool
-    agent_user_id: str | None
     objects: ClassVar["OxydeAPIKeyManager"]
 
 
@@ -39,16 +39,6 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
     def filter(
         self,
         *args: Any,
-        agent_user_id: str | None = None,
-        agent_user_id__contains: str | None = None,
-        agent_user_id__icontains: str | None = None,
-        agent_user_id__startswith: str | None = None,
-        agent_user_id__istartswith: str | None = None,
-        agent_user_id__endswith: str | None = None,
-        agent_user_id__iendswith: str | None = None,
-        agent_user_id__iexact: str | None = None,
-        agent_user_id__in: list[str] | None = None,
-        agent_user_id__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -61,9 +51,19 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         expires_at__isnull: bool | None = None,
+        holder_user_id: str | None = None,
+        holder_user_id__contains: str | None = None,
+        holder_user_id__icontains: str | None = None,
+        holder_user_id__startswith: str | None = None,
+        holder_user_id__istartswith: str | None = None,
+        holder_user_id__endswith: str | None = None,
+        holder_user_id__iendswith: str | None = None,
+        holder_user_id__iexact: str | None = None,
+        holder_user_id__in: list[str] | None = None,
+        holder_user_id__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -97,8 +97,8 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         key_prefix__iexact: str | None = None,
         key_prefix__in: list[str] | None = None,
         key_prefix__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -110,16 +110,16 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        user_id: str | None = None,
-        user_id__contains: str | None = None,
-        user_id__icontains: str | None = None,
-        user_id__startswith: str | None = None,
-        user_id__istartswith: str | None = None,
-        user_id__endswith: str | None = None,
-        user_id__iendswith: str | None = None,
-        user_id__iexact: str | None = None,
-        user_id__in: list[str] | None = None,
-        user_id__isnull: bool | None = None,
+        principal_user_id: str | None = None,
+        principal_user_id__contains: str | None = None,
+        principal_user_id__icontains: str | None = None,
+        principal_user_id__startswith: str | None = None,
+        principal_user_id__istartswith: str | None = None,
+        principal_user_id__endswith: str | None = None,
+        principal_user_id__iendswith: str | None = None,
+        principal_user_id__iexact: str | None = None,
+        principal_user_id__in: list[str] | None = None,
+        principal_user_id__isnull: bool | None = None,
     ) -> "OxydeAPIKeyQuery":
         """Filter by Q-expressions or field lookups."""
         ...
@@ -127,16 +127,6 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
     def exclude(
         self,
         *args: Any,
-        agent_user_id: str | None = None,
-        agent_user_id__contains: str | None = None,
-        agent_user_id__icontains: str | None = None,
-        agent_user_id__startswith: str | None = None,
-        agent_user_id__istartswith: str | None = None,
-        agent_user_id__endswith: str | None = None,
-        agent_user_id__iendswith: str | None = None,
-        agent_user_id__iexact: str | None = None,
-        agent_user_id__in: list[str] | None = None,
-        agent_user_id__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -149,9 +139,19 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         expires_at__isnull: bool | None = None,
+        holder_user_id: str | None = None,
+        holder_user_id__contains: str | None = None,
+        holder_user_id__icontains: str | None = None,
+        holder_user_id__startswith: str | None = None,
+        holder_user_id__istartswith: str | None = None,
+        holder_user_id__endswith: str | None = None,
+        holder_user_id__iendswith: str | None = None,
+        holder_user_id__iexact: str | None = None,
+        holder_user_id__in: list[str] | None = None,
+        holder_user_id__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -185,8 +185,8 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         key_prefix__iexact: str | None = None,
         key_prefix__in: list[str] | None = None,
         key_prefix__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -198,21 +198,21 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        user_id: str | None = None,
-        user_id__contains: str | None = None,
-        user_id__icontains: str | None = None,
-        user_id__startswith: str | None = None,
-        user_id__istartswith: str | None = None,
-        user_id__endswith: str | None = None,
-        user_id__iendswith: str | None = None,
-        user_id__iexact: str | None = None,
-        user_id__in: list[str] | None = None,
-        user_id__isnull: bool | None = None,
+        principal_user_id: str | None = None,
+        principal_user_id__contains: str | None = None,
+        principal_user_id__icontains: str | None = None,
+        principal_user_id__startswith: str | None = None,
+        principal_user_id__istartswith: str | None = None,
+        principal_user_id__endswith: str | None = None,
+        principal_user_id__iendswith: str | None = None,
+        principal_user_id__iexact: str | None = None,
+        principal_user_id__in: list[str] | None = None,
+        principal_user_id__isnull: bool | None = None,
     ) -> "OxydeAPIKeyQuery":
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["agent_user_id", "-agent_user_id", "created_at", "-created_at", "expires_at", "-expires_at", "id", "-id", "is_active", "-is_active", "key_hash", "-key_hash", "key_prefix", "-key_prefix", "last_used_at", "-last_used_at", "name", "-name", "user_id", "-user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["created_at", "-created_at", "expires_at", "-expires_at", "holder_user_id", "-holder_user_id", "id", "-id", "is_active", "-is_active", "key_hash", "-key_hash", "key_prefix", "-key_prefix", "last_used_at", "-last_used_at", "name", "-name", "principal_user_id", "-principal_user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -228,7 +228,7 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -252,7 +252,7 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -260,11 +260,11 @@ class OxydeAPIKeyQuery(Query[OxydeAPIKey]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"]) -> "OxydeAPIKeyQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"], flat: bool = False) -> "OxydeAPIKeyQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"], flat: bool = False) -> "OxydeAPIKeyQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -388,16 +388,6 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
     def filter(
         self,
         *args: Any,
-        agent_user_id: str | None = None,
-        agent_user_id__contains: str | None = None,
-        agent_user_id__icontains: str | None = None,
-        agent_user_id__startswith: str | None = None,
-        agent_user_id__istartswith: str | None = None,
-        agent_user_id__endswith: str | None = None,
-        agent_user_id__iendswith: str | None = None,
-        agent_user_id__iexact: str | None = None,
-        agent_user_id__in: list[str] | None = None,
-        agent_user_id__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -410,9 +400,19 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         expires_at__isnull: bool | None = None,
+        holder_user_id: str | None = None,
+        holder_user_id__contains: str | None = None,
+        holder_user_id__icontains: str | None = None,
+        holder_user_id__startswith: str | None = None,
+        holder_user_id__istartswith: str | None = None,
+        holder_user_id__endswith: str | None = None,
+        holder_user_id__iendswith: str | None = None,
+        holder_user_id__iexact: str | None = None,
+        holder_user_id__in: list[str] | None = None,
+        holder_user_id__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -446,8 +446,8 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         key_prefix__iexact: str | None = None,
         key_prefix__in: list[str] | None = None,
         key_prefix__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -459,16 +459,16 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        user_id: str | None = None,
-        user_id__contains: str | None = None,
-        user_id__icontains: str | None = None,
-        user_id__startswith: str | None = None,
-        user_id__istartswith: str | None = None,
-        user_id__endswith: str | None = None,
-        user_id__iendswith: str | None = None,
-        user_id__iexact: str | None = None,
-        user_id__in: list[str] | None = None,
-        user_id__isnull: bool | None = None,
+        principal_user_id: str | None = None,
+        principal_user_id__contains: str | None = None,
+        principal_user_id__icontains: str | None = None,
+        principal_user_id__startswith: str | None = None,
+        principal_user_id__istartswith: str | None = None,
+        principal_user_id__endswith: str | None = None,
+        principal_user_id__iendswith: str | None = None,
+        principal_user_id__iexact: str | None = None,
+        principal_user_id__in: list[str] | None = None,
+        principal_user_id__isnull: bool | None = None,
     ) -> OxydeAPIKeyQuery:
         """Filter by Q-expressions or field lookups."""
         ...
@@ -476,16 +476,6 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
     def exclude(
         self,
         *args: Any,
-        agent_user_id: str | None = None,
-        agent_user_id__contains: str | None = None,
-        agent_user_id__icontains: str | None = None,
-        agent_user_id__startswith: str | None = None,
-        agent_user_id__istartswith: str | None = None,
-        agent_user_id__endswith: str | None = None,
-        agent_user_id__iendswith: str | None = None,
-        agent_user_id__iexact: str | None = None,
-        agent_user_id__in: list[str] | None = None,
-        agent_user_id__isnull: bool | None = None,
         created_at: datetime | None = None,
         created_at__gt: datetime | None = None,
         created_at__gte: datetime | None = None,
@@ -498,9 +488,19 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         created_at__day: int | None = None,
         created_at__in: list[datetime] | None = None,
         created_at__isnull: bool | None = None,
-        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         expires_at__isnull: bool | None = None,
+        holder_user_id: str | None = None,
+        holder_user_id__contains: str | None = None,
+        holder_user_id__icontains: str | None = None,
+        holder_user_id__startswith: str | None = None,
+        holder_user_id__istartswith: str | None = None,
+        holder_user_id__endswith: str | None = None,
+        holder_user_id__iendswith: str | None = None,
+        holder_user_id__iexact: str | None = None,
+        holder_user_id__in: list[str] | None = None,
+        holder_user_id__isnull: bool | None = None,
         id: str | None = None,
         id__contains: str | None = None,
         id__icontains: str | None = None,
@@ -534,8 +534,8 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         key_prefix__iexact: str | None = None,
         key_prefix__in: list[str] | None = None,
         key_prefix__isnull: bool | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_used_at__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -547,25 +547,25 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         name__iexact: str | None = None,
         name__in: list[str] | None = None,
         name__isnull: bool | None = None,
-        user_id: str | None = None,
-        user_id__contains: str | None = None,
-        user_id__icontains: str | None = None,
-        user_id__startswith: str | None = None,
-        user_id__istartswith: str | None = None,
-        user_id__endswith: str | None = None,
-        user_id__iendswith: str | None = None,
-        user_id__iexact: str | None = None,
-        user_id__in: list[str] | None = None,
-        user_id__isnull: bool | None = None,
+        principal_user_id: str | None = None,
+        principal_user_id__contains: str | None = None,
+        principal_user_id__icontains: str | None = None,
+        principal_user_id__startswith: str | None = None,
+        principal_user_id__istartswith: str | None = None,
+        principal_user_id__endswith: str | None = None,
+        principal_user_id__iendswith: str | None = None,
+        principal_user_id__iexact: str | None = None,
+        principal_user_id__in: list[str] | None = None,
+        principal_user_id__isnull: bool | None = None,
     ) -> OxydeAPIKeyQuery:
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"]) -> OxydeAPIKeyQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"]) -> OxydeAPIKeyQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["agent_user_id", "created_at", "expires_at", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "user_id"], flat: bool = False) -> OxydeAPIKeyQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["created_at", "expires_at", "holder_user_id", "id", "is_active", "key_hash", "key_prefix", "last_used_at", "name", "principal_user_id"], flat: bool = False) -> OxydeAPIKeyQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -716,16 +716,16 @@ class OxydeAPIKeyManager(QueryManager[OxydeAPIKey]):
         instance: OxydeAPIKey | None = None,
         client: Any | None = None,
         using: str | None = None,
-        agent_user_id: str | None = None,
         created_at: datetime | None = None,
-        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
+        holder_user_id: str | None = None,
         id: str | None = None,
         is_active: bool | None = None,
         key_hash: str | None = None,
         key_prefix: str | None = None,
-        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7efda34d63e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_used_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fae26a9f880>, json_schema_input_type=PydanticUndefined)] | None = None,
         name: str | None = None,
-        user_id: str | None = None,
+        principal_user_id: str | None = None,
     ) -> OxydeAPIKey:
         """Create new object."""
         ...

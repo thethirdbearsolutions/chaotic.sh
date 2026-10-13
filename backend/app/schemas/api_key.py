@@ -32,15 +32,19 @@ class APIKeyResponse(BaseModel):
 class AgentKeyResponse(APIKeyResponse):
     """One key that authenticates as an agent, for the people who manage
     it (GET /agents/{id}/keys, CHT-1508). `owner_id` is the human who
-    holds the key: whoever minted it, or for a key the agent minted for
-    itself, the holder of the key it called with. `legacy_self_minted`
-    marks a key the agent minted before holders were recorded: its
-    `owner_id` is the agent, and sign-in vouches for it through the
-    agent's creator instead."""
+    holds the key (its `holder_user_id`): whoever minted it, or for a key
+    the agent minted for itself, the holder of the key it called with.
+    It is null only for a key nobody answers for, which cannot sign in.
 
-    owner_id: str
+    `legacy_self_minted` is always false since migration 0021 (CHT-1537)
+    and is kept so older clients still parse the response: it marked a
+    key the agent minted before holders were recorded, whose `owner_id`
+    was the agent. 0021 recorded the agent's creator as those keys'
+    holder, so they now list like any other key."""
+
+    owner_id: str | None = None
     owner_name: str | None = None
-    legacy_self_minted: bool
+    legacy_self_minted: bool = False
 
 
 class APIKeyCreated(BaseModel):
