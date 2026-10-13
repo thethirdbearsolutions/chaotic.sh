@@ -32,10 +32,21 @@ What this module does not do yet:
 
 Everything refuses while ``OAUTH_ENABLED`` is off.
 
-The validation cache and the refresh grace window live in this process.
-Chaotic runs one process (design §4.2), so a revocation bumps a
-process-wide epoch and the very next validation re-reads the database.
-A multi-worker deployment would need the epoch in the database.
+Revocation epoch (design §4.2, I4). Every revocation writes a
+``revocation_events`` row whose ``seq`` is one more than the newest, in
+the same transaction that revokes. The newest ``seq`` is the epoch: each
+validation reads it (one indexed single-row read) and trusts a cached
+token row only if it was cached under the same epoch, so a revocation
+made by any process, or by an admin script that goes through
+``revoke_session``, is seen on the very next request everywhere. Rule:
+every revocation goes through ``revoke_session``. A cascade DELETE (a
+user, team, client or key deleted) writes no event, so a cached
+validation of a token deleted that way can outlive it by up to
+VALIDATION_CACHE_SECONDS.
+
+Still per process: the refresh lock and the grace pairs. Across
+processes, two concurrent refreshes of one token race on a conditional
+update; the loser is refused (no revocation), not handed the pair.
 """
 from __future__ import annotations
 
@@ -49,7 +60,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
-from app.enums import HolderVia, TokenKind
+from oxyde import atomic
+
+from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
 
 logger = logging.getLogger(__name__)
@@ -203,9 +216,16 @@ def audience_accepts(token_resource: str, endpoint_resource: str) -> bool:
     return token_resource == base and endpoint_resource == base + MCP_RESOURCE_PATH
 
 
-# --- process-wide revocation epoch and caches --------------------------------
+# --- revocation epoch and process-local state ---------------------------------
 
-_epoch = 0
+
+async def revocation_epoch() -> int:
+    """The newest `revocation_events.seq` (0 before any revocation): one
+    indexed single-row read. Any revocation, in any process, moves it."""
+    newest = await OxydeRevocationEvent.objects.order_by("-seq").first()
+    return newest.seq if newest is not None else 0
+
+
 # token digest -> (monotonic time cached, epoch, validated token, session absolute expiry)
 _validation_cache: dict[str, tuple[float, int, ValidatedToken, datetime]] = {}
 # refresh token digest -> (successor pair, holder session id, grace deadline)
@@ -213,22 +233,17 @@ _grace_pairs: dict[str, tuple[IssuedTokens, str, datetime]] = {}
 _refresh_lock = asyncio.Lock()
 
 
-def revocation_epoch() -> int:
-    return _epoch
+class _ReuseDetected(Exception):
+    """Raised inside the refresh lock when a reuse revoked a session, so
+    the notice is written after the lock is released."""
 
-
-def bump_revocation_epoch() -> int:
-    """Invalidate every cached validation: the next request for any token
-    re-reads the database (I4). Every revocation calls this."""
-    global _epoch
-    _epoch += 1
-    _validation_cache.clear()
-    return _epoch
+    def __init__(self, session: OxydeHolderSession):
+        super().__init__(session.id)
+        self.session = session
 
 
 def _reset_for_tests() -> None:
-    global _epoch, _refresh_lock
-    _epoch = 0
+    global _refresh_lock
     _validation_cache.clear()
     _grace_pairs.clear()
     _refresh_lock = asyncio.Lock()
@@ -304,12 +319,14 @@ class TokenService:
         return row, raw
 
     async def redeem_single_use(self, raw: str, kind: TokenKind) -> OxydeAuthToken:
-        """Spend a code or claim ticket, exactly once. Returns its row, for
-        the caller to check the bindings (client, redirect_uri, PKCE) and
-        then ``start_session(..., from_token=row)``.
+        """Spend a code or claim ticket, exactly once. Returns its row, to
+        pass to ``start_session_from`` after checking what only the caller
+        can (the client's redirect_uri and PKCE verifier for a code).
 
-        A second redemption fails, and revokes the session the first one
-        started (OAuth 2.1 §4.1.3: the code has leaked)."""
+        A second redemption fails, revokes the code, and revokes the
+        session the first one started (OAuth 2.1 §4.1.3). Whichever order
+        that lands in relative to ``start_session_from``, the outcome is
+        the same: before, the session is refused; after, it is revoked."""
         _require_enabled()
         if kind not in (TokenKind.AUTH_CODE, TokenKind.CLAIM_TICKET) or kind_of(raw) != kind:
             raise TokenError("invalid_grant", "not a valid code")
@@ -318,52 +335,136 @@ class TokenService:
             raise TokenError("invalid_grant", "not a valid code")
         now = _now()
         if row.used_at is not None:
-            await self._revoke_sessions_started_by(row, reason=REASON_CODE_REUSE)
+            await self._revoke_code(row.id)
             raise TokenError("invalid_grant", "this code was already used")
         if row.expires_at <= now:
             raise TokenError("invalid_grant", "this code has expired")
-        spent = await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
+        spent = await OxydeAuthToken.objects.filter(
+            id=row.id, used_at__isnull=True, revoked_at__isnull=True,
+        ).update(used_at=now)
         if spent != 1:
-            # Lost a race with a concurrent redemption: the same as reuse.
-            await self._revoke_sessions_started_by(row, reason=REASON_CODE_REUSE)
+            # A concurrent redemption won: the same as reuse.
+            await self._revoke_code(row.id)
             raise TokenError("invalid_grant", "this code was already used")
         row.used_at = now
         return row
 
+    async def _revoke_code(self, code_id: str) -> None:
+        """Mark a code or ticket revoked, and revoke the session it started
+        if it started one, in one transaction (the revoking UPDATE comes
+        first, so it holds SQLite's write lock before reading the link)."""
+        async with atomic():
+            await OxydeAuthToken.objects.filter(id=code_id, revoked_at__isnull=True).update(revoked_at=_now())
+            code = await OxydeAuthToken.objects.get_or_none(id=code_id)
+            if code is not None and code.holder_session_id is not None:
+                await self._revoke_session_in_tx(code.holder_session_id, actor_id=None, reason=REASON_CODE_REUSE)
+        if code is not None and code.holder_session_id is not None:
+            _forget_grace_pairs(code.holder_session_id)
+
+    async def start_session_from(self, redeemed: OxydeAuthToken, *, scopes=None, holder: dict | None = None,
+                                 grant_id: str | None = None) -> IssuedTokens:
+        """Start the holder session a just-redeemed code or claim ticket
+        was minted for, and issue its first tokens.
+
+        Everything that was consented to comes from the code row: team,
+        principal, holder, resource, scopes, policy, project scope, and
+        the client (codes) or minting credential (tickets). `scopes` may
+        only narrow. The session is refused unless the code is spent by
+        the redemption that returned `redeemed`, not revoked, and has not
+        started a session yet; the link (`auth_tokens.holder_session_id`
+        on the code) is set in the same transaction, so a code starts at
+        most one session and a reuse can always find it."""
+        _require_enabled()
+        if redeemed.kind == TokenKind.AUTH_CODE:
+            via = HolderVia.OAUTH
+        elif redeemed.kind == TokenKind.CLAIM_TICKET:
+            via = HolderVia.CLAIM_TICKET
+        else:
+            raise TokenError("invalid_grant", "not a code or claim ticket")
+        granted = _split_scopes(redeemed.scopes)
+        if scopes is not None:
+            requested = _split_scopes(scopes) if isinstance(scopes, str) else tuple(scopes)
+            if not set(requested) <= set(granted):
+                raise TokenError("invalid_scope", "the scope may only narrow what was granted")
+            granted = requested
+        offline = via != HolderVia.OAUTH or "offline_access" in granted
+        now = _now()
+        async with atomic():
+            # The INSERT first, so this transaction holds the write lock
+            # before it reads the code: a concurrent reuse either committed
+            # before (the code is revoked; refused below) or waits and then
+            # finds the link this sets.
+            session = await self._create_session(
+                via=via, team_id=redeemed.team_id, principal_user_id=redeemed.principal_user_id,
+                holder_user_id=redeemed.holder_user_id, resource=redeemed.resource, scopes=redeemed.scopes,
+                policy_name=redeemed.policy_name, scope_project_ids=redeemed.scope_project_ids,
+                oauth_client_id=redeemed.oauth_client_id, credential_id=redeemed.minted_by_credential_id,
+                grant_id=grant_id, holder=holder, now=now,
+            )
+            code = await OxydeAuthToken.objects.get_or_none(id=redeemed.id)
+            bound = ("kind", "team_id", "principal_user_id", "holder_user_id", "resource", "scopes",
+                     "policy_name", "scope_project_ids", "oauth_client_id", "minted_by_credential_id")
+            if (
+                code is None
+                or any(getattr(code, f) != getattr(redeemed, f) for f in bound)
+                or code.used_at is None
+                or code.used_at != redeemed.used_at
+                or code.revoked_at is not None
+                or code.holder_session_id is not None
+            ):
+                raise TokenError("invalid_grant", "this code was not redeemed, or was revoked or already used")
+            linked = await OxydeAuthToken.objects.filter(
+                id=code.id, holder_session_id__isnull=True, revoked_at__isnull=True,
+            ).update(holder_session_id=session.id)
+            if linked != 1:  # pragma: no cover -- the write lock makes the read above current
+                raise TokenError("invalid_grant", "this code was already used")
+            return await self._issue(session, scopes=granted, offline=offline, replaces_id=None, now=now)
+
     async def start_session(
         self,
         *,
-        via: HolderVia,
         team_id: str,
         principal_user_id: str,
         holder_user_id: str,
+        credential_id: str,
         resource: str,
         scopes=(),
         policy_name: str = "write",
         scope_project_ids=None,
-        oauth_client_id: str | None = None,
-        credential_id: str | None = None,
         grant_id: str | None = None,
         holder: dict | None = None,
         offline: bool = True,
-        from_token: OxydeAuthToken | None = None,
     ) -> IssuedTokens:
-        """Create a holder session and issue its first access token, plus a
-        refresh token when `offline` (OAuth: `offline_access` granted).
-        `from_token` is the code or ticket just redeemed; the first tokens
-        point back at it, so a replay of it can find this session."""
+        """Start a GRANTEE_CREDENTIAL holder session: a grantee's `ck_` key
+        (`credential_id`), already authenticated and authorized by the
+        caller (CHT-1447), claims the principal directly. OAuth and
+        claim-ticket sessions come only from ``start_session_from``, so
+        their bindings come from what was consented to."""
         _require_enabled()
+        now = _now()
+        async with atomic():
+            session = await self._create_session(
+                via=HolderVia.GRANTEE_CREDENTIAL, team_id=team_id, principal_user_id=principal_user_id,
+                holder_user_id=holder_user_id, resource=resource, scopes=_join_scopes(scopes),
+                policy_name=policy_name, scope_project_ids=_project_ids_json(scope_project_ids),
+                oauth_client_id=None, credential_id=credential_id, grant_id=grant_id, holder=holder, now=now,
+            )
+            return await self._issue(session, scopes=_split_scopes(session.scopes), offline=offline,
+                                     replaces_id=None, now=now)
+
+    async def _create_session(self, *, via, team_id, principal_user_id, holder_user_id, resource, scopes,
+                              policy_name, scope_project_ids, oauth_client_id, credential_id, grant_id, holder,
+                              now) -> OxydeHolderSession:
+        holder_json = json.dumps(holder) if holder else None
+        if holder_json is not None and len(holder_json) > HOLDER_JSON_MAX:
+            raise ValueError(f"holder metadata is display-only and capped at {HOLDER_JSON_MAX} characters of JSON")
         settings = get_settings()
         if via == HolderVia.OAUTH:
             idle, absolute = settings.oauth_refresh_idle_ttl_seconds, settings.oauth_refresh_absolute_ttl_seconds
         else:
             idle, absolute = settings.claim_refresh_idle_ttl_seconds, settings.claim_refresh_absolute_ttl_seconds
-        holder_json = json.dumps(holder) if holder else None
-        if holder_json is not None and len(holder_json) > HOLDER_JSON_MAX:
-            raise ValueError(f"holder metadata is display-only and capped at {HOLDER_JSON_MAX} characters of JSON")
-        now = _now()
         absolute_at = now + timedelta(seconds=absolute)
-        session = await OxydeHolderSession.objects.create(
+        return await OxydeHolderSession.objects.create(
             team_id=team_id,
             principal_user_id=principal_user_id,
             holder_user_id=holder_user_id,
@@ -371,17 +472,13 @@ class TokenService:
             oauth_client_id=oauth_client_id,
             credential_id=credential_id,
             grant_id=grant_id,
-            scope_project_ids=_project_ids_json(scope_project_ids),
+            scope_project_ids=scope_project_ids,
             policy_name=policy_name,
             resource=resource,
-            scopes=_join_scopes(scopes),
+            scopes=scopes,
             holder=holder_json,
             idle_expires_at=min(now + timedelta(seconds=idle), absolute_at),
             absolute_expires_at=absolute_at,
-        )
-        return await self._issue(
-            session, scopes=_split_scopes(session.scopes), offline=offline,
-            replaces_id=from_token.id if from_token is not None else None, now=now,
         )
 
     async def _issue(
@@ -428,9 +525,8 @@ class TokenService:
         """Rotate a refresh token (design §2.4). Single use: the token is
         spent and a new access + refresh pair issued. Presenting a spent
         token revokes the whole session (``refresh_reuse``) and tells the
-        human who answers for it, except within REFRESH_GRACE of its use
-        while its successor is still unspent, when the same successor pair
-        comes back. `scopes` may only narrow. Every failure is
+        human who answers for it, except for one grace replay (see
+        ``_grace_replay``). `scopes` may only narrow. Every failure is
         ``invalid_grant`` (``invalid_scope`` for a widening)."""
         _require_enabled()
         if kind_of(raw) != TokenKind.REFRESH:
@@ -439,8 +535,16 @@ class TokenService:
         # One rotation at a time in this process, so a concurrent replay
         # sees the first rotation's successor pair (the grace path) rather
         # than racing it.
-        async with _refresh_lock:
-            return await self._refresh_locked(digest, oauth_client_id=oauth_client_id, scopes=scopes)
+        try:
+            async with _refresh_lock:
+                return await self._refresh_locked(digest, oauth_client_id=oauth_client_id, scopes=scopes)
+        except _ReuseDetected as reuse:
+            # Outside the lock: the notice (a DB write and a broadcast)
+            # must not hold up every other refresh in the server.
+            await self._notify_reuse(reuse.session)
+            raise TokenError(
+                "invalid_grant", "this refresh token was already used; the connection has been revoked",
+            ) from None
 
     async def _refresh_locked(self, digest: str, *, oauth_client_id, scopes) -> IssuedTokens:
         row = await OxydeAuthToken.objects.get_or_none(token_hash=digest)
@@ -453,12 +557,14 @@ class TokenService:
         if session is None or session.revoked_at is not None or row.revoked_at is not None:
             raise TokenError("invalid_grant", "this connection has been revoked")
         if row.used_at is not None:
+            # A grace replay ignores a `scopes` narrowing: it hands back
+            # exactly what the first response carried.
             replay = await self._grace_replay(row, digest, now)
             if replay is not None:
                 return replay
-            await self.revoke_session(session.id, actor_id=None, reason=REASON_REFRESH_REUSE)
-            await self._notify_reuse(session)
-            raise TokenError("invalid_grant", "this refresh token was already used; the connection has been revoked")
+            if await self.revoke_session(session.id, actor_id=None, reason=REASON_REFRESH_REUSE):
+                raise _ReuseDetected(session)
+            raise TokenError("invalid_grant", "this connection has been revoked")
         if row.expires_at <= now or session.idle_expires_at <= now or session.absolute_expires_at <= now:
             raise TokenError("invalid_grant", "this refresh token has expired")
 
@@ -469,10 +575,6 @@ class TokenService:
                 raise TokenError("invalid_scope", "a refresh may only narrow the granted scope")
             granted = requested
 
-        spent = await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
-        if spent != 1:  # pragma: no cover -- the lock above serialises this process
-            raise TokenError("invalid_grant", "this refresh token was already used")
-
         settings = get_settings()
         idle = (
             settings.oauth_refresh_idle_ttl_seconds if session.via == HolderVia.OAUTH
@@ -480,31 +582,54 @@ class TokenService:
         )
         session.idle_expires_at = min(now + timedelta(seconds=idle), session.absolute_expires_at)
         session.last_refreshed_at = now
-        await OxydeHolderSession.objects.filter(id=session.id).update(
-            idle_expires_at=session.idle_expires_at, last_refreshed_at=now,
-        )
-        issued = await self._issue(session, scopes=granted, offline=True, replaces_id=row.id, now=now)
+        async with atomic():
+            # Spend first: the conditional UPDATE takes the write lock, so a
+            # revocation either committed before (the session update below
+            # matches nothing and this rolls back) or runs after and revokes
+            # the tokens issued here too.
+            spent = await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
+            if spent != 1:
+                # Another process rotated it first. Refuse; no revocation.
+                raise TokenError("invalid_grant", "this refresh token was already used")
+            live = await OxydeHolderSession.objects.filter(id=session.id, revoked_at__isnull=True).update(
+                idle_expires_at=session.idle_expires_at, last_refreshed_at=now,
+            )
+            if live != 1:
+                raise TokenError("invalid_grant", "this connection has been revoked")
+            issued = await self._issue(session, scopes=granted, offline=True, replaces_id=row.id, now=now)
         # Held in memory only, for REFRESH_GRACE: the raw values are never
-        # stored, so a restart inside the window ends the grace (the replay
-        # is then refused, without revoking: see _grace_replay).
+        # stored, so a restart inside the window ends the grace.
         _prune_grace_pairs(now)
         _grace_pairs[digest] = (issued, session.id, now + REFRESH_GRACE)
+        # A revocation that committed just after this rotation has already
+        # revoked the new tokens; make sure it did not miss the pair.
+        current = await OxydeHolderSession.objects.get_or_none(id=session.id)
+        if current is None or current.revoked_at is not None:
+            _forget_grace_pairs(session.id)
+            raise TokenError("invalid_grant", "this connection has been revoked")
         return issued
 
     async def _grace_replay(self, row: OxydeAuthToken, digest: str, now: datetime) -> IssuedTokens | None:
         """The successor pair for a replay of the immediately previous
-        refresh token inside the grace window, or None if this is reuse.
-        Inside the window with no pair to hand back (this process restarted
-        since), the replay is refused without revoking: the client has
-        the pair from the first response, or reconnects."""
+        refresh token, or None if this is reuse (the caller revokes).
+
+        Grace is for the concurrent burst a hosted client really sends
+        (design §2.4, S11), not a way to keep pace with the client: it
+        applies only within REFRESH_GRACE of the rotation, while neither
+        the successor refresh token nor the successor access token has
+        been used, and only once per rotation. A replay inside the window
+        with no pair to hand back (already replayed once, or this process
+        restarted) is refused without revoking: nothing shows a second
+        holder yet."""
+        _prune_grace_pairs(now)
         if row.used_at is None or now - row.used_at > REFRESH_GRACE:
             return None
-        successor = await OxydeAuthToken.objects.filter(
-            replaces_id=row.id, kind=TokenKind.REFRESH,
-        ).first()
-        if successor is None or successor.used_at is not None or successor.revoked_at is not None:
+        successors = await OxydeAuthToken.objects.filter(replaces_id=row.id).all()
+        refresh = [t for t in successors if t.kind == TokenKind.REFRESH]
+        access = [t for t in successors if t.kind == TokenKind.ACCESS]
+        if not refresh or any(t.used_at is not None or t.revoked_at is not None for t in refresh + access):
             return None
-        cached = _grace_pairs.get(digest)
+        cached = _grace_pairs.pop(digest, None)
         if cached is None:
             raise TokenError("invalid_grant", "this refresh token was just used; use the tokens it returned")
         return cached[0]
@@ -527,29 +652,31 @@ class TokenService:
         inside its absolute lifetime, issued for this resource (I16).
         Raises ``TokenError("invalid_token")`` otherwise.
 
-        Cached for VALIDATION_CACHE_SECONDS per digest, stamped with the
-        revocation epoch, so a revocation takes effect on the next request.
-        Not checked here (CHT-1560): the principal is active, and an agent
-        principal's holder is still in its team."""
+        The token and session rows are cached for VALIDATION_CACHE_SECONDS
+        per digest, stamped with the revocation epoch, which is read on
+        every call (see the module docstring). Not checked here
+        (CHT-1560): the principal is active, and an agent principal's
+        holder is still in its team."""
         _require_enabled()
         if kind_of(raw) != TokenKind.ACCESS:
             raise TokenError("invalid_token", "not an access token")
         digest = token_digest(raw)
         now = _now()
-        validated = self._cached(digest, now)
+        epoch = await revocation_epoch()
+        validated = self._cached(digest, now, epoch)
         if validated is None:
-            validated = await self._validate_from_db(digest, now)
+            validated = await self._validate_from_db(digest, now, epoch)
         if not audience_accepts(validated.resource, resource):
             raise TokenError("invalid_token", "this token was not issued for this resource")
         return validated
 
-    def _cached(self, digest: str, now: datetime) -> ValidatedToken | None:
+    def _cached(self, digest: str, now: datetime, epoch: int) -> ValidatedToken | None:
         entry = _validation_cache.get(digest)
         if entry is None:
             return None
-        cached_at, epoch, validated, absolute = entry
+        cached_at, cached_epoch, validated, absolute = entry
         if (
-            epoch != _epoch
+            cached_epoch != epoch
             or time.monotonic() - cached_at > VALIDATION_CACHE_SECONDS
             or validated.expires_at <= now
             or absolute <= now
@@ -558,8 +685,7 @@ class TokenService:
             return None
         return validated
 
-    async def _validate_from_db(self, digest: str, now: datetime) -> ValidatedToken:
-        epoch = _epoch
+    async def _validate_from_db(self, digest: str, now: datetime, epoch: int) -> ValidatedToken:
         row = await OxydeAuthToken.objects.get_or_none(token_hash=digest)
         if (
             row is None
@@ -572,6 +698,10 @@ class TokenService:
         session = await OxydeHolderSession.objects.get_or_none(id=row.holder_session_id)
         if session is None or session.revoked_at is not None or session.absolute_expires_at <= now:
             raise TokenError("invalid_token", "the access token's connection has been revoked or has expired")
+        if row.used_at is None:
+            # First use: from now on a replay of the refresh token that
+            # issued this one is no longer a grace replay (_grace_replay).
+            await OxydeAuthToken.objects.filter(id=row.id, used_at__isnull=True).update(used_at=now)
         if session.last_used_at is None or now - session.last_used_at >= LAST_USED_WRITE_INTERVAL:
             await OxydeHolderSession.objects.filter(id=session.id).update(last_used_at=now)
         validated = ValidatedToken(
@@ -589,45 +719,49 @@ class TokenService:
             credential_id=session.credential_id,
             expires_at=row.expires_at,
         )
-        # Only cache what was read under the current epoch: a revocation
-        # that landed while this was reading must not be papered over.
-        if epoch == _epoch:
-            if len(_validation_cache) >= _VALIDATION_CACHE_MAX:
-                _validation_cache.clear()
-            _validation_cache[digest] = (time.monotonic(), epoch, validated, session.absolute_expires_at)
+        # Stamped with the epoch read before the rows: a revocation that
+        # lands while this reads moves the epoch past it, so the entry is
+        # never trusted.
+        if len(_validation_cache) >= _VALIDATION_CACHE_MAX:
+            _validation_cache.clear()
+        _validation_cache[digest] = (time.monotonic(), epoch, validated, session.absolute_expires_at)
         return validated
 
     # --- revocation ----------------------------------------------------------
 
     async def revoke_session(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
-        """Revoke a holder session and every token on it, record it in
-        `revocation_events`, and bump the revocation epoch. Returns False
-        if it was already revoked (nothing is written then). Deliberately
-        not gated on OAUTH_ENABLED: turning OAuth off must never stop a
-        revocation."""
+        """Revoke a holder session and every token on it, and record it in
+        `revocation_events` (which moves the epoch), all in one
+        transaction. Returns False if it was already revoked; nothing is
+        written then. Deliberately not gated on OAUTH_ENABLED: turning
+        OAuth off must never stop a revocation. Every revocation of a
+        session must come through here (module docstring)."""
+        async with atomic():
+            revoked = await self._revoke_session_in_tx(holder_session_id, actor_id=actor_id, reason=reason)
+        _forget_grace_pairs(holder_session_id)
+        return revoked
+
+    async def _revoke_session_in_tx(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
         now = _now()
+        # The conditional UPDATE first: it takes the write lock, so the
+        # token update and the epoch below see every token a concurrent
+        # rotation issued before it.
         revoked = await OxydeHolderSession.objects.filter(id=holder_session_id, revoked_at__isnull=True).update(
             revoked_at=now, revoked_by_id=actor_id, revoked_reason=reason,
         )
-        bump_revocation_epoch()
-        _forget_grace_pairs(holder_session_id)
         if revoked != 1:
             return False
         tokens = await OxydeAuthToken.objects.filter(
             holder_session_id=holder_session_id, revoked_at__isnull=True,
         ).update(revoked_at=now)
-        session = await OxydeHolderSession.objects.get_or_none(id=holder_session_id)
+        session = await OxydeHolderSession.objects.get(id=holder_session_id)
         await OxydeRevocationEvent.objects.create(
-            team_id=session.team_id if session else None,
+            seq=await revocation_epoch() + 1,
+            team_id=session.team_id,
             actor_id=actor_id,
-            target_type="holder_session",
+            target_type=RevocationTarget.HOLDER_SESSION,
             target_id=holder_session_id,
             cascade_counts=json.dumps({"auth_tokens": tokens}),
             reason=reason,
         )
         return True
-
-    async def _revoke_sessions_started_by(self, token: OxydeAuthToken, *, reason: str) -> None:
-        started = await OxydeAuthToken.objects.filter(replaces_id=token.id, holder_session_id__isnull=False).all()
-        for session_id in {t.holder_session_id for t in started}:
-            await self.revoke_session(session_id, actor_id=None, reason=reason)

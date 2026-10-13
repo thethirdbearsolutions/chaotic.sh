@@ -5,6 +5,7 @@ and refresh rotation with reuse detection and a 30 s grace replay.
 Invariants from the design doc (§6.2): I15, a token authenticates only on
 an unrevoked holder session; I16, only at the resource it was issued for.
 """
+import asyncio
 import hashlib
 from datetime import datetime, timedelta, timezone
 
@@ -12,7 +13,7 @@ import pytest
 import pytest_asyncio
 
 from app.config import get_settings
-from app.enums import HolderVia, InboxEntryKind, OAuthClientRegistration, TokenKind
+from app.enums import HolderVia, InboxEntryKind, OAuthClientRegistration, RevocationTarget, TokenKind
 from app.mcp_server.auth import _redact_key
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeOAuthClient, OxydeRevocationEvent
@@ -51,13 +52,30 @@ async def client_row(db):
     )
 
 
+async def _mint_code(agent, team, user, scopes=("chaotic:write", "offline_access")):
+    return await TokenService().mint_single_use(
+        TokenKind.AUTH_CODE, team_id=team.id, principal_user_id=agent.id, holder_user_id=user.id,
+        resource=MCP, scopes=scopes, oauth_client_id=CLIENT, code_challenge="c",
+        redirect_uri="https://claude.ai/api/mcp/auth_callback",
+    )
+
+
 @pytest_asyncio.fixture
 async def connection(agent, test_team, test_user, client_row):
-    """An OAuth connection: holder session + access + refresh."""
-    return await TokenService().start_session(
-        via=HolderVia.OAUTH, team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
-        resource=MCP, scopes=["chaotic:write", "offline_access"], oauth_client_id=CLIENT,
-    )
+    """An OAuth connection, the only way one is made: code minted at
+    consent, redeemed, session started from it."""
+    service = TokenService()
+    _row, code = await _mint_code(agent, test_team, test_user)
+    return await service.start_session_from(await service.redeem_single_use(code, TokenKind.AUTH_CODE))
+
+
+@pytest_asyncio.fixture
+async def grantee_key(agent, test_user):
+    from app.schemas.api_key import APIKeyCreate
+    from app.services.api_key_service import APIKeyService
+
+    key, _ = await APIKeyService().create(agent.id, APIKeyCreate(name="grantee"), holder_user_id=test_user.id)
+    return key
 
 
 async def _session(issued) -> OxydeHolderSession:
@@ -71,7 +89,9 @@ async def test_tokens_are_prefixed_and_stored_only_as_digests(connection):
     assert connection.access_token.startswith("cat_") and len(connection.access_token) == 4 + 64
     assert connection.refresh_token.startswith("crt_")
     rows = await OxydeAuthToken.objects.filter(holder_session_id=connection.holder_session_id).all()
-    assert {r.kind for r in rows} == {TokenKind.ACCESS, TokenKind.REFRESH}
+    # The code that started the session is linked to it too.
+    assert sorted(r.kind.value for r in rows) == ["access", "auth_code", "refresh"]
+    rows = [r for r in rows if r.kind != TokenKind.AUTH_CODE]
     raws = {connection.access_token, connection.refresh_token}
     for row in rows:
         values = set(map(str, row.model_dump().values()))
@@ -99,10 +119,10 @@ async def test_connector_token_is_refused_on_rest(connection):
     assert e.value.error == "invalid_token"
 
 
-async def test_claim_token_is_accepted_on_rest_and_mcp(agent, test_team, test_user):
+async def test_claim_token_is_accepted_on_rest_and_mcp(agent, test_team, test_user, grantee_key):
     issued = await TokenService().start_session(
-        via=HolderVia.GRANTEE_CREDENTIAL, team_id=test_team.id, principal_user_id=agent.id,
-        holder_user_id=test_user.id, resource=BASE, offline=False,
+        team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
+        credential_id=grantee_key.id, resource=BASE, offline=False,
     )
     assert issued.refresh_token is None
     for resource in (BASE, MCP):
@@ -114,17 +134,13 @@ async def test_claim_token_is_accepted_on_rest_and_mcp(agent, test_team, test_us
             await TokenService().validate_access(issued.access_token, resource=elsewhere)
 
 
-async def test_holder_metadata_is_capped(agent, test_team, test_user):
-    session = await TokenService().start_session(
-        via=HolderVia.CLAIM_TICKET, team_id=test_team.id, principal_user_id=agent.id,
-        holder_user_id=test_user.id, resource=BASE, holder={"label": "sprite 7"}, offline=False,
-    )
+async def test_holder_metadata_is_capped(agent, test_team, test_user, grantee_key):
+    common = dict(team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
+                  credential_id=grantee_key.id, resource=BASE)
+    session = await TokenService().start_session(holder={"label": "sprite 7"}, offline=False, **common)
     assert (await _session(session)).holder == '{"label": "sprite 7"}'
     with pytest.raises(ValueError):
-        await TokenService().start_session(
-            via=HolderVia.CLAIM_TICKET, team_id=test_team.id, principal_user_id=agent.id,
-            holder_user_id=test_user.id, resource=BASE, holder={"label": "x" * ts.HOLDER_JSON_MAX},
-        )
+        await TokenService().start_session(holder={"label": "x" * ts.HOLDER_JSON_MAX}, **common)
 
 
 async def test_a_token_is_not_yet_a_bearer_anywhere(client, connection):
@@ -154,7 +170,6 @@ async def test_expired_access_token_and_session_are_refused(connection):
 
     fresh = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     await OxydeHolderSession.objects.filter(id=fresh.holder_session_id).update(absolute_expires_at=past)
-    ts.bump_revocation_epoch()
     with pytest.raises(TokenError):
         await service.validate_access(fresh.access_token, resource=MCP)
 
@@ -171,21 +186,30 @@ async def test_revoking_the_session_ends_its_tokens_at_once(connection, test_use
     rows = await OxydeAuthToken.objects.filter(holder_session_id=connection.holder_session_id).all()
     assert all(r.revoked_at is not None for r in rows)
     event = await OxydeRevocationEvent.objects.get(target_id=connection.holder_session_id)
-    assert (event.actor_id, event.reason, event.target_type) == (test_user.id, "user", "holder_session")
+    assert (event.actor_id, event.reason, event.target_type) == (test_user.id, "user", RevocationTarget.HOLDER_SESSION)
+    epoch = await ts.revocation_epoch()
+    assert event.seq == epoch
+    # Revoking again writes nothing and leaves the epoch where it was.
     assert not await service.revoke_session(connection.holder_session_id, actor_id=None, reason="again")
+    assert await ts.revocation_epoch() == epoch
 
 
 async def test_cache_holds_for_its_window_until_the_epoch_moves(connection):
-    """A change that bypasses the service is invisible while cached; any
-    revocation's epoch bump makes the next request re-read (I4)."""
+    """A change that bypasses revoke_session is invisible while cached; a
+    revocation written by anyone, including another process (simulated
+    here by writing the event row directly), makes the next request in
+    this process re-read (I4)."""
     service = TokenService()
     await service.validate_access(connection.access_token, resource=MCP)
     await OxydeHolderSession.objects.filter(id=connection.holder_session_id).update(
         revoked_at=datetime.now(timezone.utc),
     )
     await service.validate_access(connection.access_token, resource=MCP)  # served from cache
-    before = ts.revocation_epoch()
-    assert ts.bump_revocation_epoch() == before + 1
+    before = await ts.revocation_epoch()
+    await OxydeRevocationEvent.objects.create(
+        seq=before + 1, target_type=RevocationTarget.HOLDER_SESSION, target_id="elsewhere",
+    )
+    assert await ts.revocation_epoch() == before + 1
     with pytest.raises(TokenError):
         await service.validate_access(connection.access_token, resource=MCP)
 
@@ -271,6 +295,73 @@ async def test_grace_replay_after_a_restart_is_refused_without_revoking(connecti
     await service.validate_access(first.access_token, resource=MCP)
 
 
+async def test_grace_is_one_replay_per_rotation(connection):
+    service = TokenService()
+    first = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    assert await service.refresh(connection.refresh_token, oauth_client_id=CLIENT) == first
+    with pytest.raises(TokenError) as e:
+        await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    assert e.value.error == "invalid_grant"
+    assert (await _session(connection)).revoked_at is None
+    await service.validate_access(first.access_token, resource=MCP)
+
+
+async def test_no_grace_once_the_successor_access_token_is_used(connection, test_user):
+    """The keep-pace attack: the legitimate client already uses the new
+    access token, so a replay of the old refresh token is a second holder."""
+    service = TokenService()
+    first = await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    await service.validate_access(first.access_token, resource=MCP)
+    with pytest.raises(TokenError):
+        await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
+    await _assert_revoked_for_reuse(connection.holder_session_id, test_user.id)
+
+
+async def test_concurrent_refreshes_hand_out_one_pair(connection):
+    service = TokenService()
+    results = await asyncio.gather(
+        *(service.refresh(connection.refresh_token, oauth_client_id=CLIENT) for _ in range(2)),
+    )
+    assert results[0] == results[1]
+    assert (await _session(connection)).revoked_at is None
+    rows = await OxydeAuthToken.objects.filter(
+        holder_session_id=connection.holder_session_id, kind=TokenKind.REFRESH,
+    ).all()
+    assert len(rows) == 2  # the original and exactly one successor
+
+
+async def test_a_revocation_during_a_rotation_leaves_no_live_token(connection, monkeypatch):
+    """revoke_session lands while a rotation is issuing: every token on
+    the session ends up revoked, and no grace pair survives."""
+    service = TokenService()
+    real_issue = TokenService._issue
+    racing = asyncio.Event()
+
+    async def issue_then_yield(self, session, **kwargs):
+        issued = await real_issue(self, session, **kwargs)
+        racing.set()
+        await asyncio.sleep(0.05)  # the revoke below waits for this transaction
+        return issued
+
+    monkeypatch.setattr(TokenService, "_issue", issue_then_yield)
+
+    async def revoke_when_issuing():
+        await racing.wait()
+        return await service.revoke_session(connection.holder_session_id, actor_id=None, reason="admin")
+
+    outcome, revoked = await asyncio.gather(
+        service.refresh(connection.refresh_token, oauth_client_id=CLIENT), revoke_when_issuing(),
+        return_exceptions=True,
+    )
+    assert revoked is True
+    rows = await OxydeAuthToken.objects.filter(holder_session_id=connection.holder_session_id).all()
+    assert rows and all(r.revoked_at is not None for r in rows)
+    assert not [d for d, (_, sid, _) in ts._grace_pairs.items() if sid == connection.holder_session_id]
+    if not isinstance(outcome, Exception):
+        with pytest.raises(TokenError):
+            await service.validate_access(outcome.access_token, resource=MCP)
+
+
 async def test_refresh_is_bound_to_its_client_and_may_only_narrow(connection):
     service = TokenService()
     with pytest.raises(TokenError) as e:
@@ -302,18 +393,12 @@ async def test_expired_refresh_token_is_invalid_grant(connection):
 
 async def test_a_code_is_single_use_and_reuse_revokes_what_it_started(agent, test_team, test_user, client_row):
     service = TokenService()
-    _row, code = await service.mint_single_use(
-        TokenKind.AUTH_CODE, team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
-        resource=MCP, scopes=["chaotic:write"], oauth_client_id=CLIENT, code_challenge="c",
-        redirect_uri="https://claude.ai/api/mcp/auth_callback",
-    )
+    _row, code = await _mint_code(agent, test_team, test_user, scopes=["chaotic:write"])
     assert code.startswith("cac_")
     redeemed = await service.redeem_single_use(code, TokenKind.AUTH_CODE)
-    issued = await service.start_session(
-        via=HolderVia.OAUTH, team_id=redeemed.team_id, principal_user_id=redeemed.principal_user_id,
-        holder_user_id=redeemed.holder_user_id, resource=redeemed.resource, scopes=["chaotic:write"],
-        oauth_client_id=CLIENT, from_token=redeemed,
-    )
+    issued = await service.start_session_from(redeemed)
+    assert issued.refresh_token is None  # no offline_access granted
+    assert (await OxydeAuthToken.objects.get(id=redeemed.id)).holder_session_id == issued.holder_session_id
     with pytest.raises(TokenError) as e:
         await service.redeem_single_use(code, TokenKind.AUTH_CODE)
     assert e.value.error == "invalid_grant"
@@ -321,13 +406,75 @@ async def test_a_code_is_single_use_and_reuse_revokes_what_it_started(agent, tes
     assert session.revoked_reason == ts.REASON_CODE_REUSE
     with pytest.raises(TokenError):
         await service.validate_access(issued.access_token, resource=MCP)
+    # A code starts one session at most, even replayed into start_session_from.
+    with pytest.raises(TokenError):
+        await service.start_session_from(redeemed)
 
 
-async def test_expired_or_wrong_kind_codes_are_refused(agent, test_team, test_user, test_user2):
-    from app.schemas.api_key import APIKeyCreate
-    from app.services.api_key_service import APIKeyService
+async def test_reuse_before_the_session_starts_still_kills_it(agent, test_team, test_user, client_row):
+    """The reuse lands between the winner's redemption and its
+    start_session_from: the code is revoked, so the session is refused."""
+    service = TokenService()
+    _row, code = await _mint_code(agent, test_team, test_user)
+    redeemed = await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+    with pytest.raises(TokenError):
+        await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+    with pytest.raises(TokenError) as e:
+        await service.start_session_from(redeemed)
+    assert e.value.error == "invalid_grant"
+    assert await OxydeHolderSession.objects.filter(principal_user_id=agent.id).count() == 0
 
-    key, _ = await APIKeyService().create(agent.id, APIKeyCreate(name="grantee"), holder_user_id=test_user.id)
+
+async def test_a_session_takes_its_bindings_from_the_code(agent, test_team, test_user, test_user2, client_row):
+    service = TokenService()
+    row, code = await _mint_code(agent, test_team, test_user, scopes=["chaotic:read", "offline_access"])
+    # Never redeemed: refused.
+    with pytest.raises(TokenError):
+        await service.start_session_from(row)
+    redeemed = await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+    # A caller-altered row is refused, and starts nothing.
+    forged = redeemed.model_copy(update={"principal_user_id": test_user2.id, "scopes": "chaotic:admin"})
+    with pytest.raises(TokenError):
+        await service.start_session_from(forged)
+    with pytest.raises(TokenError) as e:
+        await service.start_session_from(redeemed, scopes=["chaotic:write"])
+    assert e.value.error == "invalid_scope"
+    issued = await service.start_session_from(redeemed, scopes=["chaotic:read"])
+    v = await service.validate_access(issued.access_token, resource=MCP)
+    assert (v.principal_user_id, v.holder_user_id, v.scopes, v.oauth_client_id) == (
+        agent.id, test_user.id, ("chaotic:read",), CLIENT,
+    )
+    assert issued.refresh_token is None  # narrowed away offline_access
+
+
+async def test_concurrent_redemptions_spend_a_code_once(agent, test_team, test_user, client_row):
+    service = TokenService()
+    _row, code = await _mint_code(agent, test_team, test_user)
+    results = await asyncio.gather(
+        *(service.redeem_single_use(code, TokenKind.AUTH_CODE) for _ in range(5)), return_exceptions=True,
+    )
+    winners = [r for r in results if isinstance(r, OxydeAuthToken)]
+    assert len(winners) == 1
+    assert all(isinstance(r, TokenError) for r in results if r is not winners[0])
+    # The losers count as reuse: the code is revoked, so it starts nothing.
+    with pytest.raises(TokenError):
+        await service.start_session_from(winners[0])
+
+
+async def test_a_claim_ticket_starts_a_claim_session(agent, test_team, test_user, grantee_key):
+    service = TokenService()
+    _row, ticket = await service.mint_single_use(
+        TokenKind.CLAIM_TICKET, team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
+        resource=BASE, minted_by_credential_id=grantee_key.id,
+    )
+    issued = await service.start_session_from(await service.redeem_single_use(ticket, TokenKind.CLAIM_TICKET))
+    assert issued.refresh_token is not None
+    v = await service.validate_access(issued.access_token, resource=BASE)
+    assert (v.via, v.credential_id, v.oauth_client_id) == (HolderVia.CLAIM_TICKET, grantee_key.id, None)
+
+
+async def test_expired_or_wrong_kind_codes_are_refused(agent, test_team, test_user, grantee_key):
+    key = grantee_key
     service = TokenService()
     row, ticket = await service.mint_single_use(
         TokenKind.CLAIM_TICKET, team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
@@ -354,7 +501,10 @@ async def test_expired_or_wrong_kind_codes_are_refused(agent, test_team, test_us
 # --- OAUTH_ENABLED ----------------------------------------------------------------
 
 
-async def test_everything_but_revocation_refuses_while_oauth_is_off(connection, monkeypatch, agent, test_team, test_user):
+async def test_everything_but_revocation_refuses_while_oauth_is_off(
+    connection, monkeypatch, agent, test_team, test_user, grantee_key,
+):
+    _row, code = await _mint_code(agent, test_team, test_user)
     monkeypatch.setenv("OAUTH_ENABLED", "false")
     get_settings.cache_clear()
     service = TokenService()
@@ -364,9 +514,13 @@ async def test_everything_but_revocation_refuses_while_oauth_is_off(connection, 
         await service.refresh(connection.refresh_token, oauth_client_id=CLIENT)
     with pytest.raises(OAuthDisabledError):
         await service.start_session(
-            via=HolderVia.OAUTH, team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
-            resource=MCP,
+            team_id=test_team.id, principal_user_id=agent.id, holder_user_id=test_user.id,
+            credential_id=grantee_key.id, resource=BASE,
         )
+    with pytest.raises(OAuthDisabledError):
+        await service.redeem_single_use(code, TokenKind.AUTH_CODE)
+    with pytest.raises(OAuthDisabledError):
+        await _mint_code(agent, test_team, test_user)
     assert await service.revoke_session(connection.holder_session_id, actor_id=None, reason="admin")
 
 
