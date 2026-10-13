@@ -204,7 +204,11 @@ class TestIssueJson:
     def test_issue_relations_json(self, cli_runner):
         from cli.main import cli, client
         client.get_issue_by_identifier = MagicMock(return_value=SAMPLE_ISSUE)
-        relation = {"id": "r-1", "relation_type": "blocks", "related_issue": {"identifier": "CHT-2"}, "direction": "outgoing"}
+        relation = {
+            "id": "r-1", "issue_id": "i-1", "related_issue_id": "i-2", "relation_type": "blocks",
+            "created_at": "2026-01-01T00:00:00Z", "related_issue_identifier": "CHT-2",
+            "related_issue_title": "Two", "related_issue_status": "todo", "direction": "outgoing",
+        }
         client.get_relations = MagicMock(return_value=[relation])
         result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-1', '--json'])
         assert result.exit_code == 0
