@@ -115,10 +115,72 @@ class Client:
         if "pending_rituals" in detail and "issue_id" in detail:
             return self._format_ticket_ritual_error(detail)
         if "pending_rituals" in detail:
-            return "Sprint is in limbo. Run `chaotic ritual pending` to see what to do next."
+            return self._format_limbo_error(detail)
         if "arrears_by" in detail:
-            return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
+            return self._format_arrears_error(detail)
         return detail.get("message", str(detail))
+
+    @staticmethod
+    def _switch_hint(detail: dict) -> str:
+        """The `team use` / `project use` steps that make a refused project
+        current, or "" when it already is.
+
+        Project keys are unique only within a team, and identifier lookups
+        span every team the caller belongs to, so a refusal can name a
+        project the current team does not hold, or holds a different
+        project under the same key (CHT-1270 review).
+        """
+        from cli.config import get_current_project, get_current_team
+
+        steps = []
+        team_id = detail.get("team_id")
+        if team_id and team_id != get_current_team():
+            steps.append(f"`chaotic team use {team_id}`")
+        if detail.get("project_id") != get_current_project():
+            steps.append(f"`chaotic project use {detail['project_key']}`")
+        return " then ".join(steps)
+
+    @classmethod
+    def _format_arrears_error(cls, detail: dict) -> str:
+        """Name the project that is over budget, and the close that fixes it.
+
+        Arrears is keyed on the refused ticket's project, which need not be
+        the current one; a bare `chaotic sprint close` then closes some
+        other project's sprint, and repeating it never helps (CHT-1270).
+        The remedy names the sprint by id, so a second agent running the
+        same advice gets "Can only close an active sprint" instead of
+        closing the fresh sprint the first one just started.
+        Servers before CHT-1270 send no project_key; keep the old advice.
+        """
+        key = detail.get("project_key")
+        if not key:
+            return "Sprint is in arrears. Run `chaotic sprint close` to resolve, then complete rituals with `chaotic ritual pending`."
+        name = detail.get("sprint_name") or "The active sprint"
+        spent, budget = detail.get("points_spent"), detail.get("budget")
+        figures = f" ({spent}/{budget} points)" if spent is not None and budget is not None else ""
+        sprint_ref = f" {detail['sprint_id']}" if detail.get("sprint_id") else ""
+        close = f"`chaotic sprint close{sprint_ref} --project {key}`"
+        switch = cls._switch_hint(detail)
+        if "team use" in switch:
+            # Another team: --project KEY would resolve in the current team.
+            close = f"{switch}, then `chaotic sprint close{sprint_ref}`"
+        return (
+            f"{name} in project {key} is in arrears{figures}. "
+            f"Run {close} to resolve: one close starts a fresh sprint. "
+            f"If it enters limbo instead, complete that project's rituals with `chaotic ritual pending`"
+            + (f" (after {switch})." if switch else ".")
+        )
+
+    @classmethod
+    def _format_limbo_error(cls, detail: dict) -> str:
+        """Name the project whose sprint is in limbo (CHT-1270): `ritual
+        pending` reads the current project, which may be another one."""
+        key = detail.get("project_key")
+        if not key:
+            return "Sprint is in limbo. Run `chaotic ritual pending` to see what to do next."
+        switch = cls._switch_hint(detail)
+        run = f"{switch}, then `chaotic ritual pending`" if switch else "`chaotic ritual pending`"
+        return f"Sprint in project {key} is in limbo. Run {run} to see what to do next."
 
     def _format_validation_errors(self, detail: list) -> str:
         """Format a list of FastAPI/pydantic validation errors (422 body)

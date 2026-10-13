@@ -416,6 +416,7 @@ class TestSprintClose:
             "name": "Sprint 30",
             "limbo": True,
         })
+        client.get_project = MagicMock(return_value={"id": "test-project-123", "key": "CUR"})
 
         with patch('cli.main.get_current_project', return_value='test-project-123'), \
              patch('cli.main.get_current_project', return_value='test-project-123'), \
@@ -433,6 +434,10 @@ class TestSprintClose:
         client.close_sprint = MagicMock(return_value={
             "name": "Sprint 30",
             "limbo": False,
+        })
+        client.get_project = MagicMock(return_value={"id": "test-project-123", "key": "CUR"})
+        client.get_current_sprint = MagicMock(return_value={
+            "name": "Sprint 31", "budget": 20, "points_spent": 0,
         })
 
         with patch('cli.main.get_current_project', return_value='test-project-123'), \
@@ -990,3 +995,93 @@ class TestSprintIssues:
 
         assert result.exit_code == 0
         assert 'CHT-100' in result.output
+
+
+class TestSprintCloseProject:
+    """CHT-1270: arrears is per project; close names it and can target one."""
+
+    def _invoke(self, cli_runner, args, close_result, active=None, current='test-project-123'):
+        from cli.main import cli, client
+
+        client.close_sprint = MagicMock(return_value=close_result)
+        client.get_project = MagicMock(return_value={"id": "test-project-123", "key": "CUR"})
+        client.get_current_sprint = MagicMock(return_value=active or {
+            "name": "Sprint 31", "budget": 20, "points_spent": 0,
+        })
+        resolve = MagicMock(return_value={"id": "other-project-456", "key": "OTH"})
+        resolve_sprint = MagicMock(return_value='sprint-uuid-123')
+        with patch('cli.main.get_current_project', return_value=current), \
+             patch('cli.main.resolve_project', resolve), \
+             patch('cli.main.resolve_sprint_id', resolve_sprint):
+            result = cli_runner.invoke(cli, args)
+        return result, client, resolve, resolve_sprint
+
+    def test_rotation_reports_new_active_sprint_unblocked(self, cli_runner):
+        result, client, _, _ = self._invoke(
+            cli_runner, ['sprint', 'close'], {"name": "Sprint 30", "limbo": False},
+        )
+        assert result.exit_code == 0, result.output
+        assert "Sprint 30" in result.output and "CUR" in result.output
+        assert "Sprint 31" in result.output
+        assert "0/20" in result.output
+        assert "no longer in arrears" in result.output
+        client.get_current_sprint.assert_called_once_with("test-project-123")
+
+    def test_project_option_closes_that_projects_sprint(self, cli_runner):
+        result, client, resolve, resolve_sprint = self._invoke(
+            cli_runner, ['sprint', 'close', '--project', 'OTH'],
+            {"name": "Sprint 7", "limbo": False},
+        )
+        assert result.exit_code == 0, result.output
+        resolve.assert_called_once_with('OTH')
+        resolve_sprint.assert_called_once_with('current', 'other-project-456')
+        client.get_current_sprint.assert_called_once_with('other-project-456')
+        assert "OTH" in result.output
+
+    def test_project_option_works_without_a_current_project(self, cli_runner):
+        result, _, resolve, _ = self._invoke(
+            cli_runner, ['sprint', 'close', '--project', 'OTH'],
+            {"name": "Sprint 7", "limbo": False}, current=None,
+        )
+        assert result.exit_code == 0, result.output
+        resolve.assert_called_once_with('OTH')
+
+    def test_no_project_at_all_is_a_clear_error(self, cli_runner):
+        result, client, _, _ = self._invoke(
+            cli_runner, ['sprint', 'close'], {"name": "x", "limbo": False}, current=None,
+        )
+        assert result.exit_code != 0
+        assert "--project" in result.output
+        client.close_sprint.assert_not_called()
+
+    def test_limbo_says_not_rotated_and_still_blocked(self, cli_runner):
+        result, client, _, _ = self._invoke(
+            cli_runner, ['sprint', 'close', '--project', 'OTH'],
+            {"name": "Sprint 7", "limbo": True},
+        )
+        assert result.exit_code == 0, result.output
+        assert "limbo" in result.output and "not rotated" in result.output
+        assert "chaotic project use OTH" in result.output
+        assert "ritual pending" in result.output
+        client.get_current_sprint.assert_not_called()
+
+    def test_new_active_sprint_still_over_budget_is_flagged(self, cli_runner):
+        result, _, _, _ = self._invoke(
+            cli_runner, ['sprint', 'close'], {"name": "Sprint 30", "limbo": False},
+            active={"name": "Sprint 31", "budget": 5, "points_spent": 9},
+        )
+        assert result.exit_code == 0, result.output
+        assert "over budget" in result.output
+        assert "no longer in arrears" not in result.output
+
+    def test_failed_lookup_after_close_still_reports_the_close(self, cli_runner):
+        from cli.main import cli, client
+
+        client.close_sprint = MagicMock(return_value={"name": "Sprint 30", "limbo": False})
+        client.get_project = MagicMock(return_value={"id": "test-project-123", "key": "CUR"})
+        client.get_current_sprint = MagicMock(side_effect=RuntimeError("timeout"))
+        with patch('cli.main.get_current_project', return_value='test-project-123'), \
+             patch('cli.main.resolve_sprint_id', return_value='sprint-uuid-123'):
+            result = cli_runner.invoke(cli, ['sprint', 'close'])
+        assert result.exit_code == 0, result.output
+        assert "closed" in result.output

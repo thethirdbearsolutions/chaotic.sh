@@ -273,7 +273,7 @@ chaotic issue delete CHT-123
 ```bash
 chaotic sprint list            # List sprints in current project
 chaotic sprint current         # Get or create the current sprint
-chaotic sprint close <id>      # Close the current sprint
+chaotic sprint close [<id>] [--project KEY]  # Close the current sprint (of KEY, if given)
 chaotic sprint add CHT-1 CHT-2 # Add issues to the current sprint
 chaotic sprint remove CHT-1    # Remove an issue from its sprint
 ```
