@@ -158,7 +158,7 @@ def test_every_legacy_shape_gets_its_principal_and_holder(request, shape):
     path = request.getfixturevalue("at_0020" if shape == "chain" else "prod_shaped")
     before = _rows(path)
 
-    _migrate(path)
+    _migrate(path, target=MIGRATION.stem)
 
     after = _rows(path)
     assert set(after) == set(before) == set(KEYS)
@@ -183,7 +183,7 @@ def test_every_legacy_shape_gets_its_principal_and_holder(request, shape):
 
 
 def test_the_new_foreign_keys_cascade_from_principal_and_holder(at_0020):
-    _migrate(at_0020)
+    _migrate(at_0020, target=MIGRATION.stem)
     with closing(sqlite3.connect(at_0020)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         c.execute("DELETE FROM api_keys WHERE principal_user_id = 'agent' AND holder_user_id = 'creator'")
@@ -294,7 +294,7 @@ def test_a_failed_verification_rolls_everything_back(at_0020, monkeypatch):
 
 
 def test_downgrade_reads_back_as_the_same_principal_and_holder(at_0020):
-    _migrate(at_0020)
+    _migrate(at_0020, target=MIGRATION.stem)
 
     ctx = _Ctx(at_0020)
     try:

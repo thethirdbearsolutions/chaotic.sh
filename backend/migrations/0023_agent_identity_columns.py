@@ -25,7 +25,7 @@ plain UPDATE through ctx.execute, which the replay ignores (it is data,
 not schema). The downgrade drops the index and the columns.
 """
 
-depends_on = "0021_api_key_principal_and_holder"
+depends_on = "0022_api_key_hash_unique"
 
 
 def upgrade(ctx):
