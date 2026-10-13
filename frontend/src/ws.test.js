@@ -86,21 +86,45 @@ describe('ws.js', () => {
             expect(wsProtocols('abc')).toEqual([WS_SUBPROTOCOL, 'chaotic.bearer.abc']);
         });
 
-        it('reconnects after the server closes it, with the current token', () => {
-            // CHT-1603: the server closes a socket whose credential was
-            // revoked or expired (4001); the reconnect reads the token
-            // afresh rather than replaying the old one.
+        it('reconnects after a drop, with the current token', () => {
+            // CHT-1603: the reconnect reads the token afresh rather than
+            // replaying the old one.
             vi.useFakeTimers();
             try {
                 connectWebSocket('team-1');
                 const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
                 api.getToken.mockReturnValue('fresh-token');
-                ws.onclose({ code: 4001 });
+                ws.onclose({ code: 1006 });
                 vi.advanceTimersByTime(1500);
                 expect(MockWebSocket).toHaveBeenCalledTimes(2);
                 const [url, protocols] = MockWebSocket.mock.calls[1];
                 expect(url).toMatch(/\/ws\?team_id=team-1$/);
                 expect(protocols).toEqual(['chaotic', 'chaotic.bearer.fresh-token']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        // PR #352 review, finding 2: 4001 / 4003 mean the credential stopped
+        // being good; retrying cannot help, so the client stops and hands
+        // the decision to ws-handlers.js through a synthetic event.
+        it.each([
+            [4001, 'unauthorized'],
+            [4003, 'forbidden'],
+        ])('stops reconnecting on close %i and dispatches connection:%s', (code, type) => {
+            const handler = vi.fn();
+            subscribe(`connection:${type}`, handler);
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                ws.onclose({ code });
+                vi.advanceTimersByTime(60000);
+                expect(MockWebSocket).toHaveBeenCalledTimes(1);
+                expect(handler).toHaveBeenCalledWith({ code, teamId: 'team-1' }, { type, entity: 'connection' });
+                expect(showToast).not.toHaveBeenCalledWith('Live updates disconnected. Reconnecting...', 'warning');
+                expect(setWebsocket).toHaveBeenLastCalledWith(null);
+                expect(document.getElementById('ws-status-badge').classList.contains('hidden')).toBe(true);
             } finally {
                 vi.useRealTimers();
             }

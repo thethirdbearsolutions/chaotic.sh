@@ -91,3 +91,20 @@ class TestMidConnection:
             with pytest.raises(ConnectionClosed) as exc:
                 ws.recv(timeout=5)
         assert exc.value.rcvd.code == 4001
+
+    def test_removed_member_is_closed_4003(self, fast_recheck, api_client, auth_token2, test_user2, test_team):
+        """Member removal through the real API, mid-connection: closed
+        with 4003, and the code reaches the client (PR #352 review, 5)."""
+        from conftest import _run_async
+
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+
+        _run_async(OxydeTeamMember.objects.create(team_id=test_team["id"], user_id=test_user2.id, role=TeamRole.MEMBER))
+        with connect(_url(test_team["id"]), subprotocols=["chaotic", f"chaotic.bearer.{auth_token2}"],
+                     open_timeout=5) as ws:
+            _assert_open(ws)
+            api_client.remove_member(test_team["id"], test_user2.id)
+            with pytest.raises(ConnectionClosed) as exc:
+                ws.recv(timeout=5)
+        assert exc.value.rcvd.code == 4003

@@ -69,6 +69,9 @@ export function getReconnectDelay(failCount) {
 
 /** The subprotocol the server selects (CHT-1603). */
 export const WS_SUBPROTOCOL = 'chaotic';
+/** Close codes /ws sends when a credential stops being good (CHT-1603). */
+export const WS_CLOSE_UNAUTHENTICATED = 4001;
+export const WS_CLOSE_FORBIDDEN = 4003;
 const WS_BEARER_PREFIX = 'chaotic.bearer.';
 
 /**
@@ -175,9 +178,25 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
             dispatch(message);
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
             if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket disconnected');
+            // CHT-1603 (PR #352 review, finding 2): the server closed it
+            // because the credential stopped being good. Retrying cannot
+            // help: 4001 means sign in again, 4003 means no access to this
+            // team any more. ws-handlers.js acts on the synthetic event.
+            const code = event?.code;
+            if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
+                setWebsocket(null);
+                wsFailCount = 0;
+                updateWsStatusIndicator();
+                dispatch({
+                    type: code === WS_CLOSE_UNAUTHENTICATED ? 'unauthorized' : 'forbidden',
+                    entity: 'connection',
+                    data: { code, teamId },
+                });
+                return;
+            }
             wsFailCount++;
             if (wsFailCount === 1) {
                 showToast('Live updates disconnected. Reconnecting...', 'warning');

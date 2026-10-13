@@ -211,3 +211,48 @@ class TestBroadcastHelpers:
             "entity": "document",
             "data": {"id": "d1", "title": "Doc"},
         })
+
+
+class TestBroadcastWhileDisconnecting:
+    """PR #352 review, finding 1: a disconnect landing during a
+    broadcast's await (a client closing, or /ws closing a socket whose
+    credential failed its re-check) must not break the broadcast."""
+
+    @pytest.mark.asyncio
+    async def test_other_socket_removed_mid_broadcast(self, manager):
+        import asyncio
+
+        slow, other = make_ws(), make_ws()
+
+        async def slow_send(message):
+            await asyncio.sleep(0.05)
+
+        slow.send_json.side_effect = slow_send
+        manager.active_connections["team-1"] = {slow, other}
+
+        async def drop_soon():
+            await asyncio.sleep(0.01)
+            manager.disconnect(other, "team-1")
+
+        await asyncio.gather(manager.broadcast_to_team("team-1", {"type": "t"}), drop_soon())
+        assert manager.active_connections["team-1"] == {slow}
+
+    @pytest.mark.asyncio
+    async def test_dead_socket_whose_team_is_gone_by_cleanup(self, manager):
+        import asyncio
+
+        dead = make_ws()
+
+        async def dies(message):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("closed")
+
+        dead.send_json.side_effect = dies
+        manager.active_connections["team-1"] = {dead}
+
+        async def drop_soon():
+            await asyncio.sleep(0.01)
+            manager.disconnect(dead, "team-1")  # empties and deletes the team
+
+        await asyncio.gather(manager.broadcast_to_team("team-1", {"type": "t"}), drop_soon())
+        assert "team-1" not in manager.active_connections

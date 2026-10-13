@@ -287,6 +287,11 @@ async def health():
     }
 
 
+def _log_watcher_failure(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("WebSocket credential watcher failed", exc_info=task.exception())
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -327,6 +332,10 @@ async def websocket_endpoint(
             pass
 
     watcher = asyncio.create_task(close_when_refused())
+    # Cancelled when the socket ends, never awaited: surface anything it
+    # raised rather than "Task exception was never retrieved" (PR #352
+    # review, finding 8).
+    watcher.add_done_callback(_log_watcher_failure)
     try:
         while True:
             # Keep connection alive, listen for client messages

@@ -15,6 +15,16 @@ vi.mock('./state.js', () => ({
     setWebsocket: vi.fn(),
     getCurrentDetailIssue: vi.fn(() => null),
     setCurrentDetailIssue: vi.fn(),
+    setCurrentUser: vi.fn(),
+    setCurrentTeam: vi.fn(),
+}));
+
+// Mock api.js and auth.js (CHT-1603: a 4001 close ends the session)
+vi.mock('./api.js', () => ({
+    api: { logout: vi.fn(), getToken: vi.fn(() => 'tok') },
+}));
+vi.mock('./auth.js', () => ({
+    showAuthScreen: vi.fn(),
 }));
 
 // Mock dashboard.js
@@ -118,6 +128,9 @@ import { loadEpics } from './epics.js';
 import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
+import { api } from './api.js';
+import { showAuthScreen } from './auth.js';
+import { setCurrentUser, setCurrentTeam } from './state.js';
 import { dispatch as rawDispatch, resetWsState } from './ws.js';
 import { registerWsHandlers, resetDetailRefreshes, DETAIL_REFRESH_DELAY_MS, DETAIL_REFRESH_RETRY_MS } from './ws-handlers.js';
 
@@ -943,6 +956,29 @@ describe('ws-handlers.js', () => {
     // CHT-1225 item 3: resync on genuine reconnect. ws.js dispatches this
     // synthetic event (never a real server message) only when the reconnect
     // followed an actual outage, not a deliberate team switch.
+    // CHT-1603 (PR #352 review, finding 2): ws.js stops reconnecting and
+    // dispatches these when the server closes with 4001 / 4003.
+    describe('connection:unauthorized', () => {
+        it('ends the session like a REST 401: drops the token, shows sign-in', () => {
+            dispatch({ type: 'unauthorized', entity: 'connection', data: { code: 4001 } });
+            expect(api.logout).toHaveBeenCalled();
+            expect(setCurrentUser).toHaveBeenCalledWith(null);
+            expect(setCurrentTeam).toHaveBeenCalledWith(null);
+            expect(showAuthScreen).toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith('Your session has ended. Please sign in again.', 'warning');
+        });
+    });
+
+    describe('connection:forbidden', () => {
+        it('says live updates stopped, and keeps the session', () => {
+            dispatch({ type: 'forbidden', entity: 'connection', data: { code: 4003 } });
+            expect(showToast).toHaveBeenCalledWith(
+                'Live updates stopped: you no longer have access to this team.', 'error');
+            expect(api.logout).not.toHaveBeenCalled();
+            expect(showAuthScreen).not.toHaveBeenCalled();
+        });
+    });
+
     describe('connection:reconnected', () => {
         it('refreshes the inbox unread badge regardless of current view', () => {
             getCurrentView.mockReturnValue('issues');

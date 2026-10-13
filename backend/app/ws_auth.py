@@ -23,7 +23,9 @@ Where the credential comes from, in this order (``presented_credential``):
 2. A ``Sec-WebSocket-Protocol`` entry ``chaotic.bearer.<token>``, offered
    alongside ``chaotic``, the subprotocol the server selects. A browser's
    ``WebSocket`` cannot set headers, and this is the one header it can
-   set. The server never echoes the bearer entry.
+   set. The server never echoes the bearer entry. A client that offers
+   only the bearer entry still connects, with no subprotocol selected
+   (RFC 6455 4.1: a client fails only on a protocol it did not offer).
 3. ``?token=<token>``: deprecated. The web app sent its login JWT this way
    until CHT-1603, and a tab still running an older bundle does until it
    reloads. It still works, and the server logs a deprecation warning
@@ -100,7 +102,6 @@ class PresentedCredential:
     # The subprotocol to select on accept: ``chaotic`` if the client
     # offered it, else none.
     subprotocol: str | None
-    via_query: bool = False
 
 
 @reads
@@ -116,38 +117,39 @@ def _offered_subprotocols(websocket) -> list[str]:
 
 def presented_credential(websocket, query_token: str | None) -> PresentedCredential:
     """The credential this handshake carries, by the order in the module
-    docstring. Raises ``WsRefused`` (4001) when the places disagree or the
-    Authorization header is not a bearer token."""
+    docstring. Raises ``WsRefused`` (4001) when the places disagree.
+
+    An Authorization header that is not a bearer token is ignored, not
+    refused (PR #352 review, finding 3): a browser can attach cached HTTP
+    auth, or a proxy its own header, to the upgrade, and the page cannot
+    stop it. With no other source the handshake has no credential (4001)."""
     global _warned_query_token
 
     found: list[str] = []
     authorization = websocket.headers.get("authorization")
     if authorization is not None:
         scheme, _, value = authorization.strip().partition(" ")
-        if scheme.lower() != "bearer" or not value.strip():
-            raise WsRefused(CLOSE_UNAUTHENTICATED, "Authorization header is not a bearer token")
-        found.append(value.strip())
+        if scheme.lower() == "bearer" and value.strip():
+            found.append(value.strip())
 
     offered = _offered_subprotocols(websocket)
     for entry in offered:
         if entry.startswith(BEARER_PROTOCOL_PREFIX):
             found.append(entry[len(BEARER_PROTOCOL_PREFIX):])
 
-    via_query = False
     if query_token:
+        # Warned whatever else came with it: the URL leaks the token to
+        # access logs either way (PR #352 review, finding 6).
         found.append(query_token)
-        if len(found) == 1:
-            via_query = True
-            if not _warned_query_token:
-                _warned_query_token = True
-                logger.warning(QUERY_TOKEN_DEPRECATION)
+        if not _warned_query_token:
+            _warned_query_token = True
+            logger.warning(QUERY_TOKEN_DEPRECATION)
 
     if len(set(found)) > 1:
         raise WsRefused(CLOSE_UNAUTHENTICATED, "Different credentials presented")
     return PresentedCredential(
         token=found[0] if found else None,
         subprotocol=SUBPROTOCOL if SUBPROTOCOL in offered else None,
-        via_query=via_query,
     )
 
 

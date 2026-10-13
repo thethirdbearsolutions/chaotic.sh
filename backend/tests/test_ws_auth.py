@@ -36,6 +36,7 @@ class FakeWebSocket:
         self.headers = Headers(headers or {})
         self.scope = {"type": "websocket", "subprotocols": list(subprotocols or [])}
         self.accept = AsyncMock()
+        self.send_json = AsyncMock()
         self._closed = asyncio.Event()
         self.close = AsyncMock(side_effect=lambda code=1000: self._closed.set())
 
@@ -92,9 +93,25 @@ class TestWhereTheCredentialComesFrom:
         with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
             first = presented_credential(FakeWebSocket(), "abc")
             presented_credential(FakeWebSocket(), "abc")
-        assert first.token == "abc" and first.via_query
+        assert first.token == "abc"
         assert [r.getMessage() for r in caplog.records] == [ws_auth.QUERY_TOKEN_DEPRECATION]
         assert "abc" not in caplog.text
+
+    def test_query_token_beside_another_source_is_warned_too(self, monkeypatch, caplog):
+        """PR #352 review, finding 6: the URL leaks it whatever else came."""
+        monkeypatch.setattr(ws_auth, "_warned_query_token", False)
+        ws = FakeWebSocket(headers={"Authorization": "Bearer abc"})
+        with caplog.at_level(logging.WARNING, logger="app.ws_auth"):
+            assert presented_credential(ws, "abc").token == "abc"
+        assert [r.getMessage() for r in caplog.records] == [ws_auth.QUERY_TOKEN_DEPRECATION]
+
+    @pytest.mark.parametrize("authorization", ["Basic dXNlcjpwYXNz", "Bearer ", "Negotiate x"])
+    def test_a_non_bearer_authorization_header_is_ignored(self, authorization):
+        """PR #352 review, finding 3: cached HTTP auth or a proxy's header
+        on the upgrade must not refuse a good subprotocol credential."""
+        ws = FakeWebSocket(headers={"Authorization": authorization}, subprotocols=["chaotic", "chaotic.bearer.abc"])
+        assert presented_credential(ws, None).token == "abc"
+        assert presented_credential(FakeWebSocket(headers={"Authorization": authorization}), None).token is None
 
     def test_the_same_credential_in_two_places_is_fine(self):
         ws = FakeWebSocket(headers={"Authorization": "Bearer abc"}, subprotocols=["chaotic", "chaotic.bearer.abc"])
@@ -106,8 +123,6 @@ class TestWhereTheCredentialComesFrom:
             ({"Authorization": "Bearer abc"}, ["chaotic.bearer.xyz"], None),
             ({"Authorization": "Bearer abc"}, [], "xyz"),
             ({}, ["chaotic", "chaotic.bearer.abc", "chaotic.bearer.xyz"], None),
-            ({"Authorization": "Basic dXNlcjpwYXNz"}, [], None),
-            ({"Authorization": "Bearer "}, [], None),
         ],
     )
     def test_refused_shapes(self, headers, subprotocols, query):
@@ -278,6 +293,31 @@ class TestMidConnection:
         await APIKeyService().revoke(row, actor_id=test_user.id)
         assert await self._closed_with(ws, task) == 4001
         assert ws not in manager.active_connections.get(test_team.id, set())
+        await manager.broadcast_to_team(test_team.id, {"type": "created", "entity": "issue", "data": {}})
+        ws.send_json.assert_not_awaited()
+
+    async def test_watcher_disconnect_during_a_broadcast(self, test_user, test_team):
+        """PR #352 review, findings 1 and 5: the watcher removing a socket
+        while a broadcast is awaiting a send must not break the broadcast
+        (it raised "Set changed size during iteration", a 500 for the
+        write that broadcast)."""
+        from app.websocket import manager
+
+        row, raw = await key_for(test_user)
+        slow = FakeWebSocket(headers={"Authorization": f"Bearer {jwt_for(test_user)}"})
+        revoked = FakeWebSocket(headers={"Authorization": f"Bearer {raw}"})
+
+        async def slow_send(message):
+            await asyncio.sleep(0.3)  # several re-checks happen meanwhile
+
+        slow.send_json.side_effect = slow_send
+        tasks = [await run_endpoint(slow, test_team.id), await run_endpoint(revoked, test_team.id)]
+        await APIKeyService().revoke(row, actor_id=test_user.id)
+        await manager.broadcast_to_team(test_team.id, {"type": "created", "entity": "issue", "data": {}})
+        assert await self._closed_with(revoked, tasks[1]) == 4001
+        slow.send_json.assert_awaited_once()
+        await slow.close()
+        await tasks[0]
 
     async def test_member_removed_closes_4003(self, test_user, test_user2, test_team):
         await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role="MEMBER")
@@ -327,3 +367,37 @@ class TestMidConnection:
         await APIKeyService().revoke(row, actor_id=test_user.id)
         await asyncio.wait_for(task, 5)
         ws.close.assert_awaited_once_with(code=4001)
+
+
+class TestWatcherFailure:
+    def test_a_failed_watcher_is_logged(self, caplog):
+        """PR #352 review, finding 8."""
+        from app.main import _log_watcher_failure
+
+        async def boom():
+            raise RuntimeError("boom")
+
+        async def run():
+            task = asyncio.create_task(boom())
+            await asyncio.gather(task, return_exceptions=True)
+            return task
+
+        async def cancelled():
+            task = asyncio.create_task(asyncio.sleep(10))
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return task
+
+        loop = asyncio.new_event_loop()
+        try:
+            failed = loop.run_until_complete(run())
+            gone = loop.run_until_complete(cancelled())
+        finally:
+            loop.close()
+        with caplog.at_level(logging.ERROR, logger="app.main"):
+            _log_watcher_failure(gone)
+            assert not caplog.records
+            _log_watcher_failure(failed)
+        assert caplog.records[0].getMessage() == "WebSocket credential watcher failed"
+        assert caplog.records[0].exc_info[1].args == ("boom",)
