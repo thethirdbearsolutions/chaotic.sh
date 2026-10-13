@@ -55,4 +55,6 @@ class OxydeUser(Model):
             # distinct, so humans and hand-made agents (no external_ref)
             # never collide. Created by migration 0022.
             Index(("agent_team_id", "external_ref"), name="users_team_external_ref_uq", unique=True),
+            # A registrar's identities: its two caps count by this (CHT-1498).
+            Index(("registered_by_id",), name="ix_users_registered_by_id"),
         ]

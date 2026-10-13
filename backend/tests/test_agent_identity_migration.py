@@ -125,8 +125,9 @@ def test_agents_become_assistants_and_nothing_else_changes(at_0021):
     after = _users(at_0021)
     indexes_after, fks_after = _indexes_and_fks(at_0021)
     assert fks_after == fks_before and len(fks_after) == 3
-    assert {k: v for k, v in indexes_after.items() if k != "users_team_external_ref_uq"} == indexes_before
-    assert "users_team_external_ref_uq" in indexes_after
+    new_indexes = {"users_team_external_ref_uq", "ix_users_registered_by_id"}
+    assert {k: v for k, v in indexes_after.items() if k not in new_indexes} == indexes_before
+    assert new_indexes <= set(indexes_after)
     assert set(after) == set(before) == set(USERS)
     for user_id, row in after.items():
         assert {k: v for k, v in row.items() if k not in NEW} == before[user_id], user_id

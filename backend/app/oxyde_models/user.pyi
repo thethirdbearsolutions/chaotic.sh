@@ -33,7 +33,7 @@ class OxydeUser(Model):
     parent_user: OxydeUser | None
     agent_team_id: str | None
     agent_project_id: str | None
-    kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None
+    kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None
     external_ref: str | None
     registered_by_id: str | None
     can_register: bool
@@ -143,8 +143,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -292,8 +292,8 @@ class OxydeUserQuery(Query[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -614,8 +614,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -763,8 +763,8 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         is_superuser: bool | None = None,
         is_superuser__in: list[bool] | None = None,
         is_superuser__isnull: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
-        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind__in: list[Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')]] | None = None,
         kind__isnull: bool | None = None,
         name: str | None = None,
         name__contains: str | None = None,
@@ -982,7 +982,7 @@ class OxydeUserManager(QueryManager[OxydeUser]):
         is_active: bool | None = None,
         is_agent: bool | None = None,
         is_superuser: bool | None = None,
-        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f9c434b6c00>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f9c434b6ca0>, return_type=PydanticUndefined, when_used='always')] | None = None,
+        kind: Annotated[app.enums.AgentKind, BeforeValidator(func=<function DbEnum.<locals>.coerce at 0x7f3f92c19620>, json_schema_input_type=PydanticUndefined), PlainSerializer(func=<function DbEnum.<locals>.serialize at 0x7f3f92c196c0>, return_type=PydanticUndefined, when_used='always')] | None = None,
         name: str | None = None,
         parent_user: OxydeUser | None = None,
         parent_user_id: str | None = None,
