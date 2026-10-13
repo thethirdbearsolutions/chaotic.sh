@@ -6,6 +6,7 @@ from app.oxyde_models.user import OxydeUser as User
 from app.services.user_service import UserService
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
+from app.enums import TeamRole
 from app.utils.security import decode_token
 
 security = HTTPBearer(auto_error=False)
@@ -131,6 +132,29 @@ async def check_user_team_access(user: User, team_id: str) -> bool:
     team_service = TeamService()
     member = await team_service.get_member(team_id, user.id)
     return member is not None
+
+
+async def can_manage_agent(user: User, agent: User) -> bool:
+    """May `user` update, delete, deactivate/reactivate, mint a key for,
+    or revoke a key of `agent`?
+
+    Admins (and owners) of the agent's team may. The agent's creator may
+    only while still a member of that team: being removed from the team
+    ends the creator's rights over its agents, or an ex-member could mint
+    a fresh key and act in the team as the agent (CHT-1508). A
+    project-scoped agent needs nothing more, because a human's project
+    access *is* membership of the project's team
+    (``check_user_project_access``). Agents never manage agents: they are
+    not team members, and no agent is another agent's parent.
+    """
+    if user.is_agent:
+        return False
+    member = await TeamService().get_member(agent.agent_team_id, user.id)
+    if member is None:
+        return False
+    if member.role in (TeamRole.OWNER, TeamRole.ADMIN):
+        return True
+    return agent.parent_user_id == user.id
 
 
 async def check_user_project_access(user: User, project_id: str, team_id: str) -> bool:

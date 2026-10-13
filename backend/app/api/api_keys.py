@@ -1,7 +1,8 @@
 """API Key routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, can_manage_agent
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
+from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
 
 router = APIRouter()
@@ -53,7 +54,15 @@ async def revoke_api_key(
             detail="API key not found",
         )
 
-    if api_key.user_id != current_user.id:
+    # An agent's key is owned by the agent's creator, but revoking it is
+    # managing the agent: the creator may only while still in the agent's
+    # team, and the team's admins may too (CHT-1508).
+    agent = await AgentService().get_by_id(api_key.agent_user_id) if api_key.agent_user_id else None
+    if agent is not None:
+        allowed = await can_manage_agent(current_user, agent)
+    else:
+        allowed = api_key.user_id == current_user.id
+    if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to revoke this API key",

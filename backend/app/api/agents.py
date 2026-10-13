@@ -1,6 +1,6 @@
 """Agent routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser, check_user_team_access
+from app.api.deps import CurrentUser, can_manage_agent, check_user_team_access
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
 from app.schemas.api_key import APIKeyCreated
 from app.services.agent_service import AgentHasAuthoredContentError, AgentInactiveError, AgentService
@@ -218,12 +218,7 @@ async def update_agent(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can update agents
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
@@ -264,12 +259,7 @@ async def create_agent_key(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can mint a new key for an agent
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to mint a key for this agent",
@@ -303,7 +293,8 @@ async def deactivate_agent(
 ) -> AgentResponse:
     """Retire an agent: revoke all its API keys and block it from signing
     in, keeping its authored work attributed (CHT-1494). Allowed to the
-    agent's parent user and to admins of the agent's team -- the same
+    agent's parent user while still a member of the agent's team, and to
+    admins of that team (``can_manage_agent``, CHT-1508) -- the same
     people who may delete it, so an admin can retire an agent whose
     delete is refused for having authored work."""
     return await _set_agent_active(agent_id, current_user, active=False)
@@ -331,11 +322,7 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Not authorized to {action} this agent",
@@ -382,12 +369,7 @@ async def delete_agent(
             detail="Agent not found",
         )
 
-    # Only the parent user or team admins can delete agents
-    team_service = TeamService()
-    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
-    is_owner = agent.parent_user_id == current_user.id
-
-    if not (is_admin or is_owner):
+    if not await can_manage_agent(current_user, agent):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this agent",
