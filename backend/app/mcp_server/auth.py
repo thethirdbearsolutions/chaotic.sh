@@ -40,8 +40,8 @@ OAuth MCP client finds the authorization server (see
 callers are API-key users, and the OAuth hint would only mislead them.
 With the flag off every 401 is the bare challenge, as before.
 
-Either way, the resolved user is stashed in
-``context.current_mcp_user`` for the life of the request; the
+Either way, the resolved principal (user and granted scopes) is stashed
+in ``context.current_mcp_principal`` for the life of the request; the
 ``InProcessBackend`` adapter (backend.py) reads it back out on every call.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.auth.credentials import CredentialError, CredentialFailure, CredentialKind, mcp_resolver
-from app.mcp_server.context import current_mcp_user
+from app.mcp_server.context import current_mcp_principal
 from app.oauth.discovery import www_authenticate_challenge
 from app.services.token_service import ALL_SECRET_PREFIXES
 
@@ -138,7 +138,7 @@ async def _resolve(
 ):
     """Resolve the presented credential with the shared resolver
     (``app.auth.credentials``, CHT-1560), the one the REST API uses.
-    Returns (user, None) on success or (None, error_response).
+    Returns (principal, None) on success or (None, error_response).
 
     ``challenge`` is the WWW-Authenticate header when no token was sent,
     ``invalid_token_challenge`` (default: the same) when a token of any
@@ -166,7 +166,7 @@ async def _resolve(
         return None, JSONResponse(
             {"error": message}, status_code=exc.status_code, headers=invalid_token_challenge or challenge,
         )
-    return principal.user, None
+    return principal, None
 
 
 class _AuthWrapperBase:
@@ -190,16 +190,16 @@ class _AuthWrapperBase:
             await self._app(scope, receive, send)
             return
 
-        user, error = await _resolve(self._extract_key(scope), *self._challenges())
+        principal, error = await _resolve(self._extract_key(scope), *self._challenges())
         if error is not None:
             await error(scope, receive, send)
             return
 
-        reset = current_mcp_user.set(user)
+        reset = current_mcp_principal.set(principal)
         try:
             await self._app(scope, receive, send)
         finally:
-            current_mcp_user.reset(reset)
+            current_mcp_principal.reset(reset)
 
 
 class BearerHeaderAuth(_AuthWrapperBase):
