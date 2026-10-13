@@ -543,7 +543,8 @@ class TestCapabilityPathRedaction:
         assert scope["path"] == shape.format(key=f"ck_...{api_key[-4:]}")
         assert api_key.encode() not in scope["raw_path"]
 
-    @pytest.mark.parametrize("prefix", ["cat_", "crt_"])
+    # ccs_: OAuth client secrets, missing from the set until PR #350's review.
+    @pytest.mark.parametrize("prefix", ["cat_", "crt_", "cac_", "cct_", "ccs_"])
     async def test_oauth_token_shapes_are_redacted_anywhere(self, recording_client, prefix):
         ac, recorder = recording_client
         token = prefix + "ab" * 32
