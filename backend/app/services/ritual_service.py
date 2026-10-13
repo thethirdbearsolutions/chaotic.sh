@@ -23,9 +23,32 @@ from urllib.parse import urlsplit
 from app.oxyde_models.document import OxydeDocument
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
-from app.oxyde_models.ritual import OxydeRitual, OxydeRitualGroup, OxydeRitualAttestation
+from app.oxyde_models.ritual import (
+    OxydeRitual,
+    OxydeRitualAttestation,
+    OxydeRitualGroup,
+    OxydeRitualRejection,
+)
 from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
 from app.oxyde_models.user import OxydeUser
+
+
+class RitualAlreadyResolvedError(Exception):
+    """A gate or review was already decided (CHT-1606): approved, or
+    rejected and not tried again since. The API answers 409 with who
+    decided it and when, so a second approver (a phone acting on a stale
+    notification) can show that instead of a bare failure."""
+
+    def __init__(self, resolution: str, resolved_by: str | None, resolved_at: datetime | None):
+        self.resolution = resolution  # "approved" or "rejected"
+        self.resolved_by = resolved_by
+        self.resolved_at = resolved_at
+        super().__init__(f"Already {resolution}.")
+
+
+class NothingToRejectError(Exception):
+    """A reject with nothing waiting: no attestation on a REVIEW ritual,
+    no open request on a GATE (CHT-1606). The API answers 404."""
 
 
 class RitualService:
@@ -1022,6 +1045,14 @@ class RitualService:
                 return existing
             raise
 
+        # A re-attest answers an earlier rejection (CHT-1606).
+        try:
+            await self.supersede_rejections(ritual_id, issue_id)
+        except Exception:
+            logger.exception(
+                "Failed to supersede rejections for ritual=%s issue=%s", ritual_id, issue_id,
+            )
+
         # Broadcast issue-level attest. Emitted here (not just at the API
         # layer) so internal callers are observable too — same doctrine as
         # the other intent-lifecycle events.
@@ -1301,6 +1332,15 @@ class RitualService:
                 return existing
             raise
 
+        # A human completed the gate after all: any rejection of the
+        # request is moot (CHT-1606).
+        try:
+            await self.supersede_rejections(ritual_id, issue_id)
+        except Exception:
+            logger.exception(
+                "Failed to supersede rejections for ritual=%s issue=%s", ritual_id, issue_id,
+            )
+
         try:
             await self._clear_ticket_limbo(ritual, issue_id, user_id)
         except Exception:
@@ -1474,6 +1514,214 @@ class RitualService:
             )
 
         return attestation
+
+    # ------------------------------------------------------------------
+    # Reject (CHT-1606)
+    # ------------------------------------------------------------------
+
+    async def latest_rejection(
+        self, ritual_id: str, issue_id: str,
+    ) -> "OxydeRitualRejection | None":
+        """The newest rejection of `ritual_id` on `issue_id`, if any."""
+        return await OxydeRitualRejection.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id,
+        ).order_by("-rejected_at").first()
+
+    async def outstanding_rejection(
+        self, ritual_id: str, issue_id: str,
+    ) -> "OxydeRitualRejection | None":
+        """The rejection the attester has not answered yet: no re-attest,
+        no re-request, and the gate not completed since."""
+        return await OxydeRitualRejection.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id, superseded_at=None,
+        ).order_by("-rejected_at").first()
+
+    async def supersede_rejections(self, ritual_id: str, issue_id: str) -> int:
+        """Mark every outstanding rejection of this (ritual, issue) as
+        answered: the attester tried again or a human completed the gate."""
+        return await OxydeRitualRejection.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id, superseded_at=None,
+        ).update(superseded_at=datetime.now(timezone.utc))
+
+    async def _open_gate_request(self, ritual_id: str, issue_id: str):
+        """The open intent whose unresolved blocker is this GATE ritual on
+        this issue: the request a GATE reject refuses. None when nobody
+        is waiting on the gate."""
+        intents = await OxydeTicketLimbo.objects.filter(
+            issue_id=issue_id, cleared_at=None,
+        ).all()
+        for intent in intents:
+            blocker = await OxydeTicketLimboBlocker.objects.filter(
+                limbo_id=intent.id, ritual_id=ritual_id, resolved_at=None,
+            ).first()
+            if blocker is not None:
+                return intent
+        return None
+
+    async def reject_for_issue(
+        self, ritual: OxydeRitual, issue_id: str, rejecter_id: str, note: str,
+    ) -> "OxydeRitualRejection":
+        """Send a ticket-level GATE request or REVIEW attestation back,
+        with a reason (CHT-1606).
+
+        The gate stays pending ("keep"): the ticket does not move and no
+        intent is cleared.
+
+          * REVIEW: the unapproved attestation is deleted, so the ritual
+            reads as unattested again and the agent attests anew (the
+            unique (ritual, issue) attestation would otherwise make a
+            re-attest return the rejected row). Its attester, note and
+            artifact are copied onto the rejection first.
+          * GATE: the open request's blocker stays unresolved. The
+            requester sees the reason and asks again, which re-notifies
+            the approvers (IssueService._open_intent_with_limbo).
+
+        A "bounce" variant (the ticket also returns to todo) would add a
+        step after the record is written, in `_after_reject`; nothing
+        before it needs to change.
+
+        Raises RitualAlreadyResolvedError when the gate/review was already
+        approved, or was already rejected and not tried again since;
+        NothingToRejectError when nothing is waiting (no attestation for a
+        REVIEW, no open request for a GATE); ValueError for a ritual that
+        is not a ticket-level GATE or REVIEW ritual.
+        """
+        if ritual.trigger not in (RitualTrigger.TICKET_CLOSE, RitualTrigger.TICKET_CLAIM):
+            raise ValueError(
+                f"Ritual '{ritual.name}' has trigger={ritual.trigger.value}; "
+                "only ticket-level rituals (ticket_close, ticket_claim) can be rejected."
+            )
+        if ritual.approval_mode not in (ApprovalMode.GATE, ApprovalMode.REVIEW):
+            raise ValueError(
+                f"Ritual '{ritual.name}' is {ritual.approval_mode.value} mode; "
+                "only GATE and REVIEW rituals wait on a human, so only they can be rejected."
+            )
+        note = (note or "").strip()
+        if not note:
+            raise ValueError("A rejection needs a reason.")
+
+        async with atomic():
+            attestation = await self.get_issue_attestation(ritual.id, issue_id)
+            if attestation is not None and attestation.approved_at is not None:
+                raise RitualAlreadyResolvedError(
+                    "approved", attestation.approved_by, attestation.approved_at,
+                )
+            outstanding = await self.outstanding_rejection(ritual.id, issue_id)
+
+            if ritual.approval_mode == ApprovalMode.REVIEW:
+                if attestation is None:
+                    if outstanding is not None:
+                        raise RitualAlreadyResolvedError(
+                            "rejected", outstanding.rejected_by_id, outstanding.rejected_at,
+                        )
+                    raise NothingToRejectError(
+                        f"Ritual '{ritual.name}' has no attestation on this ticket to reject."
+                    )
+                # Compare-and-delete, the counterpart of _approve_atomic: an
+                # approval that landed after the read above wins.
+                deleted = await OxydeRitualAttestation.objects.filter(
+                    id=attestation.id, approved_at=None,
+                ).delete()
+                if not deleted:
+                    fresh = await self.get_issue_attestation(ritual.id, issue_id)
+                    raise RitualAlreadyResolvedError(
+                        "approved",
+                        fresh.approved_by if fresh else None,
+                        fresh.approved_at if fresh else None,
+                    )
+                record = dict(
+                    attested_by_id=attestation.attested_by,
+                    attested_at=attestation.attested_at,
+                    attestation_note=attestation.note,
+                    artifact_ref=attestation.artifact_ref,
+                )
+            else:
+                if outstanding is not None:
+                    raise RitualAlreadyResolvedError(
+                        "rejected", outstanding.rejected_by_id, outstanding.rejected_at,
+                    )
+                intent = await self._open_gate_request(ritual.id, issue_id)
+                if intent is None:
+                    raise NothingToRejectError(
+                        f"Nobody is waiting on gate '{ritual.name}' for this ticket; "
+                        "there is no request to reject."
+                    )
+                record = dict(
+                    attested_by_id=intent.requested_by_id,
+                    attested_at=intent.requested_at,
+                )
+
+            rejection = await OxydeRitualRejection.objects.create(
+                ritual_id=ritual.id,
+                issue_id=issue_id,
+                rejected_by_id=rejecter_id,
+                note=note,
+                **record,
+            )
+            # Same shape as RITUAL_ATTESTED: the ritual in field_name, the
+            # note (here the reason) in new_value.
+            await OxydeIssueActivity.objects.create(
+                issue_id=issue_id,
+                user_id=rejecter_id,
+                activity_type=ActivityType.RITUAL_REJECTED,
+                field_name=ritual.name,
+                new_value=note,
+            )
+
+        await self._after_reject(ritual, issue_id, rejection)
+        return rejection
+
+    async def _after_reject(
+        self, ritual: OxydeRitual, issue_id: str, rejection: "OxydeRitualRejection",
+    ) -> None:
+        """Side effects of a committed reject, each best-effort: the
+        approvers' inbox entries are resolved, the attester (and its owner,
+        for an agent) is told why, and the team sees a ritual_rejected
+        event. "Keep" leaves the ticket where it is; a "bounce" policy
+        would move it back to todo here.
+        """
+        from app.services.inbox_service import InboxService
+
+        inbox = InboxService()
+        try:
+            await inbox.resolve_gate_or_review(ritual_id=ritual.id, issue_id=issue_id)
+        except Exception:
+            logger.exception(
+                "Failed to resolve inbox entries after reject ritual=%s issue=%s",
+                ritual.id, issue_id,
+            )
+
+        issue = await OxydeIssue.objects.get_or_none(id=issue_id)
+        project = await OxydeProject.objects.get_or_none(id=issue.project_id) if issue else None
+        if issue is None or project is None:
+            return
+
+        try:
+            await inbox.notify_gate_rejected(
+                ritual=ritual, issue=issue, project=project, rejection=rejection,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify the attester of a reject ritual=%s issue=%s",
+                ritual.id, issue_id,
+            )
+
+        try:
+            from app.websocket import broadcast_attestation_event
+            await broadcast_attestation_event(
+                project.team_id,
+                "ritual_rejected",
+                {
+                    "ritual_id": ritual.id,
+                    "ritual_name": ritual.name,
+                    "issue_id": issue_id,
+                    "rejection_id": rejection.id,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to broadcast ritual_rejected for issue=%s", issue_id,
+            )
 
     async def _clear_ticket_limbo(
         self, ritual: "OxydeRitual", issue_id: str, cleared_by_id: str,
@@ -1927,7 +2175,17 @@ class RitualService:
         # 1. GATE rituals from TicketLimbo
         for limbo, issue, ritual, requested_by in await self._get_pending_gate_limbo_records(project_id):
             _ensure_issue(issue.id, issue)
+            # A rejected request stays listed, marked as sent back
+            # (CHT-1606).
+            rejection = await self.outstanding_rejection(ritual.id, issue.id)
+            rejecter = (
+                await OxydeUser.objects.get_or_none(id=rejection.rejected_by_id)
+                if rejection and rejection.rejected_by_id else None
+            )
             issues_map[issue.id]["pending_approvals"].append({
+                "rejected_by_name": (rejecter.name if rejecter else "Unknown") if rejection else None,
+                "rejected_at": rejection.rejected_at.isoformat() if rejection else None,
+                "rejection_note": rejection.note if rejection else None,
                 "ritual_id": ritual.id,
                 "ritual_name": ritual.name,
                 "ritual_prompt": ritual.prompt,
@@ -1998,19 +2256,37 @@ class RitualService:
             "ritual", "sprint", "issue"
         ).filter(ritual_id__in=ritual_ids).all()
 
-        # Sort by attested_at descending
-        all_attestations.sort(key=lambda a: a.attested_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        # Rejections (CHT-1606) are history too: a rejected REVIEW
+        # attestation is deleted, so its rejection row is its only record.
+        rejections = await OxydeRitualRejection.objects.join(
+            "ritual", "issue"
+        ).filter(ritual_id__in=ritual_ids).all()
+
+        epoch = datetime.min.replace(tzinfo=timezone.utc)
+
+        def _when(row):
+            if isinstance(row, OxydeRitualRejection):
+                return row.rejected_at or epoch
+            return row.attested_at or epoch
+
+        # Newest first: an attestation by when it was made, a rejection by
+        # when it was rejected.
+        rows = [*all_attestations, *rejections]
+        rows.sort(key=_when, reverse=True)
 
         # Apply pagination
-        paginated = all_attestations[skip:skip + limit]
+        paginated = rows[skip:skip + limit]
 
-        # Batch-fetch all attester/approver users in one query
+        # Batch-fetch all attester/approver/rejecter users in one query
         user_ids = set()
-        for att in paginated:
-            if att.attested_by:
-                user_ids.add(att.attested_by)
-            if att.approved_by:
-                user_ids.add(att.approved_by)
+        for row in paginated:
+            if isinstance(row, OxydeRitualRejection):
+                user_ids.update(u for u in (row.attested_by_id, row.rejected_by_id) if u)
+                continue
+            if row.attested_by:
+                user_ids.add(row.attested_by)
+            if row.approved_by:
+                user_ids.add(row.approved_by)
 
         user_map = {}
         if user_ids:
@@ -2018,9 +2294,13 @@ class RitualService:
             user_map = {u.id: u for u in users}
 
         results = []
-        for att in paginated:
-            att.attester = user_map.get(att.attested_by)
-            att.approver = user_map.get(att.approved_by)
-            results.append(att)
+        for row in paginated:
+            if isinstance(row, OxydeRitualRejection):
+                row.attester = user_map.get(row.attested_by_id)
+                row.rejecter = user_map.get(row.rejected_by_id)
+            else:
+                row.attester = user_map.get(row.attested_by)
+                row.approver = user_map.get(row.approved_by)
+            results.append(row)
 
         return results

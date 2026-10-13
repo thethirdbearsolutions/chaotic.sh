@@ -113,3 +113,58 @@ class OxydeRitualAttestation(Model):
             Index(("ritual_id", "sprint_id"), unique=True, name="uq_ritual_attestation_per_sprint",
                   where="sprint_id IS NOT NULL"),
         ]
+
+
+class OxydeRitualRejection(Model):
+    """A human sent a ticket-level GATE or REVIEW ritual back (CHT-1606).
+
+    Rejecting keeps the gate pending: a REVIEW attestation is deleted, so
+    the ritual reads as unattested and the agent attests again; a GATE
+    request leaves its limbo blocker open, so the gate stays waiting until
+    the requester asks again. This row is the record of what was refused,
+    by whom and why, kept after the attestation is gone so the attesting
+    agent can read the reason and history keeps it.
+
+    ``attested_by`` is who the rejection is addressed to: the attester of
+    a REVIEW attestation, or whoever opened the intent a GATE blocks.
+    ``superseded_at`` is set when that person tries again (re-attests, or
+    re-requests the gated transition) or a human completes the gate
+    anyway, so "an outstanding rejection" is ``superseded_at IS NULL``.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), db_pk=True)
+    ritual: OxydeRitual | None = Field(default=None, db_on_delete="CASCADE")
+    issue: OxydeIssue | None = Field(default=None, db_on_delete="CASCADE")
+    attested_by: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    attested_at: DateTimeUTC | None = Field(default=None)
+    attestation_note: str | None = Field(default=None)
+    artifact_ref: str | None = Field(default=None)
+    rejected_by: OxydeUser | None = Field(default=None, db_on_delete="SET NULL")
+    rejected_at: DateTimeUTC = Field(default_factory=lambda: datetime.now(timezone.utc))
+    note: str = Field()
+    superseded_at: DateTimeUTC | None = Field(default=None)
+
+    @property
+    def attester(self):
+        """Attester user, set by service code after manual lookup."""
+        return getattr(self, '_attester', None)
+
+    @attester.setter
+    def attester(self, value):
+        self._attester = value
+
+    @property
+    def rejecter(self):
+        """Rejecting user, set by service code after manual lookup."""
+        return getattr(self, '_rejecter', None)
+
+    @rejecter.setter
+    def rejecter(self, value):
+        self._rejecter = value
+
+    class Meta:
+        is_table = True
+        table_name = "ritual_rejections"
+        indexes = [
+            Index(("ritual_id", "issue_id"), name="ritual_rejections_ritual_issue_idx"),
+        ]

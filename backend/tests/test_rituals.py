@@ -5081,8 +5081,13 @@ class TestTicketRitualAPIEdgeCases:
             f"/api/rituals/{ritual.id}/approve-issue/{test_issue.id}",
             headers=auth_headers,
         )
-        assert response.status_code == 400
-        assert "already approved" in response.json()["detail"]
+        # CHT-1606: a 409 that says who decided it and when.
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "ritual_already_resolved"
+        assert detail["resolution"] == "approved"
+        assert detail["resolved_by"] == test_user.id
+        assert detail["resolved_at"]
 
 
 @pytest.mark.asyncio

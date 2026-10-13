@@ -595,6 +595,12 @@ class IssueService:
             )
 
         gate_rituals = [r for r in newly_blocked_rituals if r.approval_mode == ApprovalMode.GATE]
+        try:
+            gate_rituals += await self._rejected_gates_asked_again(issue, pending_rituals, gate_rituals)
+        except Exception:
+            logger.exception(
+                "Failed to check rejected gates for issue=%s", issue.id,
+            )
         if gate_rituals:
             try:
                 await self._notify_gate_pending(issue, user_id, gate_rituals)
@@ -604,6 +610,29 @@ class IssueService:
                 )
 
         raise error_class(issue.identifier, rituals=pending_rituals, issue_pk=issue.id)
+
+    async def _rejected_gates_asked_again(self, issue, pending_rituals: list, already: list) -> list:
+        """GATE rituals a human rejected that the requester is now asking
+        for again (CHT-1606).
+
+        A reject keeps the request's blocker open under the same intent,
+        so asking again adds no new blocker and would notify nobody: the
+        approvers' entries were resolved by the reject. These are the
+        rituals to notify about again. Every rejection of a gate being
+        notified about here (newly blocked or asked again) is marked
+        answered, so the next attempt does not re-notify.
+        """
+        ritual_service = RitualService()
+        already_ids = {r.id for r in already}
+        again = [
+            r for r in pending_rituals
+            if r.approval_mode == ApprovalMode.GATE
+            and r.id not in already_ids
+            and await ritual_service.outstanding_rejection(r.id, issue.id) is not None
+        ]
+        for ritual in [*already, *again]:
+            await ritual_service.supersede_rejections(ritual.id, issue.id)
+        return again
 
     async def _notify_gate_pending(self, issue, requester_id: str, gate_rituals: list) -> None:
         """CHT-1250/CHT-1251: a GATE ritual just became blocking on
@@ -1420,7 +1449,7 @@ class IssueService:
         span nine tables that a future migration could add to without
         a cascade.
         """
-        from app.oxyde_models.ritual import OxydeRitualAttestation
+        from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 
         async with atomic():
             await OxydeIssueComment.objects.filter(issue_id=issue.id).delete()
@@ -1433,6 +1462,7 @@ class IssueService:
             # cleanup, orphan attestations accumulate pointing at a
             # deleted issue.
             await OxydeRitualAttestation.objects.filter(issue_id=issue.id).delete()
+            await OxydeRitualRejection.objects.filter(issue_id=issue.id).delete()
             # Limbo intents + blockers. Blockers go first so we don't
             # leave dangling rows when the parent table is cleared.
             limbos = await OxydeTicketLimbo.objects.filter(issue_id=issue.id).all()

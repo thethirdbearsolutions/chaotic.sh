@@ -2410,3 +2410,880 @@ class OxydeRitualAttestationManager(QueryManager[OxydeRitualAttestation]):
         """Bulk update objects."""
         ...
 
+
+class OxydeRitualRejection(Model):
+    class Meta:
+        is_table: bool
+        table_name: str
+    id: str
+    ritual: OxydeRitual | None
+    issue: OxydeIssue | None
+    attested_by: OxydeUser | None
+    attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None
+    attestation_note: str | None
+    artifact_ref: str | None
+    rejected_by: OxydeUser | None
+    rejected_at: datetime
+    note: str
+    superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None
+    ritual_id: str | None
+    issue_id: str | None
+    attested_by_id: str | None
+    rejected_by_id: str | None
+    @property
+    def attester(self):
+        ...
+    @attester.setter
+    def attester(self, value):
+        ...
+    @property
+    def rejecter(self):
+        ...
+    @rejecter.setter
+    def rejecter(self, value):
+        ...
+    objects: ClassVar["OxydeRitualRejectionManager"]
+
+
+class OxydeRitualRejectionQuery(Query[OxydeRitualRejection]):
+    """Type-safe Query for OxydeRitualRejection model."""
+
+    # Query building methods (sync, return Query)
+
+    def filter(
+        self,
+        *args: Any,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
+        attestation_note: str | None = None,
+        attestation_note__contains: str | None = None,
+        attestation_note__icontains: str | None = None,
+        attestation_note__startswith: str | None = None,
+        attestation_note__istartswith: str | None = None,
+        attestation_note__endswith: str | None = None,
+        attestation_note__iendswith: str | None = None,
+        attestation_note__iexact: str | None = None,
+        attestation_note__in: list[str] | None = None,
+        attestation_note__isnull: bool | None = None,
+        attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        attested_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        attested_at__isnull: bool | None = None,
+        attested_by: OxydeUser | None = None,
+        attested_by__in: list[OxydeUser] | None = None,
+        attested_by__isnull: bool | None = None,
+        attested_by_id: str | None = None,
+        attested_by_id__contains: str | None = None,
+        attested_by_id__icontains: str | None = None,
+        attested_by_id__startswith: str | None = None,
+        attested_by_id__istartswith: str | None = None,
+        attested_by_id__endswith: str | None = None,
+        attested_by_id__iendswith: str | None = None,
+        attested_by_id__iexact: str | None = None,
+        attested_by_id__in: list[str] | None = None,
+        attested_by_id__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue: OxydeIssue | None = None,
+        issue__in: list[OxydeIssue] | None = None,
+        issue__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        note: str | None = None,
+        note__contains: str | None = None,
+        note__icontains: str | None = None,
+        note__startswith: str | None = None,
+        note__istartswith: str | None = None,
+        note__endswith: str | None = None,
+        note__iendswith: str | None = None,
+        note__iexact: str | None = None,
+        note__in: list[str] | None = None,
+        note__isnull: bool | None = None,
+        rejected_at: datetime | None = None,
+        rejected_at__gt: datetime | None = None,
+        rejected_at__gte: datetime | None = None,
+        rejected_at__lt: datetime | None = None,
+        rejected_at__lte: datetime | None = None,
+        rejected_at__between: tuple[datetime, datetime] | None = None,
+        rejected_at__range: datetime | None = None,
+        rejected_at__year: int | None = None,
+        rejected_at__month: int | None = None,
+        rejected_at__day: int | None = None,
+        rejected_at__in: list[datetime] | None = None,
+        rejected_at__isnull: bool | None = None,
+        rejected_by: OxydeUser | None = None,
+        rejected_by__in: list[OxydeUser] | None = None,
+        rejected_by__isnull: bool | None = None,
+        rejected_by_id: str | None = None,
+        rejected_by_id__contains: str | None = None,
+        rejected_by_id__icontains: str | None = None,
+        rejected_by_id__startswith: str | None = None,
+        rejected_by_id__istartswith: str | None = None,
+        rejected_by_id__endswith: str | None = None,
+        rejected_by_id__iendswith: str | None = None,
+        rejected_by_id__iexact: str | None = None,
+        rejected_by_id__in: list[str] | None = None,
+        rejected_by_id__isnull: bool | None = None,
+        ritual: OxydeRitual | None = None,
+        ritual__in: list[OxydeRitual] | None = None,
+        ritual__isnull: bool | None = None,
+        ritual_id: str | None = None,
+        ritual_id__contains: str | None = None,
+        ritual_id__icontains: str | None = None,
+        ritual_id__startswith: str | None = None,
+        ritual_id__istartswith: str | None = None,
+        ritual_id__endswith: str | None = None,
+        ritual_id__iendswith: str | None = None,
+        ritual_id__iexact: str | None = None,
+        ritual_id__in: list[str] | None = None,
+        ritual_id__isnull: bool | None = None,
+        superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        superseded_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        superseded_at__isnull: bool | None = None,
+    ) -> "OxydeRitualRejectionQuery":
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
+        attestation_note: str | None = None,
+        attestation_note__contains: str | None = None,
+        attestation_note__icontains: str | None = None,
+        attestation_note__startswith: str | None = None,
+        attestation_note__istartswith: str | None = None,
+        attestation_note__endswith: str | None = None,
+        attestation_note__iendswith: str | None = None,
+        attestation_note__iexact: str | None = None,
+        attestation_note__in: list[str] | None = None,
+        attestation_note__isnull: bool | None = None,
+        attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        attested_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        attested_at__isnull: bool | None = None,
+        attested_by: OxydeUser | None = None,
+        attested_by__in: list[OxydeUser] | None = None,
+        attested_by__isnull: bool | None = None,
+        attested_by_id: str | None = None,
+        attested_by_id__contains: str | None = None,
+        attested_by_id__icontains: str | None = None,
+        attested_by_id__startswith: str | None = None,
+        attested_by_id__istartswith: str | None = None,
+        attested_by_id__endswith: str | None = None,
+        attested_by_id__iendswith: str | None = None,
+        attested_by_id__iexact: str | None = None,
+        attested_by_id__in: list[str] | None = None,
+        attested_by_id__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue: OxydeIssue | None = None,
+        issue__in: list[OxydeIssue] | None = None,
+        issue__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        note: str | None = None,
+        note__contains: str | None = None,
+        note__icontains: str | None = None,
+        note__startswith: str | None = None,
+        note__istartswith: str | None = None,
+        note__endswith: str | None = None,
+        note__iendswith: str | None = None,
+        note__iexact: str | None = None,
+        note__in: list[str] | None = None,
+        note__isnull: bool | None = None,
+        rejected_at: datetime | None = None,
+        rejected_at__gt: datetime | None = None,
+        rejected_at__gte: datetime | None = None,
+        rejected_at__lt: datetime | None = None,
+        rejected_at__lte: datetime | None = None,
+        rejected_at__between: tuple[datetime, datetime] | None = None,
+        rejected_at__range: datetime | None = None,
+        rejected_at__year: int | None = None,
+        rejected_at__month: int | None = None,
+        rejected_at__day: int | None = None,
+        rejected_at__in: list[datetime] | None = None,
+        rejected_at__isnull: bool | None = None,
+        rejected_by: OxydeUser | None = None,
+        rejected_by__in: list[OxydeUser] | None = None,
+        rejected_by__isnull: bool | None = None,
+        rejected_by_id: str | None = None,
+        rejected_by_id__contains: str | None = None,
+        rejected_by_id__icontains: str | None = None,
+        rejected_by_id__startswith: str | None = None,
+        rejected_by_id__istartswith: str | None = None,
+        rejected_by_id__endswith: str | None = None,
+        rejected_by_id__iendswith: str | None = None,
+        rejected_by_id__iexact: str | None = None,
+        rejected_by_id__in: list[str] | None = None,
+        rejected_by_id__isnull: bool | None = None,
+        ritual: OxydeRitual | None = None,
+        ritual__in: list[OxydeRitual] | None = None,
+        ritual__isnull: bool | None = None,
+        ritual_id: str | None = None,
+        ritual_id__contains: str | None = None,
+        ritual_id__icontains: str | None = None,
+        ritual_id__startswith: str | None = None,
+        ritual_id__istartswith: str | None = None,
+        ritual_id__endswith: str | None = None,
+        ritual_id__iendswith: str | None = None,
+        ritual_id__iexact: str | None = None,
+        ritual_id__in: list[str] | None = None,
+        ritual_id__isnull: bool | None = None,
+        superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        superseded_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        superseded_at__isnull: bool | None = None,
+    ) -> "OxydeRitualRejectionQuery":
+        """Exclude objects matching field lookups."""
+        ...
+
+    def order_by(self, *fields: Literal["artifact_ref", "-artifact_ref", "attestation_note", "-attestation_note", "attested_at", "-attested_at", "attested_by", "-attested_by", "attested_by_id", "-attested_by_id", "id", "-id", "issue", "-issue", "issue_id", "-issue_id", "note", "-note", "rejected_at", "-rejected_at", "rejected_by", "-rejected_by", "rejected_by_id", "-rejected_by_id", "ritual", "-ritual", "ritual_id", "-ritual_id", "superseded_at", "-superseded_at"]) -> "OxydeRitualRejectionQuery":  # type: ignore[override]
+        """Order results by fields."""
+        ...
+
+    def limit(self, n: int) -> "OxydeRitualRejectionQuery":
+        """Limit number of results."""
+        ...
+
+    def offset(self, n: int) -> "OxydeRitualRejectionQuery":
+        """Skip first n results."""
+        ...
+
+    def distinct(self, value: bool = True) -> "OxydeRitualRejectionQuery":
+        """Return distinct results."""
+        ...
+
+    def select(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"]) -> "OxydeRitualRejectionQuery":  # type: ignore[override]
+        """Select specific fields."""
+        ...
+
+    def join(self, *paths: str) -> "OxydeRitualRejectionQuery":
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> "OxydeRitualRejectionQuery":
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> "OxydeRitualRejectionQuery":
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> "OxydeRitualRejectionQuery":
+        """Add FOR SHARE lock to query."""
+        ...
+
+    def annotate(self, **annotations: Any) -> "OxydeRitualRejectionQuery":
+        """Add computed fields using aggregate functions."""
+        ...
+
+    def group_by(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"]) -> "OxydeRitualRejectionQuery":  # type: ignore[override]
+        """Add GROUP BY clause."""
+        ...
+
+    def having(self, *q_exprs: Any, **kwargs: Any) -> "OxydeRitualRejectionQuery":
+        """Add HAVING clause for filtering grouped results."""
+        ...
+
+    def values(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"]) -> "OxydeRitualRejectionQuery":  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"], flat: bool = False) -> "OxydeRitualRejectionQuery":  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeRitualRejection]:
+        """Execute query and return all results."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeRitualRejection | None:
+        """Execute query and return first result."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeRitualRejection | None:
+        """Execute query and return last result."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count matching objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def update(  # type: ignore[override]
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **values: Any,
+    ) -> int:
+        """Update matching objects."""
+        ...
+
+    async def increment(
+        self,
+        field: str,
+        by: int | float = 1,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Atomically increment a field value."""
+        ...
+
+    async def delete(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Delete matching objects."""
+        ...
+
+class OxydeRitualRejectionManager(QueryManager[OxydeRitualRejection]):
+    """Type-safe Manager for OxydeRitualRejection model."""
+
+    # Query building methods (sync, return Query)
+
+    def query(self) -> OxydeRitualRejectionQuery:
+        """Return a Query builder for this model."""
+        ...
+
+    def filter(
+        self,
+        *args: Any,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
+        attestation_note: str | None = None,
+        attestation_note__contains: str | None = None,
+        attestation_note__icontains: str | None = None,
+        attestation_note__startswith: str | None = None,
+        attestation_note__istartswith: str | None = None,
+        attestation_note__endswith: str | None = None,
+        attestation_note__iendswith: str | None = None,
+        attestation_note__iexact: str | None = None,
+        attestation_note__in: list[str] | None = None,
+        attestation_note__isnull: bool | None = None,
+        attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        attested_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        attested_at__isnull: bool | None = None,
+        attested_by: OxydeUser | None = None,
+        attested_by__in: list[OxydeUser] | None = None,
+        attested_by__isnull: bool | None = None,
+        attested_by_id: str | None = None,
+        attested_by_id__contains: str | None = None,
+        attested_by_id__icontains: str | None = None,
+        attested_by_id__startswith: str | None = None,
+        attested_by_id__istartswith: str | None = None,
+        attested_by_id__endswith: str | None = None,
+        attested_by_id__iendswith: str | None = None,
+        attested_by_id__iexact: str | None = None,
+        attested_by_id__in: list[str] | None = None,
+        attested_by_id__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue: OxydeIssue | None = None,
+        issue__in: list[OxydeIssue] | None = None,
+        issue__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        note: str | None = None,
+        note__contains: str | None = None,
+        note__icontains: str | None = None,
+        note__startswith: str | None = None,
+        note__istartswith: str | None = None,
+        note__endswith: str | None = None,
+        note__iendswith: str | None = None,
+        note__iexact: str | None = None,
+        note__in: list[str] | None = None,
+        note__isnull: bool | None = None,
+        rejected_at: datetime | None = None,
+        rejected_at__gt: datetime | None = None,
+        rejected_at__gte: datetime | None = None,
+        rejected_at__lt: datetime | None = None,
+        rejected_at__lte: datetime | None = None,
+        rejected_at__between: tuple[datetime, datetime] | None = None,
+        rejected_at__range: datetime | None = None,
+        rejected_at__year: int | None = None,
+        rejected_at__month: int | None = None,
+        rejected_at__day: int | None = None,
+        rejected_at__in: list[datetime] | None = None,
+        rejected_at__isnull: bool | None = None,
+        rejected_by: OxydeUser | None = None,
+        rejected_by__in: list[OxydeUser] | None = None,
+        rejected_by__isnull: bool | None = None,
+        rejected_by_id: str | None = None,
+        rejected_by_id__contains: str | None = None,
+        rejected_by_id__icontains: str | None = None,
+        rejected_by_id__startswith: str | None = None,
+        rejected_by_id__istartswith: str | None = None,
+        rejected_by_id__endswith: str | None = None,
+        rejected_by_id__iendswith: str | None = None,
+        rejected_by_id__iexact: str | None = None,
+        rejected_by_id__in: list[str] | None = None,
+        rejected_by_id__isnull: bool | None = None,
+        ritual: OxydeRitual | None = None,
+        ritual__in: list[OxydeRitual] | None = None,
+        ritual__isnull: bool | None = None,
+        ritual_id: str | None = None,
+        ritual_id__contains: str | None = None,
+        ritual_id__icontains: str | None = None,
+        ritual_id__startswith: str | None = None,
+        ritual_id__istartswith: str | None = None,
+        ritual_id__endswith: str | None = None,
+        ritual_id__iendswith: str | None = None,
+        ritual_id__iexact: str | None = None,
+        ritual_id__in: list[str] | None = None,
+        ritual_id__isnull: bool | None = None,
+        superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        superseded_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        superseded_at__isnull: bool | None = None,
+    ) -> OxydeRitualRejectionQuery:
+        """Filter by Q-expressions or field lookups."""
+        ...
+
+    def exclude(
+        self,
+        *args: Any,
+        artifact_ref: str | None = None,
+        artifact_ref__contains: str | None = None,
+        artifact_ref__icontains: str | None = None,
+        artifact_ref__startswith: str | None = None,
+        artifact_ref__istartswith: str | None = None,
+        artifact_ref__endswith: str | None = None,
+        artifact_ref__iendswith: str | None = None,
+        artifact_ref__iexact: str | None = None,
+        artifact_ref__in: list[str] | None = None,
+        artifact_ref__isnull: bool | None = None,
+        attestation_note: str | None = None,
+        attestation_note__contains: str | None = None,
+        attestation_note__icontains: str | None = None,
+        attestation_note__startswith: str | None = None,
+        attestation_note__istartswith: str | None = None,
+        attestation_note__endswith: str | None = None,
+        attestation_note__iendswith: str | None = None,
+        attestation_note__iexact: str | None = None,
+        attestation_note__in: list[str] | None = None,
+        attestation_note__isnull: bool | None = None,
+        attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        attested_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        attested_at__isnull: bool | None = None,
+        attested_by: OxydeUser | None = None,
+        attested_by__in: list[OxydeUser] | None = None,
+        attested_by__isnull: bool | None = None,
+        attested_by_id: str | None = None,
+        attested_by_id__contains: str | None = None,
+        attested_by_id__icontains: str | None = None,
+        attested_by_id__startswith: str | None = None,
+        attested_by_id__istartswith: str | None = None,
+        attested_by_id__endswith: str | None = None,
+        attested_by_id__iendswith: str | None = None,
+        attested_by_id__iexact: str | None = None,
+        attested_by_id__in: list[str] | None = None,
+        attested_by_id__isnull: bool | None = None,
+        id: str | None = None,
+        id__contains: str | None = None,
+        id__icontains: str | None = None,
+        id__startswith: str | None = None,
+        id__istartswith: str | None = None,
+        id__endswith: str | None = None,
+        id__iendswith: str | None = None,
+        id__iexact: str | None = None,
+        id__in: list[str] | None = None,
+        id__isnull: bool | None = None,
+        issue: OxydeIssue | None = None,
+        issue__in: list[OxydeIssue] | None = None,
+        issue__isnull: bool | None = None,
+        issue_id: str | None = None,
+        issue_id__contains: str | None = None,
+        issue_id__icontains: str | None = None,
+        issue_id__startswith: str | None = None,
+        issue_id__istartswith: str | None = None,
+        issue_id__endswith: str | None = None,
+        issue_id__iendswith: str | None = None,
+        issue_id__iexact: str | None = None,
+        issue_id__in: list[str] | None = None,
+        issue_id__isnull: bool | None = None,
+        note: str | None = None,
+        note__contains: str | None = None,
+        note__icontains: str | None = None,
+        note__startswith: str | None = None,
+        note__istartswith: str | None = None,
+        note__endswith: str | None = None,
+        note__iendswith: str | None = None,
+        note__iexact: str | None = None,
+        note__in: list[str] | None = None,
+        note__isnull: bool | None = None,
+        rejected_at: datetime | None = None,
+        rejected_at__gt: datetime | None = None,
+        rejected_at__gte: datetime | None = None,
+        rejected_at__lt: datetime | None = None,
+        rejected_at__lte: datetime | None = None,
+        rejected_at__between: tuple[datetime, datetime] | None = None,
+        rejected_at__range: datetime | None = None,
+        rejected_at__year: int | None = None,
+        rejected_at__month: int | None = None,
+        rejected_at__day: int | None = None,
+        rejected_at__in: list[datetime] | None = None,
+        rejected_at__isnull: bool | None = None,
+        rejected_by: OxydeUser | None = None,
+        rejected_by__in: list[OxydeUser] | None = None,
+        rejected_by__isnull: bool | None = None,
+        rejected_by_id: str | None = None,
+        rejected_by_id__contains: str | None = None,
+        rejected_by_id__icontains: str | None = None,
+        rejected_by_id__startswith: str | None = None,
+        rejected_by_id__istartswith: str | None = None,
+        rejected_by_id__endswith: str | None = None,
+        rejected_by_id__iendswith: str | None = None,
+        rejected_by_id__iexact: str | None = None,
+        rejected_by_id__in: list[str] | None = None,
+        rejected_by_id__isnull: bool | None = None,
+        ritual: OxydeRitual | None = None,
+        ritual__in: list[OxydeRitual] | None = None,
+        ritual__isnull: bool | None = None,
+        ritual_id: str | None = None,
+        ritual_id__contains: str | None = None,
+        ritual_id__icontains: str | None = None,
+        ritual_id__startswith: str | None = None,
+        ritual_id__istartswith: str | None = None,
+        ritual_id__endswith: str | None = None,
+        ritual_id__iendswith: str | None = None,
+        ritual_id__iexact: str | None = None,
+        ritual_id__in: list[str] | None = None,
+        ritual_id__isnull: bool | None = None,
+        superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        superseded_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        superseded_at__isnull: bool | None = None,
+    ) -> OxydeRitualRejectionQuery:
+        """Exclude objects matching field lookups."""
+        ...
+
+    def values(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"]) -> OxydeRitualRejectionQuery:  # type: ignore[override]
+        """Return dicts instead of models."""
+        ...
+
+    def values_list(self, *fields: Literal["artifact_ref", "attestation_note", "attested_at", "attested_by", "attested_by_id", "id", "issue", "issue_id", "note", "rejected_at", "rejected_by", "rejected_by_id", "ritual", "ritual_id", "superseded_at"], flat: bool = False) -> OxydeRitualRejectionQuery:  # type: ignore[override]
+        """Return tuples/values instead of models."""
+        ...
+
+    def distinct(self, distinct: bool = True) -> OxydeRitualRejectionQuery:
+        """Return distinct results."""
+        ...
+
+    def join(self, *paths: str) -> OxydeRitualRejectionQuery:
+        """Perform LEFT JOIN for relations."""
+        ...
+
+    def prefetch(self, *paths: str) -> OxydeRitualRejectionQuery:
+        """Prefetch related objects (separate queries)."""
+        ...
+
+    def for_update(self) -> OxydeRitualRejectionQuery:
+        """Add FOR UPDATE lock to query."""
+        ...
+
+    def for_share(self) -> OxydeRitualRejectionQuery:
+        """Add FOR SHARE lock to query."""
+        ...
+
+    # Terminal methods (async, execute query)
+
+    async def get(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeRitualRejection:
+        """Get single object matching lookups."""
+        ...
+
+    async def get_or_none(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> OxydeRitualRejection | None:
+        """Get object or None if not found."""
+        ...
+
+    async def get_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeRitualRejection, bool]:
+        """Get object or create if not found. Returns (object, created)."""
+        ...
+
+    async def update_or_create(
+        self,
+        *,
+        defaults: dict[str, Any] | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        **filters: Any,
+    ) -> tuple[OxydeRitualRejection, bool]:
+        """Get object, create if missing, or update it when defaults are provided."""
+        ...
+
+    async def all(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+        mode: str = "models",
+    ) -> list[OxydeRitualRejection]:
+        """Get all objects."""
+        ...
+
+    async def first(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeRitualRejection | None:
+        """Get first object."""
+        ...
+
+    async def last(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> OxydeRitualRejection | None:
+        """Get last object."""
+        ...
+
+    async def count(
+        self,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Count all objects."""
+        ...
+
+    async def sum(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate sum of field values."""
+        ...
+
+    async def avg(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Calculate average of field values."""
+        ...
+
+    async def max(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get maximum field value."""
+        ...
+
+    async def min(
+        self,
+        field: str,
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> Any:
+        """Get minimum field value."""
+        ...
+
+    async def create(  # type: ignore[override]
+        self,
+        *,
+        instance: OxydeRitualRejection | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+        artifact_ref: str | None = None,
+        attestation_note: str | None = None,
+        attested_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        attested_by: OxydeUser | None = None,
+        attested_by_id: str | None = None,
+        id: str | None = None,
+        issue: OxydeIssue | None = None,
+        issue_id: str | None = None,
+        note: str | None = None,
+        rejected_at: datetime | None = None,
+        rejected_by: OxydeUser | None = None,
+        rejected_by_id: str | None = None,
+        ritual: OxydeRitual | None = None,
+        ritual_id: str | None = None,
+        superseded_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f2b16cd23e0>, json_schema_input_type=PydanticUndefined)] | None = None,
+    ) -> OxydeRitualRejection:
+        """Create new object."""
+        ...
+
+    async def bulk_create(  # type: ignore[override]
+        self,
+        objects: list[OxydeRitualRejection],
+        *,
+        batch_size: int | None = None,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> list[OxydeRitualRejection]:
+        """Bulk create objects."""
+        ...
+
+    async def bulk_update(  # type: ignore[override]
+        self,
+        objects: list[OxydeRitualRejection],
+        fields: list[str],
+        *,
+        client: Any | None = None,
+        using: str | None = None,
+    ) -> int:
+        """Bulk update objects."""
+        ...
+
