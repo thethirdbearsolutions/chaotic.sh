@@ -29,9 +29,9 @@ looked up: /mcp takes API keys only, so a JWT there is refused exactly
 as it was before this module existed.
 
 Scopes: API keys and session JWTs carry every scope (``ALL_SCOPES``).
-Nothing enforces scopes yet; they are here so an OAuth access token has
-somewhere to put what it was granted (architecture review e10bc055,
-finding 3).
+An OAuth access token will carry what it was granted, and
+``app.auth.access.authorize`` enforces them at the registrar rule's
+place (CHT-1562; architecture review e10bc055, finding 3).
 """
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ import enum
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from app.auth.access import ALL, ALL_SCOPES  # noqa: F401  (defined with the rule that reads them)
 from app.oxyde_models.user import OxydeUser as User
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
@@ -57,12 +58,6 @@ class CredentialFailure(str, enum.Enum):
     UNSUPPORTED = "unsupported"  # a kind this edge does not accept
     INVALID = "invalid"  # unknown, expired, revoked, or its user is gone
     INACTIVE = "inactive"  # valid, but its user is deactivated
-
-
-# The wildcard scope: every scope there is. What an API key or a session
-# JWT carries. A narrower credential lists its scopes instead.
-ALL = "*"
-ALL_SCOPES: frozenset[str] = frozenset({ALL})
 
 
 @dataclass(frozen=True)

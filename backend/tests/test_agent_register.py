@@ -439,7 +439,7 @@ class TestRegisterOnly:
 
         registrar_id, _ = registrar
         user = await OxydeUser.objects.get(id=registrar_id)
-        token = context.current_mcp_user.set(user)
+        token = context.current_mcp_principal.set(context.api_key_principal(user))
         try:
             refused = await tools.issue_create(title="as the harness", project=test_project.id)
             assert refused["error"]["error_code"] == "registrar_cannot_write", refused
@@ -447,7 +447,7 @@ class TestRegisterOnly:
             listed = await tools.issue_list(project=test_project.id)
             assert "error" not in listed, listed
         finally:
-            context.current_mcp_user.reset(token)
+            context.current_mcp_principal.reset(token)
 
     def test_every_mcp_backend_method_is_classified(self):
         """A backend method that is not a read must refuse registrars. The

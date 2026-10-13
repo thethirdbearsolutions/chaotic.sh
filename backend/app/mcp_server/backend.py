@@ -40,9 +40,9 @@ from app.api import projects as projects_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
 from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, SprintStatus
-from app.auth.access import REGISTRAR_MAY, Access, access_of, refuse_registrar_write
+from app.auth.access import Access, access_of, authorize
 from app.mcp_server import scope
-from app.mcp_server.context import get_current_mcp_user
+from app.mcp_server.context import get_current_mcp_principal, get_current_mcp_user
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
     AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
@@ -78,28 +78,26 @@ def http_error_payload(e: HTTPException) -> dict:
 
 def _translated(api_fn):
     """Wrap a backend method that calls the API function ``api_fn``: the
-    registrar rule, then error translation.
+    registrar and scope rules, then error translation.
 
-    The rule is REST's (``app.auth.access``, CHT-1561): a registrar may
-    call the method if ``api_fn`` is classified ``@reads`` or
-    ``@registers``, the same marker its REST route is judged by. An
+    The rules are REST's (``app.auth.access.authorize``, CHT-1561 and
+    CHT-1562), judged by the ``@reads``/``@writes``/``@registers`` marker
+    of ``api_fn``, the same marker its REST route is judged by. An
     unclassified ``api_fn`` is an error here, at import, rather than a
     refusal on every call. ``api_fn`` may instead be an ``Access`` for a
     method that calls no ``app.api`` function (``server_info``).
     tests/test_agent_register.py checks each method calls the function it
     names.
     """
-    access = api_fn if isinstance(api_fn, Access) else access_of(api_fn)
+    access = access_of(api_fn)
     if access is None:
         raise TypeError(f"{api_fn.__module__}.{api_fn.__qualname__} has no @reads/@writes classification")
-    registrar_may = access in REGISTRAR_MAY
 
     def decorate(fn):
         @functools.wraps(fn)
         async def wrapper(self, *args, **kwargs):
             try:
-                if not registrar_may:
-                    refuse_registrar_write(self._user, None)
+                authorize(get_current_mcp_principal(), access)
                 return await fn(self, *args, **kwargs)
             except HTTPException as e:
                 raise translate_http_exception(e) from e

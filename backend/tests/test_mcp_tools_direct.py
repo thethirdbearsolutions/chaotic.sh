@@ -21,9 +21,9 @@ def _as(test_user):
     """Run every test in this file as test_user (mirrors auth.py setting
     the contextvar per-request, just without going through HTTP).
     """
-    token = context.current_mcp_user.set(test_user)
+    token = context.current_mcp_principal.set(context.api_key_principal(test_user))
     yield
-    context.current_mcp_user.reset(token)
+    context.current_mcp_principal.reset(token)
 
 
 class TestIssueListBranches:
@@ -1643,13 +1643,13 @@ class TestProjectList:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_user.set(agent)
+        token = context.current_mcp_principal.set(context.api_key_principal(agent))
         try:
             result = await tools.project_list()
             assert "error" not in result
             assert any(p["id"] == test_project.id for p in result["projects"])
         finally:
-            context.current_mcp_user.reset(token)
+            context.current_mcp_principal.reset(token)
 
     async def test_project_scoped_agent_has_no_team_wide_access(self, db, test_project):
         # project_list is team-wide; a purely project-scoped agent has no
@@ -1665,7 +1665,7 @@ class TestProjectList:
             is_agent=True,
             agent_project_id=test_project.id,
         )
-        token = context.current_mcp_user.set(agent)
+        token = context.current_mcp_principal.set(context.api_key_principal(agent))
         try:
             result = await tools.project_list()
             assert "error" in result
@@ -1674,7 +1674,7 @@ class TestProjectList:
             # server bug (PR #271 review, finding 1).
             assert result["error"]["error_code"] == "tool_input"
         finally:
-            context.current_mcp_user.reset(token)
+            context.current_mcp_principal.reset(token)
 
 
 class TestDocViewFuzzyMatch:
@@ -1730,7 +1730,7 @@ class TestResolveDocumentIdAgentBranches:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_user.set(agent)
+        token = context.current_mcp_principal.set(context.api_key_principal(agent))
         try:
             # Agent-created docs require an emoji icon (CHT-631, enforced
             # in app.api.documents.create_document, unrelated to this
@@ -1740,7 +1740,7 @@ class TestResolveDocumentIdAgentBranches:
             resolved = await tools._resolve_document_id(agent, "Agent-visible doc")
             assert resolved == created["id"]
         finally:
-            context.current_mcp_user.reset(token)
+            context.current_mcp_principal.reset(token)
 
     async def test_project_scoped_agent_fuzzy_match(self, db, test_project):
         from app.oxyde_models.user import OxydeUser
