@@ -9,10 +9,12 @@ inside install/upgrade -- and no `uninstall` command.
 These commands orchestrate existing tools (git, systemd/launchd, just, uv)
 rather than bundling the server.
 """
+import difflib
 import html
 import json
 import os
 import platform
+import plistlib
 import re
 import secrets
 import shlex
@@ -99,7 +101,8 @@ LAUNCHD_LABEL = "com.chaotic.server"
 #   uvicorn --timeout-graceful-shutdown (justfile serve-prod)  10s
 #   < systemd TimeoutStopSec / launchd ExitTimeOut (the units we write)  30s
 #   < systemd's default TimeoutStopSec, which units written before this
-#     change still have (upgrade does not rewrite the unit)  90s
+#     change still have until an upgrade rewrites them (CHT-1476; the
+#     upgrade's own first stop still runs under the old unit)  90s
 #   < how long the CLI waits for `systemctl stop` / `launchctl unload`  120s
 # The CLI used to wait 60s against a 90s unit while uvicorn waited forever on
 # /mcp streams, so it raised TimeoutExpired mid-stop and left prod down.
@@ -382,6 +385,169 @@ def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1"):
     os.chmod(service_path, 0o600)
 
     return service_path
+
+
+# Settings in the service file that say WHICH server it runs and as whom.
+# `system upgrade` regenerates the service file (CHT-1476) but must never
+# change one of these: a different SECRET_KEY logs every session out, a
+# different HOST/PORT moves the server, a different directory points it at
+# another install. If the file on disk disagrees with what server.json
+# would produce for any of them, upgrade leaves the file alone and says so.
+_JUSTFILE_DEFAULT_HOST = "127.0.0.1"  # serve-prod: --host ${HOST:-127.0.0.1}
+_SERVICE_IDENTITY_KEYS = ("WorkingDirectory", "SECRET_KEY", "HOST", "PORT", "DATABASE_PATH", "DATABASE_URL")
+
+
+def _service_identity(content: str, os_type: str) -> dict[str, str] | None:
+    """The identity settings a service file sets, or None if it cannot be
+    parsed. Applied to the file on disk and to the regenerated one alike,
+    so quoting differences between the two cannot cause a false mismatch."""
+    found: dict[str, str] = {}
+    if os_type == "linux":
+        for raw in content.splitlines():
+            line = raw.strip()
+            if line.startswith("WorkingDirectory="):
+                found["WorkingDirectory"] = line.split("=", 1)[1]
+            elif line.startswith("Environment="):
+                key, sep, value = line.split("=", 1)[1].partition("=")
+                if sep:
+                    found[key] = value  # systemd: a later assignment wins
+    elif os_type == "darwin":
+        try:
+            data = plistlib.loads(content.encode())
+        except Exception:  # plistlib raises several types on bad input
+            return None
+        if not isinstance(data, dict):
+            return None
+        if isinstance(data.get("WorkingDirectory"), str):
+            found["WorkingDirectory"] = data["WorkingDirectory"]
+        env = data.get("EnvironmentVariables")
+        if isinstance(env, dict):
+            found.update({k: v for k, v in env.items() if isinstance(v, str)})
+    else:
+        return None
+    return {k: found[k] for k in _SERVICE_IDENTITY_KEYS if k in found}
+
+
+def _write_private_file(path: Path, content: str) -> None:
+    """Atomically replace `path` with `content`, mode 0600 from the moment
+    it exists (service files hold SECRET_KEY)."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.chmod(tmp, 0o600)  # O_CREAT's mode does not apply to an existing tmp
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _redacted_diff(old: str, new: str, path: Path, secret_key: str) -> list[str]:
+    lines = difflib.unified_diff(
+        old.splitlines(), new.splitlines(),
+        fromfile=f"{path} (before)", tofile=f"{path} (after)", lineterm="", n=1,
+    )
+    return [line.replace(secret_key, "<redacted>") if secret_key else line for line in lines]
+
+
+class ServiceFileUpdate:
+    """What reconcile_service_file() did. `status` is "updated",
+    "unchanged" or "skipped"; `backup` is set only when it wrote."""
+
+    def __init__(self, status: str, path: Path | None = None, backup: Path | None = None,
+                 diff: list[str] | None = None, reason: str = ""):
+        self.status = status
+        self.path = path
+        self.backup = backup
+        self.diff = diff or []
+        self.reason = reason
+
+
+def _daemon_reload() -> bool:
+    try:
+        run_command(["systemctl", "--user", "daemon-reload"], timeout=30)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFileUpdate:
+    """Bring an existing service file up to what this CLI generates
+    (CHT-1476), so a fix to the generated unit (e.g. TimeoutStopSec)
+    reaches installs made before it. Only `system install` and
+    `system reconfigure` used to write the file.
+
+    Regenerates from server.json's port/host/secret exactly as install
+    does. Writes only when the content differs, keeps the previous file
+    as `<name>.bak` (0600), and on Linux runs `systemctl --user
+    daemon-reload`. Never raises. Leaves the file untouched ("skipped")
+    when there is no secret in server.json, no service file, the file
+    cannot be read or parsed, or it disagrees with server.json about any
+    _SERVICE_IDENTITY_KEYS setting. Customisations belong in a systemd
+    drop-in (chaotic.service.d/), which is never touched.
+    """
+    os_type = get_os()
+    if os_type not in ("linux", "darwin"):
+        return ServiceFileUpdate("skipped", reason=f"unsupported OS ({os_type})")
+    if not secret_key:
+        return ServiceFileUpdate(
+            "skipped", reason="server.json has no secret_key, and inventing one would log everyone out")
+    path = get_service_file_path()
+    try:
+        current = path.read_text()
+    except FileNotFoundError:
+        return ServiceFileUpdate("skipped", path, reason=f"no service file at {path}")
+    except (OSError, UnicodeDecodeError) as e:
+        return ServiceFileUpdate("skipped", path, reason=f"could not read {path}: {e}")
+
+    if os_type == "linux":
+        desired = generate_systemd_service(port, secret_key, host)
+    else:
+        desired = generate_launchd_plist(port, secret_key, host)
+    if current == desired:
+        return ServiceFileUpdate("unchanged", path)
+
+    have = _service_identity(current, os_type)
+    want = _service_identity(desired, os_type)
+    if have is None:
+        return ServiceFileUpdate("skipped", path, reason=f"could not parse {path}")
+    # Units written before CHT-761 set no HOST: the server bound to the
+    # justfile's ${HOST:-127.0.0.1}, so writing that value changes nothing.
+    have.setdefault("HOST", _JUSTFILE_DEFAULT_HOST)
+    differing = [k for k in _SERVICE_IDENTITY_KEYS if have.get(k) != want.get(k)]
+    if differing:
+        return ServiceFileUpdate(
+            "skipped", path,
+            reason=f"{path} disagrees with server.json about {', '.join(differing)}",
+        )
+
+    backup = path.with_name(path.name + ".bak")
+    try:
+        _write_private_file(backup, current)
+        _write_private_file(path, desired)
+    except OSError as e:
+        return ServiceFileUpdate("skipped", path, reason=f"could not write {path}: {e}")
+    if os_type == "linux" and not _daemon_reload():
+        # Not fatal: start_service() runs daemon-reload again before
+        # starting, and fails loudly (with a rollback) if it cannot.
+        console.print("[yellow]  systemctl --user daemon-reload failed; it is retried at start.[/yellow]")
+    return ServiceFileUpdate("updated", path, backup, _redacted_diff(current, desired, path, secret_key))
+
+
+def restore_service_file(update: ServiceFileUpdate) -> bool:
+    """Undo an "updated" reconcile from its .bak (used by rollback, so a
+    rolled-back server starts under the unit it ran with before). Returns
+    True if there was nothing to undo or the undo worked."""
+    if update.status != "updated" or update.path is None or update.backup is None:
+        return True
+    try:
+        _write_private_file(update.path, update.backup.read_text())
+    except OSError:
+        return False
+    if get_os() == "linux":
+        _daemon_reload()
+    return True
 
 
 def start_service() -> bool:
@@ -1624,12 +1790,25 @@ def _print_commit_list(rev_range: str, heading: str) -> None:
     console.print()
 
 
+def _report_service_file_update(update: ServiceFileUpdate) -> None:
+    if update.status == "updated":
+        console.print(f"Updated service file {update.path} (previous kept as {update.backup.name}):")
+        for line in update.diff:
+            console.print(f"  {line}", markup=False, highlight=False)
+    elif update.status == "unchanged":
+        console.print("  [dim]Service file is up to date.[/dim]")
+    else:
+        console.print(f"  [yellow]Service file not updated: {update.reason}.[/yellow]")
+
+
 def _roll_back(
     current_commit: str | None, backup_path: Path | None,
     port: int | None = None, host: str = "127.0.0.1", was_running: bool = True,
+    service_update: ServiceFileUpdate | None = None,
 ) -> None:
     """Undo a failed upgrade: stop whatever is running, restore the previous
-    checkout and (if one was taken) the database backup, restart.
+    checkout, the previous service file (if the upgrade rewrote it) and (if
+    one was taken) the database backup, restart.
 
     The database step is skipped, loudly, if something still holds the port
     after the service was told to stop: that is exactly the CHT-1363 case
@@ -1644,6 +1823,13 @@ def _roll_back(
     state = wait_for_service_settled()
     if current_commit:
         checkout_version(current_commit, force=True)
+    if service_update is not None and service_update.status == "updated":
+        if restore_service_file(service_update):
+            console.print(f"Restored the previous service file from {service_update.backup.name}.")
+        else:
+            console.print(
+                f"[red]Could not restore the previous service file; it is at {service_update.backup}.[/red]"
+            )
     if backup_path:
         if database_in_use(port, host):
             console.print(
@@ -1689,9 +1875,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     2. Stops the server
     3. Pulls and checks out the new version
     4. Syncs dependencies and runs database migrations
-    5. Starts the server (even if it was stopped beforehand) and verifies
+    5. Regenerates the systemd unit / launchd plist if what this CLI
+       would write differs (keeping a .bak, printing a diff); restored
+       from the .bak on rollback
+    6. Starts the server (even if it was stopped beforehand) and verifies
        /health
-    6. Rolls back automatically if the health check fails or the process
+    7. Rolls back automatically if the health check fails or the process
        answering the port is not running the new commit
 
     Refuses to move the server to an older or diverged commit unless
@@ -1896,6 +2085,13 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print(f"  [yellow]{fe_msg}[/yellow]")
         console.print("  [yellow]Continuing; UI may be stale until the next successful build.[/yellow]")
 
+    # Regenerate the service file while the server is down (CHT-1476):
+    # install and reconfigure were the only writers, so fixes to the unit
+    # never reached existing installs. No-op when nothing differs.
+    console.print("Checking service file...")
+    service_update = reconcile_service_file(port, host, server_info.get("secret_key", ""))
+    _report_service_file_update(service_update)
+
     # Start server, whatever state the upgrade found it in (CHT-1475): an
     # upgrade ends with the server running the new commit and verified, or
     # it fails saying so. A server stopped by hand beforehand used to be
@@ -1907,7 +2103,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not start_service():
         console.print("[red]Failed to start server.[/red]")
         console.print("Rolling back...")
-        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
+                   service_update=service_update)
         raise SystemExit(1)
 
     # Health check
@@ -1915,7 +2112,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     if not health_check(port, host=host):
         console.print("[red]FAILED[/red]")
         console.print("\nHealth check failed. Rolling back...")
-        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+        _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
+                   service_update=service_update)
         raise SystemExit(1)
     console.print("[green]OK[/green]")
 
@@ -1934,7 +2132,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 f"\nPort {port} is answering, but with {served}, not "
                 f"{new_commit[:7]}: the new process did not take over. Rolling back..."
             )
-            _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running)
+            _roll_back(current_commit, backup_path, port=port, host=host, was_running=was_running,
+                       service_update=service_update)
             raise SystemExit(1)
         if matched is None:
             # A server too old to report git_sha (before 4a9db89) or a
