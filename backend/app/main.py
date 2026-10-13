@@ -19,6 +19,7 @@ from app.api.deps import check_user_team_access
 from app.services.user_service import UserService
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
+from app.oauth.discovery import router as oauth_discovery_router
 from app.version import get_version_info
 
 settings = get_settings()
@@ -149,6 +150,10 @@ app.include_router(api_router, prefix="/api")
 # (CHT-1266). Registered before the SPA catch-all below so it gets first
 # look; see app/mcp_server/asgi.py for the routing/auth/lifespan details.
 mount_mcp(app)
+
+# OAuth discovery documents for /mcp (CHT-1517), also ahead of the SPA
+# catch-all. They 404 unless OAUTH_ENABLED is set.
+app.include_router(oauth_discovery_router)
 
 # Get the directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
