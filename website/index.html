@@ -551,7 +551,7 @@ claude mcp add --transport http chaotic \
                         <li><strong>Retire an agent without deleting it</strong>: <code>chaotic agent deactivate</code> / <code>reactivate</code>, plus <code>chaotic agent keys list</code> / <code>revoke</code>.</li>
                         <li>Removed teammates lose the agent keys they hold, and every actor in the API and UI says whether it is an agent, and whose.</li>
                         <li>Inbox rows expand in place with Reassign, Open and Archive; over-budget refusals name the project to close.</li>
-                        <li>One database migration with a preflight check, and admins should rotate older agent keys: read the upgrade notes first.</li>
+                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: the migration refuses a dangling agent owner and leaves the server down until it is fixed, and agent keys whose holder has left the team stop working at upgrade.</li>
                     </ul>
                 </li>
                 <li class="release">

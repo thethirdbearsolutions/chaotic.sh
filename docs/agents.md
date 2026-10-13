@@ -455,8 +455,9 @@ there's no local profile to fall back on the way the stdio server has:
   self-minted keys of agents they created. Anything still running on those keys
   stops, with the same 401 as any revoked key, over REST and MCP alike.
   The agents stay. Agents the member created pass to the admin who
-  removed them, or to the team's owner if they left on their own. The
-  team's other admins get an inbox entry for each affected agent, so
+  removed them, or to the team's longest-standing owner if they left on
+  their own. The team's other admins get an inbox entry for each affected
+  agent, so
   someone can mint a replacement key. Separately from that revocation,
   an agent key whose holder (for a legacy self-minted key, the agent's
   creator) is no longer in the agent's team does not sign in. The removed creator also loses every right over the agent
