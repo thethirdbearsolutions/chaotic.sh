@@ -751,7 +751,7 @@ def register(cli):
                     "-" if iss.get("estimate") is None else str(iss["estimate"]),
                 )
             except m.APIError as e:
-                table.add_row(identifier, f"[red]Error: {e}[/red]", "-", "-", "-", "-")
+                table.add_row(identifier, f"[red]Error: {escape(str(e))}[/red]", "-", "-", "-", "-")
 
         console.print(table)
 

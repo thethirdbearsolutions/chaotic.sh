@@ -140,6 +140,41 @@ class TestRejectionShown:
         assert "Coverage" in result.output
 
 
+class TestMarkupInTheReason:
+    """PR #353 review finding 2: a reason is free text, not Rich markup."""
+
+    REASON = "- [x] add tests [/] and [bold]this[/bold]"
+
+    def test_refusal_prints_the_reason_verbatim(self, cli_runner):
+        from cli.main import cli, client, APIError
+        client.get_issue_by_identifier = MagicMock(return_value=ISSUE)
+        msg = RealClient()._format_error({
+            "issue_id": "CHT-100",
+            "pending_rituals": [{
+                "id": "rit-1", "name": "code-review", "approval_mode": "review", "attestation": None,
+                "last_rejection": {"note": self.REASON, "rejected_by_name": "Ethan", "superseded_at": None},
+            }],
+        })
+        client.update_issue = MagicMock(side_effect=APIError(msg))
+        result = cli_runner.invoke(cli, ["issue", "update", "CHT-100", "--status", "done"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert self.REASON in result.output
+
+    def test_history_prints_the_reason_verbatim(self, cli_runner):
+        from cli.main import cli, client
+        client.get_ritual_history = MagicMock(return_value=[{
+            "attested_at": "2026-10-13T00:00:00Z", "ritual_name": "code-review", "ritual_trigger": "ticket_close",
+            "issue_identifier": "CHT-100", "attested_by_name": "Bot", "note": "first",
+            "rejected_at": "2026-10-13T01:00:00Z", "rejected_by_name": "Ethan", "rejection_note": "- [x] tests [/]",
+        }])
+        result = cli_runner.invoke(cli, ["ritual", "history"])
+        assert result.exit_code == 0, result.output
+        # The table wraps the cell; both bracket runs survive as text.
+        assert "[x]" in result.output
+        assert "[/]" in result.output
+
+
 class TestClient:
     def test_reject_posts_the_note(self):
         c = RealClient()
@@ -156,6 +191,21 @@ class TestClient:
             }],
         })
         assert "Rejected by Ethan: Not this sprint" in msg
+
+    def test_refusal_names_a_rejection_this_attempt_answered(self):
+        """Finding 1: the row's rejection is already superseded (asking
+        again answered it), but the refusal lists it, so it is shown."""
+        msg = RealClient()._format_error({
+            "issue_id": "CHT-100",
+            "pending_rituals": [{
+                "id": "rit-9", "name": "signoff", "approval_mode": "gate", "attestation": None,
+                "last_rejection": {"note": "Not this sprint", "rejected_by_name": "Ethan",
+                                   "superseded_at": "2026-10-13T00:00:00Z"},
+            }],
+            "rejections": [{"ritual_id": "rit-9", "ritual": "signoff", "note": "Not this sprint",
+                            "rejected_by_name": "Ethan", "asked_again": True}],
+        })
+        assert "Rejected by Ethan: Not this sprint (asked again" in msg
 
     def test_already_resolved_409_message(self):
         msg = RealClient()._format_error({

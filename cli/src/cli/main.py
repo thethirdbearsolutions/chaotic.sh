@@ -8,6 +8,7 @@ import sys
 import webbrowser
 import click
 import httpx
+from rich.markup import escape
 from rich.panel import Panel
 
 from .config import (
@@ -230,7 +231,10 @@ def handle_error(f):
             if is_json_output():
                 output_json({"error": str(e)})
             else:
-                console.print(f"[red]Error: {e}[/red]")
+                # Server text (issue titles, rejection reasons) is not
+                # markup: escape it so a `[/]` cannot crash the print or
+                # a `[x]` vanish (CHT-1606).
+                console.print(f"[red]Error: {escape(str(e))}[/red]")
             raise SystemExit(1)
         except click.ClickException as e:
             if is_json_output():

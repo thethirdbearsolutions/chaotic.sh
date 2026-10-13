@@ -3,6 +3,7 @@ import sys
 
 import click
 import httpx
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -413,7 +414,7 @@ def register(cli):
                 # (ConnectError/Timeout) mid-batch shouldn't discard the
                 # per-issue results accumulated so far by escaping to the
                 # outer handle_error (CHT-1222).
-                console.print(f"[red]Failed to add {identifier}: {e}[/red]")
+                console.print(f"[red]Failed to add {identifier}: {escape(str(e))}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 
         any_failed = any(not r["success"] for r in results)
@@ -451,7 +452,7 @@ def register(cli):
             except (m.APIError, httpx.HTTPError) as e:
                 # See sprint_add: transport errors also get per-issue
                 # reporting instead of aborting the batch (CHT-1222).
-                console.print(f"[red]Failed to remove {identifier}: {e}[/red]")
+                console.print(f"[red]Failed to remove {identifier}: {escape(str(e))}[/red]")
                 results.append({"identifier": identifier, "success": False, "error": str(e)})
 
         any_failed = any(not r["success"] for r in results)

@@ -862,13 +862,16 @@ def register(cli):
             else:
                 status_str = "[yellow]Pending[/yellow]"
 
-            note = (entry.get("rejection_note") or entry.get("note") or "")[:40]
+            # Free text: cut first, then escape, so the cut cannot split
+            # an escape sequence and a `[/]` cannot reach Rich as markup
+            # (CHT-1606).
+            note = escape((entry.get("rejection_note") or entry.get("note") or "")[:40])
 
             table.add_row(
                 date,
-                entry.get("ritual_name", "?"),
+                escape(entry.get("ritual_name", "?")),
                 type_display,
-                context,
+                escape(context),
                 principal_markup(entry.get("attester"), entry.get("attested_by_name", "?")),
                 status_str,
                 note,

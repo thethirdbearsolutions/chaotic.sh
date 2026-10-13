@@ -230,10 +230,24 @@ class Client:
         gate = [r for r in pending if _is_dict(r) and not r.get("attestation") and r.get("approval_mode") == "gate"]
         todo = [r for r in pending if r not in awaiting and r not in gate]
 
+        # The server lists the rejections this refusal is about, including
+        # one this very attempt answered by asking again (already marked
+        # superseded on the row, but its reason is the point of the retry).
+        listed = {
+            x.get("ritual_id"): x for x in (detail.get("rejections") or []) if _is_dict(x)
+        }
+
         def _rejected(r) -> str | None:
-            """The outstanding rejection's line (CHT-1606): a human sent this
-            ritual back; the reason is what to fix before trying again."""
-            rej = r.get("last_rejection") if _is_dict(r) else None
+            """The rejection's line (CHT-1606): a human sent this ritual
+            back; the reason is what to fix before trying again."""
+            if not _is_dict(r):
+                return None
+            rej = r.get("last_rejection") or {}
+            if r.get("id") in listed:
+                x = listed[r.get("id")]
+                by = principal_label(rej.get("rejecter"), x.get("rejected_by_name")) or "a human"
+                again = " (asked again; the approvers were notified)" if x.get("asked_again") else ""
+                return f"  Rejected by {by}: {x.get('note', '')}{again}"
             if not rej or rej.get("superseded_at"):
                 return None
             by = principal_label(rej.get("rejecter"), rej.get("rejected_by_name")) or "a human"
