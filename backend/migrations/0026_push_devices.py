@@ -22,6 +22,10 @@ Foreign keys, all ON DELETE CASCADE: push_devices.user_id -> users,
 holder_session_id -> holder_sessions, credential_id -> api_keys;
 push_preferences.user_id -> users.
 
+Each device also records the expiry of the credential it was registered
+with (`credential_expires_at`) and the fingerprint of the VAPID key it
+subscribed under (`vapid_key_id`); see the model.
+
 Designed so a later transport (an FCM relay, CHT-1608) needs no
 migration: `transport` stores an enum name as text, and `p256dh`/`auth`
 are nullable.
@@ -32,7 +36,7 @@ downgrade drops both tables, and with them every device registration
 and notification choice; the apps register again on their next start,
 but people's choices are lost.
 
-Created: 2026-10-13 22:08:06
+Created: 2026-10-13 22:36:09
 """
 
 depends_on = "0025_ritual_rejections"
@@ -231,6 +235,32 @@ def upgrade(ctx):
             },
             {
                 'name': 'label',
+                'python_type': 'str',
+                'db_type': None,
+                'nullable': True,
+                'primary_key': False,
+                'unique': False,
+                'default': None,
+                'auto_increment': False,
+                'max_length': None,
+                'max_digits': None,
+                'decimal_places': None
+            },
+            {
+                'name': 'credential_expires_at',
+                'python_type': 'datetime',
+                'db_type': None,
+                'nullable': True,
+                'primary_key': False,
+                'unique': False,
+                'default': None,
+                'auto_increment': False,
+                'max_length': None,
+                'max_digits': None,
+                'decimal_places': None
+            },
+            {
+                'name': 'vapid_key_id',
                 'python_type': 'str',
                 'db_type': None,
                 'nullable': True,

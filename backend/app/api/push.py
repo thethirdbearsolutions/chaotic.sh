@@ -15,6 +15,7 @@ session or key is revoked (``app.oxyde_models.push``).
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
@@ -30,7 +31,7 @@ from app.schemas.push import (
     PushPreferencesUpdate,
     VapidPublicKeyResponse,
 )
-from app.services.push_service import PushRegistrationError, PushService, Registration
+from app.services.push_service import PushRegistrationError, PushService, Registration, device_status
 from app.utils import vapid
 
 router = APIRouter()
@@ -65,11 +66,27 @@ def _credential_links(principal: Principal) -> tuple[str | None, str | None]:
     return principal.holder_session_id, key_id
 
 
+_CREDENTIAL_LABELS = {
+    CredentialKind.SESSION_JWT: "a web or CLI sign-in",
+    CredentialKind.API_KEY: "an API key",
+    CredentialKind.OAUTH_ACCESS: "an app session",
+}
+
+
+def _responses(devices) -> list[PushDeviceResponse]:
+    now = datetime.now(timezone.utc)
+    try:
+        current = vapid.key_id()
+    except vapid.VapidKeyError:  # pragma: no cover -- startup refuses a bad key
+        current = ""
+    return [PushDeviceResponse.of(d, status=device_status(d, now=now, current_key_id=current)) for d in devices]
+
+
 @router.get("/devices", response_model=list[PushDeviceResponse])
 @reads
 async def list_push_devices(current_user: Person) -> list[PushDeviceResponse]:
     """The caller's registered devices, newest first."""
-    return [PushDeviceResponse.of(d) for d in await PushService().list_devices(current_user.id)]
+    return _responses(await PushService().list_devices(current_user.id))
 
 
 @router.put("/devices/{installation_id}", response_model=PushDeviceResponse)
@@ -97,12 +114,14 @@ async def register_push_device(
             ),
             holder_session_id=holder_session_id,
             credential_id=credential_id,
+            credential_expires_at=principal.credential_expires_at,
+            credential_label=_CREDENTIAL_LABELS.get(principal.kind, "a sign-in"),
         )
     except PushRegistrationError as exc:
         raise _refusal(exc) from None
     if created:
         response.status_code = status.HTTP_201_CREATED
-    return PushDeviceResponse.of(device)
+    return _responses([device])[0]
 
 
 @router.delete("/devices/{installation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -141,4 +160,4 @@ async def get_vapid_public_key(current_user: Person) -> VapidPublicKeyResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error_code": "push_misconfigured", "message": f"Push is not available: {exc}"},
         ) from None
-    return VapidPublicKeyResponse(public_key=public_key)
+    return VapidPublicKeyResponse(public_key=public_key, key_id=vapid.key_id())

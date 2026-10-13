@@ -124,7 +124,8 @@ def test_creates_the_tables_and_changes_nothing_else(at_before):
         notnull = {r[1] for r in c.execute("PRAGMA table_info('push_devices')") if r[3]}
         assert {"user_id", "installation_id", "transport", "endpoint", "failure_count"} <= notnull
         # Nullable for a later transport without per-device keys (CHT-1608).
-        assert not {"p256dh", "auth", "holder_session_id", "credential_id"} & notnull
+        assert not {"p256dh", "auth", "holder_session_id", "credential_id", "credential_expires_at",
+                    "vapid_key_id"} & notnull
         assert c.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
         assert c.execute("SELECT 1 FROM oxyde_migrations WHERE name = ?", (MIGRATION,)).fetchone()

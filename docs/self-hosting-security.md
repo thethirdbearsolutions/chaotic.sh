@@ -580,9 +580,13 @@ private, link-local, CGNAT, multicast and reserved addresses are refused,
 including their IPv4-in-IPv6 forms.
 
 If your ntfy runs on the same machine or your LAN, set
-`PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. Any signed-in person can then make
-this server POST to internal https services, so turn it on only where
-every account is trusted.
+`PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. That admits loopback, private
+(RFC 1918), IPv6 unique-local and CGNAT addresses; link-local,
+unspecified, multicast and reserved addresses, and the cloud metadata
+addresses (169.254.169.254, fd00:ec2::254, 100.100.100.200 and the
+like), stay refused. Any signed-in person can then make this server POST
+to internal https services, so turn it on only where every account is
+trusted.
 
 Web Push requests are signed with a VAPID key (RFC 8292). By default it
 is derived from `SECRET_KEY`, so push needs no setup, but rotating
@@ -594,4 +598,11 @@ does not protect their content.
 
 A device goes away when you remove it in Settings, when the API key or
 app session it was registered with is revoked, or when its account is
-deleted.
+deleted. It also stops getting notifications (Settings shows it as
+paused) once the credential it was last registered with expires, a web
+or CLI login included, or once the VAPID key changes, until the app
+registers it again. Each new device, and each new endpoint for an
+existing one, puts a "New device" entry in the person's inbox, so a
+device registered with a stolen login does not go unnoticed. A
+`chaotic system config check` and the server's startup both refuse a
+`VAPID_PRIVATE_KEY` that is not a P-256 key.

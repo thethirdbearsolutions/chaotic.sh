@@ -328,6 +328,36 @@ class InboxService:
         )
         await self._broadcast(session.team_id, "created", entry)
 
+    async def notify_push_device_added(self, *, user_id: str, device, created: bool, credential_label: str) -> None:
+        """A device was registered for this person's push notifications,
+        or an existing one's endpoint changed (CHT-1604). Whoever holds any
+        of their credentials can register one, so they are told, in one
+        entry in the first of their teams (an inbox entry needs a team; a
+        person in no team has no inbox and gets none)."""
+        team_ids = await self.current_team_ids(user_id)
+        if not team_ids:
+            return
+        from urllib.parse import urlsplit
+
+        name = device.label or device.platform or "a device"
+        host = urlsplit(device.endpoint).hostname or "an unknown host"
+        title = f"New device for push notifications: {name}" if created else (
+            f"Push notifications for {name} now go to a new address"
+        )
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=user_id,
+            kind=InboxEntryKind.PUSH_DEVICE_ADDED,
+            team_id=team_ids[0],
+            source_user_id=user_id,
+            title=title,
+            body=(
+                f"Registered with {credential_label}; notifications are delivered through {host}. "
+                "If this wasn't you, remove the device under Settings > Push Devices, "
+                "and revoke the API key or session it was registered with."
+            ),
+        )
+        await self._broadcast(team_ids[0], "created", entry)
+
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:

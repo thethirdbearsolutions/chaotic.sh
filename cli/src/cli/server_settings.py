@@ -20,6 +20,8 @@ restart.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import re
 from dataclasses import dataclass
@@ -30,7 +32,7 @@ SETTINGS_KEY = "settings"  # in server.json
 
 @dataclass(frozen=True)
 class Setting:
-    kind: str  # bool | url | proxies | origins | port | text
+    kind: str  # bool | url | proxies | origins | port | vapid | text
     default: str  # the server's default, for display only
     help: str
     secret: bool = False
@@ -60,7 +62,7 @@ KNOWN: dict[str, Setting] = {
         "bool", "false",
         "Accept push endpoints on loopback, private and link-local hosts (an ntfy on this machine or LAN)."),
     "VAPID_PRIVATE_KEY": Setting(
-        "text", "",
+        "vapid", "",
         "Web Push signing key: a P-256 private key, 32 bytes base64url. Empty: derived from SECRET_KEY.",
         secret=True),
 }
@@ -221,6 +223,25 @@ def _proxies(value: str) -> tuple[str, str | None]:
     return ",".join(entries), None
 
 
+# The order of the P-256 group: a private key is a scalar in [1, n - 1].
+_P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+_B64URL = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+
+
+def _vapid_key_ok(value: str) -> bool:
+    """Is ``value`` what the server accepts as a raw VAPID_PRIVATE_KEY
+    (app.utils.vapid): 32 bytes of base64url, a scalar in range? The
+    server also takes a PEM, which a service file cannot carry."""
+    if not _B64URL.match(value):
+        return False
+    body = value.rstrip("=")
+    try:
+        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    except (ValueError, binascii.Error):
+        return False
+    return len(raw) == 32 and 0 < int.from_bytes(raw, "big") < _P256_ORDER
+
+
 def normalize(name: str, value: str) -> tuple[str, str | None]:
     """(the value to store, None) or (value, why it is refused). Never
     puts a secret value in the reason."""
@@ -258,6 +279,11 @@ def normalize(name: str, value: str) -> tuple[str, str | None]:
         value, problem = _proxies(value)
         if problem:
             return value, f"{name}: {problem}"
+    elif kind == "vapid":
+        value = value.strip()
+        if value and not _vapid_key_ok(value):
+            return value, (f"{name} must be a P-256 private key: 32 bytes in base64url "
+                           "(a PEM cannot go in the service file)")
     elif kind == "port":
         digits = value.strip()
         if not (digits.isascii() and digits.isdigit()) or not 1 <= int(digits) <= 65535:

@@ -36,9 +36,11 @@ class OxydePushDevice(Model):
     label: str | None
     holder_session: OxydeHolderSession | None
     credential: OxydeAPIKey | None
+    credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None
+    vapid_key_id: str | None
     created_at: datetime
     updated_at: datetime
-    last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None
+    last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None
     failure_count: int
     user_id: str | None
     holder_session_id: str | None
@@ -79,6 +81,9 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         credential: OxydeAPIKey | None = None,
         credential__in: list[OxydeAPIKey] | None = None,
         credential__isnull: bool | None = None,
+        credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        credential_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        credential_expires_at__isnull: bool | None = None,
         credential_id: str | None = None,
         credential_id__contains: str | None = None,
         credential_id__icontains: str | None = None,
@@ -151,8 +156,8 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         label__iexact: str | None = None,
         label__in: list[str] | None = None,
         label__isnull: bool | None = None,
-        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_success_at__isnull: bool | None = None,
         p256dh: str | None = None,
         p256dh__contains: str | None = None,
@@ -202,6 +207,16 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         user_id__iexact: str | None = None,
         user_id__in: list[str] | None = None,
         user_id__isnull: bool | None = None,
+        vapid_key_id: str | None = None,
+        vapid_key_id__contains: str | None = None,
+        vapid_key_id__icontains: str | None = None,
+        vapid_key_id__startswith: str | None = None,
+        vapid_key_id__istartswith: str | None = None,
+        vapid_key_id__endswith: str | None = None,
+        vapid_key_id__iendswith: str | None = None,
+        vapid_key_id__iexact: str | None = None,
+        vapid_key_id__in: list[str] | None = None,
+        vapid_key_id__isnull: bool | None = None,
     ) -> "OxydePushDeviceQuery":
         """Filter by Q-expressions or field lookups."""
         ...
@@ -234,6 +249,9 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         credential: OxydeAPIKey | None = None,
         credential__in: list[OxydeAPIKey] | None = None,
         credential__isnull: bool | None = None,
+        credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        credential_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        credential_expires_at__isnull: bool | None = None,
         credential_id: str | None = None,
         credential_id__contains: str | None = None,
         credential_id__icontains: str | None = None,
@@ -306,8 +324,8 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         label__iexact: str | None = None,
         label__in: list[str] | None = None,
         label__isnull: bool | None = None,
-        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_success_at__isnull: bool | None = None,
         p256dh: str | None = None,
         p256dh__contains: str | None = None,
@@ -357,11 +375,21 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         user_id__iexact: str | None = None,
         user_id__in: list[str] | None = None,
         user_id__isnull: bool | None = None,
+        vapid_key_id: str | None = None,
+        vapid_key_id__contains: str | None = None,
+        vapid_key_id__icontains: str | None = None,
+        vapid_key_id__startswith: str | None = None,
+        vapid_key_id__istartswith: str | None = None,
+        vapid_key_id__endswith: str | None = None,
+        vapid_key_id__iendswith: str | None = None,
+        vapid_key_id__iexact: str | None = None,
+        vapid_key_id__in: list[str] | None = None,
+        vapid_key_id__isnull: bool | None = None,
     ) -> "OxydePushDeviceQuery":
         """Exclude objects matching field lookups."""
         ...
 
-    def order_by(self, *fields: Literal["auth", "-auth", "created_at", "-created_at", "credential", "-credential", "credential_id", "-credential_id", "endpoint", "-endpoint", "failure_count", "-failure_count", "holder_session", "-holder_session", "holder_session_id", "-holder_session_id", "id", "-id", "installation_id", "-installation_id", "label", "-label", "last_success_at", "-last_success_at", "p256dh", "-p256dh", "platform", "-platform", "transport", "-transport", "updated_at", "-updated_at", "user", "-user", "user_id", "-user_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
+    def order_by(self, *fields: Literal["auth", "-auth", "created_at", "-created_at", "credential", "-credential", "credential_expires_at", "-credential_expires_at", "credential_id", "-credential_id", "endpoint", "-endpoint", "failure_count", "-failure_count", "holder_session", "-holder_session", "holder_session_id", "-holder_session_id", "id", "-id", "installation_id", "-installation_id", "label", "-label", "last_success_at", "-last_success_at", "p256dh", "-p256dh", "platform", "-platform", "transport", "-transport", "updated_at", "-updated_at", "user", "-user", "user_id", "-user_id", "vapid_key_id", "-vapid_key_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
         """Order results by fields."""
         ...
 
@@ -377,7 +405,7 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         """Return distinct results."""
         ...
 
-    def select(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
+    def select(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
         """Select specific fields."""
         ...
 
@@ -401,7 +429,7 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         """Add computed fields using aggregate functions."""
         ...
 
-    def group_by(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
+    def group_by(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
         """Add GROUP BY clause."""
         ...
 
@@ -409,11 +437,11 @@ class OxydePushDeviceQuery(Query[OxydePushDevice]):
         """Add HAVING clause for filtering grouped results."""
         ...
 
-    def values(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
+    def values(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"]) -> "OxydePushDeviceQuery":  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"], flat: bool = False) -> "OxydePushDeviceQuery":  # type: ignore[override]
+    def values_list(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"], flat: bool = False) -> "OxydePushDeviceQuery":  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -562,6 +590,9 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         credential: OxydeAPIKey | None = None,
         credential__in: list[OxydeAPIKey] | None = None,
         credential__isnull: bool | None = None,
+        credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        credential_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        credential_expires_at__isnull: bool | None = None,
         credential_id: str | None = None,
         credential_id__contains: str | None = None,
         credential_id__icontains: str | None = None,
@@ -634,8 +665,8 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         label__iexact: str | None = None,
         label__in: list[str] | None = None,
         label__isnull: bool | None = None,
-        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_success_at__isnull: bool | None = None,
         p256dh: str | None = None,
         p256dh__contains: str | None = None,
@@ -685,6 +716,16 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         user_id__iexact: str | None = None,
         user_id__in: list[str] | None = None,
         user_id__isnull: bool | None = None,
+        vapid_key_id: str | None = None,
+        vapid_key_id__contains: str | None = None,
+        vapid_key_id__icontains: str | None = None,
+        vapid_key_id__startswith: str | None = None,
+        vapid_key_id__istartswith: str | None = None,
+        vapid_key_id__endswith: str | None = None,
+        vapid_key_id__iendswith: str | None = None,
+        vapid_key_id__iexact: str | None = None,
+        vapid_key_id__in: list[str] | None = None,
+        vapid_key_id__isnull: bool | None = None,
     ) -> OxydePushDeviceQuery:
         """Filter by Q-expressions or field lookups."""
         ...
@@ -717,6 +758,9 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         credential: OxydeAPIKey | None = None,
         credential__in: list[OxydeAPIKey] | None = None,
         credential__isnull: bool | None = None,
+        credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        credential_expires_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        credential_expires_at__isnull: bool | None = None,
         credential_id: str | None = None,
         credential_id__contains: str | None = None,
         credential_id__icontains: str | None = None,
@@ -789,8 +833,8 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         label__iexact: str | None = None,
         label__in: list[str] | None = None,
         label__isnull: bool | None = None,
-        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None = None,
-        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)]] | None = None,
+        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_success_at__in: list[Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)]] | None = None,
         last_success_at__isnull: bool | None = None,
         p256dh: str | None = None,
         p256dh__contains: str | None = None,
@@ -840,15 +884,25 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         user_id__iexact: str | None = None,
         user_id__in: list[str] | None = None,
         user_id__isnull: bool | None = None,
+        vapid_key_id: str | None = None,
+        vapid_key_id__contains: str | None = None,
+        vapid_key_id__icontains: str | None = None,
+        vapid_key_id__startswith: str | None = None,
+        vapid_key_id__istartswith: str | None = None,
+        vapid_key_id__endswith: str | None = None,
+        vapid_key_id__iendswith: str | None = None,
+        vapid_key_id__iexact: str | None = None,
+        vapid_key_id__in: list[str] | None = None,
+        vapid_key_id__isnull: bool | None = None,
     ) -> OxydePushDeviceQuery:
         """Exclude objects matching field lookups."""
         ...
 
-    def values(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"]) -> OxydePushDeviceQuery:  # type: ignore[override]
+    def values(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"]) -> OxydePushDeviceQuery:  # type: ignore[override]
         """Return dicts instead of models."""
         ...
 
-    def values_list(self, *fields: Literal["auth", "created_at", "credential", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id"], flat: bool = False) -> OxydePushDeviceQuery:  # type: ignore[override]
+    def values_list(self, *fields: Literal["auth", "created_at", "credential", "credential_expires_at", "credential_id", "endpoint", "failure_count", "holder_session", "holder_session_id", "id", "installation_id", "label", "last_success_at", "p256dh", "platform", "transport", "updated_at", "user", "user_id", "vapid_key_id"], flat: bool = False) -> OxydePushDeviceQuery:  # type: ignore[override]
         """Return tuples/values instead of models."""
         ...
 
@@ -1002,6 +1056,7 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         auth: str | None = None,
         created_at: datetime | None = None,
         credential: OxydeAPIKey | None = None,
+        credential_expires_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
         credential_id: str | None = None,
         endpoint: str | None = None,
         failure_count: int | None = None,
@@ -1010,13 +1065,14 @@ class OxydePushDeviceManager(QueryManager[OxydePushDevice]):
         id: str | None = None,
         installation_id: str | None = None,
         label: str | None = None,
-        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7f3f682b09a0>, json_schema_input_type=PydanticUndefined)] | None = None,
+        last_success_at: Annotated[datetime.datetime, BeforeValidator(func=<function ensure_utc at 0x7fb2d4e16b60>, json_schema_input_type=PydanticUndefined)] | None = None,
         p256dh: str | None = None,
         platform: str | None = None,
         transport: PushTransport | None = None,
         updated_at: datetime | None = None,
         user: OxydeUser | None = None,
         user_id: str | None = None,
+        vapid_key_id: str | None = None,
     ) -> OxydePushDevice:
         """Create new object."""
         ...

@@ -30,6 +30,12 @@ export async function loadPushDevices() {
     }
 }
 
+// Why a device gets no notifications (CHT-1604); an active one needs no note.
+const STATUS_NOTES = {
+    expired: 'Paused: its sign-in expired. Open the app to resume.',
+    needs_reregistration: 'Paused: the server key changed. Open the app to resume.',
+};
+
 function deviceName(device) {
     return device.label || device.platform || 'Unnamed device';
 }
@@ -57,6 +63,7 @@ export function renderPushDevices() {
                     <span class="api-key-date">Added ${formatDate(d.created_at)}</span>
                     ${d.last_success_at ? `<span class="api-key-date">Last notified ${formatDate(d.last_success_at)}</span>` : ''}
                     ${d.failure_count ? `<span>${escapeHtml(String(d.failure_count))} failed deliveries</span>` : ''}
+                    ${STATUS_NOTES[d.status] ? `<span class="push-device-status">${escapeHtml(STATUS_NOTES[d.status])}</span>` : ''}
                 </div>
             </div>
             <button class="btn btn-danger-outline" data-action="remove-push-device" data-installation-id="${escapeAttr(d.installation_id)}" data-device-name="${escapeAttr(deviceName(d))}">Remove</button>

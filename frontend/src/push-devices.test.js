@@ -38,6 +38,7 @@ const DEVICE = {
     updated_at: '2026-10-13T12:00:00Z',
     last_success_at: '2026-10-13T13:00:00Z',
     failure_count: 0,
+    status: 'active',
 };
 
 describe('push-devices module', () => {
@@ -97,6 +98,20 @@ describe('push-devices module', () => {
         const names = [...container.querySelectorAll('.api-key-name')].map(n => n.textContent);
         expect(names).toEqual(['android', 'Unnamed device']);
         expect(container.textContent).not.toContain('Last notified');
+    });
+
+    it('explains why a device is paused', () => {
+        setPushDevices([
+            { ...DEVICE, id: 'a', status: 'expired' },
+            { ...DEVICE, id: 'b', status: 'needs_reregistration' },
+            { ...DEVICE, id: 'c', status: 'active' },
+        ]);
+        renderPushDevices();
+        const notes = [...container.querySelectorAll('.push-device-status')].map(n => n.textContent);
+        expect(notes).toEqual([
+            'Paused: its sign-in expired. Open the app to resume.',
+            'Paused: the server key changed. Open the app to resume.',
+        ]);
     });
 
     it('escapes what the app sent', () => {

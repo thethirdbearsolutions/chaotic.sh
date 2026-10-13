@@ -1,4 +1,5 @@
 """Push notification schemas (CHT-1604)."""
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,10 +38,18 @@ class PushDeviceResponse(BaseModel):
     updated_at: DateTimeUTC
     last_success_at: DateTimeUTC | None = None
     failure_count: int = 0
+    # When the credential it was registered with expires (None: never).
+    credential_expires_at: DateTimeUTC | None = None
+    # active; expired (its credential expired: nothing is sent until the
+    # app registers again); needs_reregistration (subscribed under a VAPID
+    # key this server no longer has).
+    status: Literal["active", "expired", "needs_reregistration"]
 
     @classmethod
-    def of(cls, device) -> "PushDeviceResponse":
+    def of(cls, device, *, status: str) -> "PushDeviceResponse":
         return cls(
+            status=status,
+            credential_expires_at=device.credential_expires_at,
             id=device.id,
             installation_id=device.installation_id,
             transport=device.transport,
@@ -74,3 +83,6 @@ class VapidPublicKeyResponse(BaseModel):
     applicationServerKey)."""
 
     public_key: str
+    # Fingerprint of the key; a device registered under another one shows
+    # as needs_reregistration.
+    key_id: str

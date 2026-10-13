@@ -169,6 +169,7 @@ class InboxEntryKind(str, Enum):
     REVIEW_REQUESTED = "review_requested"  # A REVIEW ritual was attested; an admin must approve it
     AGENT_STATUS = "agent_status"          # Someone else deactivated/reactivated an agent this user created, or a departing member's agent keys were revoked (admins)
     GATE_REJECTED = "gate_rejected"        # A human rejected this user's (or their agent's) gate request or review attestation (CHT-1606)
+    PUSH_DEVICE_ADDED = "push_device_added"  # A device was registered for this user's push notifications, or its endpoint changed (CHT-1604)
 
 
 # --- Agent identity enums (CHT-1497) ---

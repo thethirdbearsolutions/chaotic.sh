@@ -18,6 +18,7 @@ new public key and registers again.
 from __future__ import annotations
 
 import base64
+import hashlib
 from functools import lru_cache
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -84,10 +85,27 @@ def private_key() -> ec.EllipticCurvePrivateKey:
     return _key_for(settings.vapid_private_key, settings.secret_key)
 
 
+def _public_point() -> bytes:
+    return private_key().public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint,
+    )
+
+
 def public_key_b64url() -> str:
     """The public key as Web Push's ``applicationServerKey``: the
     uncompressed P-256 point (65 bytes), base64url without padding."""
-    point = private_key().public_key().public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint,
-    )
-    return b64url(point)
+    return b64url(_public_point())
+
+
+def key_id() -> str:
+    """A short fingerprint of the public key: the first 12 bytes of its
+    SHA-256, base64url. Recorded on each device at registration, so a
+    device subscribed under a key this server no longer has can be told
+    apart (``push_service.device_status``)."""
+    return b64url(hashlib.sha256(_public_point()).digest()[:12])
+
+
+def check_setting() -> None:
+    """Raise VapidKeyError if VAPID_PRIVATE_KEY is set but unusable. For
+    startup, so a bad key stops the server instead of failing each push."""
+    private_key()
