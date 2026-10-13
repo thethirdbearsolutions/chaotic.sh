@@ -12,9 +12,6 @@ carries two database migrations: run `chaotic system upgrade`, which backs
 up and migrates before restarting, rather than restarting the service by
 hand.
 
-_The a18 and a19 entries were never written; their contents are in the
-`v0.1.0a18` and `v0.1.0a19` tag history (CHT-1463)._
-
 ### Upgrade notes
 
 - **MCP clients must reconnect**: `ritual_attest` and `ritual_complete` gained
@@ -61,6 +58,144 @@ _The a18 and a19 entries were never written; their contents are in the
   systemd timer.
 - ADR-0002 amended: access control is enforced above the service layer, and
   `foreign_keys` is ON (CHT-1457).
+
+## [0.1.0a19] - 2026-09-06
+
+Server and CLI changes merged since a18 (PRs #266-#301): the September
+maintainability review. This release carries two database migrations
+(0015, 0016): run `chaotic system upgrade`, which backs up and migrates
+before restarting.
+
+### Upgrade notes
+
+- **MCP clients must reconnect**: both MCP transports moved to the `mcp`
+  2.x API (`mcp>=2.1,<3`), list tools return compact rows, and errors use
+  one envelope. Compare `server_info`'s `mcp_tool_count` and fingerprint
+  with what your client cached.
+- **Sprint `start_date`/`end_date` are gone**: they are renamed
+  `activated_at`/`closed_at` and are now outputs the server stamps, not
+  inputs (migration 0016). `SprintCreate`/`SprintUpdate` no longer accept
+  dates.
+- **The unused sprint token budget is removed** (`token_budget`,
+  `tokens_spent` and their derived fields; migration 0015).
+
+### Added
+
+- **Eight new MCP tools (30 to 38)**: the inbox (`inbox_list`,
+  `inbox_mark_read`, `inbox_mark_all_read`), revision history
+  (`issue_revisions`, `issue_revision`, `doc_revisions`, `doc_revision`),
+  and `server_info`, which reports the commit, version and toolset
+  fingerprint the server is running (CHT-1335, CHT-1338, CHT-1364,
+  CHT-1401).
+- **Claim and close refusals report each ritual's attestation state**,
+  and `sprint_close` names the rituals limbo is waiting on (CHT-1360,
+  CHT-1381).
+- **Off-scale estimate warnings**: an estimate outside the project's
+  declared scale is stored and reported back as a warning (CHT-1365).
+- **A brand-new database gets its schema from the migration chain at
+  startup** (CHT-1195).
+
+### Changed
+
+- **`chaotic system upgrade` refuses silent downgrades** (backward or
+  diverged targets need `--allow-downgrade`) and verifies that the new
+  process, not a stale one, answers the port (CHT-1357, CHT-1363).
+- **`chaotic system backup` snapshots through SQLite's online backup API**,
+  so a backup taken against a running server is consistent (CHT-1207).
+- **MCP list tools** (`issue_list`, `issue_ready`, `doc_list`,
+  `project_list`) return compact rows with `count` and `truncated`, and
+  issue rows carry resolved names for their foreign keys (CHT-1370,
+  CHT-1371).
+- `issue_ready` refuses instead of silently widening to the whole team
+  (CHT-1355).
+- API keys are verified with SHA-256 instead of bcrypt (~260 ms less CPU
+  per request); legacy hashes still work and are upgraded on first use
+  (CHT-1369).
+- Round-robin ritual groups rotate with the sprint and advance on
+  ticket claim/close; a group's members must share a trigger (CHT-1280,
+  CHT-1403, CHT-1405, CHT-1408).
+
+### Fixed
+
+- **`--estimate 0` is a zero-point estimate**, not "unset" (CHT-1397).
+- **Enum filters match**: `DbEnum` registers each enum class on Oxyde's
+  filter path, so filtering by a member matches its stored name
+  (CHT-1398).
+- `close_sprint` claims both transitions with a conditional UPDATE, so
+  two racing closes cannot both rotate (CHT-1404).
+- Editing an issue description or document always snapshots a revision
+  (CHT-1340).
+
+### Internal
+
+- API functions return their response schema by construction (ADR-0005,
+  CHT-1348); FastAPI `Query`/`Header` metadata moved to `Annotated`
+  (CHT-1375, CHT-1377).
+- One shared MCP tool-definition module over a backend protocol
+  (CHT-1374); the README tool table is generated (CHT-1395).
+- CI runs ruff pyflakes rules (CHT-1362, CHT-1373, CHT-1382); the backend
+  suite runs in about 30 seconds (CHT-1413); the test database is built
+  from the migration chain (CHT-1208).
+- The publish workflow no longer gates PyPI on TestPyPI (CHT-1356).
+- Design proposal for duplicate detection on issue create (CHT-1358).
+
+## [0.1.0a18] - 2026-09-05
+
+Server and CLI changes merged since a17 (PRs #229-#264). `v0.1.0a17` was
+tagged but never reached PyPI, so a18 is the first PyPI release since a16
+and also carries the web UI changes listed under 0.1.0a17. This release
+carries one database migration (0014): run `chaotic system upgrade`.
+
+### Upgrade notes
+
+- **MCP clients must reconnect**: the MCP toolset grew from 10 to 30
+  tools.
+- **Ritual and estimate exemptions need an interactive human**: the CLI
+  sends `X-Chaotic-Interactive`, and a human account running
+  non-interactively (piped, scripted, MCP) is gated like an agent
+  (CHT-1302). Upgrade the CLI with the server.
+- The CLI pins `mcp<2`, since `mcp` 2.0.0 removed the API both transports
+  used (CHT-1331).
+
+### Added
+
+- **MCP toolset expansion**: `doc_update`, `issue_ready`, issue relation
+  tools, writable labels, `doc_link`/`doc_unlink`, sprint tools, ritual
+  tools and `project_list`; `issue_start` takes ritual attestations and a
+  lease (CHT-1284, CHT-1330, CHT-1332-CHT-1334, CHT-1336, CHT-1337,
+  CHT-1339, CHT-1342).
+- **`chaotic agent keys create <AGENT>`** mints or rotates an API key for
+  an existing agent; the web UI has a matching action (CHT-1303). Agents
+  are marked `is_agent` in responses (CHT-1304).
+- **Inbox archive**: archive entries in place, persisted server-side, with
+  immediate keyboard nav (CHT-1314, CHT-1316; migration 0014).
+- `chaotic sprint budget [SPRINT] [AMOUNT]` sets a budget as well as
+  reading it (CHT-343).
+- `chaotic doc get` / `doc read` aliases for `doc show` (CHT-299), and a
+  `refactor` issue type (CHT-976).
+- `GET /api/version` and a `git_sha` on `/health` report what is
+  deployed; frontend cache-busters are content hashes (CHT-1294).
+
+### Fixed
+
+- **Stranded close intents**: an open intent owned by another principal
+  expires after `intent_ttl_minutes` (default 15) and a later claim or
+  close takes it over, so a failed non-interactive close no longer makes a
+  ticket unclosable; `--attest` supplies notes inline (CHT-1326).
+- **MCP output goes through the response schemas**, fixing enum
+  name/value mismatches at the root (CHT-1333, CHT-1345, CHT-1348).
+- The server refuses to start on a database whose migrations are behind
+  the code (CHT-1318).
+- Sprint budget deduction is race-safe (CHT-329); parent cycles and
+  self/inverse relations are rejected (CHT-297, CHT-298).
+- Inbox reads are scoped to current team membership, and project-scoped
+  docs are authorized at the project level (CHT-1271, CHT-1273, CHT-1274).
+- Mentions and cross-references skip code spans and fences, and re-link on
+  comment edit (CHT-801, CHT-803, CHT-1272).
+- Free-text CLI prompt input is sanitized (CHT-759); `project create`
+  guards against a missing current team (CHT-1176, CHT-1312).
+- Web UI: focus returns to the field trigger after an inline edit
+  (CHT-1293, CHT-1297).
 
 ## [0.1.0a17] - 2026-07-11
 
