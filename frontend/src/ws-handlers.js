@@ -39,6 +39,34 @@ function hasOpenDescriptionEditor() {
     return !!document.querySelector('.description-inline-editor');
 }
 
+function isViewVisible(id) {
+    const el = document.getElementById(id);
+    return !!el && !el.classList.contains('hidden');
+}
+
+/**
+ * Id of the issue whose detail view is on screen right now, or null.
+ *
+ * The handlers below used to gate on getCurrentView() === 'issue-detail',
+ * which is never true in production: detail routes (/issue/:id) bypass
+ * router.js's navigateTo(), the only setter of currentView, so it keeps
+ * naming whichever list the user came from (CHT-1237). That made every
+ * remote comment/update/relation/attestation/activity refresh of an open
+ * issue dead code -- including comments posted by agents over MCP or the
+ * API, which the web UI never re-fetched on its own (CHT-1286). Check what
+ * is actually visible instead, the way documents.js's
+ * isViewingDocumentDetail() does (CHT-1213). getCurrentDetailIssue() alone
+ * is not enough: it is never cleared when the user navigates away.
+ */
+function openDetailIssueId() {
+    if (!isViewVisible('issue-detail-view')) return null;
+    return getCurrentDetailIssue()?.id ?? null;
+}
+
+function isViewingIssueDetail(issueId) {
+    return !!issueId && openDetailIssueId() === issueId;
+}
+
 /**
  * Register all WebSocket event handlers.
  * Call this once during app initialization.
@@ -148,8 +176,8 @@ function handleIssueCreated(data) {
     }
 
     // Refresh issue detail if a child issue was created
-    if (getCurrentView() === 'issue-detail' && data.parent_id === getCurrentDetailIssue()?.id) {
-        viewIssue(getCurrentDetailIssue()?.id, false);
+    if (isViewingIssueDetail(data.parent_id)) {
+        refreshOpenDetail(data.parent_id);
     }
 }
 
@@ -185,21 +213,17 @@ function handleIssueUpdated(data) {
         // CHT-1226: a sub-issue closing/reopening under a visible epic
         // (progress bar is done/total sub-issues) used to go stale.
         loadEpics();
-    } else if (getCurrentView() === 'issue-detail') {
-        // Was gated on detailContent.dataset.issueId, an attribute production
-        // code never sets — remote updates to the open issue (including a
-        // description change from another user) silently never refreshed
-        // (CHT-1214). Match the getCurrentDetailIssue() check every other
-        // handler below already uses. While the description editor is open,
-        // defer instead of re-rendering (which would clobber the edit) —
-        // and hand over the fresh issue payload so Save can detect a remote
-        // description conflict.
-        if (getCurrentDetailIssue()?.id === data.id) {
-            if (hasOpenDescriptionEditor()) {
-                noteSkippedDetailRefresh(data);
-            } else {
-                viewIssue(data.id, false);
-            }
+    }
+    // Not part of the chain above: with a detail open, getCurrentView()
+    // still names the list underneath it (CHT-1237). While the description
+    // editor is open, defer instead of re-rendering (which would clobber
+    // the edit) and hand over the fresh issue payload so Save can detect a
+    // remote description conflict (CHT-1214).
+    if (isViewingIssueDetail(data.id)) {
+        if (hasOpenDescriptionEditor()) {
+            noteSkippedDetailRefresh(data);
+        } else {
+            viewIssue(data.id, false);
         }
     }
 }
@@ -235,7 +259,7 @@ function handleIssueDeleted(data) {
     showToast(`Issue ${data.identifier} deleted`, 'info');
 
     // Navigate away if viewing the deleted issue
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.id) {
+    if (isViewingIssueDetail(data.id)) {
         showToast(`Issue ${data.identifier} was deleted`, 'warning');
         navigateTo('my-issues');
     }
@@ -257,7 +281,7 @@ function handleComment(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (isViewingIssueDetail(data.issue_id)) {
         refreshOpenDetail(data.issue_id);
     }
     // Document comments broadcast a `document_id` field (documents.py), but
@@ -289,11 +313,9 @@ function handleDocument(data, { type } = {}) {
 }
 
 function handleRelation(data) {
-    if (getCurrentView() === 'issue-detail') {
-        const currentIssueId = getCurrentDetailIssue()?.id;
-        if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
-            refreshOpenDetail(currentIssueId);
-        }
+    const currentIssueId = openDetailIssueId();
+    if (currentIssueId && (data.source_issue_id === currentIssueId || data.target_issue_id === currentIssueId)) {
+        refreshOpenDetail(currentIssueId);
     }
 }
 
@@ -301,7 +323,7 @@ function handleAttestation(data) {
     if (getCurrentView() === 'approvals') {
         loadGateApprovals();
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (isViewingIssueDetail(data.issue_id)) {
         refreshOpenDetail(data.issue_id);
     }
 }
@@ -323,7 +345,7 @@ function handleActivity(data) {
     if (getCurrentView() === 'my-issues') {
         loadDashboardActivity({ showLoading: false });
     }
-    if (getCurrentView() === 'issue-detail' && getCurrentDetailIssue()?.id === data.issue_id) {
+    if (isViewingIssueDetail(data.issue_id)) {
         refreshOpenDetail(data.issue_id);
     }
 }
@@ -341,12 +363,20 @@ function handleProject(data, { type }) {
     }
 }
 
-/** Refresh sprint detail if viewing one, otherwise refresh the list (CHT-325). */
+/**
+ * Refresh sprint detail if viewing one, otherwise refresh the list (CHT-325).
+ *
+ * Decided by what is on screen, not by getCurrentSprintDetail(): that is
+ * never cleared, and viewSprint() hides every other view, so keying on it
+ * pulled the user into a stale sprint from the sprints list, or tore down
+ * an issue detail opened from a sprint (CHT-1487). Neither visible means
+ * another detail is on top of the sprints view; navigating back reloads.
+ */
 function refreshSprintView() {
     const detail = getCurrentSprintDetail();
-    if (detail) {
+    if (detail && isViewVisible('sprint-detail-view')) {
         viewSprint(detail.id, false).catch(e => console.error('Failed to refresh sprint detail:', e));
-    } else {
+    } else if (isViewVisible('sprints-view')) {
         loadSprints().catch(e => console.error('Failed to reload sprints:', e));
     }
 }
@@ -409,8 +439,9 @@ function handleReconnected() {
         loadGateApprovals();
     } else if (view === 'inbox') {
         loadInbox();
-    } else if (view === 'issue-detail') {
-        const issueId = getCurrentDetailIssue()?.id;
-        if (issueId) refreshOpenDetail(issueId);
     }
+    // An open issue detail sits on top of whichever list `view` names
+    // (CHT-1237), so refresh it as well, not instead.
+    const detailIssueId = openDetailIssueId();
+    if (detailIssueId) refreshOpenDetail(detailIssueId);
 }
