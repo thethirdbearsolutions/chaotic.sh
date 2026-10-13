@@ -1,4 +1,5 @@
 """Ritual API routes."""
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
@@ -41,6 +42,7 @@ from app.services.principals import fill_principals, load_principals
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _attestation_response(att) -> RitualAttestationResponse:
@@ -513,6 +515,14 @@ async def force_clear_ticket_limbo(
             )
         except Exception:
             pass
+
+    # Nothing on the ticket waits on a decision now: settle the gate and
+    # review inbox entries, so a syncing client drops them (CHT-1607).
+    try:
+        from app.services.inbox_service import InboxService
+        await InboxService().resolve_for_issue(issue_id, decisions_only=True)
+    except Exception:
+        logger.exception("Failed to resolve inbox entries after force-clear issue=%s", issue_id)
 
     return {
         "message": f"Cleared {len(limbo_records)} ticket limbo record(s)",

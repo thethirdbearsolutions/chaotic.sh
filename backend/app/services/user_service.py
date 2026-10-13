@@ -112,6 +112,10 @@ class UserService:
             setattr(user, field, value)
         user.updated_at = datetime.now(timezone.utc)
         await user.save(update_fields=set(update_data.keys()) | {"updated_at"})
+        if "name" in update_data:
+            # Inbox entries show who triggered them (CHT-1607).
+            from app.services.inbox_service import InboxService
+            await InboxService().touch_safely(source_user_id=user.id)
         await user.refresh()
         return user
 

@@ -1,5 +1,5 @@
 """Inbox schemas (CHT-1250)."""
-from typing import ClassVar
+from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, field_validator
 from app.enums import InboxActionKind, InboxActionNote, InboxEntryKind, InboxEntryState
 from app.schemas.principal import HasPrincipals, PrincipalSummary
@@ -26,7 +26,7 @@ class InboxEntryAction(BaseModel):
     the JSON body takes {"note": "..."}."""
 
     kind: InboxActionKind
-    method: str = "POST"
+    method: Literal["POST"] = "POST"
     path: str
     note: InboxActionNote = InboxActionNote.NONE
 
@@ -60,7 +60,9 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
     resolved_at: DateTimeUTC | None = None
     updated_at: DateTimeUTC
     state: InboxEntryState = InboxEntryState.OPEN
-    # What the recipient can do about it in one call; empty on a tombstone.
+    # What the recipient can do about it in one call: archive only on a
+    # resolved entry, nothing on an archived one, and nothing at all for a
+    # credential that cannot write.
     actions: list[InboxEntryAction] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -72,16 +74,30 @@ class InboxEntryResponse(HasPrincipals, BaseModel):
 
 
 class InboxSyncResponse(BaseModel):
-    """One page of GET /inbox/sync (CHT-1607).
+    """One page of GET /inbox/sync (CHT-1607). The client contract:
 
-    Store `next_cursor` and send it back as `since` next time; while
-    `has_more` is true, fetch again at once. `team_ids` are the teams the
-    user can read now: drop any held entry whose team is not in it (left
-    or deleted teams send no tombstones)."""
+    * Store `next_cursor` and send it back as `since` next time. While
+      `has_more` is true, fetch again at once; otherwise wait for the next
+      poll or push.
+    * Upsert every entry by `id`; drop it when `state` is `resolved` or
+      `archived`. The same entry can come more than once: the cursor stays
+      a few seconds behind the newest change, so recent changes are sent
+      again on the next sync.
+    * When `reset` is true, the server restarted the sync (the caller can
+      now read a team the cursor did not cover): clear the cache before
+      applying this page, then page on as usual.
+    * Drop any held entry whose team is not in `team_ids` (a left or
+      deleted team sends no tombstones).
+    * Display fields (`issue_identifier`, `document_title`, `source_user`)
+      are resolved when sent. A document title or a person's name change
+      re-sends the open entries that show it; anything else that changes
+      them does not, so treat them as a snapshot.
+    """
 
     entries: list[InboxEntryResponse]
     next_cursor: str | None = None
     has_more: bool = False
+    reset: bool = False
     team_ids: list[str]
 
 

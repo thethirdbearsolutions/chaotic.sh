@@ -244,6 +244,10 @@ class AgentService:
         for field, value in update_data.items():
             setattr(agent, field, value)
         await agent.save(update_fields=set(update_data.keys()))
+        if "name" in update_data:
+            # Inbox entries show who triggered them (CHT-1607).
+            from app.services.inbox_service import InboxService
+            await InboxService().touch_safely(source_user_id=agent.id)
         # Re-query with join to load parent_user for response
         return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 

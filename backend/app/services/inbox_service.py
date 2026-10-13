@@ -445,21 +445,77 @@ class InboxService:
             filters["recipient_user_id"] = recipient_user_id
         return await self._resolve(filters)
 
+    # The kinds that ask a human to decide a ritual on an issue, and the
+    # answer to such a decision: what goes stale when the ritual or the
+    # gate goes away.
+    _DECISION_KINDS = (
+        InboxEntryKind.GATE_PENDING, InboxEntryKind.REVIEW_REQUESTED, InboxEntryKind.GATE_REJECTED,
+    )
+
+    async def resolve_for_issue(self, issue_id: str, *, decisions_only: bool = False) -> int:
+        """Settle the entries about `issue_id` (CHT-1607 review, finding 4):
+        every kind when the issue is deleted (the entry points at nothing),
+        only the gate/review kinds when its pending rituals were cleared
+        some other way (an admin force-clear). Without this a synced
+        device would keep an approve button whose call 404s or 400s."""
+        filters: dict = {"issue_id": issue_id}
+        if decisions_only:
+            filters["kind__in"] = [k.name for k in self._DECISION_KINDS]
+        return await self._resolve(filters)
+
+    async def resolve_for_ritual(self, ritual_id: str) -> int:
+        """Settle the gate/review entries of a ritual that was deleted or
+        deactivated: nothing is waiting on it any more (finding 4)."""
+        return await self._resolve({
+            "ritual_id": ritual_id, "kind__in": [k.name for k in self._DECISION_KINDS],
+        })
+
+    async def resolve_for_document(self, document_id: str) -> int:
+        """Settle the entries about a deleted document (CHT-1607)."""
+        return await self._resolve({"document_id": document_id})
+
+    async def touch(self, **filters) -> int:
+        """Bump updated_at on the open entries matching `filters`: text an
+        entry shows changed (a document title, a person's name) though the
+        entry itself did not, and a synced device should re-fetch it
+        (CHT-1607 review, finding 6). Tombstones are left alone."""
+        return await OxydeInboxEntry.objects.filter(
+            **filters, resolved_at=None, archived_at=None,
+        ).update(updated_at=datetime.now(timezone.utc))
+
+    async def touch_safely(self, **filters) -> None:
+        """touch(), best-effort, for the rename paths: a failure here must
+        not fail the rename."""
+        try:
+            await self.touch(**filters)
+        except Exception:
+            logger.exception("Failed to bump inbox entries %s", filters)
+
     async def _resolve(self, filters: dict) -> int:
         """Settle the unresolved entries matching `filters` (CHT-1607):
         each gets resolved_at, and read_at if it had none, and a fresh
         updated_at so a syncing client sees the change. An entry the
         recipient already read is resolved too: the device still holds
         it and must learn to drop it. Returns how many were unread, which
-        is what callers have always been told."""
+        is what callers have always been told.
+
+        Two statements, and only the second touches what a sync reads
+        (updated_at): every row it settles changes in that one statement,
+        so a sync can never see some of them at an instant and miss the
+        rest at the same instant (PR #355 review, finding 1). The first
+        only fills read_at, which moves no cursor."""
+        unread = await self._mark_read_for_resolve(filters)
         now = datetime.now(timezone.utc)
-        unread = await OxydeInboxEntry.objects.filter(
-            **filters, resolved_at=None, read_at=None,
-        ).update(read_at=now, resolved_at=now, updated_at=now)
         await OxydeInboxEntry.objects.filter(
             **filters, resolved_at=None,
         ).update(resolved_at=now, updated_at=now)
         return unread
+
+    async def _mark_read_for_resolve(self, filters: dict) -> int:
+        """Step one of _resolve: read_at on the unread rows, nothing else."""
+        return await OxydeInboxEntry.objects.filter(
+            **filters, resolved_at=None, read_at=None,
+        ).update(read_at=datetime.now(timezone.utc))
 
     async def resolve_rejected(
         self, *, ritual_id: str, issue_id: str, recipient_user_ids: list[str],

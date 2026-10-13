@@ -536,12 +536,15 @@ class InProcessBackend:
     @_translated(inbox_api.list_inbox)
     async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list:
         return _dump_list(await inbox_api.list_inbox(
-            current_user=self._user, team_id=team_id, unread=unread, skip=0, limit=limit,
+            current_user=self._user, principal=get_current_mcp_principal(),
+            team_id=team_id, unread=unread, skip=0, limit=limit,
         ))
 
     @_translated(inbox_api.mark_inbox_read)
     async def mark_inbox_read(self, entry_id: str) -> dict:
-        return _dump(await inbox_api.mark_inbox_read(entry_id=entry_id, current_user=self._user))
+        return _dump(await inbox_api.mark_inbox_read(
+            entry_id=entry_id, current_user=self._user, principal=get_current_mcp_principal(),
+        ))
 
     @_translated(inbox_api.mark_all_inbox_read)
     async def mark_all_inbox_read(self, team_id: str | None) -> dict:
