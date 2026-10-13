@@ -1778,7 +1778,12 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         if not _confirm_action(f"\n{action}"):
             console.print("[yellow]Cancelled.[/yellow]")
             if was_running:
-                start_service()
+                console.print("Starting server again...")
+                if not (start_service() and health_check(port, host=host)):
+                    console.print("[red]The server did not come back up.[/red]")
+                    _print_service_state()
+                    raise SystemExit(1)
+            _print_service_state()
             raise SystemExit(0)
 
     console.print()

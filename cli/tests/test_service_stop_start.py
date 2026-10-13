@@ -309,6 +309,58 @@ class TestUpgradeFromStopped:
         assert "Server is DOWN. Start it with 'chaotic system start'" in _flat(result.output)
 
 
+class TestUpgradeCancelled:
+    """Declining the confirmation after the server was stopped restarts it
+    and says where it ended up (review of CHT-1474)."""
+
+    def _run_without_yes(self, **overrides):
+        commits = iter(_COMMITS)
+        patches = {
+            "is_server_installed": dict(return_value=True),
+            "get_current_version": dict(return_value="v0.1.0a19"),
+            "get_current_commit": dict(side_effect=lambda: next(commits, _COMMITS[-1])),
+            "fetch_updates": dict(return_value=True),
+            "get_latest_version": dict(return_value="v0.1.0a20"),
+            "resolve_commit": dict(return_value=_COMMITS[1]),
+            "is_ancestor": dict(side_effect=lambda older, newer: (older, newer) == _COMMITS),
+            "validate_git_ref": dict(return_value=True),
+            "run_command": dict(return_value=MagicMock(returncode=0, stdout="")),
+            "wait_for_service_settled": dict(return_value="active"),
+            "is_service_running": dict(return_value=True),
+            "stop_service": dict(return_value=True),
+            "wait_for_service_stop": dict(return_value=True),
+            "start_service": dict(return_value=True),
+            "health_check": dict(return_value=True),
+            "load_server_json": dict(return_value={"port": 24267}),
+            "get_remote_version": dict(return_value=None),
+            "checkout_version": dict(return_value=(True, None)),
+            "_confirm_action": dict(return_value=False),
+        }
+        patches.update(overrides)
+        with ExitStack() as stack:
+            mocks = {n: stack.enter_context(patch(f"cli.system.{n}", **kw)) for n, kw in patches.items()}
+            result = CliRunner().invoke(system.system, ["upgrade", "--no-backup"])
+        return result, mocks
+
+    def test_cancel_restarts_and_verifies(self):
+        result, m = self._run_without_yes()
+        assert result.exit_code == 0
+        out = _flat(result.output)
+        assert "Cancelled" in out and "Server is RUNNING" in out
+        m["start_service"].assert_called_once()
+        m["health_check"].assert_called_once()
+        m["checkout_version"].assert_not_called()
+
+    def test_cancel_whose_restart_fails_says_down(self):
+        result, _ = self._run_without_yes(
+            health_check=dict(return_value=False),
+            is_service_running=dict(side_effect=[True, False]),
+        )
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "did not come back up" in out and "Server is DOWN" in out
+
+
 class TestSystemStopTimeout:
     def _stop(self, running):
         states = iter(running)
