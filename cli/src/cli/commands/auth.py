@@ -107,11 +107,11 @@ def register(cli):
             identity = "[cyan]AGENT[/cyan]"
             parent_name = user.get("parent_user_name")
             if parent_name:
-                identity += f" (parent: {parent_name})"
+                identity += f" (parent: {escape(parent_name)})"
         else:
             identity = "human"
         console.print(Panel(
-            f"[bold]{user['name']}[/bold]\n{user['email']}\n{identity}",
+            f"[bold]{escape(user['name'])}[/bold]\n{escape(user['email'])}\n{identity}",
             title="Current User",
         ))
 
@@ -144,6 +144,8 @@ def register(cli):
         table.add_column("Active")
         table.add_column("Expires")
 
+        # Server strings, the name the caller's own free text: escaped so
+        # "[/red]" cannot break the render nor "[link=...]" add a link.
         for k in keys:
             key_id = k["id"][:8] + "..."
             name = k.get("name") or "Unnamed"
@@ -152,7 +154,7 @@ def register(cli):
             last_used = (k.get("last_used_at") or "")[:10] or "-"
             expires = (k.get("expires_at") or "")[:10] or "-"
             active = "Yes" if k.get("is_active") else "No"
-            table.add_row(key_id, name, prefix, created, last_used, active, expires)
+            table.add_row(*(escape(cell) for cell in (key_id, name, prefix, created, last_used, active, expires)))
 
         console.print(table)
 
@@ -178,15 +180,15 @@ def register(cli):
             expires_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
         result = _client().create_api_key(name, expires_at=expires_at)
-        console.print(f"[green]API key '{result['name']}' created.[/green]")
+        console.print(f"[green]API key '{escape(result['name'])}' created.[/green]")
         if result.get("expires_at"):
-            console.print(f"Expires: {result['expires_at'][:19]}Z")
+            console.print(f"Expires: {escape(result['expires_at'][:19])}Z")
         console.print()
         console.print("[bold yellow]API Key (save this - it won't be shown again!):[/bold yellow]")
-        console.print(f"[cyan]{result['key']}[/cyan]")
+        console.print(f"[cyan]{escape(result['key'])}[/cyan]")
         console.print()
         console.print("To configure the CLI with this key:")
-        console.print(f"  chaotic auth set-key {result['key']}")
+        console.print(f"  chaotic auth set-key {escape(result['key'])}")
 
     @auth_keys.command("revoke")
     @click.argument("key_id")
@@ -205,16 +207,16 @@ def register(cli):
         for k in keys:
             if k["id"] == key_id or k["id"].startswith(key_id):
                 if key is not None:
-                    console.print(f"[red]Ambiguous key ID prefix '{key_id}'. Please be more specific.[/red]")
+                    console.print(f"[red]Ambiguous key ID prefix '{escape(key_id)}'. Please be more specific.[/red]")
                     raise SystemExit(1)
                 key = k
 
         if not key:
-            console.print(f"[red]API key '{key_id}' not found.[/red]")
+            console.print(f"[red]API key '{escape(key_id)}' not found.[/red]")
             raise SystemExit(1)
 
         _client().revoke_api_key(key["id"])
-        console.print(f"[green]API key '{key['name']}' revoked.[/green]")
+        console.print(f"[green]API key '{escape(key['name'])}' revoked.[/green]")
 
     @auth.group("connections")
     def auth_connections():

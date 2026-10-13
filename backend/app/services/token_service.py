@@ -77,9 +77,20 @@ TOKEN_PREFIXES: dict[TokenKind, str] = {
     TokenKind.REFRESH: "crt_",
     TokenKind.CLAIM_TICKET: "cct_",
 }
-# Every bearer prefix this server mints, `ck_` keys included. Log
-# redaction keys on these (app.mcp_server.auth).
-ALL_SECRET_PREFIXES: tuple[str, ...] = ("ck_",) + tuple(TOKEN_PREFIXES.values())
+API_KEY_PREFIX = "ck_"
+CLIENT_SECRET_PREFIX = "ccs_"
+# Every secret this server mints is one of these prefixes plus
+# SECRET_BYTES random bytes in lowercase hex, made by mint_secret: API
+# keys (api_key_service), OAuth tokens (below) and OAuth client secrets
+# (oauth_client_service). Log redaction is built on exactly this shape
+# (app.mcp_server.auth path scrub, app.log_redaction).
+ALL_SECRET_PREFIXES: tuple[str, ...] = (API_KEY_PREFIX, CLIENT_SECRET_PREFIX) + tuple(TOKEN_PREFIXES.values())
+SECRET_BYTES = 32
+
+
+def mint_secret(prefix: str) -> str:
+    """A new secret: `prefix` + SECRET_BYTES random bytes as hex."""
+    return prefix + secrets.token_hex(SECRET_BYTES)
 
 DISPLAY_PREFIX_LENGTH = 8
 # `holder_sessions.holder` is display-only metadata (label, runtime, client
@@ -167,7 +178,7 @@ def token_digest(raw: str) -> str:
 
 
 def _new_token(kind: TokenKind) -> str:
-    return TOKEN_PREFIXES[kind] + secrets.token_hex(32)
+    return mint_secret(TOKEN_PREFIXES[kind])
 
 
 def kind_of(raw: str) -> TokenKind | None:

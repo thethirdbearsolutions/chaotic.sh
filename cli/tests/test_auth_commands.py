@@ -355,3 +355,85 @@ class TestAuthKeysRevoke:
 
         assert result.exit_code != 0
         assert 'Ambiguous' in result.output
+
+
+HOSTILE_NAMES = ["Evil [/red] key", "[link=https://evil.example]Claude[/link]", "[white on white]hidden"]
+
+
+class TestAuthKeysMarkup:
+    """CHT-1588: server strings and the caller's arguments are printed as
+    text, not parsed as Rich markup. Unescaped, "[/red]" raised a
+    MarkupError and "[link=...]" became a hyperlink with its tag hidden.
+    The literal string showing up in the output is the proof."""
+
+    @pytest.fixture(autouse=True)
+    def wide_console(self, monkeypatch):
+        from cli.commands.shared import console
+
+        monkeypatch.setattr(console._stdout_console, "width", 400)
+
+    @pytest.mark.parametrize("name", HOSTILE_NAMES)
+    def test_create(self, cli_runner, name):
+        from cli.main import cli, client
+
+        client.create_api_key = MagicMock(return_value={
+            "name": name, "key": "ck_" + "ab" * 32, "expires_at": "2026-12-31T00:00:00",
+        })
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'create', name])
+        assert result.exit_code == 0, result.output
+        assert f"API key '{name}' created." in result.output
+
+    @pytest.mark.parametrize("name", HOSTILE_NAMES)
+    def test_list(self, cli_runner, name):
+        from cli.main import cli, client
+
+        client.list_api_keys = MagicMock(return_value=[
+            {"id": "key-uuid-123456789", "name": name, "key_prefix": "ck_[/b]", "is_active": True},
+        ])
+        result = cli_runner.invoke(cli, ['auth', 'keys', 'list'])
+        assert result.exit_code == 0, result.output
+        assert name in result.output
+        assert "ck_[/b]" in result.output
+
+    @pytest.mark.parametrize("name", HOSTILE_NAMES)
+    def test_revoke(self, cli_runner, name):
+        from cli.main import cli, client
+
+        client.list_api_keys = MagicMock(return_value=[{"id": "key-uuid-123", "name": name}])
+        client.revoke_api_key = MagicMock()
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['auth', 'keys', 'revoke', 'key-uuid-123'])
+        assert result.exit_code == 0, result.output
+        assert f"API key '{name}' revoked." in result.output
+
+    @pytest.mark.parametrize("key_id", ["[/red]", "[link=https://evil.example]x[/link]"])
+    def test_revoke_not_found_echoes_the_argument(self, cli_runner, key_id):
+        from cli.main import cli, client
+
+        client.list_api_keys = MagicMock(return_value=[])
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['auth', 'keys', 'revoke', key_id])
+        assert result.exit_code == 1
+        assert f"API key '{key_id}' not found." in result.output
+
+    def test_revoke_ambiguous_echoes_the_argument(self, cli_runner):
+        from cli.main import cli, client
+
+        client.list_api_keys = MagicMock(return_value=[{"id": "[/red]-1", "name": "a"}, {"id": "[/red]-2", "name": "b"}])
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['auth', 'keys', 'revoke', '[/red]'])
+        assert result.exit_code == 1
+        assert "Ambiguous key ID prefix '[/red]'" in result.output
+
+    @pytest.mark.parametrize("name", HOSTILE_NAMES)
+    def test_whoami(self, cli_runner, name):
+        from cli.main import cli, client
+
+        client.get_me = MagicMock(return_value={
+            "name": name, "email": "[/red]@x.test", "is_agent": True, "parent_user_name": name,
+        })
+        result = cli_runner.invoke(cli, ['auth', 'whoami'])
+        assert result.exit_code == 0, result.output
+        assert name in result.output
+        assert "[/red]@x.test" in result.output
+        assert f"(parent: {name})" in result.output

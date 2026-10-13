@@ -124,7 +124,7 @@ def _redact_key(key: str) -> str:
     the at-a-glance readability this exists for.
 
     Every prefix this server mints is kept whole (CHT-1516): a
-    `cat_`/`crt_`/`cac_`/`cct_` token pasted into a path is scrubbed the
+    `cat_`/`crt_`/`cac_`/`cct_` token or `ccs_` client secret pasted into a path is scrubbed the
     same way and reads as `cat_...19a0`, not `cat...19a0`.
     """
     if len(key) > 12:
