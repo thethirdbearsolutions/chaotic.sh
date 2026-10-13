@@ -43,8 +43,10 @@ through. If you think a test is wrong, say why in the PR.
 
 ## Things worth knowing
 
-- **Frontend:** edit `frontend/src/`. `npm run build` produces
-  `frontend/static/js/app.bundle.js`, which is generated and not committed.
+- **Frontend:** edit `frontend/src/`, never the generated
+  `frontend/static/js/app.bundle.js`. The server serves that bundle, so it is
+  committed: run `npm run build` and commit the rebuilt bundle in the same
+  PR as your `src/` change.
 - **Database:** schema changes go through an Oxyde migration in
   `backend/migrations/`. Read the "Database" section of
   [CLAUDE.md](CLAUDE.md) first; it lists the rules the migration tests
