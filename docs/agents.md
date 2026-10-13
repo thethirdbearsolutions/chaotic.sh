@@ -411,13 +411,60 @@ there's no local profile to fall back on the way the stdio server has:
   `project` that doesn't match its scope is rejected the same way.
 - To retire an agent, `chaotic agent deactivate <agent>` revokes all its
   keys and blocks it from signing in while keeping its work attributed
-  to it. Its creator and any admin of its team may do this; `chaotic
-  agent delete` is refused once the agent has authored anything. A
+  to it. Its creator (while still a member of its team) and any admin
+  of its team may do this; `chaotic agent delete` is refused once the
+  agent has authored anything. A
   deactivated agent can't be assigned new issues; the ones it already
   holds stay assigned, so reassign its open work. `chaotic agent
   reactivate <agent>` undoes it, but its old keys stay revoked: mint a
   new one with `chaotic agent keys create`. When someone other than the
   creator does either, the creator gets an inbox entry saying who.
+- An agent key belongs to whoever minted it: the creator holds the key
+  `agent create` printed, and a key an admin mints with `chaotic agent
+  keys create` is the admin's (it shows in their `chaotic auth keys
+  list`, not the creator's). A key an agent mints for itself through
+  `POST /api-keys` belongs to whoever holds the key it called with, so
+  every agent key has a human behind it. `chaotic agent keys list
+  <agent>` shows every key that signs in as the agent and who holds
+  it; `chaotic agent keys revoke <agent> <key>` revokes one by its ID
+  prefix or its `ck_...` prefix. Both are for team admins and the
+  agent's creator.
+- **Changed for existing keys:** before this release, every key minted
+  for an agent was recorded as its creator's, even one a team admin
+  minted, and a key an agent minted for itself recorded no human at all
+  (it shows as `(creator, legacy)` in `keys list`). Existing rows cannot
+  tell an admin's mint from the creator's, so all of those keys stand or
+  fall with the agent's creator. That cuts both ways:
+  - When the creator leaves, an admin's bot running on such a key stops.
+  - When the **admin** who actually holds such a key leaves, nothing
+    revokes it: it is recorded as the creator's, `keys list` shows the
+    creator as its holder, and a key the agent mints with it is recorded
+    as the creator's too. For an agent the team owner created, that key
+    never expires on its own.
+
+  **Admins: rotate any agent key that someone other than the agent's
+  creator minted before this release** (`chaotic agent keys create`,
+  move the bot over, then `chaotic agent keys revoke` the old one). A
+  key minted from now on is recorded as its minter's, so neither problem
+  recurs. A bulk rotate/revoke of pre-release keys is tracked as
+  CHT-1529.
+- **Leaving a team ends the agent keys you hold for it.** When a member
+  is removed from a team, or leaves it, every key they hold for that
+  team's agents is revoked in the same step: keys they minted, keys an
+  agent minted for itself with one of their keys, and the legacy
+  self-minted keys of agents they created. Anything still running on those keys
+  stops, with the same 401 as any revoked key, over REST and MCP alike.
+  The agents stay. Agents the member created pass to the admin who
+  removed them, or to the team's owner if they left on their own. The
+  team's other admins get an inbox entry for each affected agent, so
+  someone can mint a replacement key. Separately from that revocation,
+  an agent key whose holder (for a legacy self-minted key, the agent's
+  creator) is no longer in the agent's team does not sign in. The removed creator also loses every right over the agent
+  (update, delete, deactivate/reactivate, listing, minting or revoking
+  its keys). Rejoining does not bring back revoked keys or ownership.
+  The sign-in check is separate from revocation, though: a key that was
+  never revoked, such as one whose holder left before this release, signs
+  in again once that holder is back in the team.
 
 `issue_view`/`issue_update`/`issue_comment`/`issue_start` don't take a
 `team`/`project` parameter at all in either transport -- issue

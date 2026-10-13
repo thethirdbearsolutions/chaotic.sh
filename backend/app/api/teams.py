@@ -14,6 +14,9 @@ from app.schemas.team import (
     TeamInvitationResponse,
 )
 from app.config import get_settings
+from oxyde import atomic
+from app.oxyde_models.team import OxydeTeamMember
+from app.services.agent_service import AgentService
 from app.services.team_service import TeamService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
@@ -233,7 +236,28 @@ async def remove_member(
             detail="Cannot remove owner",
         )
 
-    await team_service.remove_member(member)
+    # Leaving the team ends the agent keys the member holds for it, in the
+    # same transaction (CHT-1510): those secrets left with them. Agents
+    # they created pass to the admin removing them, or, when they leave on
+    # their own, to the team's longest-standing owner.
+    agent_service = AgentService()
+    async with atomic():
+        await team_service.remove_member(member)
+        if user_id != current_user.id:
+            new_owner_id = current_user.id
+        else:
+            owners = await OxydeTeamMember.objects.filter(
+                team_id=team_id, role=TeamRole.OWNER,
+            ).order_by("joined_at").all()
+            new_owner_id = owners[0].user_id if owners else None
+        released = await agent_service.release_member_agents(team_id, user_id, new_owner_id)
+
+    if released:
+        removed = await UserService().get_by_id(user_id)
+        new_owner = await UserService().get_by_id(new_owner_id) if new_owner_id else None
+        await agent_service.notify_member_agents_released(
+            team_id=team_id, released=released, removed=removed, actor=current_user, new_owner=new_owner,
+        )
 
 
 # Invitations

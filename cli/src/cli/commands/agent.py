@@ -260,4 +260,102 @@ def register(cli):
         console.print("To configure the CLI with this agent's key:")
         console.print(f"  chaotic auth set-key {result['key']}")
 
+    @agent_keys.command("list")
+    @click.argument("agent_ref", metavar="AGENT")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def agent_keys_list(agent_ref):
+        """List every API key that signs in as an agent, active or revoked,
+        with who holds it. A key the agent minted for itself is held by
+        whoever holds the key it used; one minted before holders were
+        recorded shows "(creator, legacy)".
+
+        Allowed to team admins and to the agent's creator while in the team.
+
+        Example:
+            chaotic agent keys list claude-bot
+        """
+        m = _main()
+        agent_ref = _require_ref(agent_ref)
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
+        keys = _client().list_agent_keys(agent_obj["id"])
+        if m.is_json_output():
+            m.output_json(keys)
+            return
+        if not keys:
+            console.print(f"[yellow]Agent '{agent_obj['name']}' has no API keys.[/yellow]")
+            return
+
+        table = Table(title=f"API keys for {agent_obj['name']}")
+        table.add_column("ID", style="dim")
+        table.add_column("Name")
+        table.add_column("Prefix")
+        table.add_column("Held by")
+        table.add_column("Created")
+        table.add_column("Last Used")
+        table.add_column("Active")
+        for k in keys:
+            holder = "(creator, legacy)" if k.get("legacy_self_minted") else (k.get("owner_name") or k.get("owner_id") or "-")
+            table.add_row(
+                k["id"][:8] + "...",
+                k.get("name") or "Unnamed",
+                k.get("key_prefix") or "-",
+                holder,
+                (k.get("created_at") or "")[:10] or "-",
+                (k.get("last_used_at") or "")[:10] or "-",
+                "Yes" if k.get("is_active") else "No",
+            )
+        console.print(table)
+
+    @agent_keys.command("revoke")
+    @click.argument("agent_ref", metavar="AGENT")
+    @click.argument("key_ref", metavar="KEY")
+    @_main().require_team
+    @_main().handle_error
+    def agent_keys_revoke(agent_ref, key_ref):
+        """Revoke one of an agent's API keys, leaving its others working.
+
+        KEY is the key's ID, an ID prefix, or its `ck_...` prefix, as
+        `chaotic agent keys list` shows them (a pasted full key works too).
+        Only active keys are considered. To revoke all of them and stop the agent, use
+        `chaotic agent deactivate`.
+
+        Example:
+            chaotic agent keys revoke claude-bot 1a2b3c4d
+            chaotic agent keys revoke claude-bot ck_9f8e7d6c
+        """
+        m = _main()
+        agent_ref = _require_ref(agent_ref)
+        key_ref = key_ref.strip()
+        if not key_ref:
+            console.print("[red]Key identifier must not be empty.[/red]")
+            raise SystemExit(1)
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
+        def _matches(k):
+            prefix = k.get("key_prefix") or ""
+            return (
+                k["id"].startswith(key_ref)
+                or prefix.startswith(key_ref)
+                # A pasted full secret: match it on the prefix it starts with.
+                or (len(key_ref) > len(prefix) and prefix and key_ref.startswith(prefix))
+            )
+
+        # Already-revoked keys are not candidates: revoking one is a no-op,
+        # and it must not make an active key's prefix ambiguous.
+        matches = [k for k in _client().list_agent_keys(agent_obj["id"]) if k.get("is_active") and _matches(k)]
+        # Never print a pasted secret back to the terminal.
+        shown = key_ref if len(key_ref) <= 11 else key_ref[:11] + "..."
+        if not matches:
+            console.print(f"[red]Agent '{agent_obj['name']}' has no active key '{shown}'.[/red]")
+            raise SystemExit(1)
+        if len(matches) > 1:
+            console.print(f"[red]Ambiguous key identifier '{shown}'. Please be more specific.[/red]")
+            raise SystemExit(1)
+        key = matches[0]
+        if not m.confirm_action(f"Revoke key '{key['name']}' ({key['key_prefix']}) of agent '{agent_obj['name']}'?"):
+            raise SystemExit(0)
+        _client().revoke_api_key(key["id"])
+        console.print(f"[green]Key '{key['name']}' revoked.[/green]")
+
     return agent

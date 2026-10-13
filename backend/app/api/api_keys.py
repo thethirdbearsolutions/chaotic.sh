@@ -1,8 +1,12 @@
 """API Key routes."""
-from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
+from oxyde import atomic
+from app.api.deps import CurrentUser, can_manage_agent, get_api_key_record
 from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
+from app.services.agent_service import AgentService
 from app.services.api_key_service import APIKeyService
+from app.services.team_service import TeamService
 
 router = APIRouter()
 
@@ -11,10 +15,43 @@ router = APIRouter()
 async def create_api_key(
     api_key_in: APIKeyCreate,
     current_user: CurrentUser,
+    calling_key: Annotated[object | None, Depends(get_api_key_record)],
 ):
-    """Create a new API key. The full key is only shown once."""
+    """Create a new API key. The full key is only shown once.
+
+    An agent minting a key for itself gets one linked to it whose holder
+    is the human behind the key it called with (CHT-1508): whoever holds
+    the calling key holds the new one too, so leaving the team ends both.
+    A calling key from before holders were recorded is vouched for by the
+    agent's creator, and so is the key minted with it. The holder's
+    membership is re-checked in the same transaction as the insert, so a
+    removal that commits first cannot leave behind a key its sweep
+    missed. An agent with no calling key on record is refused rather than
+    given a key nobody holds.
+    """
     api_key_service = APIKeyService()
-    api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
+    if not current_user.is_agent:
+        api_key, full_key = await api_key_service.create(current_user.id, api_key_in)
+    else:
+        if calling_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="An agent can only mint a key with one of its own API keys",
+            )
+        holder_id = calling_key.user_id
+        vouching_id = holder_id if holder_id != current_user.id else current_user.parent_user_id
+        async with atomic():
+            if not vouching_id or await TeamService().get_member(
+                current_user.agent_team_id, vouching_id,
+            ) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid API key",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            api_key, full_key = await api_key_service.create(
+                holder_id, api_key_in, agent_user_id=current_user.id,
+            )
 
     return APIKeyCreated(
         id=api_key.id,
@@ -32,9 +69,12 @@ async def list_api_keys(
     skip: int = 0,
     limit: int = 1000,
 ):
-    """List all API keys for the current user."""
-    api_key_service = APIKeyService()
-    api_keys = await api_key_service.list_by_user(current_user.id)
+    """List all API keys for the current user: the ones they hold. For an
+    agent, every key that signs in as it (CHT-1508)."""
+    if current_user.is_agent:
+        api_keys = await AgentService().list_keys(current_user.id)
+    else:
+        api_keys = await APIKeyService().list_by_user(current_user.id)
     return api_keys[skip:skip + limit]
 
 
@@ -53,7 +93,19 @@ async def revoke_api_key(
             detail="API key not found",
         )
 
-    if api_key.user_id != current_user.id:
+    # Whoever holds a key may revoke it. Beyond that, a key that
+    # authenticates as an agent -- linked to it, or a legacy one the agent
+    # minted for itself -- may be revoked by whoever may manage the agent: its
+    # team's admins, and its creator while still in the team (CHT-1508).
+    allowed = api_key.user_id == current_user.id or (
+        # An agent may revoke any key that signs in as itself.
+        current_user.is_agent and api_key.agent_user_id == current_user.id
+    )
+    if not allowed:
+        agent_service = AgentService()
+        agent = await agent_service.get_by_id(api_key.agent_user_id or api_key.user_id)
+        allowed = agent is not None and await can_manage_agent(current_user, agent)
+    if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to revoke this API key",

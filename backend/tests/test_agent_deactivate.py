@@ -167,22 +167,30 @@ class TestDeactivateAgent:
     async def test_a_key_the_agent_minted_for_itself_is_revoked_too(
         self, client, auth_headers, test_user, test_team, test_project,
     ):
-        """A key the agent created through POST /api-keys is owned by the
-        agent (user_id=agent.id, no agent_user_id); it must be revoked."""
+        """A key the agent created through POST /api-keys must be revoked:
+        both today's shape (linked to the agent, held by the human behind
+        the calling key, CHT-1508) and the legacy one (user_id=agent.id,
+        no agent_user_id)."""
+        from app.schemas.api_key import APIKeyCreate
+        from app.services.api_key_service import APIKeyService
+
         agent, key, _ = await _agent_with_work(test_user, test_team, test_project)
         minted = await client.post(
             "/api/api-keys", json={"name": "self"}, headers={"Authorization": f"Bearer {key}"},
         )
         assert minted.status_code == 201, minted.text
         own_key = minted.json()["key"]
+        legacy, legacy_key = await APIKeyService().create(agent.id, APIKeyCreate(name="legacy"))
 
         await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
 
         own = await OxydeAPIKey.objects.get(id=minted.json()["id"])
-        assert own.user_id == agent.id and own.agent_user_id is None
+        assert own.user_id == test_user.id and own.agent_user_id == agent.id
         assert own.is_active is False
-        response = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {own_key}"})
-        assert response.status_code == 401
+        assert (await OxydeAPIKey.objects.get(id=legacy.id)).is_active is False
+        for k in (own_key, legacy_key):
+            response = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {k}"})
+            assert response.status_code == 401
 
     async def test_only_the_agent_is_affected(
         self, client, auth_headers, test_user, test_team, test_project,
