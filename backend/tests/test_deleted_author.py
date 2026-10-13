@@ -101,7 +101,7 @@ async def test_an_agent_that_authored_anything_is_not_deleted(client, auth_heade
 
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
-    assert "Worker" in detail and "1 issues" in detail and "1 issue comments" in detail
+    assert "Worker" in detail and "1 issue," in detail and "1 issue comment," in detail
     assert await service.get_by_id(agent.id) is not None
     assert (await OxydeIssue.objects.get(id=issue.id)).creator_id == agent.id
 

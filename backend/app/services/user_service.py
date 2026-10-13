@@ -9,9 +9,57 @@ from app.utils.security import get_password_hash, verify_password
 from oxyde import atomic
 from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.api_key import OxydeAPIKey
+from app.services.agent_service import AgentService, describe_counts
 
 # Type alias: callers still see "User" but it's now an Oxyde model
 User = OxydeUser
+
+
+def _label(user: OxydeUser) -> str:
+    """'Name' (id prefix): names are not unique, ids are unreadable."""
+    return f"'{user.name}' ({user.id[:8]})"
+
+
+class UserDeletionRefusedError(Exception):
+    """Refused (CHT-1467): deleting the user would erase who wrote
+    something -- the user, or an agent they own, authored work (the agent
+    rule is CHT-1427's) -- or would have to delete a user row that names
+    them as its parent but is not an agent.
+
+    `counts` is the user's own authored_counts(); `agent_counts` maps the
+    id of each agent that authored anything to its counts, and
+    `agent_names` that id to the agent's name; `non_agent_children` lists
+    the ids of rows with parent_user_id = the user and is_agent false.
+    """
+
+    def __init__(
+        self,
+        user: OxydeUser,
+        counts: dict[str, int],
+        agents_with_work: list[tuple[OxydeUser, dict[str, int]]],
+        non_agent_children: list[OxydeUser],
+    ):
+        self.counts = counts
+        self.agent_counts = {agent.id: per_agent for agent, per_agent in agents_with_work}
+        self.agent_names = {agent.id: agent.name for agent, _ in agents_with_work}
+        self.non_agent_children = [child.id for child in non_agent_children]
+        reasons = []
+        if any(counts.values()):
+            reasons.append(f"it authored {describe_counts(counts)}")
+        for agent, per_agent in agents_with_work:
+            reasons.append(f"its agent {_label(agent)} authored {describe_counts(per_agent)}")
+        if non_agent_children:
+            listed = ", ".join(_label(child) for child in non_agent_children)
+            reasons.append(
+                f"user(s) {listed} name it as their parent but are not agents, so deleting it "
+                "would delete them (an operator must clear their parent_user_id)"
+            )
+        detail = "; ".join(reasons)
+        tail = (
+            " Deleting the account would leave that work without an author."
+            if any(counts.values()) or agents_with_work else ""
+        )
+        super().__init__(f"User {_label(user)} cannot be deleted: {detail}.{tail}")
 
 
 class UserService:
@@ -67,8 +115,40 @@ class UserService:
         return user
 
     async def delete(self, user: OxydeUser) -> None:
-        """Delete a user and cascade to child records."""
+        """Delete a user, their agents and their memberships, invitations
+        and API keys -- only if neither they nor any of their agents
+        authored anything.
+
+        Otherwise UserDeletionRefusedError (CHT-1467): the same rule
+        AgentService.delete applies to one agent, applied to the account
+        and every agent it owns, so deleting the owner cannot be used to
+        get around it. The agents are deleted here, explicitly; the
+        database's users.parent_user_id is ON DELETE RESTRICT (0020), so
+        deleting a human who still has agents fails rather than cascades.
+        A row naming the user as parent that is not an agent is never
+        deleted along with them: its presence refuses the delete too.
+        """
+        agent_service = AgentService()
         async with atomic():
+            # Every row that names the user as parent, agent or not: the
+            # RESTRICT applies to all of them (CHT-1467's review).
+            children = await OxydeUser.objects.filter(
+                parent_user_id=user.id
+            ).order_by("created_at").all()
+            agents = [child for child in children if child.is_agent]
+            non_agent_children = [child for child in children if not child.is_agent]
+            counts = await agent_service.authored_counts(user.id)
+            agents_with_work = []
+            for agent in agents:
+                per_agent = await agent_service.authored_counts(agent.id)
+                if any(per_agent.values()):
+                    agents_with_work.append((agent, per_agent))
+            if any(counts.values()) or agents_with_work or non_agent_children:
+                raise UserDeletionRefusedError(user, counts, agents_with_work, non_agent_children)
+            for agent in agents:
+                await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
+                await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
+                await agent.delete()
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()
             await OxydeTeamInvitation.objects.filter(email=user.email).delete()
             await OxydeAPIKey.objects.filter(user_id=user.id).delete()

@@ -180,3 +180,36 @@ def test_the_database_agrees_with_the_record_on_delete_actions(schema_template):
     finally:
         connection.close()
     assert not mismatched, mismatched
+
+
+# Deleting a user may cascade only into rows that belong to the account
+# itself. Anything else that points at a user records who did something
+# and is SET NULL (CHT-1427) or, for an agent's owner, RESTRICT
+# (CHT-1467). ticket_limbo.requested_by_id is the known exception: it is
+# NOT NULL and cascades, which is why the delete guards count it.
+USER_FKS_ALLOWED_TO_CASCADE = {
+    ("api_keys", "user_id"),
+    ("api_keys", "agent_user_id"),
+    ("team_members", "user_id"),
+    ("team_invitations", "invited_by_id"),
+    ("ticket_limbo", "requested_by_id"),
+}
+
+
+def test_deleting_a_user_cascades_only_into_what_the_account_owns(schema_template):
+    connection = sqlite3.connect(f"file:{schema_template}?mode=ro", uri=True)
+    try:
+        tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        cascading = {
+            (table, fk[3])
+            for table in tables
+            for fk in connection.execute(f"PRAGMA foreign_key_list('{table}')")
+            if fk[2] == "users" and fk[6] == "CASCADE"
+        }
+        parent = [
+            fk[6] for fk in connection.execute("PRAGMA foreign_key_list('users')") if fk[3] == "parent_user_id"
+        ]
+    finally:
+        connection.close()
+    assert cascading <= USER_FKS_ALLOWED_TO_CASCADE, sorted(cascading - USER_FKS_ALLOWED_TO_CASCADE)
+    assert parent == ["RESTRICT"], "deleting a human must not delete their agents behind the guard (CHT-1467)"

@@ -12,7 +12,7 @@ from app.oxyde_models.document import (
 )
 from app.oxyde_models.issue import (
     OxydeBudgetTransaction, OxydeIssue, OxydeIssueActivity, OxydeIssueComment,
-    OxydeIssueDescriptionRevision, OxydeTicketLimbo,
+    OxydeIssueDescriptionRevision, OxydeTicketLimbo, OxydeTicketLimboBlocker,
 )
 from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.schemas.agent import AgentCreate, AgentUpdate
@@ -22,15 +22,26 @@ from app.schemas.api_key import APIKeyCreate
 logger = logging.getLogger(__name__)
 
 
+def _count_phrase(n: int, kind: str) -> str:
+    """'1 issue', '2 issues', '1 issue activity entry'."""
+    if n == 1:
+        kind = kind[:-3] + "y" if kind.endswith("ies") else kind[:-1]
+    return f"{n} {kind}"
+
+
+def describe_counts(counts: dict[str, int]) -> str:
+    """The nonzero counts of an authored_counts() result, as prose."""
+    return ", ".join(_count_phrase(n, kind) for kind, n in counts.items() if n)
+
+
 class AgentHasAuthoredContentError(Exception):
     """Refused: the agent wrote things, and deleting it would erase who
     wrote them (CHT-1427). `counts` maps a kind of record to how many."""
 
     def __init__(self, agent_name: str, counts: dict[str, int], agent_id: str = "{id}"):
         self.counts = counts
-        listed = ", ".join(f"{n} {kind}" for kind, n in counts.items() if n)
         super().__init__(
-            f"Agent '{agent_name}' cannot be deleted: it authored {listed}. Deleting it "
+            f"Agent '{agent_name}' cannot be deleted: it authored {describe_counts(counts)}. Deleting it "
             "would leave that work without an author. Deactivate it instead "
             f"(`chaotic agent deactivate`, or POST /api/agents/{agent_id}/deactivate): that "
             "revokes its API keys and blocks it from signing in, and keeps its work "
@@ -206,9 +217,10 @@ class AgentService:
         return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 
     async def authored_counts(self, agent_id: str) -> dict[str, int]:
-        """How many records attribute something to this agent: every
+        """How many records attribute something to this user (an agent,
+        or the human UserService.delete checks with it, CHT-1467): every
         column that would lose the attribution (or, for ritual gate
-        requests, the row) if the agent were deleted."""
+        requests, the row) if the user were deleted."""
         return {
             "issues": await OxydeIssue.objects.filter(creator_id=agent_id).count(),
             "issue comments": await OxydeIssueComment.objects.filter(author_id=agent_id).count(),
@@ -220,6 +232,10 @@ class AgentService:
             # SET NULL already, but each still loses its attribution.
             "ritual attestations": await OxydeRitualAttestation.objects.filter(attested_by=agent_id).count(),
             "ritual approvals": await OxydeRitualAttestation.objects.filter(approved_by=agent_id).count(),
+            # Who cleared a ritual gate, and who resolved each blocker
+            # (SET NULL; CHT-1467's review).
+            "ritual gate clearances": await OxydeTicketLimbo.objects.filter(cleared_by_id=agent_id).count(),
+            "ritual blocker resolutions": await OxydeTicketLimboBlocker.objects.filter(resolved_by_id=agent_id).count(),
             "budget transactions": await OxydeBudgetTransaction.objects.filter(user_id=agent_id).count(),
             "issue description revisions": await OxydeIssueDescriptionRevision.objects.filter(author_id=agent_id).count(),
             "document revisions": await OxydeDocumentRevision.objects.filter(author_id=agent_id).count(),
