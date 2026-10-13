@@ -151,6 +151,9 @@ class TestAuthorizeValidation:
         ({"resource": BASE + "/api"}, "invalid_target"),
         ({"scope": "chaotic:write openid"}, "invalid_scope"),
         ({"scope": "chaotic:admin"}, "invalid_scope"),
+        # The wildcard is never a scope on the wire (CHT-1562).
+        ({"scope": "*"}, "invalid_scope"),
+        ({"scope": "chaotic:write *"}, "invalid_scope"),
     ])
     async def test_other_errors_redirect_to_the_validated_uri(self, client, oauth_client, overrides, error):
         response = await _authorize(client, oauth_client, **overrides)
