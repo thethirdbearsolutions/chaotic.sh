@@ -19,13 +19,15 @@ What this module does not do yet:
 * It is not wired into authentication. ``validate_access`` returns a
   ``ValidatedToken`` with everything a principal needs (who it acts as,
   who holds it, team and project scope, scopes, policy, expiry), and the
-  CredentialResolver of CHT-1560 turns that into the request's principal
-  for REST and /mcp alike. That is also where the per-request checks
-  that are not about the token belong, as for a ``ck_`` key today: the
-  principal is active, and an agent principal's holder is still in the
-  agent's team. Scope enforcement is CHT-1562. Until then a ``cat_``
-  bearer is refused everywhere (REST decodes it as a JWT and fails; /mcp
-  takes only ``ck_``).
+  credential resolver (``app.auth.credentials``, CHT-1560) turns that
+  into the request's principal for REST and /mcp alike, as the verifier
+  of its reserved ``OAUTH_ACCESS`` kind (CHT-1520 plugs it in). That is
+  also where the per-request checks that are not about the token
+  belong, as for a ``ck_`` key: the principal is active, and an agent
+  principal's holder is still in the agent's team. Scope enforcement is
+  CHT-1562. Until then a ``cat_`` bearer is refused everywhere: the
+  resolver classifies it as a session JWT, which fails to decode, and
+  /mcp accepts only API keys.
 * Endpoints: the token endpoint and code exchange are CHT-1520, claim
   grants CHT-1447, and the RevocationService with cascades CHT-1449.
   ``revoke_session`` here is the one primitive they build on.
