@@ -523,7 +523,7 @@ describe('issue-detail-view', () => {
                 expect(editor.isConnected).toBe(true);
             });
 
-            it('keeps focus in the comment box across the re-render', async () => {
+            it('keeps focus and selection in the comment box across the re-render', async () => {
                 // The base fixture has a stray #new-comment outside the
                 // detail view; drop it so the id resolves to the rendered one.
                 document.querySelector('body > #new-comment')?.remove();
@@ -531,14 +531,146 @@ describe('issue-detail-view', () => {
                 const before = document.getElementById('new-comment');
                 expect(before).not.toBeNull();
                 before.value = 'hello world';
+                // The CHT-1041 draft listener saves on input; the re-render
+                // restores the text from it.
+                before.dispatchEvent(new Event('input'));
                 before.focus();
-                before.setSelectionRange(5, 5);
+                before.setSelectionRange(2, 7);
+                const focusSpy = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
+
+                try {
+                    expect(await viewIssue('issue-1', false, { refresh: true })).toBe('rendered');
+
+                    const after = document.getElementById('new-comment');
+                    expect(after).not.toBe(before);
+                    expect(document.activeElement).toBe(after);
+                    expect(after.value).toBe('hello world');
+                    expect(after.selectionStart).toBe(2);
+                    expect(after.selectionEnd).toBe(7);
+                    // PR #318 review 5: focusing must not scroll the page.
+                    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+                } finally {
+                    focusSpy.mockRestore();
+                    // Clear the saved draft so it can't leak into later tests.
+                    const el = document.getElementById('new-comment');
+                    el.value = '';
+                    el.dispatchEvent(new Event('input'));
+                }
+            });
+
+            it('puts the page scroll position back after the re-render', async () => {
+                await viewIssue('issue-1');
+                const scrollYSpy = vi.spyOn(window, 'scrollY', 'get').mockReturnValue(640);
+                window.scrollTo.mockClear();
+                try {
+                    await viewIssue('issue-1', false, { refresh: true });
+                    expect(window.scrollTo).toHaveBeenCalledWith(0, 640);
+                } finally {
+                    scrollYSpy.mockRestore();
+                }
+            });
+
+            // PR #318 review 1: two refreshes overlapping (one comment fires
+            // both 'comment' and 'activity') must not land oldest-last.
+            it('drops an older refresh that resolves after a newer one', async () => {
+                await viewIssue('issue-1');
+                const slow = deferred();
+                api.getIssue.mockImplementationOnce(() => slow.promise);
+                const older = viewIssue('issue-1', false, { refresh: true });
+
+                api.getIssue.mockResolvedValueOnce({ ...mockIssue, title: 'Newer' });
+                expect(await viewIssue('issue-1', false, { refresh: true })).toBe('rendered');
+                slow.resolve({ ...mockIssue, title: 'Older' });
+
+                expect(await older).toBe('dropped');
+                expect(getCurrentDetailIssue().title).toBe('Newer');
+            });
+
+            // PR #318 review 3
+            it('keeps the rituals panel expanded across a refresh', async () => {
+                await viewIssue('issue-1');
+                setTicketRitualsCollapsed(false);
 
                 await viewIssue('issue-1', false, { refresh: true });
+                expect(getTicketRitualsCollapsed()).toBe(false);
 
-                const after = document.getElementById('new-comment');
-                expect(after).not.toBe(before);
-                expect(document.activeElement).toBe(after);
+                await viewIssue('issue-1');
+                expect(getTicketRitualsCollapsed()).toBe(true);
+            });
+
+            // PR #318 review 4/5: transient UI that a re-render would
+            // orphan or wipe. Held off before fetching, and reported as
+            // 'retry' so ws-handlers.js tries again.
+            describe('transient UI', () => {
+                beforeEach(() => {
+                    // Production has one #new-comment, inside the detail;
+                    // the base fixture's stray copy would take the id.
+                    document.querySelector('body > #new-comment')?.remove();
+                });
+
+                const cases = {
+                    'an inline field dropdown': () => {
+                        isInlineDropdownOpen.mockReturnValue(true);
+                        return () => isInlineDropdownOpen.mockReturnValue(false);
+                    },
+                    'the overflow menu': () => {
+                        document.querySelector('#issue-detail-view .overflow-menu-dropdown').classList.remove('hidden');
+                        return () => document.querySelector('#issue-detail-view .overflow-menu-dropdown').classList.add('hidden');
+                    },
+                    'the @mention list': () => {
+                        document.getElementById('mention-suggestions').classList.remove('hidden');
+                        return () => document.getElementById('mention-suggestions').classList.add('hidden');
+                    },
+                    'an IME composition in the comment box': () => {
+                        const ta = document.querySelector('#issue-detail-view #new-comment');
+                        ta.dispatchEvent(new Event('compositionstart'));
+                        return () => ta.dispatchEvent(new Event('compositionend'));
+                    },
+                };
+
+                for (const [name, open] of Object.entries(cases)) {
+                    it(`holds off while ${name} is open, then renders once it closes`, async () => {
+                        await viewIssue('issue-1');
+                        const marker = document.querySelector('#issue-detail-content > *');
+                        const close = open();
+                        api.getIssue.mockClear();
+
+                        expect(await viewIssue('issue-1', false, { refresh: true })).toBe('retry');
+                        expect(api.getIssue).not.toHaveBeenCalled();
+                        expect(marker.isConnected).toBe(true);
+
+                        close();
+                        expect(await viewIssue('issue-1', false, { refresh: true })).toBe('rendered');
+                        expect(marker.isConnected).toBe(false);
+                    });
+                }
+
+                it('also holds off if one opens while the refresh is fetching', async () => {
+                    await viewIssue('issue-1');
+                    const marker = document.querySelector('#issue-detail-content > *');
+                    const slow = deferred();
+                    api.getIssue.mockImplementationOnce(() => slow.promise);
+                    const refresh = viewIssue('issue-1', false, { refresh: true });
+
+                    isInlineDropdownOpen.mockReturnValue(true);
+                    try {
+                        slow.resolve(mockIssue);
+                        expect(await refresh).toBe('retry');
+                        expect(marker.isConnected).toBe(true);
+                    } finally {
+                        isInlineDropdownOpen.mockReturnValue(false);
+                    }
+                });
+
+                it('does not hold off a user navigation', async () => {
+                    await viewIssue('issue-1');
+                    isInlineDropdownOpen.mockReturnValue(true);
+                    try {
+                        expect(await viewIssue('issue-1')).toBe('rendered');
+                    } finally {
+                        isInlineDropdownOpen.mockReturnValue(false);
+                    }
+                });
             });
 
             it('logs instead of showing an error toast when the refresh fails', async () => {

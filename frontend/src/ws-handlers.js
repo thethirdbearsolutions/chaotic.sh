@@ -223,7 +223,7 @@ function handleIssueUpdated(data) {
         if (hasOpenDescriptionEditor()) {
             noteSkippedDetailRefresh(data);
         } else {
-            viewIssue(data.id, false, { refresh: true });
+            refreshOpenDetail(data.id);
         }
     }
 }
@@ -265,6 +265,19 @@ function handleIssueDeleted(data) {
     }
 }
 
+// Coalescing for open-detail refreshes (PR #318 review 2). One remote
+// comment broadcasts both 'comment' and 'activity', an update both
+// 'issue:updated' and 'activity', and a local edit echoes back on top of
+// its own viewIssue(); agents post in bursts. Each refresh is 6+2 requests
+// and a full re-render, so events for an issue within DETAIL_REFRESH_DELAY_MS
+// share one trailing refresh, and at most one runs at a time: an event that
+// lands while one is in flight schedules exactly one more after it.
+export const DETAIL_REFRESH_DELAY_MS = 250;
+// How long to wait before retrying a refresh that a transient UI state (an
+// open dropdown/menu/mention list, IME composition) held off.
+export const DETAIL_REFRESH_RETRY_MS = 1000;
+const detailRefreshes = new Map(); // issueId -> { timer, inFlight, again }
+
 /**
  * Refresh the open detail view for an event on the currently-viewed issue,
  * deferring (not dropping) the refresh while the description editor is open.
@@ -273,8 +286,56 @@ function refreshOpenDetail(issueId) {
     if (hasOpenDescriptionEditor()) {
         noteSkippedDetailRefresh();
     } else {
-        viewIssue(issueId, false, { refresh: true });
+        scheduleDetailRefresh(issueId, DETAIL_REFRESH_DELAY_MS);
     }
+}
+
+function scheduleDetailRefresh(issueId, delay) {
+    let entry = detailRefreshes.get(issueId);
+    if (!entry) {
+        entry = { timer: null, inFlight: false, again: false };
+        detailRefreshes.set(issueId, entry);
+    }
+    if (entry.inFlight) {
+        entry.again = true;
+        return;
+    }
+    if (entry.timer) return;
+    entry.timer = setTimeout(() => runDetailRefresh(issueId), delay);
+}
+
+async function runDetailRefresh(issueId) {
+    const entry = detailRefreshes.get(issueId);
+    if (!entry) return;
+    entry.timer = null;
+    if (!isViewingIssueDetail(issueId)) {
+        detailRefreshes.delete(issueId);
+        return;
+    }
+    entry.inFlight = true;
+    let outcome;
+    try {
+        outcome = await viewIssue(issueId, false, { refresh: true });
+    } finally {
+        entry.inFlight = false;
+    }
+    if (detailRefreshes.get(issueId) !== entry) return; // reset meanwhile
+    if (entry.again) {
+        entry.again = false;
+        scheduleDetailRefresh(issueId, DETAIL_REFRESH_DELAY_MS);
+    } else if (outcome === 'retry') {
+        scheduleDetailRefresh(issueId, DETAIL_REFRESH_RETRY_MS);
+    } else {
+        detailRefreshes.delete(issueId);
+    }
+}
+
+/** Test hook: cancel pending detail refreshes (cf. ws.js resetWsState). */
+export function resetDetailRefreshes() {
+    for (const entry of detailRefreshes.values()) {
+        if (entry.timer) clearTimeout(entry.timer);
+    }
+    detailRefreshes.clear();
 }
 
 function handleComment(data) {

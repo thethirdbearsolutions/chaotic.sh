@@ -1,7 +1,7 @@
 /**
  * Tests for ws-handlers.js module (CHT-1039)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock state.js
 vi.mock('./state.js', () => ({
@@ -116,8 +116,18 @@ import { loadEpics } from './epics.js';
 import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
-import { dispatch, resetWsState } from './ws.js';
-import { registerWsHandlers } from './ws-handlers.js';
+import { dispatch as rawDispatch, resetWsState } from './ws.js';
+import { registerWsHandlers, resetDetailRefreshes, DETAIL_REFRESH_DELAY_MS, DETAIL_REFRESH_RETRY_MS } from './ws-handlers.js';
+
+/**
+ * Dispatch an event and run out the open-detail refresh debounce
+ * (PR #318 review 2), so assertions see the coalesced viewIssue() call.
+ * Tests of the coalescing itself use rawDispatch.
+ */
+function dispatch(event) {
+    rawDispatch(event);
+    vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+}
 
 /**
  * Put the issue detail on screen the way production does (CHT-1237):
@@ -140,7 +150,9 @@ function showView(id) {
 
 describe('ws-handlers.js', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         vi.clearAllMocks();
+        resetDetailRefreshes();
         document.body.innerHTML = '';
         resetWsState();
         registerWsHandlers();
@@ -151,6 +163,11 @@ describe('ws-handlers.js', () => {
         getCurrentView.mockReturnValue('my-issues');
         getCurrentUser.mockReturnValue({ id: 'user-1' });
         getCurrentDetailIssue.mockReturnValue(null);
+    });
+
+    afterEach(() => {
+        resetDetailRefreshes();
+        vi.useRealTimers();
     });
 
     describe('issue:created', () => {
@@ -541,6 +558,7 @@ describe('ws-handlers.js', () => {
         it('refreshes the open issue detail for a remote comment, whatever list it was opened from', () => {
             for (const underlying of ['issues', 'my-issues', 'board', 'sprints', 'epics']) {
                 vi.clearAllMocks();
+                resetDetailRefreshes();
                 openIssueDetail('issue-1', underlying);
                 dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
                 expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
@@ -574,6 +592,88 @@ describe('ws-handlers.js', () => {
         it('does not call refreshDocumentDetailIfViewing for an issue comment', () => {
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
             expect(refreshDocumentDetailIfViewing).not.toHaveBeenCalled();
+        });
+    });
+
+    // PR #318 review 2: refreshes of the open detail are coalesced per issue.
+    describe('open-detail refresh coalescing', () => {
+        it('turns the comment + activity pair for one comment into one trailing refresh', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            rawDispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+        });
+
+        it('keeps at most one refresh in flight and runs exactly one more after it', async () => {
+            openIssueDetail('issue-1');
+            let finish;
+            viewIssue.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            // A burst while the first is still fetching.
+            for (let i = 0; i < 5; i++) {
+                rawDispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            }
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            finish('rendered');
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 2);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+        });
+
+        it('retries a refresh that transient UI held off', async () => {
+            openIssueDetail('issue-1');
+            viewIssue.mockResolvedValueOnce('retry').mockResolvedValueOnce('rendered');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 2);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+        });
+
+        it('stops retrying once the user leaves the detail', async () => {
+            openIssueDetail('issue-1');
+            viewIssue.mockResolvedValue('retry');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            document.getElementById('issue-detail-view').classList.add('hidden');
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 3);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            viewIssue.mockReset();
+        });
+
+        it('drops a scheduled refresh if the user leaves before it fires', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            document.getElementById('issue-detail-view').classList.add('hidden');
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).not.toHaveBeenCalled();
+        });
+
+        it('coalesces per issue, not globally', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            // The user switches issues inside the window; the new issue's
+            // event gets its own refresh, the old one is dropped on fire.
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-2' });
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-2' } });
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            expect(viewIssue).toHaveBeenCalledWith('issue-2', false, { refresh: true });
         });
     });
 

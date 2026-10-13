@@ -475,6 +475,40 @@ subscribe((key) => {
 // Bumped by every navigating viewIssue() call -- not by background
 // refreshes (see `refresh` below).
 let viewIssueNavigationId = 0;
+// Bumped by every viewIssue() call, refresh or navigation: a refresh renders
+// only if no later call of either kind started while it was fetching, so two
+// overlapping refreshes can never land oldest-last (PR #318 review 1).
+let viewIssueRefreshSeq = 0;
+// True between compositionstart and compositionend on #new-comment: replacing
+// the textarea mid-composition aborts the IME input (PR #318 review 5).
+let commentComposing = false;
+
+/**
+ * Why a background refresh of the open issue must wait right now, or null.
+ *  - 'editor': the inline description editor is open. The refresh is noted
+ *    and resolved by the editor's Cancel/Save (CHT-1214); nothing retries.
+ *  - 'transient': an inline field dropdown, the overflow menu or the
+ *    @mention list is open, or an IME composition is in progress in the
+ *    comment box. A re-render would orphan the dropdown on a replaced row
+ *    (the CHT-1290 bug class), wipe the mention list, or abort the IME
+ *    input. These close on their own, so the caller retries shortly.
+ * @returns {'editor'|'transient'|null}
+ */
+export function detailRefreshBlocker() {
+    if (document.querySelector('.description-inline-editor')) return 'editor';
+    if (isInlineDropdownOpen()) return 'transient';
+    const detailView = document.getElementById('issue-detail-view');
+    if (detailView?.querySelector('.overflow-menu-dropdown:not(.hidden)')) return 'transient';
+    const mentions = document.getElementById('mention-suggestions');
+    if (mentions && !mentions.classList.contains('hidden')) return 'transient';
+    if (commentComposing) return 'transient';
+    return null;
+}
+
+function deferRefresh(blocker) {
+    noteSkippedDetailRefresh();
+    return blocker === 'editor' ? 'deferred' : 'retry';
+}
 
 /**
  * True while issueId's detail is the one on screen.
@@ -499,17 +533,27 @@ function isShowingIssueDetail(issueId) {
  *     renders nothing instead of yanking them back to this issue.
  *   - Focus loss. Typing a comment while a teammate or agent comments
  *     would otherwise lose the caret mid-word: the text survives via the
- *     CHT-1041 draft, but the textarea is replaced. Focus and selection are
- *     restored to the same element id after the re-render.
+ *     CHT-1041 draft, but the textarea is replaced. Focus, selection and
+ *     the page scroll position are restored after the re-render.
+ *   - Transient UI. See detailRefreshBlocker(); checked before fetching and
+ *     again before rendering.
+ * @returns {Promise<'rendered'|'dropped'|'deferred'|'retry'|'failed'>} what
+ *   happened; ws-handlers.js retries a refresh that returns 'retry'.
  */
 export async function viewIssue(issueId, pushHistory = true, { refresh = false } = {}) {
     const navigationId = refresh ? viewIssueNavigationId : ++viewIssueNavigationId;
+    const refreshSeq = ++viewIssueRefreshSeq;
+    if (refresh) {
+        const blocker = detailRefreshBlocker();
+        if (blocker) return deferRefresh(blocker);
+    }
     try {
         // Record the list's scroll position before we replace it with detail
         // content, so Back can restore it (CHT-1211 item 1).
         if (pushHistory) saveScrollPosition();
 
-        ticketRitualsCollapsed = true;
+        // A refresh keeps whatever the user expanded (PR #318 review 3).
+        if (!refresh) ticketRitualsCollapsed = true;
         // CHT-1224: comments used to be the one fetch in this Promise.all with
         // no per-call .catch (unlike ritual status/sprints below), so a single
         // comments-endpoint failure discarded 4 successful fetches and failed
@@ -556,14 +600,15 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
         // Last await above: from here to the end of the try, rendering is
         // synchronous, so these checks cannot go stale before it finishes.
-        if (navigationId !== viewIssueNavigationId) return;
+        if (navigationId !== viewIssueNavigationId) return 'dropped';
         let restoreFocus = null;
+        let restoreScrollY = null;
         if (refresh) {
-            if (!isShowingIssueDetail(issueId)) return;
-            if (document.querySelector('.description-inline-editor')) {
-                noteSkippedDetailRefresh();
-                return;
-            }
+            if (refreshSeq !== viewIssueRefreshSeq) return 'dropped';
+            if (!isShowingIssueDetail(issueId)) return 'dropped';
+            const blocker = detailRefreshBlocker();
+            if (blocker) return deferRefresh(blocker);
+            restoreScrollY = window.scrollY;
             const active = document.activeElement;
             if (active?.id && document.getElementById('issue-detail-view').contains(active)) {
                 restoreFocus = {
@@ -972,7 +1017,10 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');
+        commentComposing = false;
         if (commentTextarea) {
+            commentTextarea.addEventListener('compositionstart', () => { commentComposing = true; }, { signal: detailSignal });
+            commentTextarea.addEventListener('compositionend', () => { commentComposing = false; }, { signal: detailSignal });
             // Restore draft comment if available
             const savedDraft = getCommentDraft(issue.id);
             if (savedDraft) {
@@ -1061,7 +1109,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         if (restoreFocus) {
             const el = document.getElementById(restoreFocus.id);
             if (el) {
-                el.focus();
+                el.focus({ preventScroll: true });
                 if (typeof restoreFocus.start === 'number' && typeof el.setSelectionRange === 'function') {
                     try {
                         el.setSelectionRange(restoreFocus.start, restoreFocus.end);
@@ -1071,6 +1119,12 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                 }
             }
         }
+        // The innerHTML swap can collapse and regrow the page; put the
+        // reader back where they were.
+        if (restoreScrollY !== null) {
+            window.scrollTo(0, restoreScrollY);
+        }
+        return 'rendered';
     } catch (e) {
         if (refresh) {
             // A failed background refresh leaves the current render in
@@ -1080,6 +1134,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         } else {
             showApiError('load issue', e);
         }
+        return 'failed';
     }
 }
 
