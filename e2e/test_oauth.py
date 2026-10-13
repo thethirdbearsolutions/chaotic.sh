@@ -338,6 +338,65 @@ def test_connector_flow_end_to_end(test_server, oauth_on, web_login_token, test_
     assert not any(_SECRET.search(line) for line in access_log.lines), access_log.lines
 
 
+def _connect(web_login_token, team_id, client_name="E2E Connector"):
+    """Register a client, authorize, approve as the human and redeem the
+    code. Returns (client_id, token response)."""
+    registered = httpx.post(f"{ORIGIN}/oauth/register", json={
+        "client_name": client_name, "redirect_uris": [REDIRECT],
+    }, timeout=5.0)
+    assert registered.status_code == 201, registered.text
+    client_id = registered.json()["client_id"]
+    authorize = httpx.get(f"{ORIGIN}/oauth/authorize", params={
+        "client_id": client_id, "redirect_uri": REDIRECT, "response_type": "code",
+        "code_challenge": CHALLENGE, "code_challenge_method": "S256",
+        "scope": "chaotic:write offline_access", "resource": MCP_URL,
+    }, timeout=5.0)
+    assert authorize.status_code == 302, authorize.text
+    request_id = authorize.headers["location"].rsplit("/", 1)[1]
+    human = {"Authorization": f"Bearer {web_login_token}"}
+    assert httpx.get(f"{ORIGIN}/api/oauth/requests/{request_id}", headers=human, timeout=5.0).status_code == 200
+    approved = httpx.post(
+        f"{ORIGIN}/api/oauth/requests/{request_id}/approve", json={"team_id": team_id}, headers=human, timeout=5.0,
+    )
+    assert approved.status_code == 200, approved.text
+    code = parse_qs(urlsplit(approved.json()["redirect"]).query)["code"][0]
+    exchanged = _token({
+        "grant_type": "authorization_code", "client_id": client_id, "code": code,
+        "redirect_uri": REDIRECT, "code_verifier": VERIFIER, "resource": MCP_URL,
+    })
+    assert exchanged.status_code == 200, exchanged.text
+    return client_id, exchanged.json()
+
+
+def test_connected_apps_list_and_revoke(test_server, oauth_on, web_login_token, test_team, api_client, auth_token2):
+    """CHT-1523: the person who approved a connection sees it, through the
+    CLI's client, and disconnecting it ends the app's access on its next
+    request. Nobody else sees it or can revoke it. (The second user goes
+    by raw HTTP: two CLI client fixtures patch the same module globals, so
+    the later one would win for both.)"""
+    client_id, tokens = _connect(web_login_token, test_team["id"])
+    assert _initialize(tokens["access_token"]).status_code == 200
+
+    [connection] = api_client.list_connections()
+    assert connection["id"] == tokens["chaotic"]["holder_session_id"]
+    assert connection["client"]["client_id"] == client_id and connection["client"]["name"] == "E2E Connector"
+    assert connection["client"]["trust"] == "unverified"  # registered itself (DCR)
+    assert connection["agent"]["id"] == tokens["chaotic"]["agent"]["id"]
+    assert connection["team_id"] == test_team["id"] and connection["policy"] == "write"
+
+    other = {"Authorization": f"Bearer {auth_token2}"}
+    assert httpx.get(f"{ORIGIN}/api/oauth/connections", headers=other, timeout=5.0).json() == []
+    stolen = httpx.delete(f"{ORIGIN}/api/oauth/connections/{connection['id']}", headers=other, timeout=5.0)
+    assert stolen.status_code == 404
+    assert _initialize(tokens["access_token"]).status_code == 200
+
+    api_client.revoke_connection(connection["id"])
+    assert api_client.list_connections() == []
+    assert _initialize(tokens["access_token"]).status_code == 401
+    dead = _token({"grant_type": "refresh_token", "client_id": client_id, "refresh_token": tokens["refresh_token"]})
+    assert dead.status_code == 400 and dead.json()["error"] == "invalid_grant"
+
+
 def test_token_endpoint_is_404_while_oauth_is_off(test_server):
     response = httpx.post(f"{ORIGIN}/oauth/token", data={"grant_type": "refresh_token"}, timeout=5.0)
     assert response.status_code == 404

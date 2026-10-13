@@ -26,14 +26,21 @@ import json
 import re
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.api.deps import HumanUser
+from app.api.deps import CurrentUser, HumanUser, security
+from app.auth.credentials import CredentialKind, classify
 from app.auth.access import reads, writes
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
 from app.oauth import ratelimit
+from app.oxyde_models.oauth import OxydeOAuthClient
+from app.oxyde_models.team import OxydeTeam
+from app.oxyde_models.user import OxydeUser
 from app.oauth.clients import canonical_resource, redirect_uri_matches, redirect_uri_problem
 from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, oauth_enabled
 from app.oauth.errors import FRAME_HEADERS, NO_STORE, OAuthHTTPError
@@ -42,9 +49,13 @@ from app.schemas.oauth import (
     AuthorizationDecision,
     AuthorizationRequestView,
     ClientRegistrationResponse,
+    ConnectionResponse,
+    ConsentClient,
+    TokenAgent,
     TokenResponse,
 )
 from app.services.oauth_client_service import OAuthClientError, OAuthClientService, redirect_uris_of
+from app.services.revocation_service import RevocationService
 from app.services.oauth_grant_service import GrantError, OAuthGrantService, TokenRequest
 from app.services.oauth_consent_service import (
     AVAILABLE_POLICIES,
@@ -426,3 +437,114 @@ async def deny_authorization_request(request_id: str, user: HumanUser) -> Author
         return AuthorizationDecision(redirect=await OAuthConsentService().deny(request_id, user))
     except ConsentError as exc:
         raise _http(exc) from None
+
+
+# --- connected apps (CHT-1523), mounted under /api/oauth ---------------------
+#
+# A person's own OAuth connections: the holder sessions they consented to
+# (design §4.3, S7). Only their own: the service filters on the consenting
+# human, and a connection that is not theirs is a 404 whatever it is.
+# Not gated on OAUTH_ENABLED: turning OAuth off must never stop anyone
+# seeing or ending a connection made while it was on. A person may use
+# any of their own credentials (the CLI's login or key, or the web app);
+# an agent may not, whatever it holds, so a connection can never list or
+# revoke the connections of the human it answers to.
+
+HUMAN_REQUIRED = {
+    "error_code": "human_required",
+    "message": "Only a person can list or revoke their connected apps; an agent cannot.",
+}
+OAUTH_TOKEN_REFUSED = {
+    "error_code": "oauth_token_refused",
+    "message": "A connected app's own token cannot list or revoke connected apps; "
+               "use your web login, your CLI login or one of your API keys.",
+}
+
+
+# The credential kinds a person may manage their connected apps with: an
+# allowlist, as for require_human_session, so a kind added later is
+# refused until someone decides otherwise.
+PERSON_KINDS = frozenset({CredentialKind.SESSION_JWT, CredentialKind.API_KEY})
+
+
+async def _person_credential(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> None:
+    """Refuse by credential class, before the credential is resolved: an
+    OAuth access token (whoever its principal is: once a holder session
+    can act as a human, WEB_LOGIN, CHT-1524, a token an app holds must
+    still not reach that human's other connections) is refused without
+    being validated, so it is never marked used. No credential at all is
+    left to the resolver's 401."""
+    if credentials is not None and classify(credentials.credentials) not in PERSON_KINDS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(OAUTH_TOKEN_REFUSED))
+
+
+async def _require_person(
+    _kind: Annotated[None, Depends(_person_credential)],
+    user: CurrentUser,
+) -> OxydeUser:
+    """A human, on one of their own credentials: a session JWT (web or
+    CLI login) or a human's ``ck_`` key. The credential's class is checked
+    first (``_person_credential``, which FastAPI solves before resolving
+    ``user``); then any agent is refused, whatever it presents."""
+    if user.is_agent:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_REQUIRED))
+    return user
+
+
+Person = Annotated[OxydeUser, Depends(_require_person)]
+
+
+async def _connection_responses(rows) -> list[ConnectionResponse]:
+    def ids(attr):
+        return list({getattr(r, attr) for r in rows if getattr(r, attr)})
+
+    clients = {c.id: c for c in await OxydeOAuthClient.objects.filter(id__in=ids("oauth_client_id")).all()}
+    agents = {u.id: u for u in await OxydeUser.objects.filter(id__in=ids("principal_user_id")).all()}
+    teams = {t.id: t for t in await OxydeTeam.objects.filter(id__in=ids("team_id")).all()}
+    out = []
+    client_service = OAuthClientService()
+    for row in rows:
+        client = clients.get(row.oauth_client_id)
+        agent = agents.get(row.principal_user_id)
+        team = teams.get(row.team_id)
+        identity = client_service.identity(client) if client else None
+        out.append(ConnectionResponse(
+            id=row.id,
+            client=ConsentClient(
+                client_id=client.id, name=identity.name, trust=identity.trust, host=identity.host,
+                registration=client.registration.value,
+            ) if client else None,
+            agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind) if agent else None,
+            team_id=row.team_id,
+            team_name=team.name if team else None,
+            project_ids=json.loads(row.scope_project_ids) if row.scope_project_ids is not None else None,
+            policy=row.policy_name,
+            scopes=[s for s in (row.scopes or "").split(" ") if s],
+            created_at=row.created_at,
+            last_used_at=row.last_used_at,
+            last_refreshed_at=row.last_refreshed_at,
+            idle_expires_at=row.idle_expires_at,
+            absolute_expires_at=row.absolute_expires_at,
+        ))
+    return out
+
+
+@router.get("/connections", response_model=list[ConnectionResponse])
+@reads
+async def list_connections(current_user: Person) -> list[ConnectionResponse]:
+    """The caller's live OAuth connections, newest first."""
+    rows = await RevocationService().list_connections(current_user.id)
+    return await _connection_responses(rows)
+
+
+@router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
+async def revoke_connection(connection_id: str, current_user: Person) -> None:
+    """Revoke one of the caller's own OAuth connections: the holder
+    session and every token on it, effective on the app's next request.
+    Idempotent; 404 for a connection that is not the caller's."""
+    result = await RevocationService().revoke_connection(current_user.id, connection_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")

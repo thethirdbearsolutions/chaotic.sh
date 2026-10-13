@@ -567,6 +567,15 @@ export class ApiClient {
         return this.request('DELETE', `/api-keys/${keyId}`);
     }
 
+    // Connected apps: your own OAuth connections (CHT-1523)
+    async getConnections() {
+        return this.request('GET', '/oauth/connections');
+    }
+
+    async revokeConnection(connectionId) {
+        return this.request('DELETE', `/oauth/connections/${encodeURIComponent(connectionId)}`);
+    }
+
     // Agents
     async createTeamAgent(teamId, name, avatarUrl = null) {
         return this.request('POST', `/teams/${teamId}/agents`, { name, avatar_url: avatarUrl });

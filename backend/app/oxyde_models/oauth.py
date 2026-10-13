@@ -28,10 +28,11 @@ with it (CASCADE). That is all the schema does. Revoking or deactivating
 those rows deletes nothing: `APIKeyService.revoke` sets `is_active`
 false, deactivating a user sets `is_active` false, and neither touches a
 session. Ending the sessions and tickets of a revoked key, a deactivated
-or retired user, or a departed member is the RevocationService's job
-(CHT-1449, CHT-1523), and until it does, the credential resolver
-(CHT-1560) refuses a token whose principal is inactive or whose agent
-principal's holder has left the team, as it does for keys. Every
+or retired user, or a departed member is done explicitly, in the same
+transaction, by `app.services.revocation_service` (CHT-1523). The
+credential resolver (CHT-1560) still refuses a token whose principal is
+inactive or whose agent principal's holder has left the team, as it does
+for keys, as a backstop for any path that misses a cascade. Every
 revocation goes through `TokenService.revoke_session` (or its successor)
 so that it writes a `revocation_events` row: validation caches are keyed
 to the newest of those rows (see `OxydeRevocationEvent.seq`). A cascade
@@ -252,7 +253,7 @@ class OxydeRevocationEvent(Model):
     # newest row, or stale caches would be trusted. Every writer computes
     # MAX(seq) + 1 inside its revoking transaction, after that
     # transaction's first write (so it holds the write lock); see
-    # `TokenService._revoke_session_in_tx`, the only writer so far.
+    # `TokenService._revoke_session_in_tx` and `RevocationService._record`.
     seq: int = Field()
     team: OxydeTeam | None = Field(default=None, db_on_delete="SET NULL")
     # Who revoked: a user, or NULL for the system (refresh-token reuse,

@@ -126,4 +126,4 @@ async def revoke_api_key(
             detail="Not authorized to revoke this API key",
         )
 
-    await api_key_service.revoke(api_key)
+    await api_key_service.revoke(api_key, actor_id=current_user.id)
