@@ -5,6 +5,194 @@ All notable changes to `chaotic-cli` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) versioning.
 
+## [0.1.0a22] - 2026-10-13
+
+Server, CLI and web UI changes merged since a21 (PRs #260, #322-#329).
+This release carries one database migration (0020) that refuses to run
+on a database with a dangling agent owner, and it changes which agent API
+keys still sign in. **Run both preflight checks below before upgrading.**
+Install the new CLI first (`uv tool install --force chaotic-cli==0.1.0a22`),
+then run `chaotic system upgrade`, which stops the server, backs up the
+database, checks out the new code and migrates before restarting.
+
+### Upgrade notes
+
+- **Preflight 1 (required): dangling agent owners.** Migration 0020 adds
+  a foreign key to `users.parent_user_id` (the human who owns an agent).
+  If any row names a parent that no longer exists, 0020 stops before
+  writing anything and lists the ids. By then `chaotic system upgrade` has
+  already checked out the a22 code, and it restarts the server on it. The
+  server refuses to serve a database whose migrations are behind its code,
+  so **the server stays down** until you fix the rows and run `chaotic
+  system upgrade --yes` again. The database itself is untouched (still at
+  a21's schema), so nothing needs restoring. Check first, read-only, in its
+  own process (never from inside the running server):
+
+  ```sql
+  SELECT child.id, child.is_agent, child.parent_user_id FROM users AS child
+  WHERE child.parent_user_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM users AS parent WHERE parent.id = child.parent_user_id);
+  ```
+
+  for example `sqlite3 "file:/path/to/chaotic.db?mode=ro" "<query>"`. Fix
+  every row it returns: point each agent at an existing human, or set
+  `parent_user_id = NULL` on a row that is not an agent. Then upgrade.
+- **Preflight 2: agent keys that stop signing in at upgrade.** From a22,
+  an agent key signs in only while its holder is a member of the agent's
+  team (see the next two notes for who the holder is). This is checked at
+  every sign-in, not only when someone is removed, so **the moment the
+  server comes up on a22, every key whose recorded holder already left
+  the agent's team returns 401**. That includes keys a team admin minted
+  for an agent whose creator has since left, because pre-release keys are
+  recorded as the creator's. To list them before upgrading (read-only, as
+  above):
+
+  ```sql
+  SELECT k.key_prefix, agent.id AS agent_id, agent.name AS agent,
+         CASE WHEN k.user_id = agent.id THEN agent.parent_user_id ELSE k.user_id END AS holder_id
+  FROM api_keys AS k
+  JOIN users AS agent ON agent.id = COALESCE(k.agent_user_id, k.user_id) AND agent.is_agent = 1
+  WHERE k.is_active = 1
+    AND NOT EXISTS (SELECT 1 FROM team_members AS m
+                    WHERE m.team_id = agent.agent_team_id
+                      AND m.user_id = CASE WHEN k.user_id = agent.id
+                                           THEN agent.parent_user_id ELSE k.user_id END);
+  ```
+
+  After upgrading, a team admin mints each affected agent a new key
+  (`chaotic agent keys create`) and moves the bot over. Such agents keep a
+  creator outside the team (ownership passes only when someone is removed
+  from now on), so only team admins can manage them.
+- **Changed for existing agent keys.** Before this release, every key
+  minted for an agent was recorded as its creator's, even one a team admin
+  minted, and a key an agent minted for itself recorded no human at all
+  (it shows as `(creator, legacy)` in `chaotic agent keys list`). Existing
+  rows cannot tell an admin's mint from the creator's, so all of those
+  keys stand or fall with the agent's creator. That cuts both ways:
+  - When the creator leaves the team, an admin's bot running on such a
+    key stops, and so does any legacy self-minted key of that agent.
+  - When the **admin** who actually holds such a key leaves, nothing
+    revokes it: it is recorded as the creator's. For an agent the team
+    owner created, that key never expires on its own.
+
+  **Admins: rotate any agent key that someone other than the agent's
+  creator minted before this release.** A human must mint the replacement
+  (`chaotic agent keys create`, signed in as yourself), then move the bot
+  over and `chaotic agent keys revoke` the old key. Do not let the bot
+  rotate its own key: a key an agent mints for itself inherits the holder
+  of the key it called with, so a key minted with a legacy self-minted
+  key is legacy again, and one minted with a pre-release admin key is
+  again recorded as the creator's. Keys a human mints from now on are
+  recorded as that human's. A bulk rotate/revoke of pre-release keys is
+  tracked as CHT-1529.
+- **Leaving a team ends the agent keys you hold for it.** Removing a
+  member (or the member leaving) revokes, in the same step, every key they
+  hold for that team's agents and the legacy self-minted keys of agents
+  they created. Agents running on those keys get 401 until someone mints
+  them a new key. The agents stay: the ones the member created pass to the
+  admin who removed them, or to the team's longest-standing owner if the
+  member left, and the team's other admins get an inbox entry per agent.
+  A removed creator also loses every management right over their agents
+  (CHT-1508, CHT-1510).
+- **Migration 0020: the database no longer cascades a human's delete to
+  their agents.** `users.parent_user_id` becomes `ON DELETE RESTRICT ON
+  UPDATE CASCADE`, both on databases built from the migration chain (which
+  had ON DELETE CASCADE) and on older databases like production's (which
+  had no foreign key on that column). Like 0019, it edits the stored table
+  definition in one transaction and copies no rows. This fixes a21's known
+  issue (CHT-1467).
+- **Deleting your account can now be refused.** `DELETE /users/me`
+  returns 409, with counts per person, if you or any of your agents
+  authored anything. Otherwise your agents and their keys are deleted
+  with you. An agent calling `DELETE /users/me` gets 403.
+- **New inbox kind `agent_status`**, for an agent's creator when someone
+  else deactivates or reactivates it. A client that switches on inbox
+  kinds will see a value it has not seen before.
+- **MCP clients should reconnect**: compact issue, document and inbox
+  rows gained `assignee`, `author` and `source_user`, and the
+  `sprint_current`/`sprint_close` descriptions changed, so a cached
+  toolset is stale (the tool count stays 38).
+- **Rolling back after a successful upgrade needs both halves.**
+  `chaotic system upgrade` backs up the database before it checks out
+  the new code (unless `--no-backup`); `chaotic system backup --list`
+  shows the backups. The server serves only a database whose applied
+  migrations match its code exactly, ahead or behind. So `chaotic system
+  backup --restore <timestamp>` on its own puts a21's database under a22
+  code, and the server will not start. Going back means the a21 code
+  *and* the pre-upgrade backup together; there is no single command for
+  that yet (CHT-1546). Do not downgrade 0020 with `oxyde migrate`
+  instead: its downgrade installs 0001's ON DELETE CASCADE, even on
+  databases that had no foreign key before.
+
+### Added
+
+- **Retire an agent without deleting it.** `chaotic agent deactivate`
+  (`POST /agents/{id}/deactivate`) revokes every key that signs in as the
+  agent and marks it inactive; its authored work keeps its author.
+  `chaotic agent reactivate` (`POST /agents/{id}/reactivate`) turns it
+  back on, though revoked keys stay revoked. The agent's creator or an
+  admin of its team can do either, and when it is not the creator, the
+  creator gets an inbox entry. `agent list` marks deactivated agents, the
+  delete 409 now points at deactivate, and minting a key for a deactivated
+  agent is refused. No deactivated user, agent or human, can be newly
+  assigned an issue (CHT-1494).
+- **`chaotic agent keys list` / `chaotic agent keys revoke`**
+  (`GET /agents/{id}/keys`, `DELETE /api-keys/{id}`) list every key that
+  signs in as an agent, with its holder and a `legacy_self_minted` flag,
+  and revoke one by id prefix, `ck_...` prefix or pasted full key, without
+  ever echoing the secret (CHT-1508).
+- **Every actor says whether it is an agent, and whose.** Issue, comment,
+  activity, inbox, attestation, document and revision responses carry a
+  summary `{id, name, is_agent, owner_id, owner_name}` next to each
+  existing `*_name` field (`creator`, `assignee`, `author`, `user`,
+  `source_user`, `attester`, `approver`). The CLI prints agents as
+  "Builder Bot (agent of Ada)" and `issue show` gains Assignee and Creator
+  lines; the web UI's agent badge reads "AI agent of <owner>" on hover and
+  now appears on comments, creators, activity, documents and revisions
+  (CHT-1500).
+- **Expandable inbox rows.** Enter or a click opens an inbox row in place,
+  showing what triggered it and who from, with an action bar: Reassign
+  back to sender (for assignments and review requests), Open, and Archive.
+  One row is open at a time; j/k collapse it, Escape collapses and then
+  deselects, and `e` still archives (CHT-1320).
+
+### Changed
+
+- **Over-budget refusals name the project.** The arrears and limbo 409s
+  carry `project_id`, `project_key` and `team_id` (arrears also the sprint
+  id and name), and the CLI prints the exact remedy, e.g. "Sprint 7 in
+  project OTH is in arrears (12/10 points). Run `chaotic sprint close
+  <sprint_id> --project OTH`", with `team use`/`project use` first when
+  the project is in another team. `sprint close` takes `--project`, names
+  the sprint now active, and says plainly when it only entered limbo
+  instead of rotating (CHT-1270).
+
+### Fixed
+
+- **Inbox keys no longer act behind an open issue or document.** After
+  Open from an inbox row, `e`, j/k and Escape went to the hidden inbox, so
+  `e` archived an entry and opened the estimate field at once (CHT-1513).
+- **Archived or read inbox rows no longer come back** when a background
+  refresh started before the archive lands after it; an entry archived in
+  another tab now drops out even when it is the open row (CHT-1514).
+- **An agent's creator who has left its team no longer gets inbox
+  entries about it.** Those entries name the acting admin and go out on
+  the team's channel, so they no longer reach an ex-member (CHT-1508).
+- **Migrations 0008 and 0019 read the database through Oxyde** instead of
+  Python's `sqlite3`. A second SQLite library opening a database Oxyde had
+  open could corrupt its view of the WAL, which surfaced as an occasional
+  "database disk image is malformed" in CI and could also hit `oxyde
+  migrate` and the startup bootstrap (CHT-1491).
+
+### Internal
+
+- The publish workflow skips files already on PyPI, refuses a tag that
+  does not match `cli/pyproject.toml`'s version, publishes only from tags,
+  and runs one release per tag, so a release can be re-run and the a18-a21
+  GitHub Releases backfilled safely (CHT-1356).
+- The test schema template leaves WAL mode before it is copied, and a new
+  test keeps `sqlite3` out of `app/` and `migrations/` (CHT-1491).
+
 ## [0.1.0a21] - 2026-10-13
 
 Server and CLI changes merged since a20 (PRs #311-#320). This release

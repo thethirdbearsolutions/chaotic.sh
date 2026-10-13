@@ -544,6 +544,18 @@ claude mcp add --transport http chaotic \
             <ol class="release-list">
                 <li class="release">
                     <div class="release-meta">
+                        <span class="release-version">0.1.0a22</span>
+                        <time datetime="2026-10-13">Oct 13, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li><strong>Retire an agent without deleting it</strong>: <code>chaotic agent deactivate</code> / <code>reactivate</code>, plus <code>chaotic agent keys list</code> / <code>revoke</code>.</li>
+                        <li>Removed teammates lose the agent keys they hold, and every actor in the API and UI says whether it is an agent, and whose.</li>
+                        <li>Inbox rows expand in place with Reassign, Open and Archive; over-budget refusals name the project to close.</li>
+                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: the migration refuses a dangling agent owner and leaves the server down until it is fixed, and agent keys whose holder has left the team stop working at upgrade.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
                         <span class="release-version">0.1.0a21</span>
                         <time datetime="2026-10-13">Oct 13, 2026</time>
                     </div>
@@ -576,18 +588,6 @@ claude mcp add --transport http chaotic \
                         <li>Claim and close refusals report each ritual's attestation state, and off-scale estimates come back as warnings.</li>
                         <li><code>chaotic system upgrade</code> refuses silent downgrades, and <code>chaotic system backup</code> is consistent against a running server.</li>
                         <li>Two database migrations; sprint dates are now <code>activated_at</code>/<code>closed_at</code>, stamped by the server. MCP clients should reconnect.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.0a18</span>
-                        <time datetime="2026-09-05">Sep 5, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>The MCP toolset grows from 10 to 30 tools</strong>: docs, relations, labels, sprints, rituals and projects.</li>
-                        <li><code>chaotic agent keys create</code> mints or rotates an agent's API key, and the inbox gains an archive.</li>
-                        <li>Ritual and estimate exemptions need an interactive human; a script running as you is gated like an agent.</li>
-                        <li>A stuck close intent expires and can be taken over, so a failed non-interactive close no longer wedges a ticket.</li>
                     </ul>
                 </li>
             </ol>
@@ -642,7 +642,7 @@ claude mcp add --transport http chaotic \
                 <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
                 then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
             </p>
-            <p class="install-note">Latest release: <strong>0.1.0a21</strong></p>
+            <p class="install-note">Latest release: <strong>0.1.0a22</strong></p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
