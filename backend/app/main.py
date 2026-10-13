@@ -21,7 +21,7 @@ from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
 from app.oauth.cors import OAuthAwareCORS
 from app.oauth.discovery import router as oauth_discovery_router
 from app.api.oauth import public_router as oauth_router
-from app.oauth.errors import OAuthHTTPError, oauth_error_handler
+from app.oauth.errors import FRAME_HEADERS, OAuthHTTPError, oauth_error_handler
 from app.version import get_version_info
 
 settings = get_settings()
@@ -193,11 +193,17 @@ def _render_index(request: Request):
     in the page so "what's live" is visible without grepping the bundle.
     """
     info = _version_info()
-    return templates.TemplateResponse(request, "index.html", {
+    response = templates.TemplateResponse(request, "index.html", {
         "asset_version": info["bundle_hash"],
         "css_version": info["css_hash"],
         "git_sha_short": info["git_sha_short"],
     })
+    # Never framed: the OAuth consent page is a route of this shell, and
+    # framing any of it invites clickjacking (CHT-1519, threat S4). Its
+    # path carries the consent request id, so no path in Referers either.
+    response.headers.update(FRAME_HEADERS)
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -334,10 +340,14 @@ async def cli_auth(request: Request, callback: str = Query(...), state: str = Qu
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Callback URL must be localhost")
 
-    return templates.TemplateResponse(request, "cli-auth.html", {
+    response = templates.TemplateResponse(request, "cli-auth.html", {
         "callback": callback,
         "state": state
     })
+    # It mints an API key on a click: never framed (CHT-1519 review N6).
+    response.headers.update(FRAME_HEADERS)
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)

@@ -72,11 +72,17 @@ class AgentService:
         parent_user: OxydeUser,
         team_id: str,
         project_id: str | None = None,
-    ) -> tuple[OxydeUser, str, str]:
-        """Create a new agent with an API key.
+        *,
+        mint_key: bool = True,
+        external_ref: str | None = None,
+    ) -> tuple[OxydeUser, str | None, str | None]:
+        """Create a new agent, with an API key unless `mint_key` is False
+        (an agent created at OAuth consent acts through its connection's
+        tokens and gets no key, CHT-1519).
 
         Returns:
-            Tuple of (agent User, full API key, API key ID)
+            Tuple of (agent User, full API key, API key ID); the key parts
+            are None without a key.
         """
         # Generate a unique email for the agent
         agent_email = f"agent-{uuid.uuid4()}@agent.local"
@@ -94,7 +100,11 @@ class AgentService:
                 parent_user_id=parent_user.id,
                 agent_team_id=team_id,
                 agent_project_id=project_id,
+                external_ref=external_ref,
             )
+            if not mint_key:
+                await agent.refresh()
+                return agent, None, None
 
             # Create an API key for the agent
             api_key_service = APIKeyService()

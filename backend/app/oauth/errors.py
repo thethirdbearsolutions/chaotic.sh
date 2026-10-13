@@ -6,6 +6,9 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+# Never framed (threat S4, clickjacking): the consent page and the SPA
+# shell it lives in, and the authorize error page.
+FRAME_HEADERS = {"Content-Security-Policy": "frame-ancestors 'none'", "X-Frame-Options": "DENY"}
 
 
 class OAuthHTTPError(Exception):

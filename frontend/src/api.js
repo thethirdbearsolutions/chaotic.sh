@@ -100,13 +100,28 @@ export class ApiClient {
     }
 
     async login(email, password) {
-        const result = await this.request('POST', '/auth/login', { email, password });
+        // client: 'web' marks this as the web app's own login, which OAuth
+        // consent requires; the CLI never sends it (CHT-1519).
+        const result = await this.request('POST', '/auth/login', { email, password, client: 'web' });
         this.setToken(result.access_token);
         return result;
     }
 
     async getMe() {
         return this.request('GET', '/auth/me');
+    }
+
+    // OAuth consent (CHT-1519)
+    async getOAuthRequest(requestId) {
+        return this.request('GET', `/oauth/requests/${encodeURIComponent(requestId)}`);
+    }
+
+    async approveOAuthRequest(requestId, choice) {
+        return this.request('POST', `/oauth/requests/${encodeURIComponent(requestId)}/approve`, choice);
+    }
+
+    async denyOAuthRequest(requestId) {
+        return this.request('POST', `/oauth/requests/${encodeURIComponent(requestId)}/deny`, {});
     }
 
     logout() {
