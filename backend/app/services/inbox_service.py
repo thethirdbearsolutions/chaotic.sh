@@ -214,6 +214,32 @@ class InboxService:
         )
         await self._broadcast(project.team_id, "created", entry)
 
+    async def notify_agent_status(self, *, agent, actor, verb: str) -> None:
+        """Someone other than its creator deactivated or reactivated an
+        agent (CHT-1494): tell the creator who, so a bot that starts
+        failing auth has an explanation in the app."""
+        if verb == "deactivated":
+            body = (
+                "Its API keys were revoked and it can no longer sign in. "
+                "Its authored work is kept. It can be reactivated with "
+                "`chaotic agent reactivate`."
+            )
+        else:
+            body = (
+                "It can sign in again once it has a key; its old keys stay "
+                "revoked. Mint one with `chaotic agent keys create`."
+            )
+        entry = await OxydeInboxEntry.objects.create(
+            recipient_user_id=agent.parent_user_id,
+            kind=InboxEntryKind.AGENT_STATUS,
+            team_id=agent.agent_team_id,
+            project_id=agent.agent_project_id,
+            source_user_id=actor.id,
+            title=f"{actor.name} {verb} your agent {agent.name}",
+            body=body,
+        )
+        await self._broadcast(agent.agent_team_id, "created", entry)
+
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,
     ) -> None:

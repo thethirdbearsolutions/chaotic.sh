@@ -766,6 +766,14 @@ class Client:
         """Delete an agent."""
         return self._request("DELETE", f"/agents/{agent_id}")
 
+    def deactivate_agent(self, agent_id: str) -> dict:
+        """Deactivate an agent: revoke its keys, keep its authored work."""
+        return self._request("POST", f"/agents/{agent_id}/deactivate")
+
+    def reactivate_agent(self, agent_id: str) -> dict:
+        """Reactivate a deactivated agent (its old keys stay revoked)."""
+        return self._request("POST", f"/agents/{agent_id}/reactivate")
+
     def create_agent_key(self, agent_id: str) -> dict:
         """Mint a new API key for an existing agent."""
         return self._request("POST", f"/agents/{agent_id}/keys")
