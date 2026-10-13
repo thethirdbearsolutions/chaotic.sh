@@ -1,6 +1,8 @@
 """Main FastAPI application."""
+import asyncio
 from contextlib import asynccontextmanager
 import logging
+from typing import Annotated
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
@@ -14,9 +16,7 @@ from app.config import get_settings
 from app.oxyde_db import init_oxyde, close_oxyde, bootstrap_if_empty, verify_migrations_current
 from app.api import api_router
 from app.websocket import manager
-from app.utils.security import decode_token
-from app.api.deps import check_user_team_access
-from app.services.user_service import UserService
+from app import ws_auth
 from app.mcp_server.asgi import mcp_lifespan, mount_mcp
 from app.mcp_server.auth import warn_if_capability_url_enabled
 from app.mcp_server.tools import ALL_TOOLS, toolset_fingerprint
@@ -294,47 +294,62 @@ async def health():
     }
 
 
+def _log_watcher_failure(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("WebSocket credential watcher failed", exc_info=task.exception())
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(...),
-    team_id: str = Query(...)
+    team_id: Annotated[str, Query()],
+    token: Annotated[str | None, Query(deprecated=True)] = None,
 ):
-    """WebSocket endpoint for real-time updates."""
-    # Validate token
-    payload = decode_token(token)
-    if not payload:
-        await websocket.close(code=4001)
-        return
+    """WebSocket endpoint for real-time updates.
 
-    # Validate team membership (CHT-1110)
-    user_id = payload.get("sub")
-    if not user_id:
-        await websocket.close(code=4001)
-        return
-
+    Authenticated through the shared credential resolver, from the
+    Authorization header, a ``chaotic.bearer.<token>`` subprotocol entry,
+    or the deprecated ``?token=`` (``app.ws_auth``, CHT-1603), and checked
+    again while open: a credential revoked or expired, or a member removed
+    from the team, is closed at the next check.
+    """
     try:
-        user_service = UserService()
-        user = await user_service.get_by_id(user_id)
-        if not user or not user.is_active:
-            await websocket.close(code=4003)
-            return
-        if not await check_user_team_access(user, team_id):
-            await websocket.close(code=4003)
-            return
+        presented = ws_auth.presented_credential(websocket, token)
+        principal = await ws_auth.authenticate(presented.token, team_id)
+    except ws_auth.WsRefused as exc:
+        await websocket.close(code=exc.code)
+        return
     except Exception:
         logger.exception("WebSocket auth error during team validation")
-        await websocket.close(code=4011)
+        await websocket.close(code=ws_auth.CLOSE_INTERNAL_ERROR)
         return
 
-    await manager.connect(websocket, team_id)
+    await manager.connect(websocket, team_id, subprotocol=presented.subprotocol)
+
+    async def close_when_refused():
+        refused = await ws_auth.watch(presented.token, team_id)
+        # Stop broadcasting to it now, not when the client acknowledges.
+        manager.disconnect(websocket, team_id)
+        logger.info(
+            "Closing WebSocket for user=%s team=%s: %s", principal.user.id, team_id, refused.reason,
+        )
+        try:
+            await websocket.close(code=refused.code)
+        except Exception:  # already gone
+            pass
+
+    watcher = asyncio.create_task(close_when_refused())
+    # Cancelled when the socket ends, never awaited: surface anything it
+    # raised rather than "Task exception was never retrieved" (PR #352
+    # review, finding 8).
+    watcher.add_done_callback(_log_watcher_failure)
     try:
         while True:
             # Keep connection alive, listen for client messages
             await websocket.receive_text()
             # Could handle client messages here if needed (e.g., presence, typing indicators)
     except WebSocketDisconnect:
-        manager.disconnect(websocket, team_id)
+        pass
     except Exception:
         # CHT-1225: only WebSocketDisconnect was caught here -- any other
         # exception during receive_text() (an abrupt network drop can
@@ -346,6 +361,8 @@ async def websocket_endpoint(
             "WebSocket receive error for team=%s; cleaning up connection",
             team_id,
         )
+    finally:
+        watcher.cancel()
         manager.disconnect(websocket, team_id)
 
 

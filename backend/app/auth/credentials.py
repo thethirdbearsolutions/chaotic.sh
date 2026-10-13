@@ -2,9 +2,8 @@
 
 A presented bearer string becomes a ``Principal``, or a
 ``CredentialError`` that says what went wrong. REST (``app.api.deps``)
-and /mcp (``app.mcp_server.auth``) are thin adapters over this module
-(the /ws WebSocket still checks its JWT itself, CHT-1567; an OAuth
-token never decodes as one, so /ws refuses it):
+and /mcp (``app.mcp_server.auth``) are thin adapters over this module,
+and so is the /ws WebSocket (``app.ws_auth``, CHT-1567, CHT-1603):
 each maps a ``CredentialError`` to its own response shape and
 WWW-Authenticate challenge, and neither looks at the token itself.
 
@@ -324,6 +323,13 @@ REST_KINDS = frozenset({CredentialKind.API_KEY, CredentialKind.SESSION_JWT, Cred
 MCP_KINDS = frozenset({CredentialKind.API_KEY, CredentialKind.OAUTH_ACCESS})
 CAPABILITY_URL_KINDS = frozenset({CredentialKind.API_KEY})
 
+# /ws takes what REST takes, as the same resource (``<base>``): it is the
+# REST API's live feed, so a connector token is refused there too. Its
+# adapter (``app.ws_auth``) also refuses every agent, whatever its
+# credential: /ws is for the people's own clients (CHT-1603).
+WS_KINDS = REST_KINDS
+
 rest_resolver = CredentialResolver(REST_KINDS, audience=token_service.issuer)
+ws_resolver = CredentialResolver(WS_KINDS, audience=token_service.issuer)
 mcp_resolver = CredentialResolver(MCP_KINDS, audience=token_service.mcp_resource)
 capability_url_resolver = CredentialResolver(CAPABILITY_URL_KINDS)

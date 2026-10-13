@@ -11,8 +11,12 @@
 import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
+import { getToken as getStoredToken } from './storage.js';
 
 let wsFailCount = 0;
+// True once the server closed the socket for a credential reason
+// (4001/4003, CHT-1603) and the client gave up reconnecting.
+let wsStopped = false;
 let reconnectTimer = null;
 
 // Connection generation (CHT-1224 PR #211 review finding 1): incremented on
@@ -38,7 +42,14 @@ const subscribers = new Map();
 function updateWsStatusIndicator() {
     const badge = document.getElementById('ws-status-badge');
     if (!badge) return;
-    badge.classList.toggle('hidden', wsFailCount === 0);
+    // CHT-1603: after the server refused the credential (4003, or a 4001
+    // that did not sign this tab out) nothing reconnects, so the badge
+    // says live updates have stopped rather than hiding.
+    badge.classList.toggle('hidden', wsFailCount === 0 && !wsStopped);
+    badge.textContent = wsStopped ? 'Stopped' : 'Offline';
+    badge.title = wsStopped
+        ? 'Live updates stopped — reload to try again'
+        : 'Live updates disconnected — reconnecting';
 }
 
 /**
@@ -65,6 +76,23 @@ export function getReconnectDelay(failCount) {
     // Add ±25% jitter to prevent thundering herd
     const jitter = base * 0.25 * (Math.random() * 2 - 1);
     return Math.max(500, Math.round(base + jitter));
+}
+
+/** The subprotocol the server selects (CHT-1603). */
+export const WS_SUBPROTOCOL = 'chaotic';
+/** Close codes /ws sends when a credential stops being good (CHT-1603). */
+export const WS_CLOSE_UNAUTHENTICATED = 4001;
+export const WS_CLOSE_FORBIDDEN = 4003;
+const WS_BEARER_PREFIX = 'chaotic.bearer.';
+
+/**
+ * Subprotocols to offer: 'chaotic', and the credential as a
+ * 'chaotic.bearer.<token>' entry (CHT-1603).
+ * @param {string} token
+ * @returns {string[]}
+ */
+export function wsProtocols(token) {
+    return [WS_SUBPROTOCOL, WS_BEARER_PREFIX + token];
 }
 
 /**
@@ -103,8 +131,9 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
 
     // Fresh connect = new outage scope: clear any leftover fail state from
     // the previous connection generation (e.g. switching teams mid-outage).
-    if (!isReconnect && wsFailCount > 0) {
+    if (!isReconnect && (wsFailCount > 0 || wsStopped)) {
         wsFailCount = 0;
+        wsStopped = false;
         updateWsStatusIndicator();
     }
 
@@ -114,10 +143,14 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
     const generation = ++wsGeneration;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}&team_id=${encodeURIComponent(teamId)}`;
+    // CHT-1603: the credential travels in the Sec-WebSocket-Protocol header
+    // (the one header a browser WebSocket can set), never in the URL, which
+    // reaches access and proxy logs. The server selects 'chaotic' and never
+    // echoes the bearer entry. Read fresh on every (re)connect.
+    const wsUrl = `${protocol}//${window.location.host}/ws?team_id=${encodeURIComponent(teamId)}`;
 
     try {
-        const ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl, wsProtocols(token));
         setWebsocket(ws);
 
         ws.onopen = () => {
@@ -157,9 +190,29 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
             dispatch(message);
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
             if (generation !== wsGeneration) return; // superseded connection — ignore
             console.log('WebSocket disconnected');
+            // CHT-1603 (PR #352 review, finding 2): the server closed it
+            // because the credential stopped being good. Retrying cannot
+            // help: 4001 means sign in again, 4003 means no access to this
+            // team any more. ws-handlers.js acts on the synthetic event.
+            const code = event?.code;
+            if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
+                setWebsocket(null);
+                wsFailCount = 0;
+                // A 4001 signs out only if storage still holds the token
+                // this socket was opened with: if another tab has signed in
+                // since, clearing it would sign that newer session out too
+                // (PR #352 re-review). This tab just stops.
+                const signOut = code === WS_CLOSE_UNAUTHENTICATED && getStoredToken() === token;
+                wsStopped = !signOut;
+                updateWsStatusIndicator();
+                let type = 'forbidden';
+                if (code === WS_CLOSE_UNAUTHENTICATED) type = signOut ? 'unauthorized' : 'superseded';
+                dispatch({ type, entity: 'connection', data: { code, teamId } });
+                return;
+            }
             wsFailCount++;
             if (wsFailCount === 1) {
                 showToast('Live updates disconnected. Reconnecting...', 'warning');
@@ -237,6 +290,7 @@ export function dispatch(message) {
  */
 export function resetWsState() {
     wsFailCount = 0;
+    wsStopped = false;
     updateWsStatusIndicator();
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);

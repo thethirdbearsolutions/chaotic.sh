@@ -6,7 +6,7 @@
  */
 
 import { subscribe } from './ws.js';
-import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, getCurrentView, getCurrentDetailIssue } from './state.js';
+import { getIssues, setIssues, getDetailNavContext, setDetailNavContext, getCurrentUser, setCurrentUser, setCurrentTeam, getCurrentView, getCurrentDetailIssue } from './state.js';
 import { getMyIssues, setMyIssues, renderMyIssues, loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { renderIssues } from './issue-list.js';
 import { loadIssues } from './issues-view.js';
@@ -18,6 +18,8 @@ import { viewIssue, noteSkippedDetailRefresh } from './issue-detail-view.js';
 import { refreshDocumentsListIfActive, refreshDocumentDetailIfViewing, handleRemoteDocumentDeleted } from './documents.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
+import { api } from './api.js';
+import { showAuthScreen } from './auth.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 
@@ -108,6 +110,40 @@ export function registerWsHandlers() {
     // dispatches only on a genuine reconnect (never a deliberate team
     // switch; see handleReconnected() below for why).
     subscribe('connection:reconnected', handleReconnected);
+    // The server closed the socket because its credential stopped being
+    // good (CHT-1603); ws.js does not reconnect after these.
+    subscribe('connection:unauthorized', handleSessionEnded);
+    subscribe('connection:forbidden', handleLiveFeedForbidden);
+    subscribe('connection:superseded', handleSessionSuperseded);
+}
+
+/**
+ * /ws closed with 4001, but another tab has signed in since this socket
+ * opened (storage holds a newer token). Signing out here would clear that
+ * newer session, so this tab only stops its live updates (CHT-1603).
+ */
+function handleSessionSuperseded() {
+    showToast('Live updates stopped: you signed in again in another tab. Reload this tab to continue.', 'warning');
+}
+
+/**
+ * /ws closed with 4001: the login token expired or was refused. Same as a
+ * REST 401 at startup (app.js): drop the token and show the sign-in screen.
+ */
+function handleSessionEnded() {
+    api.logout();
+    setCurrentUser(null);
+    setCurrentTeam(null);
+    showAuthScreen();
+    showToast('Your session has ended. Please sign in again.', 'warning');
+}
+
+/**
+ * /ws closed with 4003: signed in, but no longer allowed this team's live
+ * feed (removed from the team, or deactivated). REST calls will say why.
+ */
+function handleLiveFeedForbidden() {
+    showToast('Live updates stopped: you no longer have access to this team.', 'error');
 }
 
 function handleIssueCreated(data) {
