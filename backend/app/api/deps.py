@@ -3,10 +3,9 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.oxyde_models.user import OxydeUser as User
-from app.services.user_service import UserService
+from app.auth.credentials import CredentialError, CredentialKind, classify, rest_resolver
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
-from app.utils.security import decode_token
 
 security = HTTPBearer(auto_error=False)
 
@@ -54,22 +53,14 @@ async def get_current_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> User:
-    """Get current authenticated user via JWT token or API key."""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = credentials.credentials
-
-    # Check if this is an API key (starts with ck_)
-    if token.startswith("ck_"):
-        user = await _authenticate_with_api_key(token)
-    else:
-        # Otherwise treat as JWT token
-        user = await _authenticate_with_jwt(token)
+    """Get current authenticated user via JWT token or API key. The
+    credential itself is resolved by ``app.auth.credentials`` (CHT-1560),
+    shared with /mcp; this maps its failure to REST's 401/403."""
+    try:
+        principal = await rest_resolver.resolve(credentials.credentials if credentials else None)
+    except CredentialError as exc:
+        raise _http_error(exc) from None
+    user = principal.user
 
     # The matched route's endpoint function (Starlette puts it in the
     # scope when routing). Every authenticated REST route depends on this
@@ -78,95 +69,16 @@ async def get_current_user(
     return user
 
 
-async def _authenticate_with_jwt(token: str) -> User:
-    """Authenticate using JWT token."""
-    payload = decode_token(token)
-
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+def _http_error(exc: CredentialError) -> HTTPException:
+    """REST's answer to a credential that did not resolve: the resolver's
+    detail, with the bare Bearer challenge on a 401."""
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    user_service = UserService()
-    user = await user_service.get_by_id(user_id)
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is inactive",
-        )
-
-    return user
-
-
-async def _authenticate_with_api_key(api_key: str) -> User:
-    """Authenticate using API key: return the user the key signs in as
-    (its `principal_user_id`, CHT-1537), a human or an agent."""
-    api_key_service = APIKeyService()
-    key_record = await api_key_service.validate_key(api_key)
-
-    if not key_record:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    user_service = UserService()
-
-    user = await user_service.get_by_id(key_record.principal_user_id)
-    if not user:
-        # One answer whether the missing user was a human or an agent
-        # (before CHT-1537 an agent key said "Agent not found"). The
-        # foreign key cascades the key away with its user, so this needs
-        # a row written with foreign keys off.
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # An agent key is only as good as the membership of the human behind
-    # it (CHT-1508/CHT-1510): the key's `holder_user_id`, whoever minted
-    # it, or the holder of the key an agent used to mint one for itself
-    # (a legacy self-minted key was given the agent's creator by 0021).
-    # Once that human is no longer in the agent's team the key is dead,
-    # whether or not the removal got to revoke it, and it is answered
-    # exactly like a revoked key. REST and both MCP transports come
-    # through here.
-    if user.is_agent:
-        holder_id = key_record.holder_user_id
-        if not holder_id or await TeamService().get_member(user.agent_team_id, holder_id) is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is inactive",
-        )
-
-    return user
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
 async def get_api_key_record(
@@ -175,7 +87,7 @@ async def get_api_key_record(
     """The key row behind this request's `ck_...` bearer token, or None
     for a JWT. Only meaningful alongside CurrentUser, which has already
     validated the token."""
-    if not credentials or not credentials.credentials.startswith("ck_"):
+    if not credentials or classify(credentials.credentials) is not CredentialKind.API_KEY:
         return None
     api_key, _legacy = await APIKeyService().find_by_key(credentials.credentials)
     return api_key
@@ -245,9 +157,7 @@ async def get_auth_method(
     if not credentials:
         return "unknown"
 
-    token = credentials.credentials
-
-    if token.startswith("ck_"):
+    if classify(credentials.credentials) is CredentialKind.API_KEY:
         return "api_key"
     return "jwt"
 
