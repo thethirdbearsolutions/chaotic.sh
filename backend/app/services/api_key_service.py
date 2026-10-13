@@ -5,12 +5,15 @@ Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 import asyncio
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
 from app.utils.security import verify_password
+
+logger = logging.getLogger(__name__)
 
 # Type alias for API compatibility
 APIKey = OxydeAPIKey
@@ -50,6 +53,11 @@ _BCRYPT_HASH_PREFIX = "$2"
 
 def _is_legacy_bcrypt_hash(key_hash: str) -> bool:
     return key_hash.startswith(_BCRYPT_HASH_PREFIX)
+
+
+def _usable(api_key: OxydeAPIKey, now: datetime) -> bool:
+    """Active and not expired: a row that may sign in."""
+    return api_key.is_active and not (api_key.expires_at and api_key.expires_at < now)
 
 
 class AgentKeyNeedsHolderError(ValueError):
@@ -114,51 +122,80 @@ class APIKeyService:
         """Get API key by ID."""
         return await OxydeAPIKey.objects.get_or_none(id=api_key_id)
 
-    async def get_by_prefix(self, key_prefix: str) -> OxydeAPIKey | None:
-        """Get API key by prefix."""
-        return await OxydeAPIKey.objects.get_or_none(key_prefix=key_prefix)
+    async def find_by_key(self, full_key: str) -> tuple[OxydeAPIKey | None, bool]:
+        """The active, unexpired row `full_key` belongs to, or None. The
+        second value says the row is a legacy bcrypt row that `full_key`
+        just verified against, so its hash can be upgraded.
 
-    async def validate_key(self, full_key: str) -> OxydeAPIKey | None:
-        """Validate an API key and return the associated key record if valid."""
+        Current rows are found by their SHA-256 digest, which is unique
+        (`ux_api_keys_key_hash`, CHT-1534). The 11-character display prefix
+        is 32 bits and shared by unrelated keys (CHT-1554), so it is never
+        trusted to name one row: it only narrows the legacy bcrypt rows a
+        key could belong to, and each of those is checked in turn.
+
+        Revoked and expired rows are never returned, and a legacy one is
+        never bcrypt-checked: it can never sign in, so it is never upgraded,
+        and checking it would cost every forged key under its prefix a
+        bcrypt round forever.
+        """
         if not full_key.startswith("ck_"):
-            return None
+            return None, False
 
-        key_prefix = self._get_prefix(full_key)
-        api_key = await self.get_by_prefix(key_prefix)
+        now = datetime.now(timezone.utc)
+        expected = _sha256_key_hash(full_key)
+        api_key = await OxydeAPIKey.objects.get_or_none(key_hash=expected)
+        if api_key is not None:
+            # The index already matched on equality; the constant-time
+            # compare keeps the check itself independent of where the
+            # strings differ, whatever the database did to find the row.
+            if hmac.compare_digest(api_key.key_hash, expected) and _usable(api_key, now):
+                return api_key, False
+            return None, False
 
-        if not api_key:
-            return None
-
-        if not api_key.is_active:
-            return None
-
-        if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
-            return None
-
-        update_fields: set[str] = set()
-        if api_key.key_hash.startswith(SHA256_HASH_PREFIX):
-            if not hmac.compare_digest(api_key.key_hash, _sha256_key_hash(full_key)):
-                return None
-        elif _is_legacy_bcrypt_hash(api_key.key_hash):
+        # Legacy bcrypt rows (pre CHT-1369) are salted, so they can only be
+        # found by prefix. Several rows may share it: try each.
+        candidates = await OxydeAPIKey.objects.filter(
+            key_prefix=self._get_prefix(full_key), is_active=True,
+        ).all()
+        for candidate in candidates:
+            if not _usable(candidate, now):
+                continue
+            if hmac.compare_digest(candidate.key_hash, expected):
+                # A concurrent request with this same key upgraded the row
+                # between the digest lookup above and this read. It is this
+                # key's row, already upgraded.
+                return candidate, False
+            if not _is_legacy_bcrypt_hash(candidate.key_hash):
+                continue
             # bcrypt is CPU-bound and synchronous: keep it off the event loop
             # so one legacy key's ~260 ms cannot stall every other request.
             try:
-                ok = await asyncio.to_thread(verify_password, _prehash_key(full_key), api_key.key_hash)
+                ok = await asyncio.to_thread(verify_password, _prehash_key(full_key), candidate.key_hash)
             except ValueError:
                 # "$2..." but not a well-formed bcrypt string ("Invalid salt"):
-                # fail closed as a bad credential rather than a 500.
-                return None
-            if not ok:
-                return None
+                # not this key, rather than a 500.
+                continue
+            if ok:
+                return candidate, True
+        # A row in neither format (corrupted or foreign) matches nothing.
+        return None, False
+
+    async def validate_key(self, full_key: str) -> OxydeAPIKey | None:
+        """Validate an API key and return the associated key record if valid."""
+        api_key, legacy = await self.find_by_key(full_key)
+
+        if not api_key or not _usable(api_key, datetime.now(timezone.utc)):
+            return None
+
+        update_fields: set[str] = set()
+        if legacy:
             # Opportunistic upgrade: the caller just proved they hold the key,
             # so its SHA-256 digest can be stored and bcrypt is never paid again.
+            # The id only: the prefix is 32 bits of the secret (CHT-1555
+            # retires this path once the line stops appearing).
+            logger.info("API key id %s signed in with a legacy bcrypt hash; upgrading it to SHA-256", api_key.id)
             api_key.key_hash = _sha256_key_hash(full_key)
             update_fields.add("key_hash")
-        else:
-            # Neither format: a corrupted or foreign row. bcrypt would raise
-            # ("Invalid salt") and turn a bad credential into a 500; a key
-            # whose stored hash cannot be checked simply does not validate.
-            return None
 
         now = datetime.now(timezone.utc)
         # `> now` covers a stamp from a fast clock or a restored DB, which
