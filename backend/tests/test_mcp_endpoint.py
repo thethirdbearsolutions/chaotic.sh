@@ -584,6 +584,67 @@ class TestCapabilityPathRedaction:
         assert api_key.encode() not in scope["raw_path"]
         assert scope["path"] == path.format(key=f"ck_...{api_key[-4:]}")
 
+    @pytest.mark.parametrize("prefix", ["ck_", "cat_", "crt_", "cac_", "cct_"])
+    async def test_query_values_with_a_secret_prefix_are_redacted(self, recording_client, prefix):
+        """CHT-1590: uvicorn logs the query string with the path."""
+        ac, recorder = recording_client
+        secret = prefix + "ab" * 32
+        await ac.get("/api/projects", params={"token": secret, "team_id": "t1"})
+        (scope,) = recorder.scopes
+        assert secret.encode() not in scope["query_string"]
+        assert scope["query_string"] == f"token={prefix}...abab&team_id=t1".encode()
+
+    @pytest.mark.parametrize(
+        "query, logged",
+        [
+            # Percent-encoded, a bare value with no name, and a secret as a name.
+            ("k=%63k_{hex}", "k=ck_...abab"),
+            ("ck_{hex}", "ck_...abab"),
+            ("ck_{hex}=1&x=2", "ck_...abab=1&x=2"),
+            # Left alone: too short, no minted prefix, and the empty pieces.
+            ("q=ck_short&r=xk_{hex}&&=", "q=ck_short&r=xk_{hex}&&="),
+        ],
+    )
+    async def test_query_shapes(self, recording_client, query, logged):
+        ac, recorder = recording_client
+        hexs = "ab" * 32
+        await ac.get("/api/projects?" + query.format(hex=hexs))
+        (scope,) = recorder.scopes
+        assert scope["query_string"] == logged.format(hex=hexs).encode()
+
+    async def test_query_on_the_capability_url_is_redacted(self, recording_client, api_key):
+        ac, recorder = recording_client
+        resp = await ac.post(
+            f"/mcp/{api_key}?key={api_key}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS,
+        )
+        assert resp.status_code == 200
+        (scope,) = recorder.scopes
+        assert api_key.encode() not in scope["query_string"]
+        assert api_key not in scope["path"]
+
+    async def test_websocket_query_is_redacted(self, db, api_key):
+        """The /ws handshake carries its own token in the query (a JWT,
+        untouched); a minted secret beside it is scrubbed."""
+        from app.main import app
+
+        query = f"token=not-a-jwt&team_id=t&key={api_key}".encode()
+        scope = {
+            "type": "websocket", "path": "/ws", "raw_path": b"/ws", "query_string": query,
+            "headers": [], "client": ("127.0.0.1", 1), "server": ("test", 80),
+            "scheme": "ws", "root_path": "", "subprotocols": [],
+        }
+        sent = []
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await app(scope, receive, send)
+        assert sent[-1]["type"] == "websocket.close"
+        assert scope["query_string"] == f"token=not-a-jwt&team_id=t&key=ck_...{api_key[-4:]}".encode()
+
     async def test_bearer_mode_path_untouched(self, recording_client, api_key):
         ac, recorder = recording_client
         headers = {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
