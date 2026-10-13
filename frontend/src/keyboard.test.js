@@ -188,6 +188,35 @@ describe('Keyboard Handler', () => {
             expect(actions.closeModal).not.toHaveBeenCalled();
         });
 
+        it.each(['BUTTON', 'BODY'])('never closes a dirty modal from a %s; refocuses its field', (tagName) => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isModalDirty.mockReturnValue(true);
+            actions.focusModalField = vi.fn();
+            handler = createKeyboardHandler(actions);
+            const event = makeEvent('Escape', { target: { tagName } });
+            handler(event);
+            expect(actions.closeModal).not.toHaveBeenCalled();
+            expect(actions.focusModalField).toHaveBeenCalled();
+            expect(event.preventDefault).toHaveBeenCalled();
+        });
+
+        it('closes a clean modal from a BUTTON', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('Escape', { target: { tagName: 'BUTTON' } }));
+            expect(actions.closeModal).toHaveBeenCalled();
+        });
+
+        it('ignores Escape during IME composition', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isInlineDropdownOpen.mockReturnValue(true);
+            const blur = vi.fn();
+            handler(makeEvent('Escape', { isComposing: true, target: { tagName: 'INPUT', blur } }));
+            handler(makeEvent('Escape', { isComposing: true, target: { tagName: 'BUTTON' } }));
+            expect(actions.closeInlineDropdowns).not.toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+            expect(blur).not.toHaveBeenCalled();
+        });
+
         it('still only blurs an input when no modal is open', () => {
             const blur = vi.fn();
             handler(makeEvent('Escape', { target: { tagName: 'INPUT', blur } }));

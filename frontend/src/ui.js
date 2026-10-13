@@ -31,6 +31,21 @@ export function markModalDirty() {
 }
 
 /**
+ * Forget markModalDirty() after the modal resets its own form in place
+ * ("Create & New").
+ */
+export function clearModalDirty() {
+  modalMarkedDirty = false;
+}
+
+/**
+ * Focus the open modal's first visible field, if any (CHT-1231).
+ */
+export function focusModalFirstField() {
+  document.querySelector('#modal-content input:not([type="hidden"]), #modal-content textarea')?.focus();
+}
+
+/**
  * Whether the open modal holds anything the user entered: a markModalDirty()
  * call, or a visible form control whose value differs from its initial one.
  * Used to decide whether Escape from a field may close the modal (CHT-1231).
@@ -263,7 +278,7 @@ export function closeInlineDropdownsFromEscape() {
   const focusWasInside = !!active?.closest?.('.inline-dropdown');
   closeAllDropdowns();
   if (focusWasInside && isModalOpen()) {
-    document.querySelector('#modal-content input:not([type="hidden"]), #modal-content textarea')?.focus();
+    focusModalFirstField();
   }
 }
 

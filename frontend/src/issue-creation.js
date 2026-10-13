@@ -9,7 +9,7 @@ import { getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft } from 
 import { api } from './api.js';
 import { getProjects, getEstimateOptions } from './projects.js';
 import { getCurrentView, getLabels, setLabels, getCurrentTeam, getCurrentProject } from './state.js';
-import { showModal, closeModal, showToast, showApiError, closeAllDropdowns, registerDropdownClickOutside, markModalDirty } from './ui.js';
+import { showModal, closeModal, showToast, showApiError, closeAllDropdowns, registerDropdownClickOutside, markModalDirty, clearModalDirty } from './ui.js';
 import { viewIssue } from './issue-detail-view.js';
 import { loadIssues } from './issues-view.js';
 import { loadMyIssues } from './dashboard.js';
@@ -475,6 +475,10 @@ export function setCreateIssueField(field, value, label) {
     }
 
     closeAllDropdowns();
+    // The chosen option had focus and is gone with the dropdown; put focus
+    // back on the toolbar button that opened it rather than on <body>
+    // (CHT-1231).
+    document.querySelector(`.toolbar-btn[data-action="toggle-create-dropdown"][data-dropdown-type="${field}"]`)?.focus();
 }
 
 async function submitCreateIssue({ keepOpen = false } = {}) {
@@ -531,6 +535,9 @@ async function submitCreateIssue({ keepOpen = false } = {}) {
         if (keepOpen) {
             document.getElementById('create-issue-title').value = '';
             document.getElementById('create-issue-description').value = '';
+            // The form is reset for the next issue; what it held was just
+            // saved, so Escape may close it again (CHT-1231).
+            clearModalDirty();
             document.getElementById('create-issue-title').focus();
         } else {
             closeModal();

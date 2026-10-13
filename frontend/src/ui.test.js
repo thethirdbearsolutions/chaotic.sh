@@ -13,6 +13,8 @@ import {
   isModalDirty,
   markModalDirty,
   closeInlineDropdownsFromEscape,
+  clearModalDirty,
+  focusModalFirstField,
 } from './ui.js';
 
 describe('showModal', () => {
@@ -96,6 +98,18 @@ describe('isModalDirty', () => {
     expect(isModalDirty()).toBe(true);
     showModal();
     expect(isModalDirty()).toBe(false);
+  });
+
+  it('clearModalDirty clears the mark', () => {
+    markModalDirty();
+    clearModalDirty();
+    expect(isModalDirty()).toBe(false);
+  });
+
+  it('focusModalFirstField skips hidden inputs', () => {
+    document.getElementById('modal-overlay').classList.remove('hidden');
+    focusModalFirstField();
+    expect(document.activeElement.id).toBe('title');
   });
 
   it('closeModal clears the mark', () => {

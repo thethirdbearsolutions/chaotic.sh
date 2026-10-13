@@ -45,6 +45,7 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
     closeInlineDropdownsFromEscape: vi.fn(),
     isModalDirty: vi.fn().mockReturnValue(false),
+    focusModalFirstField: vi.fn(),
 }));
 vi.mock('./auth.js', () => ({
     showAuthScreen: vi.fn(),

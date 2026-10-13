@@ -21,8 +21,10 @@
  *   is open. Such a popup is the topmost layer, so Escape closes it alone.
  * @param {Function} [actions.closeInlineDropdowns] - Close those popups
  * @param {Function} [actions.isModalDirty] - Returns true if the open modal
- *   holds anything the user entered. Escape from a field in a clean modal
- *   closes it; in a dirty one it only blurs the field (CHT-1231).
+ *   holds anything the user entered. Escape closes a clean modal; it never
+ *   closes a dirty one: from a field it blurs, elsewhere it refocuses the
+ *   first field (CHT-1231).
+ * @param {Function} [actions.focusModalField] - Focus the open modal's first field
  * @param {Function} [actions.isDetailViewActive] - Returns true if the issue
  *   detail view is currently showing. Detail view's own hotkey listener is
  *   registered dynamically per-view (always AFTER this global one), so bare
@@ -39,6 +41,10 @@ export function createKeyboardHandler(actions) {
         if (e.metaKey || e.ctrlKey || e.altKey) {
             return;
         }
+
+        // CHT-1231: Escape during IME composition cancels the composition;
+        // it must not also close a dropdown or a modal.
+        if (e.isComposing) return;
 
         // CHT-1231: an open inline dropdown sits above everything else
         // (including a modal), so Escape closes just the dropdown. Before,
@@ -74,7 +80,14 @@ export function createKeyboardHandler(actions) {
         if (e.key === 'Escape') {
             e.preventDefault();
             if (modalOpen) {
-                actions.closeModal();
+                // CHT-1231: Escape never discards a dirty modal. With focus
+                // on a button or the body, send it back to the first field
+                // instead (where Escape blurs), so the draft survives.
+                if (actions.isModalDirty?.()) {
+                    actions.focusModalField?.();
+                } else {
+                    actions.closeModal();
+                }
             } else if (document.body.classList.contains('sidebar-open') && actions.closeSidebar) {
                 actions.closeSidebar();
             } else {

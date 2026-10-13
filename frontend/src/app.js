@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
-import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty } from './ui.js';
+import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
 import { initApp } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
@@ -717,6 +717,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     isInlineDropdownOpen,
     closeInlineDropdowns: closeInlineDropdownsFromEscape,
     isModalDirty,
+    focusModalField: focusModalFirstField,
     closeDropdowns: () => {
         document.getElementById('team-dropdown').classList.add('hidden');
         document.getElementById('user-dropdown').classList.add('hidden');
