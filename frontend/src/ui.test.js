@@ -12,6 +12,7 @@ import {
   showApiError,
   isModalDirty,
   markModalDirty,
+  closeInlineDropdownsFromEscape,
 } from './ui.js';
 
 describe('showModal', () => {
@@ -106,6 +107,38 @@ describe('isModalDirty', () => {
   it('is clean with no modal content', () => {
     document.body.innerHTML = '';
     expect(isModalDirty()).toBe(false);
+  });
+});
+
+describe('closeInlineDropdownsFromEscape (CHT-1231)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-overlay"><div id="modal-content">
+        <input type="hidden" id="h"><input type="text" id="title">
+        <button id="tool">Status</button>
+      </div></div>
+      <div class="inline-dropdown"><input class="label-create-input"></div>`;
+  });
+
+  it('returns focus to the modal when it was inside the dropdown', () => {
+    document.querySelector('.label-create-input').focus();
+    closeInlineDropdownsFromEscape();
+    expect(document.querySelector('.inline-dropdown')).toBeNull();
+    expect(document.activeElement.id).toBe('title');
+  });
+
+  it('leaves focus alone when it was outside the dropdown', () => {
+    document.getElementById('tool').focus();
+    closeInlineDropdownsFromEscape();
+    expect(document.querySelector('.inline-dropdown')).toBeNull();
+    expect(document.activeElement.id).toBe('tool');
+  });
+
+  it('does not grab focus when no modal is open', () => {
+    document.getElementById('modal-overlay').classList.add('hidden');
+    document.querySelector('.label-create-input').focus();
+    closeInlineDropdownsFromEscape();
+    expect(document.activeElement).toBe(document.body);
   });
 });
 

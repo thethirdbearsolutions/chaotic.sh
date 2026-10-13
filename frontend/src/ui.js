@@ -253,6 +253,21 @@ export function closeAllDropdowns() {
 }
 
 /**
+ * Close inline dropdowns in response to Escape (CHT-1231). If focus was
+ * inside one (the label-create input), removing it would drop focus to
+ * <body>, where the next Escape closes the modal unchecked; hand focus back
+ * to the open modal's first field instead.
+ */
+export function closeInlineDropdownsFromEscape() {
+  const active = document.activeElement;
+  const focusWasInside = !!active?.closest?.('.inline-dropdown');
+  closeAllDropdowns();
+  if (focusWasInside && isModalOpen()) {
+    document.querySelector('#modal-content input:not([type="hidden"]), #modal-content textarea')?.focus();
+  }
+}
+
+/**
  * Set the current dropdown keyboard handler
  * @param {Function|null} handler - Keyboard event handler
  */
