@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     # as a 500 on the first registration (bcrypt rejects < 4; 31 is hours).
     bcrypt_rounds: int = Field(12, ge=4, le=31)
 
+    # Agent self-registration (CHT-1498). A key minted by POST
+    # /agents/register expires after this many seconds (7 days); the
+    # client re-registers to rotate it. Each registrar (an agent with
+    # can_register, or a human calling register) may hold at most
+    # `registrar_max_active_identities` active identities and make at most
+    # `registrar_max_registrations_per_hour` registrations (rotations
+    # included) in any rolling hour; past either it gets a 429.
+    agent_session_key_ttl_seconds: int = Field(7 * 24 * 3600, ge=60)
+    registrar_max_active_identities: int = Field(200, ge=1)
+    registrar_max_registrations_per_hour: int = Field(60, ge=1)
+
     model_config = SettingsConfigDict(env_file=".env")
 
     @model_validator(mode="after")

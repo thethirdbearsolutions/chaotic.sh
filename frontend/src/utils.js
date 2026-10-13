@@ -284,10 +284,18 @@ export function renderAgentBadge(isAgent, ownerName = null) {
 
 /**
  * The agent badge for a principal summary ({id, name, is_agent, owner_id,
- * owner_name}) as API responses embed it next to each *_name (CHT-1500).
+ * owner_name, kind, registered_by_name}) as API responses embed it next to
+ * each *_name (CHT-1500). A session identity shows its registrar (CHT-1498).
  * @param {Object|null} principal
  * @returns {string} HTML string, or '' for a person or a missing summary
  */
 export function renderPrincipalBadge(principal) {
+    if (principal?.is_agent && principal?.kind === 'session') {
+        // A registered session identity (CHT-1498): "session · via <registrar>".
+        const via = principal.registered_by_name;
+        const label = via ? `session · via ${via}` : 'session';
+        const title = principal.owner_name ? `AI session identity of ${principal.owner_name}` : 'AI session identity';
+        return `<span class="badge badge-agent" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`;
+    }
     return renderAgentBadge(principal?.is_agent, principal?.owner_name);
 }

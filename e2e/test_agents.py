@@ -96,3 +96,28 @@ class TestDeletingTheOwner:
 
         assert refused.value.status_code == 403
         assert api_client.get_agent(agent["id"])["name"] == "Self"
+
+
+class TestRegistration:
+    """POST /agents/register through the CLI client (CHT-1498)."""
+
+    def test_a_registrar_registers_a_session_that_writes_as_itself(self, api_client, test_team, test_project):
+        registrar = api_client.create_team_agent(test_team["id"], "Harness")
+        api_client.update_agent(registrar["id"], can_register=True)
+        ref = "claude-code:session:e2e-0001"
+
+        with _as_agent(registrar["api_key"]) as harness:
+            first = harness.register_agent(ref, name="Claude · e2e")
+            again = harness.register_agent(ref)
+            with pytest.raises(APIError) as refused:
+                harness.create_issue(project_id=test_project["id"], title="as the harness")
+        assert refused.value.status_code == 403
+
+        assert first["created"] is True and again["created"] is False
+        assert again["agent"]["id"] == first["agent"]["id"] and again["agent"]["name"] == "Claude · e2e"
+        assert again["agent"]["kind"] == "session" and again["agent"]["registered_by_id"] == registrar["id"]
+
+        with _as_agent(again["api_key"]) as session:
+            issue = session.create_issue(project_id=test_project["id"], title="by the session")
+        assert issue["creator"]["kind"] == "session"
+        assert issue["creator"]["registered_by_name"] == "Harness"

@@ -40,6 +40,7 @@ from app.api import projects as projects_api
 from app.api import rituals as rituals_api
 from app.api import sprints as sprints_api
 from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, SprintStatus
+from app.api.deps import refuse_registrar_write
 from app.mcp_server import scope
 from app.mcp_server.context import get_current_mcp_user
 from app.schemas.document import DocumentCreate, DocumentUpdate
@@ -75,10 +76,29 @@ def http_error_payload(e: HTTPException) -> dict:
     return backend_error_payload(translate_http_exception(e))
 
 
+# Backend methods that read. (Not strictly side-effect free:
+# get_current_sprint, like its REST GET, may create the project's first
+# sprints through ensure_sprints_exist -- unattributed bookkeeping,
+# CHT-1557.) A registrar may call these and nothing
+# else (CHT-1498): every other method is treated as a write, so a new
+# method is refused to a registrar until it is named a read here or by
+# its get_/list_ prefix. tests/test_agent_register.py pins the split.
+READ_METHODS = frozenset({"server_info"})
+
+
+def is_read_method(name: str) -> bool:
+    return name in READ_METHODS or name.startswith(("get_", "list_"))
+
+
 def _translated(fn):
+    read_only = is_read_method(fn.__name__)
+
     @functools.wraps(fn)
     async def wrapper(self, *args, **kwargs):
         try:
+            if not read_only:
+                # The same rule as REST's get_current_user, per tool.
+                refuse_registrar_write(self._user, "POST", None)
             return await fn(self, *args, **kwargs)
         except HTTPException as e:
             raise translate_http_exception(e) from e

@@ -705,6 +705,17 @@ describe('renderPrincipalBadge (CHT-1500)', () => {
     expect(renderPrincipalBadge({ id: 'a', name: 'Bot', is_agent: true })).toContain('title="AI agent"');
   });
 
+  it('shows a session identity as "session · via <registrar>" (CHT-1498)', () => {
+    const html = renderPrincipalBadge({
+      id: 's', name: 'Claude', is_agent: true, owner_name: 'Ada', kind: 'session',
+      registered_by_name: 'Cloud <x>',
+    });
+    expect(html).toContain('badge-agent');
+    expect(html).toContain('>session · via Cloud &lt;x&gt;</span>');
+    expect(html).toContain('title="AI session identity of Ada"');
+    expect(renderPrincipalBadge({ id: 's', name: 'C', is_agent: true, kind: 'session' })).toContain('>session</span>');
+  });
+
   it('renders nothing for a person or a missing summary', () => {
     expect(renderPrincipalBadge({ id: 'u', name: 'Ada', is_agent: false })).toBe('');
     expect(renderPrincipalBadge(null)).toBe('');

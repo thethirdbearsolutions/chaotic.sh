@@ -145,7 +145,13 @@ class UserService:
                     agents_with_work.append((agent, per_agent))
             if any(counts.values()) or agents_with_work or non_agent_children:
                 raise UserDeletionRefusedError(user, counts, agents_with_work, non_agent_children)
+            # Identities they (as a person registering for themself) or any
+            # of their registrars registered are retired, not left alive
+            # without a registrar (CHT-1498); ones they own are deleted
+            # below with their other agents.
+            await agent_service._retire_identities(user.id)
             for agent in agents:
+                await agent_service._retire_identities(agent.id)
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
                 await agent.delete()
             await OxydeTeamMember.objects.filter(user_id=user.id).delete()

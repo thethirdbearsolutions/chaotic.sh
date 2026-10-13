@@ -34,6 +34,20 @@ async def create_api_key(
             current_user.id, api_key_in, holder_user_id=current_user.id,
         )
     else:
+        if current_user.registered_by_id is not None:
+            # A registered identity's keys come from its registrar: 7-day,
+            # rotated on re-register, one live at a time (CHT-1498). A key
+            # it minted itself would outlive all of that.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "registered_identity_key",
+                    "message": (
+                        "A registered identity cannot mint its own keys; re-register through its "
+                        "registrar (POST /api/agents/register) for a fresh one."
+                    ),
+                },
+            )
         if calling_key is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

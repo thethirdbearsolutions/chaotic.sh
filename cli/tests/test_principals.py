@@ -20,6 +20,15 @@ class TestPrincipalLabel:
     def test_agent_without_owner(self):
         assert principal_label({**AGENT, "owner_id": None, "owner_name": None}) == "Builder Bot (agent)"
 
+    def test_session_identity_names_its_registrar(self):
+        """CHT-1498: a registered identity reads as a session via its registrar."""
+        session = {**AGENT, "name": "Claude · x", "kind": "session", "registered_by_name": "Claude Code (cloud)"}
+        assert principal_label(session) == "Claude · x (session · via Claude Code (cloud))"
+        assert principal_label({**session, "registered_by_name": None}) == "Claude · x (session)"
+
+    def test_assistant_kind_reads_as_before(self):
+        assert principal_label({**AGENT, "kind": "assistant"}) == "Builder Bot (agent of Ada)"
+
     @pytest.mark.parametrize("missing", [None, {}, "a1", {"is_agent": True}])
     def test_no_summary_falls_back(self, missing):
         """A backend older than the summary sends only the name."""

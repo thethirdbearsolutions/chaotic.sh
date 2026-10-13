@@ -1,4 +1,6 @@
 """Agent schemas."""
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 from app.enums import AgentKind
 from app.utils import DateTimeUTC
@@ -9,6 +11,8 @@ class AgentCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     avatar_url: str | None = None
+    # Make it a registrar (kind=service) from the start (CHT-1498).
+    can_register: bool = False
 
 
 class AgentUpdate(BaseModel):
@@ -16,6 +20,10 @@ class AgentUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     avatar_url: str | None = None
+    # Turn the registrar capability on (kind becomes service) or off
+    # (kind back to assistant). Refused for a registered identity
+    # (CHT-1498): registration is one level deep.
+    can_register: bool | None = None
 
 
 class AgentResponse(BaseModel):
@@ -38,6 +46,9 @@ class AgentResponse(BaseModel):
     external_ref: str | None = None
     registered_by_id: str | None = None
     can_register: bool = False
+    # Set only on a deactivate response: how many identities this agent
+    # had registered that the deactivation also retired (CHT-1498).
+    deactivated_identities: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,3 +66,37 @@ class AgentCreated(BaseModel):
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Address of a registered identity, e.g. `claude-code:session:<uuid>`:
+# printable, no whitespace. An address, never a credential.
+EXTERNAL_REF_PATTERN = r"^[!-~]+$"
+
+
+class AgentRegister(BaseModel):
+    """POST /agents/register (CHT-1498): get or create the session
+    identity a registrar knows by `external_ref`, and mint it a key."""
+
+    external_ref: str = Field(min_length=1, max_length=200, pattern=EXTERNAL_REF_PATTERN)
+    # Display name. Optional: a new identity defaults to
+    # "<registrar> · <last 8 of the ref>"; an existing one keeps its name.
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    # Only session identities can be registered in this slice.
+    kind: Literal["session"] = "session"
+    # Narrow a team-scoped registrar's identity to one project of its
+    # team. Must be the registrar's own project for a project-scoped one.
+    project_id: str | None = None
+    # Only for a human caller, who belongs to teams rather than being
+    # scoped to one; optional when project_id is given. An agent
+    # registrar may pass its own team or nothing.
+    team_id: str | None = None
+
+
+class AgentRegistered(BaseModel):
+    """The identity and its fresh key. The key is shown only here."""
+
+    agent: AgentResponse
+    created: bool
+    api_key: str
+    api_key_id: str
+    expires_at: DateTimeUTC

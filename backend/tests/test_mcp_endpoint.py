@@ -670,3 +670,20 @@ class TestRemovedCreatorsAgentKey:
 
         assert removed.status_code == 204
         assert await self._both(client, key) == (401, 401)
+
+
+class TestRegistrarOverHTTP:
+    """A registrar's key is register-only on /mcp too (CHT-1498)."""
+
+    async def test_registrar_write_is_refused_and_read_allowed(self, client, auth_headers, test_team, test_project):
+        created = await client.post(
+            f"/api/teams/{test_team.id}/agents", json={"name": "Harness", "can_register": True}, headers=auth_headers,
+        )
+        headers = {**_MCP_HEADERS, "Authorization": f"Bearer {created.json()['api_key']}"}
+
+        write = await _tool_call(client, headers, "issue_create", {"title": "x", "project": test_project.id})
+        assert write.status_code == 200, write.text
+        assert "registrar_cannot_write" in write.text
+
+        read = await _tool_call(client, headers, "issue_list", {"project": test_project.id})
+        assert read.status_code == 200 and "registrar_cannot_write" not in read.text

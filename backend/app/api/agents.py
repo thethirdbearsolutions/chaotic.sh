@@ -1,7 +1,18 @@
 """Agent routes."""
-from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser, can_manage_agent, check_user_team_access
-from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from app.api.deps import (
+    CurrentUser, can_manage_agent, check_user_team_access, get_api_key_record, registrar_may_call,
+)
+from app.enums import AgentKind
+from app.schemas.agent import (
+    AgentCreate, AgentRegister, AgentRegistered, AgentUpdate, AgentResponse, AgentCreated,
+)
+from app.enums import TeamRole
+from app.services.registration_service import (
+    RegistrationRefused, RegistrationService, member_named, name_matches_member_detail,
+)
 from app.schemas.api_key import AgentKeyResponse, APIKeyCreated
 from app.services.agent_service import (
     AgentHasAuthoredContentError, AgentInactiveError, AgentManageDeniedError, AgentService,
@@ -14,8 +25,34 @@ from app.services.user_service import UserService
 router = APIRouter()
 
 
-def agent_response(agent) -> AgentResponse:
-    """The wire form of an agent row (with `parent_user` joined)."""
+async def _is_team_admin(user, team_id: str | None) -> bool:
+    if user.is_agent or not team_id:
+        return False
+    member = await TeamService().get_member(team_id, user.id)
+    return member is not None and member.role in (TeamRole.OWNER, TeamRole.ADMIN)
+
+
+async def sees_external_ref(viewer, agent, *, admin: bool | None = None) -> bool:
+    """`external_ref` (a harness session address) is shown only to the
+    identity itself, the human who owns and holds it, and admins of its
+    team (CHT-1498 review). Other teammates see null."""
+    if not agent.external_ref:
+        return True
+    if viewer.id in (agent.id, agent.parent_user_id):
+        return True
+    return admin if admin is not None else await _is_team_admin(viewer, agent.agent_team_id)
+
+
+async def _refuse_member_name(team_id: str, name: str) -> None:
+    """Rule 8 for every agent name, not only registered ones: an agent may
+    not carry a person's name in its team (normalized, CHT-1498)."""
+    if await member_named(team_id, name):
+        raise HTTPException(status_code=422, detail=name_matches_member_detail(name))
+
+
+def agent_response(agent, *, show_ref: bool = True) -> AgentResponse:
+    """The wire form of an agent row (with `parent_user` joined).
+    `show_ref`: see ``sees_external_ref``."""
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -28,7 +65,7 @@ def agent_response(agent) -> AgentResponse:
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         kind=agent.kind,
-        external_ref=agent.external_ref,
+        external_ref=agent.external_ref if show_ref else None,
         registered_by_id=agent.registered_by_id,
         can_register=agent.can_register,
     )
@@ -69,6 +106,7 @@ async def create_team_agent(
             detail="Agents cannot create other agents",
         )
 
+    await _refuse_member_name(team_id, agent_in.name)
     agent_service = AgentService()
     agent, api_key, api_key_id = await agent_service.create(
         agent_in=agent_in,
@@ -125,6 +163,7 @@ async def create_project_agent(
             detail="Agents cannot create other agents",
         )
 
+    await _refuse_member_name(project.team_id, agent_in.name)
     agent_service = AgentService()
     agent, api_key, api_key_id = await agent_service.create(
         agent_in=agent_in,
@@ -171,8 +210,9 @@ async def list_team_agents(
     agent_service = AgentService()
     agents = await agent_service.list_by_team(team_id)
 
+    admin = await _is_team_admin(current_user, team_id)
     return [
-        agent_response(agent)
+        agent_response(agent, show_ref=await sees_external_ref(current_user, agent, admin=admin))
         for agent in agents
     ]
 
@@ -200,7 +240,7 @@ async def get_agent(
             detail="Not authorized to view this agent",
         )
 
-    return agent_response(agent)
+    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -209,7 +249,9 @@ async def update_agent(
     agent_in: AgentUpdate,
     current_user: CurrentUser,
 ):
-    """Update an agent's name or avatar."""
+    """Update an agent's name or avatar, or make it a registrar
+    (`can_register`, CHT-1498). Allowed to its creator while in the
+    agent's team and to that team's admins."""
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -225,9 +267,23 @@ async def update_agent(
             detail="Not authorized to update this agent",
         )
 
+    if agent_in.can_register is not None and (
+        agent.registered_by_id is not None or agent.kind == AgentKind.SESSION
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "registered_identity_cannot_register",
+                "message": "A registered identity cannot be made a registrar: registration is one level deep.",
+            },
+        )
+
+    if agent_in.name is not None and agent_in.name != agent.name:
+        await _refuse_member_name(agent.agent_team_id, agent_in.name)
+
     agent = await agent_service.update(agent, agent_in)
 
-    return agent_response(agent)
+    return agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
 
 
 @router.post(
@@ -370,10 +426,11 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail=f"Not authorized to {action} this agent",
         )
 
+    retired = None
     if active:
         agent = await agent_service.reactivate(agent, current_user)
     else:
-        agent = await agent_service.deactivate(agent, current_user)
+        agent, retired = await agent_service.deactivate_with_identities(agent, current_user)
     if agent is None:
         # Deleted between the lookup and the write.
         raise HTTPException(
@@ -381,7 +438,9 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    return agent_response(agent)
+    response = agent_response(agent, show_ref=await sees_external_ref(current_user, agent))
+    response.deactivated_identities = retired
+    return response
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -410,3 +469,41 @@ async def delete_agent(
         await agent_service.delete(agent)
     except AgentHasAuthoredContentError as refused:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
+
+
+@router.post(
+    "/agents/register",
+    response_model=AgentRegistered,
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"model": AgentRegistered, "description": "An existing identity, with a fresh key"}},
+)
+@registrar_may_call
+async def register_agent(
+    req: AgentRegister,
+    current_user: CurrentUser,
+    calling_key: Annotated[object | None, Depends(get_api_key_record)],
+    response: Response,
+) -> AgentRegistered:
+    """Get or create the session identity a registrar knows by
+    `external_ref`, and mint it a fresh expiring key (CHT-1498). 201 when
+    created, 200 when it already existed (its other keys are revoked:
+    one live key per identity). The key is shown only here.
+
+    Callers: an agent with `can_register` (with one of its own keys), or
+    a person in the team. Rules and refusals: app.services.registration_service.
+    """
+    try:
+        reg = await RegistrationService().register(current_user, calling_key, req)
+    except RegistrationRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+        ) from refused
+    if not reg.created:
+        response.status_code = status.HTTP_200_OK
+    return AgentRegistered(
+        agent=agent_response(reg.agent),
+        created=reg.created,
+        api_key=reg.full_key,
+        api_key_id=reg.api_key.id,
+        expires_at=reg.api_key.expires_at,
+    )

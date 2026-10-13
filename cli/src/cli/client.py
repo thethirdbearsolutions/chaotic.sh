@@ -813,6 +813,12 @@ class Client:
         """Create a project-scoped agent."""
         return self._request("POST", f"/projects/{project_id}/agents", {"name": name})
 
+    def register_agent(self, external_ref: str, **kwargs) -> dict:
+        """Get or create the session identity this registrar knows by
+        `external_ref` and mint it a fresh expiring key (CHT-1498).
+        kwargs: name, project_id, team_id (a person's call only)."""
+        return self._request("POST", "/agents/register", {"external_ref": external_ref, **kwargs})
+
     def get_team_agents(self, team_id: str) -> list:
         """List all agents for a team."""
         return self._request("GET", f"/teams/{team_id}/agents")

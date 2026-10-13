@@ -2,18 +2,28 @@
 
 See ``app.schemas.principal`` for what a summary is and why it exists.
 Two queries per call however many rows and principals there are: the
-principals, then the owners of whichever of them are agents.
+principals, then the owners and registrars of whichever of them are
+agents (those not already loaded).
 """
 from collections.abc import Iterable
 
 from pydantic import BaseModel
 
+from app.enums import AgentKind
 from app.oxyde_models.user import OxydeUser
 from app.schemas.principal import HasPrincipals, PrincipalSummary
 
 
 def _get(row, key):
     return row[key] if isinstance(row, dict) else getattr(row, key)
+
+
+def _kind(raw) -> AgentKind | None:
+    """A `kind` column as read by .values(): the member, or the stored
+    .name (CLAUDE.md, "Enum Representation")."""
+    if raw is None or isinstance(raw, AgentKind):
+        return raw
+    return AgentKind[raw]
 
 
 async def load_principals(ids: Iterable[str | None]) -> dict[str, PrincipalSummary]:
@@ -23,27 +33,34 @@ async def load_principals(ids: Iterable[str | None]) -> dict[str, PrincipalSumma
         return {}
     # Named columns, never whole rows: a user row carries the password hash.
     rows = await OxydeUser.objects.filter(id__in=list(wanted)).values(
-        "id", "name", "is_agent", "parent_user_id",
+        "id", "name", "is_agent", "parent_user_id", "kind", "registered_by_id",
     ).all()
     found = {_get(r, "id"): r for r in rows}
 
-    owner_ids = {_get(r, "parent_user_id") for r in rows if _get(r, "is_agent")} - {None}
-    owner_names = {i: _get(found[i], "name") for i in owner_ids if i in found}
-    missing = owner_ids - owner_names.keys()
+    agents = [r for r in rows if _get(r, "is_agent")]
+    related_ids = (
+        {_get(r, "parent_user_id") for r in agents} | {_get(r, "registered_by_id") for r in agents}
+    ) - {None}
+    names = {i: _get(found[i], "name") for i in related_ids if i in found}
+    missing = related_ids - names.keys()
     if missing:
-        owners = await OxydeUser.objects.filter(id__in=list(missing)).values("id", "name").all()
-        owner_names.update({_get(o, "id"): _get(o, "name") for o in owners})
+        related = await OxydeUser.objects.filter(id__in=list(missing)).values("id", "name").all()
+        names.update({_get(o, "id"): _get(o, "name") for o in related})
 
     out = {}
     for uid, r in found.items():
         is_agent = bool(_get(r, "is_agent"))
         owner_id = _get(r, "parent_user_id") if is_agent else None
+        registrar_id = _get(r, "registered_by_id") if is_agent else None
         out[uid] = PrincipalSummary(
             id=uid,
             name=_get(r, "name"),
             is_agent=is_agent,
             owner_id=owner_id,
-            owner_name=owner_names.get(owner_id) if owner_id else None,
+            owner_name=names.get(owner_id) if owner_id else None,
+            kind=_kind(_get(r, "kind")) if is_agent else None,
+            registered_by_id=registrar_id,
+            registered_by_name=names.get(registrar_id) if registrar_id else None,
         )
     return out
 
