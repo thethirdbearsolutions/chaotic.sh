@@ -144,3 +144,39 @@ def test_the_state_only_migration_records_in_the_replay():
     }
     with pytest.raises(AssertionError):
         _load_0017()._record_state(_RefusingContext())
+
+
+def test_the_record_agrees_with_the_models_on_delete_actions():
+    """Oxyde's diff ignores `on_delete`, so a model switching a foreign key
+    from CASCADE to SET NULL (or back) leaves makemigrations silent. Hold
+    the record to the models here, and the database to the record below
+    (CHT-1427)."""
+    replayed = replay_migrations(str(MIGRATIONS))
+    current = extract_current_schema(dialect="sqlite")
+    mismatched = []
+    for table, spec in current["tables"].items():
+        recorded = {fk["name"]: fk["on_delete"] for fk in replayed["tables"][table].get("foreign_keys", [])}
+        for fk in spec.get("foreign_keys", []):
+            if recorded.get(fk["name"]) != fk["on_delete"]:
+                mismatched.append(f"{table}.{fk['name']}: model {fk['on_delete']}, record {recorded.get(fk['name'])}")
+    assert not mismatched, mismatched
+
+
+def test_the_database_agrees_with_the_record_on_delete_actions(schema_template):
+    """Every foreign key the record holds has the same ON DELETE in a
+    database built from the chain (the record may hold fewer: see 0017)."""
+    replayed = replay_migrations(str(MIGRATIONS))
+    connection = sqlite3.connect(f"file:{schema_template}?mode=ro", uri=True)
+    try:
+        mismatched = []
+        for table, spec in replayed["tables"].items():
+            in_database = {
+                (row[3], row[2]): row[6] for row in connection.execute(f"PRAGMA foreign_key_list('{table}')")
+            }
+            for fk in spec.get("foreign_keys", []):
+                key = (fk["columns"][0], fk["ref_table"])
+                if in_database.get(key) != fk["on_delete"]:
+                    mismatched.append(f"{table}.{key[0]}: record {fk['on_delete']}, database {in_database.get(key)}")
+    finally:
+        connection.close()
+    assert not mismatched, mismatched

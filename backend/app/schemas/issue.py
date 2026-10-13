@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.enums import IssueStatus, IssuePriority, IssueType, ActivityType, IssueRelationType
+from app.schemas.authorship import name_deleted_author
 from app.utils import DateTimeUTC
 
 
@@ -70,7 +71,7 @@ class IssueResponse(BaseModel):
     issue_type: IssueType
     estimate: int | None
     assignee_id: str | None
-    creator_id: str
+    creator_id: str | None  # None: author deleted (CHT-1427)
     creator_name: str | None = None
     sprint_id: str | None
     parent_id: str | None
@@ -106,6 +107,10 @@ class IssueResponse(BaseModel):
     def coerce_issue_type(cls, v):
         return _coerce_enum(IssueType, v)
 
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "creator_id", "creator_name")
+
 
 class IssueCommentCreate(BaseModel):
     """Schema for creating a comment."""
@@ -124,13 +129,17 @@ class IssueCommentResponse(BaseModel):
 
     id: str
     issue_id: str
-    author_id: str
+    author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "author_id", "author_name")
 
 
 class LabelCreate(BaseModel):
@@ -194,7 +203,7 @@ class IssueActivityResponse(BaseModel):
 
     id: str
     issue_id: str
-    user_id: str
+    user_id: str | None  # None: author deleted (CHT-1427)
     user_name: str | None = None
     user_email: str | None = None
     activity_type: ActivityType
@@ -210,6 +219,10 @@ class IssueActivityResponse(BaseModel):
     @classmethod
     def coerce_activity_type(cls, v):
         return _coerce_enum(ActivityType, v)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "user_id", "user_name")
 
 
 class IssueActivityFeedResponse(BaseModel):
@@ -230,7 +243,7 @@ class IssueActivityFeedResponse(BaseModel):
     document_title: str | None = None
     document_icon: str | None = None
     # Common fields
-    user_id: str
+    user_id: str | None  # None: author deleted (CHT-1427)
     user_name: str | None = None
     user_email: str | None = None
     activity_type: str  # Changed to str to support both ActivityType and DocumentActivityType
@@ -241,6 +254,10 @@ class IssueActivityFeedResponse(BaseModel):
     created_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "user_id", "user_name")
 
 
 class TeamCommentResponse(BaseModel):
@@ -258,13 +275,17 @@ class TeamCommentResponse(BaseModel):
     document_title: str | None = None
     document_icon: str | None = None
     # Common fields
-    author_id: str
+    author_id: str | None  # None: author deleted (CHT-1427)
     author_name: str | None = None
     content: str
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _name_deleted_author(self):
+        return name_deleted_author(self, "author_id", "author_name")
 
 
 class IssueRelationCreate(BaseModel):

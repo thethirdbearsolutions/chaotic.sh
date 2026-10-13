@@ -6,9 +6,31 @@ import uuid
 from oxyde import atomic
 from app.oxyde_models.user import OxydeUser
 from app.oxyde_models.api_key import OxydeAPIKey
+from app.oxyde_models.document import (
+    OxydeDocument, OxydeDocumentActivity, OxydeDocumentComment, OxydeDocumentRevision,
+)
+from app.oxyde_models.issue import (
+    OxydeBudgetTransaction, OxydeIssue, OxydeIssueActivity, OxydeIssueComment,
+    OxydeIssueDescriptionRevision, OxydeTicketLimbo,
+)
+from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
 from app.schemas.api_key import APIKeyCreate
+
+
+class AgentHasAuthoredContentError(Exception):
+    """Refused: the agent wrote things, and deleting it would erase who
+    wrote them (CHT-1427). `counts` maps a kind of record to how many."""
+
+    def __init__(self, agent_name: str, counts: dict[str, int]):
+        self.counts = counts
+        listed = ", ".join(f"{n} {kind}" for kind, n in counts.items() if n)
+        super().__init__(
+            f"Agent '{agent_name}' cannot be deleted: it authored {listed}. Deleting it "
+            "would leave that work without an author. Revoke its API keys instead "
+            "(`chaotic auth keys revoke`)."
+        )
 
 
 class AgentService:
@@ -96,9 +118,38 @@ class AgentService:
         # Re-query with join to load parent_user for response
         return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 
+    async def authored_counts(self, agent_id: str) -> dict[str, int]:
+        """How many records attribute something to this agent: every
+        column that would lose the attribution (or, for ritual gate
+        requests, the row) if the agent were deleted."""
+        return {
+            "issues": await OxydeIssue.objects.filter(creator_id=agent_id).count(),
+            "issue comments": await OxydeIssueComment.objects.filter(author_id=agent_id).count(),
+            "issue activity entries": await OxydeIssueActivity.objects.filter(user_id=agent_id).count(),
+            "documents": await OxydeDocument.objects.filter(author_id=agent_id).count(),
+            "document comments": await OxydeDocumentComment.objects.filter(author_id=agent_id).count(),
+            "document activity entries": await OxydeDocumentActivity.objects.filter(user_id=agent_id).count(),
+            "ritual gate requests": await OxydeTicketLimbo.objects.filter(requested_by_id=agent_id).count(),
+            # SET NULL already, but each still loses its attribution.
+            "ritual attestations": await OxydeRitualAttestation.objects.filter(attested_by=agent_id).count(),
+            "ritual approvals": await OxydeRitualAttestation.objects.filter(approved_by=agent_id).count(),
+            "budget transactions": await OxydeBudgetTransaction.objects.filter(user_id=agent_id).count(),
+            "issue description revisions": await OxydeIssueDescriptionRevision.objects.filter(author_id=agent_id).count(),
+            "document revisions": await OxydeDocumentRevision.objects.filter(author_id=agent_id).count(),
+        }
+
     async def delete(self, agent: OxydeUser) -> None:
-        """Delete an agent and its API keys."""
+        """Delete an agent and its API keys -- only if it authored nothing.
+
+        An agent that wrote anything is refused with
+        AgentHasAuthoredContentError (CHT-1427): its rows would survive
+        (authorship is ON DELETE SET NULL) but lose their author, and
+        ticket_limbo.requested_by_id still cascades.
+        """
         async with atomic():
+            counts = await self.authored_counts(agent.id)
+            if any(counts.values()):
+                raise AgentHasAuthoredContentError(agent.name, counts)
             await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
             await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
             await agent.delete()
