@@ -353,6 +353,12 @@ claude mcp add --transport http chaotic https://your-chaotic-host/mcp \
 
 ### Connecting claude.ai's web custom-connector UI (capability URL)
 
+> **Deprecated (CHT-1522).** The capability URL is served only while
+> `MCP_CAPABILITY_URL_ENABLED` is on. It is on by default for now, with
+> a `Deprecation` header on every response and a startup warning; it
+> turns off by default once OAuth for MCP ships, and is then removed.
+> See `docs/self-hosting-security.md`.
+
 As of when this was written, claude.ai's web "Add custom connector"
 dialog takes a server URL plus, in Advanced settings, an OAuth client
 id/secret pair -- there's no field for a Bearer token or a custom

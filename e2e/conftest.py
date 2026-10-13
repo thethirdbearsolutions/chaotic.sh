@@ -85,6 +85,9 @@ class _Server:
         config = uvicorn.Config(
             app=app, host="127.0.0.1", port=TEST_PORT,
             log_level="error",
+            # As in production (CHT-1586): only the app applies
+            # FORWARDED_ALLOW_IPS.
+            proxy_headers=False,
         )
         self.server = uvicorn.Server(config)
         self.thread = None

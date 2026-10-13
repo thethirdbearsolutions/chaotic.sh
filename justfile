@@ -30,7 +30,7 @@ sync-cli:
 
 # Run the backend server (with hot reload)
 serve:
-    cd backend && uv run uvicorn app.main:app --reload --port 24267
+    cd backend && uv run uvicorn app.main:app --reload --port 24267 --no-proxy-headers
 
 # Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
 # --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
@@ -39,8 +39,11 @@ serve:
 # stop sat until systemd's SIGKILL. 10s lets ordinary in-flight API requests (all
 # short) finish; MCP clients reconnect. It must stay under the unit's
 # TimeoutStopSec (SYSTEMD_TIMEOUT_STOP_SEC in cli/src/cli/system.py; a cli test pins both).
+# --no-proxy-headers (CHT-1586): the app itself applies X-Forwarded-For from the
+# proxies in FORWARDED_ALLOW_IPS (backend/app/config.py, validated: never "*"), so
+# uvicorn must not apply its own copy of that list as well.
 serve-prod:
-    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} --timeout-graceful-shutdown 10
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267} --timeout-graceful-shutdown 10 --no-proxy-headers
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli

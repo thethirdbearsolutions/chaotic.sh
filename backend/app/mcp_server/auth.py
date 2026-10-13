@@ -26,6 +26,11 @@ Two modes (no JWT on either):
    and revoke (``chaotic auth keys revoke``) without touching any other
    integration. ***
 
+   Deprecated (CHT-1522): served only while
+   ``MCP_CAPABILITY_URL_ENABLED`` is on (default on for now, off once
+   OAuth ships), with a ``Deprecation`` header on every response. Off,
+   it is a 404; the redaction below stays installed either way.
+
    One leak channel IS closed server-side: ``CapabilityPathRedaction``
    below rewrites ``scope["path"]`` to a redacted form before anything
    downstream can log it, so *this* server's access log and error log
@@ -49,7 +54,10 @@ in ``context.current_mcp_principal`` for the life of the request; the
 """
 from __future__ import annotations
 
-from starlette.datastructures import Headers
+import logging
+from urllib.parse import quote
+
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -61,9 +69,12 @@ from app.auth.credentials import (
     capability_url_resolver,
     mcp_resolver,
 )
+from app.config import get_settings
 from app.mcp_server.context import current_mcp_principal
 from app.oauth.discovery import www_authenticate_challenge
 from app.services.token_service import ALL_SECRET_PREFIXES
+
+logger = logging.getLogger(__name__)
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 
@@ -76,6 +87,31 @@ _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 _SCOPE_KEY = "chaotic_mcp_capability_key"
 
 _MCP_PREFIX = "/mcp/"
+
+# RFC 9745 ``Deprecation`` value for the capability URL (CHT-1522): the
+# date it was deprecated, 2026-10-13T00:00:00Z, as a structured-field Date.
+CAPABILITY_URL_DEPRECATION = "@1791849600"
+# RFC 9745 §3: where to read about the deprecation and the migration.
+CAPABILITY_URL_DEPRECATION_LINK = (
+    "<https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/docs/self-hosting-security.md"
+    '#the-capability-url-mcp_capability_url_enabled>; rel="deprecation"; type="text/html"'
+)
+
+
+def capability_url_enabled() -> bool:
+    """``MCP_CAPABILITY_URL_ENABLED``, read at call time."""
+    return get_settings().mcp_capability_url_enabled
+
+
+def warn_if_capability_url_enabled() -> None:
+    """Startup warning while the deprecated capability URL is served
+    (CHT-1522). Called from app.main's lifespan."""
+    if capability_url_enabled():
+        logger.warning(
+            "MCP_CAPABILITY_URL_ENABLED is on: /mcp/<api-key> still accepts an API key in the URL. "
+            "It is deprecated and will be off by default once OAuth for MCP ships; move connectors "
+            "to /mcp with an Authorization header or OAuth, then set MCP_CAPABILITY_URL_ENABLED=false."
+        )
 
 
 def _redact_key(key: str) -> str:
@@ -123,22 +159,111 @@ class CapabilityPathRedaction:
     and would leak the key if redaction only happened post-routing. The
     redacted path still matches the ``/mcp/{api_key}`` route (it's a
     normal one-segment path), so routing is unaffected.
+
+    The key is the first segment after ``/mcp/`` whatever follows it, and
+    anything below it is dropped from the logged path as well (CHT-1587):
+    ``/mcp/<key>/`` and ``/mcp/<key>/x`` are redacted and answered 404
+    here. Being the one place that sees every capability-URL request
+    before routing, it also applies MCP_CAPABILITY_URL_ENABLED (CHT-1522):
+    off, every request gets a 404 without the key being read; on, every
+    response but a 500 carries the deprecation headers.
+
+    Other shapes a key can arrive in (``//mcp/<key>`` from a base URL
+    with a trailing slash, ``/mcp//<key>``, ``/MCP/<key>``, a key pasted
+    anywhere else) and WebSocket requests are scrubbed too (PR #346
+    re-review): every segment that starts with a prefix this server mints
+    and is long enough to be a secret is redacted. Those requests route
+    as before (the SPA, a 403 WebSocket close); none of them reaches the
+    capability route, so none reaches the key resolver.
     """
 
     def __init__(self, app: ASGIApp):
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            path = scope.get("path", "")
-            if path.startswith(_MCP_PREFIX):
-                key = path[len(_MCP_PREFIX):]
-                if key and "/" not in key:
-                    redacted_path = f"{_MCP_PREFIX}{_redact_key(key)}"
-                    scope[_SCOPE_KEY] = key
-                    scope["path"] = redacted_path
-                    scope["raw_path"] = redacted_path.encode()
+        if scope["type"] not in ("http", "websocket"):
+            await self._app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        key, slash, tail = path[len(_MCP_PREFIX):].partition("/") if path.startswith(_MCP_PREFIX) else ("", "", "")
+        if not key:
+            # Any other shape (`//mcp/<key>`, `/mcp//<key>`, `/MCP/<key>`, a
+            # key pasted anywhere else): scrub every segment that looks like
+            # a secret this server mints, and route the rest as usual.
+            redacted = _redact_secret_segments(path)
+            if redacted != path:
+                _set_path(scope, redacted)
+            await self._app(scope, receive, send)
+            return
+
+        # The capability URL: the first segment after /mcp/ is the key,
+        # whatever it looks like, and anything below it is dropped from
+        # the logged path too (CHT-1587).
+        _set_path(scope, f"{_MCP_PREFIX}{_redact_key(key)}" + (f"/{'...' if tail else ''}" if slash else ""))
+        if scope["type"] == "websocket":
+            # No WebSocket route lives here; the router refuses it (403).
+            await self._app(scope, receive, send)
+            return
+
+        enabled = capability_url_enabled()
+        if enabled:
+            send = _with_deprecation(send)
+        if slash or not enabled:
+            # Off (CHT-1522): every method gets a 404 before anything reads
+            # the key, so a stale URL learns nothing about it. A path below
+            # the key is never the capability URL (CHT-1587); without this
+            # it fell through to the SPA catch-all with a 200.
+            await JSONResponse({"detail": "Not Found"}, status_code=404)(scope, receive, send)
+            return
+        scope[_SCOPE_KEY] = key
         await self._app(scope, receive, send)
+
+
+def _set_path(scope: Scope, path: str) -> None:
+    """Rewrite the path every logger reads (``path``; ``raw_path`` kept
+    consistent, percent-encoded as the ASGI spec has it)."""
+    scope["path"] = path
+    scope["raw_path"] = quote(path).encode("ascii")
+
+
+# Shorter than this a segment cannot hold a secret worth hiding (every
+# secret this server mints is a prefix plus 64 hex characters), and
+# leaving it alone keeps a short word like `cat_x` routable.
+_MIN_SECRET_SEGMENT = 13
+
+
+def _redact_secret_segments(path: str) -> str:
+    """Redact each path segment that starts with a prefix this server
+    mints (``ck_``, ``cat_``, ...) and is long enough to be a secret."""
+    return "/".join(
+        _redact_key(segment)
+        if len(segment) >= _MIN_SECRET_SEGMENT and segment.startswith(ALL_SECRET_PREFIXES)
+        else segment
+        for segment in path.split("/")
+    )
+
+
+def _with_deprecation(send: Send) -> Send:
+    """Wrap ``send`` so the response carries the capability URL's
+    deprecation headers (CHT-1522). Applied here, outside routing, so the
+    router's 405 gets them too. A 500 does not: Starlette's
+    ServerErrorMiddleware sends it outside every user middleware."""
+
+    async def send_with_deprecation(message):
+        if message["type"] == "http.response.start":
+            headers = MutableHeaders(scope=message)
+            headers["Deprecation"] = CAPABILITY_URL_DEPRECATION
+            headers.append("Link", CAPABILITY_URL_DEPRECATION_LINK)
+        await send(message)
+
+    return send_with_deprecation
+
+
+def _missing_key_message() -> str:
+    """Only point at the capability URL while it is served (CHT-1522)."""
+    if capability_url_enabled():
+        return "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."
+    return "Missing API key. Send `Authorization: Bearer ck_...`."
 
 
 async def _resolve(
@@ -162,7 +287,7 @@ async def _resolve(
     except CredentialError as exc:
         if exc.failure is CredentialFailure.MISSING:
             return None, JSONResponse(
-                {"error": "Missing API key. Send `Authorization: Bearer ck_...`, or use the /mcp/<key> capability URL."},
+                {"error": _missing_key_message()},
                 status_code=401,
                 headers=challenge,
             )
@@ -241,7 +366,13 @@ class BearerHeaderAuth(_AuthWrapperBase):
 class CapabilityURLAuth(_AuthWrapperBase):
     """Mode 2: /mcp/{api_key} -- the path segment IS the key, read from
     where CapabilityPathRedaction stashed it (NOT from path_params, which
-    only ever contains the already-redacted form -- see _SCOPE_KEY)."""
+    only ever contains the already-redacted form -- see _SCOPE_KEY).
+
+    Deprecated (CHT-1522): the gate and the ``Deprecation`` header live
+    in CapabilityPathRedaction, which sees every /mcp/<key> request before
+    routing. With ``MCP_CAPABILITY_URL_ENABLED`` off, no request reaches
+    this class.
+    """
 
     def _extract_key(self, scope: Scope) -> str | None:
         return scope.get(_SCOPE_KEY)
