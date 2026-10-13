@@ -15,7 +15,7 @@ from app.schemas.issue import IssueUpdate
 from app.services.inbox_service import InboxService
 from app.services.issue_service import ClaimRitualsError, IssueService, TicketRitualsError
 from app.services.ritual_service import RitualService
-from app.utils.sync_cursor import InvalidCursorError, SyncPosition, decode_cursor, encode_cursor
+from app.utils.sync_cursor import InvalidCursorError, SyncPosition, decode_cursor, encode_cursor, teams_digest
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +70,7 @@ class TestCursor:
     def test_round_trip(self):
         at = datetime(2026, 10, 13, 12, 0, 0, 123456, tzinfo=timezone.utc)
         assert decode_cursor(encode_cursor(at, "abc")) == SyncPosition(at, "abc", None)
-        assert decode_cursor(encode_cursor(at, "abc", teams=["b", "a"])).teams == frozenset({"a", "b"})
+        assert decode_cursor(encode_cursor(at, "abc", teams=["b", "a"])).teams_digest == teams_digest({"a", "b"})
 
     def test_naive_datetime_is_utc(self):
         at = datetime(2026, 10, 13, 12, 0, 0)
@@ -88,7 +88,7 @@ class TestCursor:
         "eyJ2IjoxLCJ0Ijoibm9wZSIsImlkIjoiYSJ9",  # bad t
         "eyJ2IjoxLCJ0IjoiMjAyNi0xMC0xM1QxMjowMDowMCswMDowMCIsImlkIjoxfQ",  # id not str
         "eyJ2IjoxfQ",  # missing keys
-        "eyJ2IjoxLCJ0IjoiMjAyNi0xMC0xM1QxMjowMDowMCswMDowMCIsImlkIjoiYSIsInRlYW1zIjoxfQ",  # teams not a list
+        "eyJ2IjoxLCJ0IjoiMjAyNi0xMC0xM1QxMjowMDowMCswMDowMCIsImlkIjoiYSIsInRnIjoxfQ",  # team digest not a string
     ])
     def test_rejects_garbage(self, bad):
         with pytest.raises(InvalidCursorError):
@@ -209,7 +209,8 @@ class TestSyncEndpoint:
     async def test_empty_first_sync_has_no_cursor(self, client, db, test_team, auth_headers):
         body = await _sync(client, auth_headers)
         assert body == {
-            "entries": [], "next_cursor": None, "has_more": False, "reset": False, "team_ids": [test_team.id],
+            "entries": [], "next_cursor": None, "has_more": False, "retry_after": None, "reset": False,
+            "team_ids": [test_team.id],
         }
 
     async def test_since_returns_only_changes_with_tombstones(
@@ -460,6 +461,7 @@ class TestSafetyLag:
         pos = decode_cursor(first["next_cursor"])
         assert pos.updated_at <= datetime.now(timezone.utc) - timedelta(seconds=5)
         assert pos.updated_at < e.updated_at
+        assert 1 <= first["retry_after"] <= 5
         again = await _sync(client, auth_headers, since=first["next_cursor"])
         assert [x["id"] for x in again["entries"]] == [e.id]  # repeated, upserted
 
@@ -483,6 +485,7 @@ class TestSafetyLag:
         body = await _sync(client, auth_headers)
         pos = decode_cursor(body["next_cursor"])
         assert (pos.updated_at, pos.id) == (old, e.id)
+        assert body["retry_after"] is None
 
     async def test_lag_ends_paging_instead_of_spinning(
         self, client, db, test_team, test_user, auth_headers,
@@ -491,6 +494,7 @@ class TestSafetyLag:
             await _entry(test_user.id, test_team.id, f"e{i}")
         body = await _sync(client, auth_headers, limit=1)
         assert len(body["entries"]) == 1 and body["has_more"] is False
+        assert body["retry_after"] >= 1
 
     async def test_a_cursor_ahead_of_the_watermark_does_not_move_back(
         self, client, db, test_team, test_user, auth_headers,
@@ -499,6 +503,7 @@ class TestSafetyLag:
         cursor = encode_cursor(ahead, "zzz", teams=[test_team.id])
         body = await _sync(client, auth_headers, since=cursor)
         assert body["entries"] == [] and body["next_cursor"] == cursor
+        assert body["retry_after"] is None  # nothing sent, nothing to wait for
 
 
 @pytest.mark.asyncio
@@ -510,22 +515,44 @@ class TestTeamScopeGrows:
         the cursor; the server restarts the sync and says so."""
         other = await OxydeTeam.objects.create(name="Other", key="OTHR")
         await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.MEMBER)
+        home = await _entry(test_user.id, test_team.id, "home")
         kept = await _entry(test_user.id, other.id, "in other")
         first = await _sync(client, auth_headers)
         assert first["reset"] is False
 
         await OxydeTeamMember.objects.filter(team_id=other.id, user_id=test_user.id).delete()
         left = await _sync(client, auth_headers, since=first["next_cursor"])
-        assert left["team_ids"] == [test_team.id] and left["reset"] is False
+        # The team set changed, so this resets too (one full sync).
+        assert left["team_ids"] == [test_team.id] and left["reset"] is True
+        assert [e["id"] for e in left["entries"]] == [home.id]
 
         await OxydeTeamMember.objects.create(team_id=other.id, user_id=test_user.id, role=TeamRole.MEMBER)
         back = await _sync(client, auth_headers, since=left["next_cursor"])
         assert back["reset"] is True
-        assert [e["id"] for e in back["entries"]] == [kept.id]
-        assert decode_cursor(back["next_cursor"]).teams == {test_team.id, other.id}
+        assert [e["id"] for e in back["entries"]] == [home.id, kept.id]
+        assert decode_cursor(back["next_cursor"]).teams_digest == teams_digest({test_team.id, other.id})
 
         steady = await _sync(client, auth_headers, since=back["next_cursor"])
         assert steady["reset"] is False and steady["entries"] == []
+
+    async def test_many_teams_keep_the_cursor_short_and_a_new_one_resets(
+        self, client, db, test_team, test_user, auth_headers,
+    ):
+        """R4: the cursor carries a digest, not the list."""
+        for i in range(60):
+            team = await OxydeTeam.objects.create(name=f"T{i}", key=f"TM{i:02d}")
+            await OxydeTeamMember.objects.create(team_id=team.id, user_id=test_user.id, role=TeamRole.MEMBER)
+        await _entry(test_user.id, test_team.id)
+        body = await _sync(client, auth_headers)
+        assert len(body["team_ids"]) == 61
+        assert len(body["next_cursor"]) < 200
+        steady = await _sync(client, auth_headers, since=body["next_cursor"])
+        assert steady["reset"] is False
+
+        newer = await OxydeTeam.objects.create(name="New", key="NEWT")
+        await OxydeTeamMember.objects.create(team_id=newer.id, user_id=test_user.id, role=TeamRole.MEMBER)
+        joined = await _sync(client, auth_headers, since=steady["next_cursor"])
+        assert joined["reset"] is True and len(joined["team_ids"]) == 62
 
     async def test_a_cursor_without_teams_resets(self, client, db, test_team, test_user, auth_headers):
         e = await _entry(test_user.id, test_team.id)

@@ -1,4 +1,5 @@
 """Inbox API routes (CHT-1250)."""
+import math
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -18,7 +19,7 @@ from app.schemas.inbox import (
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.inbox_service import InboxService
 from app.services.principals import load_principals
-from app.utils.sync_cursor import InvalidCursorError, SyncPosition, decode_cursor, encode_cursor
+from app.utils.sync_cursor import InvalidCursorError, SyncPosition, decode_cursor, encode_cursor, teams_digest
 from app.websocket import broadcast_inbox_event
 
 router = APIRouter()
@@ -29,7 +30,12 @@ router = APIRouter()
 # past now minus this lag, so such a row (committed within the lag) is
 # still after the cursor. Rows newer than the lag are sent anyway; they
 # come again on the next sync, and the client upserts by id.
-SYNC_SAFETY_LAG = timedelta(seconds=5)
+#
+# 30 s, well clear of how long a write can sit between its stamp and its
+# commit: SQLite's busy_timeout is 5000 ms, so a writer can wait that long
+# for the lock alone after stamping (PR #355 re-review, R2). The cost of a
+# longer lag is only that recent rows are sent twice.
+SYNC_SAFETY_LAG = timedelta(seconds=30)
 
 
 def _may_write(principal) -> bool:
@@ -203,11 +209,13 @@ async def sync_inbox(
     inbox_service = InboxService()
     team_ids = await inbox_service.current_team_ids(current_user.id)
 
-    # A team the cursor was not issued for (joined, or rejoined after the
-    # device dropped its entries) has entries behind the cursor that the
-    # device never got or threw away. Start over: a first sync, with
-    # reset set so the client clears its cache (review finding 3).
-    reset = position is not None and (position.teams is None or not set(team_ids) <= position.teams)
+    # The caller's teams changed since the cursor was issued. A team it
+    # joined (or rejoined after the device dropped its entries) has
+    # entries behind the cursor the device never got or threw away. Start
+    # over: a first sync, with reset set so the client clears its cache
+    # (review finding 3). The cursor holds only a digest of the team set,
+    # so a team left resets too; that costs one full sync and is rare.
+    reset = position is not None and position.teams_digest != teams_digest(team_ids)
     if reset:
         position = None
 
@@ -229,10 +237,15 @@ async def sync_inbox(
         at, row_id = position.updated_at, position.id
     else:
         at = row_id = None
+    retry_after = None
     if at is not None:
         watermark = datetime.now(timezone.utc) - SYNC_SAFETY_LAG
         if at > watermark:
             has_more = False
+            if rows:
+                # When the newest row sent passes the watermark, the next
+                # sync can move the cursor past it (re-review, R3).
+                retry_after = max(1, math.ceil((at - watermark).total_seconds()))
             if position is not None and position.updated_at >= watermark:
                 at, row_id = position.updated_at, position.id
             else:
@@ -243,6 +256,7 @@ async def sync_inbox(
         entries=await _build_responses(rows, current_user, may_write=_may_write(principal)),
         next_cursor=next_cursor,
         has_more=has_more,
+        retry_after=retry_after,
         reset=reset,
         team_ids=sorted(team_ids),
     )

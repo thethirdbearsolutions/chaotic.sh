@@ -83,8 +83,11 @@ class InboxSyncResponse(BaseModel):
       `archived`. The same entry can come more than once: the cursor stays
       a few seconds behind the newest change, so recent changes are sent
       again on the next sync.
-    * When `reset` is true, the server restarted the sync (the caller can
-      now read a team the cursor did not cover): clear the cache before
+    * When `retry_after` is set, the cursor is being held back behind
+      rows just sent: syncing again sooner than that many seconds returns
+      the same rows. Push or user action may still sync earlier.
+    * When `reset` is true, the server restarted the sync (the caller's
+      teams changed since the cursor was issued): clear the cache before
       applying this page, then page on as usual.
     * Drop any held entry whose team is not in `team_ids` (a left or
       deleted team sends no tombstones).
@@ -97,6 +100,7 @@ class InboxSyncResponse(BaseModel):
     entries: list[InboxEntryResponse]
     next_cursor: str | None = None
     has_more: bool = False
+    retry_after: int | None = None
     reset: bool = False
     team_ids: list[str]
 

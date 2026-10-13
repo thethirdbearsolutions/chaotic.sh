@@ -7,12 +7,15 @@ boundary never skips or repeats one. The encoding is opaque on purpose:
 clients must not parse or build cursors, so the server can change what is
 inside without a client release.
 
-A cursor may also carry the scope it was issued for (`teams`: the team
-ids the caller could read then), so the server can tell when that scope
-grew and the position no longer covers everything the caller may see.
+A cursor may also carry a digest of the scope it was issued for (the
+team ids the caller could read then), so the server can tell when that
+scope changed and the position may no longer cover everything the caller
+may see. A digest, not the list, so the cursor stays short however many
+teams the caller is in.
 """
 import base64
 import binascii
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import NamedTuple
@@ -27,7 +30,13 @@ class InvalidCursorError(ValueError):
 class SyncPosition(NamedTuple):
     updated_at: datetime  # aware, UTC
     id: str
-    teams: frozenset[str] | None = None
+    teams_digest: str | None = None
+
+
+def teams_digest(teams) -> str:
+    """A short, order-independent digest of a set of team ids."""
+    joined = "\n".join(sorted(set(teams))).encode()
+    return hashlib.sha256(joined).hexdigest()[:16]
 
 
 def encode_cursor(updated_at: datetime, row_id: str, teams=None) -> str:
@@ -36,7 +45,7 @@ def encode_cursor(updated_at: datetime, row_id: str, teams=None) -> str:
         updated_at = updated_at.replace(tzinfo=timezone.utc)
     payload = {"v": _VERSION, "t": updated_at.astimezone(timezone.utc).isoformat(), "id": row_id}
     if teams is not None:
-        payload["teams"] = sorted(teams)
+        payload["tg"] = teams_digest(teams)
     raw = json.dumps(payload, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
@@ -51,15 +60,13 @@ def decode_cursor(cursor: str) -> SyncPosition:
             raise InvalidCursorError("unsupported cursor version")
         row_id = payload["id"]
         updated_at = datetime.fromisoformat(payload["t"])
-        teams = payload.get("teams")
+        digest = payload.get("tg")
         if not isinstance(row_id, str) or updated_at.tzinfo is None:
             raise InvalidCursorError("malformed cursor")
-        if teams is not None and not (isinstance(teams, list) and all(isinstance(t, str) for t in teams)):
+        if digest is not None and not isinstance(digest, str):
             raise InvalidCursorError("malformed cursor")
     except InvalidCursorError:
         raise
     except (binascii.Error, UnicodeDecodeError, ValueError, KeyError, TypeError) as e:
         raise InvalidCursorError("malformed cursor") from e
-    return SyncPosition(
-        updated_at.astimezone(timezone.utc), row_id, frozenset(teams) if teams is not None else None,
-    )
+    return SyncPosition(updated_at.astimezone(timezone.utc), row_id, digest)
