@@ -54,6 +54,7 @@ from app.oxyde_models.user import OxydeUser
 from app.schemas.agent import AgentRegister
 from app.schemas.api_key import APIKeyCreate
 from app.services.api_key_service import APIKeyService
+from app.services.revocation_service import RevocationService
 from app.utils.datetimes import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -203,9 +204,15 @@ class RegistrationService:
                     agent.name = name
                     agent.updated_at = datetime.now(timezone.utc)
                     await agent.save(update_fields={"name", "updated_at"})
-                revoked = await OxydeAPIKey.objects.filter(
+                old_keys = await OxydeAPIKey.objects.filter(
                     principal_user_id=agent.id, is_active=True,
-                ).update(is_active=False)
+                ).all()
+                revoked = await OxydeAPIKey.objects.filter(
+                    id__in=[key.id for key in old_keys], is_active=True,
+                ).update(is_active=False) if old_keys else 0
+                # What the rotated-out keys opened or minted ends with them
+                # (CHT-1523).
+                await RevocationService().revoke_for_keys([key.id for key in old_keys], actor_id=caller.id)
                 created = False
 
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.agent_session_key_ttl_seconds)

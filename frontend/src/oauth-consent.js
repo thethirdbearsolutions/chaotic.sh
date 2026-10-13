@@ -85,7 +85,11 @@ const TRUST_LABELS = {
     unverified: 'Unverified app (registered itself)',
 };
 
-function trustBadge(clientInfo) {
+/**
+ * The app's trust badge, as consent shows it. Also used by Connected apps
+ * (CHT-1523), so a connection is listed exactly as it was approved.
+ */
+export function trustBadge(clientInfo) {
     const label = TRUST_LABELS[clientInfo.trust] || TRUST_LABELS.unverified;
     const host = clientInfo.host ? ` · ${escapeHtml(clientInfo.host)}` : '';
     return `<span class="oauth-badge oauth-badge-${escapeAttr(clientInfo.trust)}">${escapeHtml(label)}${host}</span>`;

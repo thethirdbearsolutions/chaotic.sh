@@ -129,7 +129,7 @@ async def delete_team(team_id: str, current_user: CurrentUser):
             detail="Only owner can delete team",
         )
 
-    await team_service.delete(team)
+    await team_service.delete(team, actor_id=current_user.id)
 
 
 # Members
@@ -259,7 +259,9 @@ async def remove_member(
                 team_id=team_id, role=TeamRole.OWNER,
             ).order_by("joined_at").all()
             new_owner_id = owners[0].user_id if owners else None
-        released = await agent_service.release_member_agents(team_id, user_id, new_owner_id)
+        released = await agent_service.release_member_agents(
+            team_id, user_id, new_owner_id, actor_id=current_user.id,
+        )
 
     if released:
         removed = await UserService().get_by_id(user_id)

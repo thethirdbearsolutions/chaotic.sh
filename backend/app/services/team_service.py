@@ -57,14 +57,20 @@ class TeamService:
         await team.refresh()
         return team
 
-    async def delete(self, team: OxydeTeam) -> None:
+    async def delete(self, team: OxydeTeam, *, actor_id: str | None = None) -> None:
         """Delete a team and its child records.
 
         Oxyde doesn't enforce FK cascades, so we manually delete
-        members and invitations before removing the team.
+        members and invitations before removing the team. Its holder
+        sessions and unredeemed codes and tickets are revoked first
+        (CHT-1523), so the deletion is audited and moves the revocation
+        epoch rather than only cascading the rows away.
         """
+        from app.services.revocation_service import RevocationService
+
         async with atomic():
             await OxydeTeamInvitation.objects.filter(team_id=team.id).delete()
+            await RevocationService().revoke_for_team(team.id, actor_id=actor_id)
             await OxydeTeamMember.objects.filter(team_id=team.id).delete()
             await team.delete()
 

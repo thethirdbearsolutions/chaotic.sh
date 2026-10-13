@@ -27,8 +27,10 @@ What this module does not do yet:
   ``app.auth.access.authorize`` (CHT-1562).
 * Endpoints: /oauth/token and /oauth/revoke (CHT-1520) are
   ``app.api.oauth`` over ``app.services.oauth_grant_service``; claim
-  grants are CHT-1447, and the RevocationService with cascades CHT-1449.
-  ``revoke_session`` here is the one primitive they build on.
+  grants are CHT-1447. Cascades (a revoked key, a deactivated agent, a
+  departed member) are ``app.services.revocation_service`` (CHT-1523);
+  the admin view and bulk revocation are CHT-1449. ``revoke_session``
+  here is the one primitive they build on.
 
 Everything refuses while ``OAUTH_ENABLED`` is off.
 
@@ -39,7 +41,9 @@ validation reads it (one indexed single-row read) and trusts a cached
 token row only if it was cached under the same epoch, so a revocation
 made by any process, or by an admin script that goes through
 ``revoke_session``, is seen on the very next request everywhere. Rule:
-every revocation goes through ``revoke_session``. A cascade DELETE (a
+every revocation goes through ``revoke_session``, or through
+``revoke_sessions_batch`` followed by exactly one event in the same
+transaction (``RevocationService``, CHT-1523). A cascade DELETE (a
 user, team, client or key deleted) writes no event, so a cached
 validation of a token deleted that way can outlive it by up to
 VALIDATION_CACHE_SECONDS.
@@ -811,6 +815,34 @@ class TokenService:
             revoked = await self._revoke_session_in_tx(holder_session_id, actor_id=actor_id, reason=reason)
         _forget_grace_pairs(holder_session_id)
         return revoked
+
+    async def revoke_sessions_batch(
+        self, holder_session_ids, *, actor_id: str | None, reason: str,
+    ) -> tuple[int, int]:
+        """Revoke many holder sessions and their tokens in two set-based
+        updates, writing NO ``revocation_events`` row: the caller must
+        write exactly one after this returns, in its own transaction
+        (``RevocationService._record`` does; that row moves the epoch
+        once for the whole action). The two updates are atomic on their
+        own either way: a savepoint inside the caller's transaction, a
+        transaction of their own outside one. Returns (sessions revoked, tokens revoked);
+        sessions already revoked are left as they are and not counted."""
+        ids = list(dict.fromkeys(holder_session_ids))
+        if not ids:
+            return 0, 0
+        now = _now()
+        async with atomic():
+            # The conditional UPDATE first, as in _revoke_session_in_tx: it
+            # takes the write lock before the tokens are read.
+            sessions = await OxydeHolderSession.objects.filter(id__in=ids, revoked_at__isnull=True).update(
+                revoked_at=now, revoked_by_id=actor_id, revoked_reason=reason,
+            )
+            tokens = await OxydeAuthToken.objects.filter(
+                holder_session_id__in=ids, revoked_at__isnull=True,
+            ).update(revoked_at=now)
+        for holder_session_id in ids:
+            _forget_grace_pairs(holder_session_id)
+        return sessions, tokens
 
     async def _revoke_session_in_tx(self, holder_session_id: str, *, actor_id: str | None, reason: str) -> bool:
         now = _now()

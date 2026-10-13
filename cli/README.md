@@ -29,6 +29,8 @@ chaotic auth login
 chaotic auth keys list
 chaotic auth keys create
 chaotic auth keys revoke <key-id>
+chaotic auth connections list      # apps you connected over OAuth
+chaotic auth connections revoke <id>
 chaotic auth set-key ck_your_api_key_here
 chaotic auth clear-key
 ```

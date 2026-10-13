@@ -3,10 +3,30 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
 from .shared import _client, console, parse_duration
+
+
+# How the consent screen labels an app (frontend/src/oauth-consent.js).
+TRUST_LABELS = {
+    "recognized": "recognized",
+    "cimd": "identified by its website",
+    "unverified": "unverified (registered itself)",
+}
+
+
+def _app_name(connection) -> str:
+    client = connection.get("client") or {}
+    return client.get("name") or client.get("client_id") or "unknown app"
+
+
+def _trust_label(connection) -> str:
+    client = connection.get("client") or {}
+    label = TRUST_LABELS.get(client.get("trust"), TRUST_LABELS["unverified"])
+    return f"{label} · {client['host']}" if client.get("host") else label
 
 
 def _main():
@@ -195,5 +215,86 @@ def register(cli):
 
         _client().revoke_api_key(key["id"])
         console.print(f"[green]API key '{key['name']}' revoked.[/green]")
+
+    @auth.group("connections")
+    def auth_connections():
+        """Your connected apps: the OAuth connections you approved."""
+        pass
+
+    @auth_connections.command("list")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_connections_list():
+        """List the apps you connected over OAuth, and what each can do."""
+        m = _main()
+        connections = _client().list_connections()
+        if m.is_json_output():
+            m.output_json(connections)
+            return
+        if not connections:
+            console.print("[yellow]No connected apps.[/yellow]")
+            return
+
+        table = Table(title="Connected Apps")
+        table.add_column("ID", style="dim", no_wrap=True)
+        table.add_column("App")
+        table.add_column("Trust")
+        table.add_column("Agent")
+        table.add_column("Team")
+        table.add_column("Projects")
+        table.add_column("Policy")
+        table.add_column("Created")
+        table.add_column("Last Used")
+
+        # Every string here comes from the server, and the app's name from
+        # the app itself: escape it all, so a name like "[/red]" cannot
+        # break the render or "[link=...]" inject a hyperlink.
+        for c in connections:
+            agent = c.get("agent") or {}
+            projects = c.get("project_ids")
+            table.add_row(
+                escape(c["id"][:8]),
+                escape(_app_name(c)),
+                escape(_trust_label(c)),
+                escape(agent.get("name") or "-"),
+                escape(c.get("team_name") or "-"),
+                "all" if projects is None else str(len(projects)),
+                escape(c.get("policy") or "-"),
+                escape((c.get("created_at") or "")[:10] or "-"),
+                escape((c.get("last_used_at") or "")[:10] or "-"),
+            )
+
+        console.print(table)
+
+    @auth_connections.command("revoke")
+    @click.argument("connection_id")
+    @_main().require_auth
+    @_main().handle_error
+    def auth_connections_revoke(connection_id):
+        """Disconnect an app: its tokens stop working on its next request.
+
+        CONNECTION_ID can be the full ID or a prefix (e.g., the first 8 characters).
+        """
+        m = _main()
+        matches = [c for c in _client().list_connections() if c["id"].startswith(connection_id)]
+        exact = [c for c in matches if c["id"] == connection_id]
+        if exact:
+            matches = exact
+        if not matches:
+            console.print(f"[red]Connection '{escape(connection_id)}' not found.[/red]")
+            raise SystemExit(1)
+        if len(matches) > 1:
+            console.print(
+                f"[red]Ambiguous connection ID prefix '{escape(connection_id)}'. Please be more specific.[/red]"
+            )
+            raise SystemExit(1)
+        connection = matches[0]
+        name = f"{_app_name(connection)} ({_trust_label(connection)})"
+        # confirm_action prompts through click, not Rich: no markup there.
+        if not m.confirm_action(f"Disconnect '{name}'? It will have to be approved again to reconnect."):
+            raise SystemExit(0)
+        _client().revoke_connection(connection["id"])
+        console.print(f"[green]Disconnected '{escape(name)}'.[/green]")
 
     return auth
