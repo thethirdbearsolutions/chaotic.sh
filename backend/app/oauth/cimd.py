@@ -13,16 +13,27 @@ request. So the fetch is fenced:
 * the host is resolved here, and every address it resolves to must be
   public: loopback, private, link-local, CGNAT (100.64/10), multicast,
   reserved and unspecified addresses are refused, as are IPv4-mapped and
-  6to4/Teredo forms of them (``is_public_address``). The connection then
+  6to4/Teredo forms of them (``is_public_address``). Only the default
+  port (443) is fetched, so the fetch can't be pointed at some other
+  service on a public host. The connection then
   goes to the vetted address, with the host name used only for SNI,
   certificate verification and the Host header, so a second DNS answer
   (rebinding) is never consulted;
 * no redirects, no proxy (``trust_env=False``: a proxy would resolve
   the name again), 3 s for the whole exchange, at most 16 KB of body.
+  The 16 KB are counted on the wire: the request asks for
+  ``Accept-Encoding: identity`` and any response that is content-encoded
+  anyway is refused, so a small compressed body can't inflate into a
+  large one in memory. The response must be ``application/json`` (or a
+  ``+json`` type).
 
 What the document must say is checked by ``parse_client_metadata``:
 ``client_id`` equal to the URL exactly, a non-empty ``redirect_uris``
-list, and ``token_endpoint_auth_method`` ``none`` (or absent; a CIMD
+list whose every entry passes the same rules as a dynamically registered
+one (``https``, or ``http`` on a loopback host), plus RFC 8252 §7.1
+private-use schemes in reverse-domain form for native apps; never
+``javascript:``, ``data:`` or the like (``app.oauth.clients.
+redirect_uri_problem``), and ``token_endpoint_auth_method`` ``none`` (or absent; a CIMD
 client has no shared secret, and ``private_key_jwt`` is not supported in
 v1).
 
@@ -41,9 +52,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.oauth.clients import redirect_uri_problem
+
 FETCH_TIMEOUT_SECONDS = 3.0
 MAX_DOCUMENT_BYTES = 16 * 1024
 MAX_CLIENT_ID_LENGTH = 512
+# A document lists a client's redirect URIs; more than this is not a
+# client, it's an attempt to make the consent page or the matcher slow.
+MAX_DOCUMENT_REDIRECT_URIS = 20
 CACHE_MIN_SECONDS = 5 * 60
 CACHE_MAX_SECONDS = 24 * 3600
 
@@ -96,9 +112,11 @@ def check_client_id_url(client_id: str) -> None:
     if any(seg in (".", "..") for seg in parts.path.split("/")):
         raise CIMDError("the client_id URL must not contain dot segments")
     try:
-        parts.port
+        port = parts.port
     except ValueError:
         raise CIMDError("the client_id URL has an invalid port") from None
+    if port is not None and port != 443:
+        raise CIMDError("a client_id URL must use the default https port")
 
 
 def is_public_address(address: str) -> bool:
@@ -126,6 +144,8 @@ def is_public_address(address: str) -> bool:
 
 
 async def _resolve(host: str, port: int) -> list[str]:
+    # On the loop's default executor; a slow resolver holds a thread
+    # past the 3 s timeout (CHT-1579).
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
@@ -163,18 +183,17 @@ async def fetch(url: str) -> FetchedDocument:
 async def _fetch(url: str) -> FetchedDocument:
     parts = urlsplit(url)
     host = parts.hostname
-    port = parts.port or 443
+    port = 443  # check_client_id_url allows no other
     address = await resolve_public(host, port)
     netloc = f"[{address}]" if ":" in address else address
     target = parts._replace(netloc=f"{netloc}:{port}").geturl()
-    host_header = host if parts.port in (None, 443) else f"{host}:{parts.port}"
     try:
         async with httpx.AsyncClient(
             follow_redirects=False, trust_env=False, timeout=FETCH_TIMEOUT_SECONDS, transport=_transport,
         ) as client:
             request = client.build_request(
                 "GET", target,
-                headers={"Host": host_header, "Accept": "application/json"},
+                headers={"Host": host, "Accept": "application/json", "Accept-Encoding": "identity"},
                 # Certificate and SNI are checked against the name, not
                 # the address connected to.
                 extensions={"sni_hostname": host},
@@ -183,8 +202,19 @@ async def _fetch(url: str) -> FetchedDocument:
             try:
                 if response.status_code != 200:
                     raise CIMDError(f"the client's metadata document answered HTTP {response.status_code}")
+                encoding = response.headers.get("content-encoding", "").strip().lower()
+                if encoding not in ("", "identity"):
+                    # Asked for identity; decompressing anyway would make
+                    # the 16 KB cap a cap on compressed bytes only.
+                    raise CIMDError("the client's metadata document was sent compressed; it must be sent uncompressed")
+                if not _is_json_type(response.headers.get("content-type")):
+                    raise CIMDError("the client's metadata document is not served as application/json")
+                declared = (response.headers.get("content-length") or "").strip()
+                if declared.isdigit() and int(declared) > MAX_DOCUMENT_BYTES:
+                    raise CIMDError("the client's metadata document is larger than 16 KB")
                 body = bytearray()
-                async for chunk in response.aiter_bytes():
+                # Raw: bytes as received, never decoded by httpx.
+                async for chunk in response.aiter_raw():
                     body.extend(chunk)
                     if len(body) > MAX_DOCUMENT_BYTES:
                         raise CIMDError("the client's metadata document is larger than 16 KB")
@@ -193,6 +223,15 @@ async def _fetch(url: str) -> FetchedDocument:
                 await response.aclose()
     except httpx.HTTPError:
         raise CIMDError("the client's metadata document could not be fetched") from None
+
+
+def _is_json_type(content_type: str | None) -> bool:
+    """``application/json`` or ``application/<something>+json``, with
+    any parameters."""
+    if not content_type:
+        return False
+    media = content_type.split(";", 1)[0].strip().lower()
+    return media == "application/json" or (media.startswith("application/") and media.endswith("+json"))
 
 
 _MAX_AGE = re.compile(r"(?:^|,)\s*(?:s-maxage|max-age)\s*=\s*\"?(\d+)\"?", re.IGNORECASE)
@@ -231,6 +270,12 @@ def parse_client_metadata(client_id: str, body: bytes) -> dict:
         or not all(isinstance(u, str) and u for u in redirect_uris)
     ):
         raise CIMDError("the client's metadata document declares no redirect_uris")
+    if len(redirect_uris) > MAX_DOCUMENT_REDIRECT_URIS:
+        raise CIMDError(f"the client's metadata document declares more than {MAX_DOCUMENT_REDIRECT_URIS} redirect_uris")
+    for uri in redirect_uris:
+        problem = redirect_uri_problem(uri, allow_private_use=True)
+        if problem:
+            raise CIMDError(f"the client's metadata document has an unusable redirect_uri: {problem}")
     method = document.get("token_endpoint_auth_method", "none")
     if method != "none":
         raise CIMDError(f"token_endpoint_auth_method {method!r} is not supported for metadata-document clients")
