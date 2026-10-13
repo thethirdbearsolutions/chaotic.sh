@@ -55,6 +55,7 @@ in ``context.current_mcp_principal`` for the life of the request; the
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import quote, unquote_plus
 
 from starlette.datastructures import Headers, MutableHeaders
@@ -180,7 +181,11 @@ class CapabilityPathRedaction:
     alike (CHT-1590): uvicorn logs it with the path. A name or value that
     starts with a prefix this server mints and is long enough to be a
     secret becomes its redacted form. No endpoint reads such a secret
-    from a query string, so nothing downstream loses anything it uses.
+    from a query string, so nothing downstream loses anything it uses;
+    a non-secret value that merely looks like one (an OAuth ``state``
+    starting with ``ck_``, a search for a pasted key) reaches the app
+    redacted, which is the price of scrubbing before routing so that
+    every logger, the 500 path included, sees the same scope.
     """
 
     def __init__(self, app: ASGIApp):
@@ -255,12 +260,16 @@ def _looks_like_secret(text: str) -> bool:
 
 
 def _redact_secret_query(query: bytes) -> bytes:
-    """Redact each ``&``-separated name or value of a raw query string
-    that, once percent-decoded, looks like a secret this server mints
-    (CHT-1590). Everything else is kept byte for byte."""
-    parts = query.split(b"&")
+    """Redact each name or value of a raw query string that, once
+    percent-decoded, looks like a secret this server mints (CHT-1590).
+    Pairs split on ``;`` as well as ``&``: the app ignores ``;`` but
+    the access log prints the raw string. Everything else is kept byte
+    for byte."""
+    parts = re.split(rb"([&;])", query)
     changed = False
     for i, part in enumerate(parts):
+        if part in (b"&", b";"):
+            continue
         pieces = part.split(b"=", 1)
         for j, piece in enumerate(pieces):
             decoded = unquote_plus(piece.decode("latin-1"), errors="replace")
@@ -270,7 +279,7 @@ def _redact_secret_query(query: bytes) -> bytes:
                 pieces[j] = quote(_redact_key(decoded), safe="").encode("ascii")
                 changed = True
         parts[i] = b"=".join(pieces)
-    return b"&".join(parts) if changed else query
+    return b"".join(parts) if changed else query
 
 
 def _with_deprecation(send: Send) -> Send:

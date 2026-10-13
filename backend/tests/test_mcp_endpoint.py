@@ -601,6 +601,8 @@ class TestCapabilityPathRedaction:
             ("k=%63k_{hex}", "k=ck_...abab"),
             ("ck_{hex}", "ck_...abab"),
             ("ck_{hex}=1&x=2", "ck_...abab=1&x=2"),
+            # `;` separates pairs in the logged string too (PR #350 review).
+            ("a=1;token=ck_{hex}&b=2", "a=1;token=ck_...abab&b=2"),
             # Left alone: too short, no minted prefix, and the empty pieces.
             ("q=ck_short&r=xk_{hex}&&=", "q=ck_short&r=xk_{hex}&&="),
         ],
