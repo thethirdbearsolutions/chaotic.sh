@@ -38,9 +38,20 @@ Every reader uses the columns directly: sign-in loads the principal and,
 for an agent, checks the holder's membership of the agent's team; "keys
 of an agent" is `principal_user_id = agent`; "keys a person holds" is
 `holder_user_id = person`. `APIKeyService.create(principal, ...,
-holder_user_id=...)` is the one write path. Migration 0021 rebuilt the
-table once, resolving every legacy row by the old rule (a legacy
-self-minted key gets the agent's creator as holder).
+holder_user_id=...)` is the one write path; it defaults the holder to
+the principal (a human's own key) and raises for an agent's key minted
+without one, since an agent holding its own key could never sign in.
+Migration 0021 rebuilt the table once, resolving every legacy row by
+the old rule (a legacy self-minted key gets the agent's creator as
+holder).
+
+A key whose principal or holder names a user that no longer exists
+(possible where foreign keys were off) is deleted by 0021 rather than
+refusing the upgrade: it provably cannot sign in, and a refusal would
+leave the service down after `chaotic system upgrade`. Each deletion is
+printed (prefix, id, missing user) in the upgrade's output, and the
+upgrade's backup keeps the row. An unrecognised table shape is still
+refused before anything is written.
 
 ## Consequences
 

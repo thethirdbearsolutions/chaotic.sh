@@ -325,6 +325,15 @@ class TestUpgradeFromStopped:
         assert result.exit_code == 1
         assert "0021 [dim] delete it (DELETE FROM api_keys)" in result.output
 
+    def test_a_successful_migrations_output_is_shown(self):
+        result, _ = _upgrade(
+            is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
+            run_migrations=dict(return_value=(True, "Migrations applied\n0021: deleting API key ck_dead0000... [x]")),
+        )
+
+        assert "0021: deleting API key ck_dead0000... [x]" in result.output
+
 
 class TestRunMigrationsReportsOxydesOutput:
     """`oxyde migrate` prints its errors on stdout. Reporting only stderr
@@ -353,6 +362,20 @@ class TestRunMigrationsReportsOxydesOutput:
         ok, message = self._fail_migrate_with(output="from stdout\n", stderr="from stderr\n")
         assert ok is False
         assert "from stdout" in message and "from stderr" in message
+
+    def test_a_successful_run_keeps_what_oxyde_printed(self):
+        """A migration that reports what it did (0021 lists the dead API
+        keys it deletes, CHT-1537) stays in the upgrade's output."""
+        def run(cmd, **kwargs):
+            out = "0021: deleting API key ck_dead0000... (id k1)\n" if cmd[:4] == ["uv", "run", "--frozen", "oxyde"] else ""
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli", return_value=(True, "ok")):
+            ok, message = system.run_migrations()
+
+        assert ok is True
+        assert message == "Migrations applied\n0021: deleting API key ck_dead0000... (id k1)"
 
     def test_silence_still_says_something(self):
         ok, message = self._fail_migrate_with(output=None, stderr=None)

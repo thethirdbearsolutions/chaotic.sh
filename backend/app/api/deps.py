@@ -87,11 +87,13 @@ async def _authenticate_with_api_key(api_key: str) -> User:
 
     user = await user_service.get_by_id(key_record.principal_user_id)
     if not user:
-        # A key someone else holds signs in as an agent.
+        # One answer whether the missing user was a human or an agent
+        # (before CHT-1537 an agent key said "Agent not found"). The
+        # foreign key cascades the key away with its user, so this needs
+        # a row written with foreign keys off.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found" if key_record.holder_user_id == key_record.principal_user_id
-            else "Agent not found",
+            detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

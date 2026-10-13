@@ -47,6 +47,9 @@ KEYS = {
     "orphan-self": (("orphan", None), ("orphan", None)),
     # An empty agent_user_id, which sign-in read as "none".
     "human-empty-agent": (("admin", ""), ("admin", "admin")),
+    # An agent_user_id naming a human (no code path writes this): it signed
+    # in as that human, with user_id as holder. The downgrade must keep it.
+    "agent-names-human": (("creator", "admin"), ("admin", "creator")),
 }
 
 
@@ -185,31 +188,77 @@ def test_the_new_foreign_keys_cascade_from_principal_and_holder(at_0020):
         c.execute("PRAGMA foreign_keys = ON")
         c.execute("DELETE FROM api_keys WHERE principal_user_id = 'agent' AND holder_user_id = 'creator'")
         c.execute("DELETE FROM users WHERE id = 'agent'")  # its own keys held by the admin go with it
-        assert {r[0] for r in c.execute("SELECT id FROM api_keys")} == {"human-own", "orphan-self", "human-empty-agent"}
-        c.execute("DELETE FROM users WHERE id = 'admin'")  # the human key it is principal of goes too
+        assert {r[0] for r in c.execute("SELECT id FROM api_keys")} == {
+            "human-own", "orphan-self", "human-empty-agent", "agent-names-human",
+        }
+        c.execute("DELETE FROM users WHERE id = 'admin'")  # the keys it is principal of go too
         assert {r[0] for r in c.execute("SELECT id FROM api_keys")} == {"human-own", "orphan-self"}
         c.commit()
 
 
-def test_a_key_naming_a_missing_user_stops_the_migration_before_anything_is_written(at_0020):
-    with closing(sqlite3.connect(at_0020)) as c:
+def _add_dead_keys(path: str) -> None:
+    """Keys that name users who no longer exist: possible where foreign
+    keys were off. Neither can sign in."""
+    with closing(sqlite3.connect(path)) as c:
         c.execute("PRAGMA foreign_keys = OFF")
-        c.execute(
-            "INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, created_at, is_active, agent_user_id) "
-            "VALUES ('ghost', 'gone-human', 'g', 'ck_ghost000', 'sha256$g', ?, 1, 'agent')",
-            (NOW,),
-        )
+        for key_id, user_id, agent_user_id in (
+            ("ghost-holder", "gone-human", "agent"),  # an agent key whose holder is gone
+            ("ghost-principal", "gone-human", None),  # a human key whose human is gone
+        ):
+            c.execute(
+                "INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, created_at, is_active, "
+                "agent_user_id) VALUES (?, ?, 'g', ?, 'sha256$g', ?, 1, ?)",
+                (key_id, user_id, f"ck_{key_id[6:14]}", NOW, agent_user_id),
+            )
         c.commit()
-    before = _rows(at_0020)
+
+
+def test_keys_naming_a_missing_user_are_deleted_and_reported(at_0020, capsys):
+    """Such a key cannot sign in, and refusing would leave the service
+    down after `chaotic system upgrade`: 0021 deletes it in the same
+    transaction and prints what it deleted."""
+    _add_dead_keys(at_0020)
 
     ctx = _Ctx(at_0020)
     try:
-        with pytest.raises(RuntimeError, match=r"ghost \(signs in as agent, held by gone-human\).*nothing was changed"):
-            _load_migration().upgrade(ctx)
+        _load_migration().upgrade(ctx)
     finally:
         ctx.close()
-    assert ctx.statements == []
-    assert _rows(at_0020) == before
+    printed = capsys.readouterr().out
+    _run_in_one_transaction(at_0020, ctx.statements)
+
+    assert "deleting API key ck_holder... (id ghost-holder): it signs in as agent, held by gone-human" in printed
+    assert "deleting API key ck_principa... (id ghost-principal): it signs in as gone-human" in printed
+    assert printed.count("deleting API key") == 2
+    rows = _rows(at_0020)
+    assert set(rows) == set(KEYS), "only the dead keys go"
+    for key_id, (_, (principal, holder)) in KEYS.items():
+        assert (rows[key_id]["principal_user_id"], rows[key_id]["holder_user_id"]) == (principal, holder)
+    with closing(sqlite3.connect(at_0020)) as c:
+        assert c.execute("PRAGMA foreign_key_check('api_keys')").fetchall() == []
+
+
+@pytest.mark.parametrize("shape", ["chain", "production"])
+def test_dead_keys_do_not_stop_oxyde_migrate(request, shape):
+    """The same through the real executor, on both shapes."""
+    path = request.getfixturevalue("at_0020" if shape == "chain" else "prod_shaped")
+    _add_dead_keys(path)
+
+    _migrate(path)
+
+    assert set(_rows(path)) == set(KEYS)
+    with closing(sqlite3.connect(path)) as c:
+        assert c.execute("SELECT max(name) FROM oxyde_migrations").fetchone()[0] == MIGRATION.stem
+
+
+def test_a_database_with_no_dead_keys_prints_nothing(at_0020, capsys):
+    ctx = _Ctx(at_0020)
+    try:
+        _load_migration().upgrade(ctx)
+    finally:
+        ctx.close()
+    assert capsys.readouterr().out == ""
+    assert not any(statement.startswith("DELETE") for statement in ctx.statements)
 
 
 def test_an_unexpected_table_shape_is_refused(at_0020):

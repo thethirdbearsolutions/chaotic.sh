@@ -1370,13 +1370,17 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
         # Run Oxyde migrations. --frozen (here and above): use the env
         # `just sync` just built from the committed uv.lock; a plain
         # `uv run` would re-resolve and rewrite a stale lock (CHT-1201).
-        run_command(
+        result = run_command(
             ["uv", "run", "--frozen", "oxyde", "migrate"],
             cwd=backend_dir,
             timeout=120,
             env=migration_env,
         )
-        return True, "Migrations applied"
+        # What oxyde printed: the migrations it applied, and anything a
+        # migration reports as it runs (0021 lists the dead API keys it
+        # deletes, CHT-1537), so it stays in the upgrade's output.
+        output = result.stdout.strip() if isinstance(result.stdout, str) else ""
+        return True, "Migrations applied" + (f"\n{output}" if output else "")
     except subprocess.TimeoutExpired:
         return False, "Migration timed out"
     except subprocess.CalledProcessError as e:
@@ -1601,7 +1605,7 @@ def system_install(git_version, host, port, no_start, repo, yes):
         # escape(): the message carries the command's own output.
         console.print(f"[red]{escape(message)}[/red]")
         raise SystemExit(1)
-    console.print(f"  [dim]{message}[/dim]")
+    console.print(f"  [dim]{escape(message)}[/dim]")
 
     # Generate secure secret key
     console.print("Generating secure SECRET_KEY...")
@@ -2261,6 +2265,7 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
                 console.print("[red]Failed to restart server. Run 'chaotic system start' manually.[/red]")
         _print_service_state(port, host)
         raise SystemExit(1)
+    console.print(f"  [dim]{escape(message)}[/dim]")
 
     # Rebuild frontend bundle so it matches the updated src/. Non-fatal: the
     # committed bundle (if a PR remembered to commit it) is still served.

@@ -511,3 +511,37 @@ class TestAPIKeyServiceLookups:
         service = APIKeyService()
         result = await service.get_by_prefix("ck_unknown")
         assert result is None
+
+
+@pytest.mark.asyncio
+class TestAgentKeysNeedAHolder:
+    """An agent is no team member, so a key it held itself would never
+    sign in: minting one without a holder is a caller's bug and raises
+    rather than writing a dead key (CHT-1537)."""
+
+    async def test_an_agent_key_without_a_holder_raises(self, db, test_user, test_team):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+        from app.services.api_key_service import AgentKeyNeedsHolderError
+
+        agent, _, _ = await AgentService().create(AgentCreate(name="Bot"), test_user, test_team.id)
+        before = await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count()
+
+        with pytest.raises(AgentKeyNeedsHolderError):
+            await APIKeyService().create(agent.id, APIKeyCreate(name="no holder"))
+
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == before
+
+    async def test_with_a_holder_it_is_minted(self, db, test_user, test_team):
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+
+        agent, _, _ = await AgentService().create(AgentCreate(name="Bot"), test_user, test_team.id)
+        key, _ = await APIKeyService().create(agent.id, APIKeyCreate(name="held"), holder_user_id=test_user.id)
+
+        assert (key.principal_user_id, key.holder_user_id) == (agent.id, test_user.id)
+
+    async def test_a_human_key_defaults_to_its_human(self, db, test_user):
+        key, _ = await APIKeyService().create(test_user.id, APIKeyCreate(name="mine"))
+
+        assert key.holder_user_id == test_user.id

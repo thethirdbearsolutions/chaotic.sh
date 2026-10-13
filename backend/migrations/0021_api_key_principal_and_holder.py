@@ -45,18 +45,22 @@ goes with its column.
 
 Before the transaction, through the migration's own Oxyde connection
 (never Python's sqlite3, CHT-1491), the table's columns are read and
-must be exactly the pre-0021 ten; and every row's principal and holder
-must name an existing user, or the copy would break the new foreign
-keys. Either failure stops the migration before anything is written,
-with what to fix. To check a database before upgrading (read-only):
+must be exactly the pre-0021 ten; anything else stops the migration
+before anything is written. The rows whose principal or holder names a
+user that no longer exists are read too (possible where foreign keys
+were off, before CHT-1341, or on a SQLAlchemy-era table with no foreign
+key on agent_user_id). Such a key cannot sign in: its user is gone, or
+it is an agent key whose holder is gone and so is no team member. The
+copy would break the new foreign keys on it, so 0021 deletes it, in the
+same transaction, rather than refuse and leave the service down after
+`chaotic system upgrade`. Each one is printed (prefix, id, the missing
+user) to the upgrade's output, and `chaotic system upgrade` takes a
+backup before migrating, so the rows themselves are not lost. To see
+them before upgrading (read-only):
 
-    SELECT id FROM api_keys AS k WHERE NOT EXISTS
+    SELECT id, key_prefix FROM api_keys AS k WHERE NOT EXISTS
       (SELECT 1 FROM users WHERE users.id = coalesce(nullif(k.agent_user_id, ''), k.user_id))
       OR NOT EXISTS (SELECT 1 FROM users WHERE users.id = k.user_id);
-
-Such a key cannot sign in today (its user or its holder is gone);
-delete it (`DELETE FROM api_keys WHERE id = '<id>'`) and run
-`oxyde migrate` again.
 
 Inside the transaction, after the rename, a CHECK-constrained temp
 table fails (and rolls back) the migration unless the row count is
@@ -69,10 +73,15 @@ drop_column and three create_index. The foreign keys are not recorded,
 as for every `str` column with `db_on_delete` (see 0017).
 
 Downgrade rebuilds 0001's shape: `user_id` = the holder (the principal
-where there is none) and `agent_user_id` = the principal when it is an
-agent. Under the pre-0021 rule that reads back as the same principal
-and holder; a legacy key's creator stays written in `user_id`. The
-indexes go with the table, as 0001 had none.
+where there is none) and `agent_user_id` = the principal whenever the
+holder is not the principal. Under the pre-0021 rule every key reads
+back as the same principal. It reads back as the same holder too,
+except a key with no holder: that one falls back to the agent's
+*current* creator again, as before 0021, so it signs in once the agent
+has a creator in its team. A legacy key's creator stays written in
+`user_id`. Keys 0021 deleted are not restored (they are in the backup
+`chaotic system upgrade` took). The indexes go with the table, as 0001
+had none.
 
 Created: 2026-10-13
 """
@@ -147,7 +156,7 @@ RESOLVED_SQL = (
 )
 
 DANGLING_SQL = (
-    "SELECT r.id, r.principal_user_id, r.holder_user_id FROM "
+    "SELECT r.id, r.key_prefix, r.principal_user_id, r.holder_user_id FROM "
     f"({RESOLVED_SQL}) AS r "
     "WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.id = r.principal_user_id) "
     "OR (r.holder_user_id IS NOT NULL "
@@ -259,17 +268,18 @@ def _upgrade_database(ctx) -> None:
     database = _database(ctx)
     _check_columns(_columns(database), OLD_COLUMNS, "upgrade")
     dangling = _read_through_oxyde(database, DANGLING_SQL, [])
+    for row in dangling:
+        # Printed, not logged: `oxyde migrate` shows stdout, and
+        # `chaotic system upgrade` relays it (CHT-1548).
+        print(
+            f"0021: deleting API key {row['key_prefix']}... (id {row['id']}): it signs in as "
+            f"{row['principal_user_id']}, held by {row['holder_user_id']}, and one of them is a "
+            "user that no longer exists, so it cannot sign in",
+            flush=True,
+        )
     if dangling:
-        listed = ", ".join(
-            f"{row['id']} (signs in as {row['principal_user_id']}, held by {row['holder_user_id']})"
-            for row in dangling[:20]
-        )
-        raise RuntimeError(
-            f"0021 cannot rebuild {TABLE}: {len(dangling)} key(s) name a user that does not exist "
-            f"({listed}). Such a key cannot sign in; delete it "
-            f"(DELETE FROM {TABLE} WHERE id = '<id>') and run `oxyde migrate` again; "
-            "nothing was changed"
-        )
+        ids = ", ".join(_quote_literal(row["id"]) for row in dangling)
+        ctx.execute(f"DELETE FROM {TABLE} WHERE id IN ({ids})")
     shared = ", ".join(SHARED)
     ctx.execute(NEW_TABLE_SQL)
     _rebuild(
@@ -289,8 +299,8 @@ def _downgrade_database(ctx) -> None:
         ctx,
         f'INSERT INTO "{STAGING}" ({", ".join(SHARED)}, user_id, agent_user_id) '
         f"SELECT {shared}, coalesce(k.holder_user_id, k.principal_user_id), "
-        "CASE WHEN p.is_agent THEN k.principal_user_id END "
-        f"FROM {TABLE} AS k LEFT JOIN users AS p ON p.id = k.principal_user_id",
+        "CASE WHEN k.holder_user_id IS NOT k.principal_user_id THEN k.principal_user_id END "
+        f"FROM {TABLE} AS k",
         OLD_COLUMNS,
     )
 

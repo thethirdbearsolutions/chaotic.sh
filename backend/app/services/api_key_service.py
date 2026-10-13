@@ -52,6 +52,11 @@ def _is_legacy_bcrypt_hash(key_hash: str) -> bool:
     return key_hash.startswith(_BCRYPT_HASH_PREFIX)
 
 
+class AgentKeyNeedsHolderError(ValueError):
+    """APIKeyService.create was asked for an agent's key without naming
+    the human who holds it (CHT-1537)."""
+
+
 class APIKeyService:
     """Service for API key operations."""
 
@@ -75,10 +80,20 @@ class APIKeyService:
     ) -> tuple[OxydeAPIKey, str]:
         """Create a new API key that signs in as `principal_user_id` and is
         held by `holder_user_id` (CHT-1537). Leaving the holder out makes
-        the principal hold it, which is what a human's own key is; an
-        agent's key must name the human who answers for it, since an
-        agent is no team member and a key it held itself would never
-        sign in. Returns (api_key_model, full_key)."""
+        the principal hold it, which is what a human's own key is. An
+        agent's key must name the human who answers for it: an agent is
+        no team member, so a key it held itself would never sign in, and
+        that mistake raises AgentKeyNeedsHolderError instead of minting a
+        dead key. Returns (api_key_model, full_key)."""
+        if holder_user_id is None:
+            from app.oxyde_models.user import OxydeUser
+
+            principal = await OxydeUser.objects.get_or_none(id=principal_user_id)
+            if principal is not None and principal.is_agent:
+                raise AgentKeyNeedsHolderError(
+                    f"An API key for agent {principal_user_id} needs a holder_user_id: "
+                    "the human who answers for it"
+                )
         full_key = self._generate_key()
         key_prefix = self._get_prefix(full_key)
         key_hash = _sha256_key_hash(full_key)

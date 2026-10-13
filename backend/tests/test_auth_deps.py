@@ -4,7 +4,7 @@ Covers uncovered lines in app/api/deps.py:
 - JWT with missing 'sub' claim (L50)
 - Inactive user via JWT (L67)
 - Invalid API key (L85)
-- Agent not found via API key (L97)
+- Agent not found via API key (same 401 as a missing user since CHT-1537)
 - User not found via API key (L105)
 - Inactive user via API key (L113)
 - get_auth_method function (L176-181)
@@ -113,7 +113,7 @@ async def test_api_key_agent_not_found(client, db, test_user):
         headers={"Authorization": f"Bearer {full_key}"},
     )
     assert response.status_code == 401
-    assert "Agent not found" in response.json()["detail"]
+    assert response.json()["detail"] == "User not found"
 
 
 @pytest.mark.asyncio
