@@ -6,13 +6,13 @@ import asyncio
 import hashlib
 import hmac
 import logging
-import secrets
 from datetime import datetime, timedelta, timezone
 
 from oxyde import atomic
 
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
+from app.services.token_service import API_KEY_PREFIX, mint_secret
 from app.utils.security import verify_password
 
 logger = logging.getLogger(__name__)
@@ -77,8 +77,7 @@ class APIKeyService:
     def _generate_key(self) -> str:
         """Generate a new API key."""
         # Format: ck_<64 hex chars>
-        random_bytes = secrets.token_hex(32)  # 64 hex chars
-        return f"ck_{random_bytes}"
+        return mint_secret(API_KEY_PREFIX)
 
     def _get_prefix(self, key: str) -> str:
         """Extract the prefix from a key for identification."""
