@@ -570,12 +570,87 @@ class TestPrefixCollisions:
             with caplog.at_level("INFO", logger="app.services.api_key_service"):
                 assert (await service.validate_key(key)).id == row.id
             # The fallback says when it fires, so it can be retired (CHT-1555).
-            assert any("legacy bcrypt" in r.getMessage() and row.id in r.getMessage() for r in caplog.records)
+            messages = [r.getMessage() for r in caplog.records if "legacy bcrypt" in r.getMessage()]
+            assert len(messages) == 1 and row.id in messages[0]
+            # Never the prefix: it is 32 bits of the secret.
+            assert key[:11] not in messages[0] and key[3:11] not in messages[0]
             await row.refresh()
             assert row.key_hash == "sha256$" + _prehash_key(key)
         assert (await service.validate_key(current_key)).id == current.id
         await current.refresh()
         assert current.key_hash == "sha256$" + _prehash_key(current_key)
+
+    async def test_a_concurrent_upgrade_between_the_two_lookups_still_signs_in(self, db, test_user, monkeypatch):
+        """Request A misses on the digest, then request B (same key)
+        upgrades the row before A reads the prefix candidates. A must
+        accept the now-upgraded row, not skip it as "not bcrypt" and 401
+        (PR #336 independent review, finding 1). The interleaving is forced
+        so the test is deterministic."""
+        service = APIKeyService()
+        full_key = service._generate_key()
+        row = await self._legacy(test_user.id, full_key)
+        digest = "sha256$" + _prehash_key(full_key)
+        real = OxydeAPIKey.objects.get_or_none
+        raced = []
+
+        async def lookup_then_lose_the_race(**lookup):
+            found = await real(**lookup)
+            if lookup.get("key_hash") == digest and found is None and not raced:
+                raced.append(True)
+                await OxydeAPIKey.objects.filter(id=row.id).update(key_hash=digest)
+            return found
+
+        monkeypatch.setattr(OxydeAPIKey.objects, "get_or_none", lookup_then_lose_the_race)
+        result = await service.validate_key(full_key)
+        assert raced and result is not None and result.id == row.id
+
+    async def test_concurrent_first_use_of_a_legacy_key_never_401s(self, db, test_user):
+        """The reviewer's repro: a burst of first requests with one legacy
+        key all sign in, and the row ends upgraded."""
+        import asyncio
+
+        service = APIKeyService()
+        full_key = service._generate_key()
+        row = await self._legacy(test_user.id, full_key)
+        results = await asyncio.gather(*(service.validate_key(full_key) for _ in range(20)))
+        assert [r is not None and r.id == row.id for r in results] == [True] * 20
+        await row.refresh()
+        assert row.key_hash == "sha256$" + _prehash_key(full_key)
+
+    async def test_revoked_and_expired_legacy_rows_cost_no_bcrypt(self, db, test_user, monkeypatch):
+        """A legacy row that can never sign in is never bcrypt-checked: not
+        for its own key, not for a forged key under its prefix (PR #336
+        independent review, finding 2). find_by_key, which
+        get_api_key_record uses, returns no inactive row on either path."""
+        import app.services.api_key_service as module
+
+        checks = []
+        real = module.verify_password
+
+        def counting(*args):
+            checks.append(args)
+            return real(*args)
+
+        monkeypatch.setattr(module, "verify_password", counting)
+        service = APIKeyService()
+        revoked_key, expired_key = service._generate_key(), service._generate_key()
+        revoked = await self._legacy(test_user.id, revoked_key)
+        await service.revoke(revoked)
+        expired = await self._legacy(test_user.id, expired_key)
+        expired.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        await expired.save(update_fields={"expires_at"})
+
+        for key in (revoked_key, _sibling(revoked_key), expired_key, _sibling(expired_key)):
+            assert await service.validate_key(key) is None
+            assert await service.find_by_key(key) == (None, False)
+        assert checks == []
+        for row in (revoked, expired):
+            await row.refresh()
+            assert row.key_hash.startswith("$2")
+
+        current, current_key = await service.create(test_user.id, APIKeyCreate(name="c"))
+        await service.revoke(current)
+        assert await service.find_by_key(current_key) == (None, False)
 
     async def test_a_malformed_legacy_row_does_not_hide_its_neighbour(self, db, test_user):
         service = APIKeyService()

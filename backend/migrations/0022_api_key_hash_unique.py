@@ -16,9 +16,12 @@ create_index, which it can do on SQLite, declared in
 
 A database where two rows already share a `key_hash` (only possible for
 rows written by hand: two keys' SHA-256 digests do not collide, and
-bcrypt hashes are salted) fails the CREATE UNIQUE INDEX, and the
-migration's transaction leaves the database as it was. To check before
-upgrading (read-only):
+bcrypt hashes are salted) cannot take the index. Before creating it,
+0022 reads the rows that share a hash through the migration's own Oxyde
+connection (never Python's sqlite3, CHT-1491) and, if there are any,
+refuses with their ids before anything is written. Which of them to
+keep is the operator's call (they may be different users' rows), so the
+migration deletes nothing. To check before upgrading (read-only):
 
     SELECT key_hash, count(*) FROM api_keys GROUP BY key_hash HAVING count(*) > 1;
 
@@ -27,9 +30,82 @@ Created: 2026-10-13 14:41:28
 
 depends_on = "0021_api_key_principal_and_holder"
 
+TABLE = "api_keys"
+
+DUPLICATES_SQL = (
+    f"SELECT id, key_hash FROM {TABLE} WHERE key_hash IN "
+    f"(SELECT key_hash FROM {TABLE} GROUP BY key_hash HAVING count(*) > 1) "
+    "ORDER BY key_hash, id"
+)
+
+
+def _read_through_oxyde(database, sql: str, params: list) -> list[dict]:
+    """Rows of `sql` (as dicts keyed by column name), read through Oxyde's
+    own connection to the migration target. (0021's, copied so a later
+    edit there cannot change this migration.)
+
+    Never sqlite3.connect() the target here: Oxyde links its own copy of
+    SQLite, POSIX locks are per process, and a second copy opening the
+    same WAL database truncates the -shm Oxyde has mapped and drops its
+    locks on close (CHT-1491). upgrade() is synchronous and runs inside
+    the executor's event loop, so the query runs on a short-lived thread
+    with an event loop of its own.
+    """
+    import asyncio
+    import threading
+
+    from oxyde import execute_raw
+
+    outcome = {}
+
+    def run():
+        try:
+            outcome["rows"] = asyncio.run(execute_raw(sql, params, client=database))
+        except BaseException as error:  # re-raised on the migration's thread
+            outcome["error"] = error
+
+    reader = threading.Thread(target=run, name="migration-0022-read")
+    reader.start()
+    reader.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["rows"]
+
+
+def _refuse_duplicate_hashes(ctx) -> None:
+    database = getattr(ctx, "_db_conn", None)
+    if (
+        getattr(ctx, "dialect", "sqlite") != "sqlite"
+        or database is None
+        or not callable(getattr(database, "execute", None))
+    ):
+        raise RuntimeError(
+            "0022 needs to check api_keys for duplicate key hashes and has no connection to "
+            "the target database; nothing was changed"
+        )
+    duplicates = _read_through_oxyde(database, DUPLICATES_SQL, [])
+    if duplicates:
+        groups: dict[str, list[str]] = {}
+        for row in duplicates:
+            groups.setdefault(row["key_hash"], []).append(row["id"])
+        listed = "; ".join(", ".join(ids) for ids in groups.values())
+        raise RuntimeError(
+            f"0022: {len(duplicates)} API key rows share a key_hash with another row, so "
+            f"ux_api_keys_key_hash cannot be created. Rows sharing a hash (by id): {listed}. "
+            "Revoke or delete all but one of each group, then run the migration again; "
+            "nothing was changed"
+        )
+
+
+def _recording(ctx) -> bool:
+    """True in the replay (collect mode); see 0017."""
+    return getattr(ctx, "_mode", "execute") == "collect"
+
 
 def upgrade(ctx):
     """Apply migration."""
+    if not _recording(ctx):
+        _refuse_duplicate_hashes(ctx)
     ctx.create_index("api_keys", {
     'name': 'ux_api_keys_key_hash',
     'fields': [

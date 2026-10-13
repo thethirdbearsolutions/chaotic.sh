@@ -1,12 +1,16 @@
 """Tests for migrations/0022_api_key_hash_unique.py (CHT-1534, CHT-1554).
 
 A database at 0021 is seeded with current (`sha256$`) and legacy bcrypt
-keys, several of them sharing one 11-character prefix. After 0022 the
+keys, several of them sharing one 11-character prefix. Two starting
+shapes, as for 0021: one built from the chain, and one whose api_keys
+came from 0021's rebuild of a SQLAlchemy-era table. After 0022 the
 key hash is unique and is what a lookup by hash uses, and no row has
 changed. A database whose rows already share a hash (only possible by
-hand) fails the migration and is left exactly as it was. The downgrade
+hand) is refused, naming the rows, and the file is left byte for byte
+as it was. The downgrade
 drops the index again.
 """
+import hashlib
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +18,7 @@ from contextlib import closing
 
 import pytest
 
+from .test_api_key_principal_migration import SQLALCHEMY_API_KEYS
 from .test_parent_user_fk_migration import BACKEND, _migrate
 
 MIGRATION = "0022_api_key_hash_unique"
@@ -81,11 +86,32 @@ def _applied(path: str) -> bool:
         return c.execute("SELECT 1 FROM oxyde_migrations WHERE name = ?", (MIGRATION,)).fetchone() is not None
 
 
-@pytest.fixture
-def at_0021(tmp_path):
-    path = str(tmp_path / "chain.db")
+@pytest.fixture(params=["chain", "production"])
+def at_0021(request, tmp_path):
+    path = str(tmp_path / f"{request.param}.db")
+    if request.param == "chain":
+        _migrate(path, target="0021_api_key_principal_and_holder")
+        return path
+    _migrate(path, target="0020_parent_user_restrict")
+    with closing(sqlite3.connect(path)) as c:
+        c.execute("DROP TABLE api_keys")
+        for statement in SQLALCHEMY_API_KEYS:
+            c.execute(statement)
+        c.commit()
     _migrate(path, target="0021_api_key_principal_and_holder")
     return path
+
+
+def _file_digests(path: str) -> dict[str, str | None]:
+    """The database and its sidecars, byte for byte."""
+    digests = {}
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        try:
+            with open(path + suffix, "rb") as f:
+                digests[suffix] = hashlib.sha256(f.read()).hexdigest()
+        except FileNotFoundError:
+            digests[suffix] = None
+    return digests
 
 
 def test_the_hash_becomes_unique_and_no_row_changes(at_0021):
@@ -117,13 +143,22 @@ def test_the_hash_becomes_unique_and_no_row_changes(at_0021):
 
 
 def test_rows_already_sharing_a_hash_stop_the_migration_and_change_nothing(at_0021):
-    keys = dict(KEYS, k5=("ck_0000cccc", KEYS["k1"][1]))
+    keys = dict(KEYS, k5=("ck_0000cccc", KEYS["k1"][1]), k6=("ck_0000dddd", KEYS["k4"][1]))
     _seed(at_0021, keys)
     before = _rows(at_0021)
+    files = _file_digests(at_0021)
 
-    with pytest.raises(RuntimeError, match="(?i)unique"):
+    with pytest.raises(RuntimeError) as refused:
         _migrate(at_0021, target=MIGRATION)
 
+    message = str(refused.value)
+    assert "4 API key rows share a key_hash" in message
+    assert "k1, k5" in message and "k4, k6" in message
+    assert "k2" not in message and "k3" not in message
+    assert "nothing was changed" in message
+    # Not even the hashes are printed.
+    assert KEYS["k1"][1] not in message
+    assert _file_digests(at_0021) == files
     assert not _applied(at_0021)
     assert _index_sql(at_0021) is None
     assert _rows(at_0021) == before

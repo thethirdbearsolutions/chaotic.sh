@@ -55,6 +55,11 @@ def _is_legacy_bcrypt_hash(key_hash: str) -> bool:
     return key_hash.startswith(_BCRYPT_HASH_PREFIX)
 
 
+def _usable(api_key: OxydeAPIKey, now: datetime) -> bool:
+    """Active and not expired: a row that may sign in."""
+    return api_key.is_active and not (api_key.expires_at and api_key.expires_at < now)
+
+
 class AgentKeyNeedsHolderError(ValueError):
     """APIKeyService.create was asked for an agent's key without naming
     the human who holds it (CHT-1537)."""
@@ -118,34 +123,48 @@ class APIKeyService:
         return await OxydeAPIKey.objects.get_or_none(id=api_key_id)
 
     async def find_by_key(self, full_key: str) -> tuple[OxydeAPIKey | None, bool]:
-        """The row `full_key` belongs to, or None, without looking at whether
-        it is active or expired. The second value says the row is a legacy
-        bcrypt row that `full_key` just verified against, so its hash can
-        be upgraded.
+        """The active, unexpired row `full_key` belongs to, or None. The
+        second value says the row is a legacy bcrypt row that `full_key`
+        just verified against, so its hash can be upgraded.
 
         Current rows are found by their SHA-256 digest, which is unique
         (`ux_api_keys_key_hash`, CHT-1534). The 11-character display prefix
         is 32 bits and shared by unrelated keys (CHT-1554), so it is never
         trusted to name one row: it only narrows the legacy bcrypt rows a
         key could belong to, and each of those is checked in turn.
+
+        Revoked and expired rows are never returned, and a legacy one is
+        never bcrypt-checked: it can never sign in, so it is never upgraded,
+        and checking it would cost every forged key under its prefix a
+        bcrypt round forever.
         """
         if not full_key.startswith("ck_"):
             return None, False
 
+        now = datetime.now(timezone.utc)
         expected = _sha256_key_hash(full_key)
         api_key = await OxydeAPIKey.objects.get_or_none(key_hash=expected)
         if api_key is not None:
             # The index already matched on equality; the constant-time
             # compare keeps the check itself independent of where the
             # strings differ, whatever the database did to find the row.
-            if hmac.compare_digest(api_key.key_hash, expected):
+            if hmac.compare_digest(api_key.key_hash, expected) and _usable(api_key, now):
                 return api_key, False
             return None, False
 
         # Legacy bcrypt rows (pre CHT-1369) are salted, so they can only be
         # found by prefix. Several rows may share it: try each.
-        candidates = await OxydeAPIKey.objects.filter(key_prefix=self._get_prefix(full_key)).all()
+        candidates = await OxydeAPIKey.objects.filter(
+            key_prefix=self._get_prefix(full_key), is_active=True,
+        ).all()
         for candidate in candidates:
+            if not _usable(candidate, now):
+                continue
+            if hmac.compare_digest(candidate.key_hash, expected):
+                # A concurrent request with this same key upgraded the row
+                # between the digest lookup above and this read. It is this
+                # key's row, already upgraded.
+                return candidate, False
             if not _is_legacy_bcrypt_hash(candidate.key_hash):
                 continue
             # bcrypt is CPU-bound and synchronous: keep it off the event loop
@@ -157,10 +176,6 @@ class APIKeyService:
                 # not this key, rather than a 500.
                 continue
             if ok:
-                logger.info(
-                    "API key %s... (id %s) signed in with a legacy bcrypt hash; upgrading it to SHA-256",
-                    candidate.key_prefix, candidate.id,
-                )
                 return candidate, True
         # A row in neither format (corrupted or foreign) matches nothing.
         return None, False
@@ -169,19 +184,16 @@ class APIKeyService:
         """Validate an API key and return the associated key record if valid."""
         api_key, legacy = await self.find_by_key(full_key)
 
-        if not api_key:
-            return None
-
-        if not api_key.is_active:
-            return None
-
-        if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+        if not api_key or not _usable(api_key, datetime.now(timezone.utc)):
             return None
 
         update_fields: set[str] = set()
         if legacy:
             # Opportunistic upgrade: the caller just proved they hold the key,
             # so its SHA-256 digest can be stored and bcrypt is never paid again.
+            # The id only: the prefix is 32 bits of the secret (CHT-1555
+            # retires this path once the line stops appearing).
+            logger.info("API key id %s signed in with a legacy bcrypt hash; upgrading it to SHA-256", api_key.id)
             api_key.key_hash = _sha256_key_hash(full_key)
             update_fields.add("key_hash")
 
