@@ -192,6 +192,15 @@ USER_FKS_ALLOWED_TO_CASCADE = {
     # holds it (CHT-1537, 0021).
     ("api_keys", "principal_user_id"),
     ("api_keys", "holder_user_id"),
+    # Holder sessions and the tokens on them are credentials too: they go
+    # with the user they act as and with the human who answers for them,
+    # and a consent request with the human it was bound to (CHT-1515,
+    # 0024).
+    ("holder_sessions", "principal_user_id"),
+    ("holder_sessions", "holder_user_id"),
+    ("auth_tokens", "principal_user_id"),
+    ("auth_tokens", "holder_user_id"),
+    ("oauth_authorization_requests", "bound_user_id"),
     ("team_members", "user_id"),
     ("team_invitations", "invited_by_id"),
     ("ticket_limbo", "requested_by_id"),
