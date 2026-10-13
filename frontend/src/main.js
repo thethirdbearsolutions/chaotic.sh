@@ -25,6 +25,7 @@ import './rituals.js';
 import './gate-approvals.js';
 import './api-keys.js';
 import './connected-apps.js';
+import './push-devices.js';
 import './command-palette.js';
 import './dashboard.js';
 import './onboarding.js';

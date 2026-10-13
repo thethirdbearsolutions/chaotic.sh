@@ -58,6 +58,15 @@ ROUTES_NOT_FOR_THE_CLIENT = {
     ("GET", "/api/oauth/requests/{request_id}"): "OAuth consent page (frontend); human web login only",
     ("POST", "/api/oauth/requests/{request_id}/approve"): "OAuth consent page (frontend); human web login only",
     ("POST", "/api/oauth/requests/{request_id}/deny"): "OAuth consent page (frontend); human web login only",
+    # Push (CHT-1604): the native app registers its own device and reads
+    # the VAPID key; Settings lists and removes devices. A terminal has no
+    # push endpoint, so the CLI neither registers nor manages one.
+    ("GET", "/api/push/devices"): "push devices: the Settings page (frontend) and the native app",
+    ("PUT", "/api/push/devices/{installation_id}"): "push registration: the native app only",
+    ("DELETE", "/api/push/devices/{installation_id}"): "push devices: the Settings page (frontend) and the native app",
+    ("GET", "/api/push/preferences"): "push preferences: the native app",
+    ("PATCH", "/api/push/preferences"): "push preferences: the native app",
+    ("GET", "/api/push/vapid-public-key"): "push registration: the native app only",
 }
 
 # Routes that exist server-side but have no Client method yet. Empty since

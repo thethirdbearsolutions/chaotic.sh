@@ -84,7 +84,8 @@ describe('Integration smoke test', () => {
         const testImports = [
             './api.js', './ui.js', './auth.js', './documents.js', './agents.js',
             './teams.js', './projects.js', './rituals.js', './gate-approvals.js',
-            './api-keys.js', './connected-apps.js', './command-palette.js', './dashboard.js', './onboarding.js',
+            './api-keys.js', './connected-apps.js', './push-devices.js', './command-palette.js', './dashboard.js',
+            './onboarding.js',
             './quote-comment.js', './app.js',
         ];
 
@@ -96,7 +97,8 @@ describe('Integration smoke test', () => {
         const modules = [
             './api.js', './ui.js', './auth.js', './documents.js', './agents.js',
             './teams.js', './projects.js', './rituals.js', './gate-approvals.js',
-            './api-keys.js', './connected-apps.js', './command-palette.js', './dashboard.js', './app.js',
+            './api-keys.js', './connected-apps.js', './push-devices.js', './command-palette.js', './dashboard.js',
+            './app.js',
         ];
 
         const importErrors = [];

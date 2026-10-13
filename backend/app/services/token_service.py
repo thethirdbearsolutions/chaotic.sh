@@ -68,6 +68,7 @@ from oxyde import atomic
 
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
+from app.services.push_service import PushService
 
 logger = logging.getLogger(__name__)
 
@@ -851,6 +852,8 @@ class TokenService:
             tokens = await OxydeAuthToken.objects.filter(
                 holder_session_id__in=ids, revoked_at__isnull=True,
             ).update(revoked_at=now)
+            # A signed-out device stops being pushed to (CHT-1604).
+            await PushService().delete_for_sessions(ids)
         for holder_session_id in ids:
             _forget_grace_pairs(holder_session_id)
         return sessions, tokens
@@ -868,6 +871,8 @@ class TokenService:
         tokens = await OxydeAuthToken.objects.filter(
             holder_session_id=holder_session_id, revoked_at__isnull=True,
         ).update(revoked_at=now)
+        # A signed-out device stops being pushed to (CHT-1604).
+        await PushService().delete_for_sessions([holder_session_id])
         session = await OxydeHolderSession.objects.get(id=holder_session_id)
         await OxydeRevocationEvent.objects.create(
             seq=await revocation_epoch() + 1,

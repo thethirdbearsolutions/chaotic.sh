@@ -52,6 +52,7 @@ from app.config import get_settings
 from app.enums import HolderVia, RevocationTarget, TokenKind
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeRevocationEvent
+from app.services.push_service import PushService
 from app.services.token_service import TokenService, revocation_epoch
 
 REASON_KEY_REVOKED = "key_revoked"
@@ -126,6 +127,9 @@ class RevocationService:
     async def _end_keys(self, key_ids: list[str], *, actor_id, reason) -> CascadeCounts:
         if not key_ids:
             return CascadeCounts()
+        # Devices registered with a revoked key stop being pushed to
+        # (CHT-1604); the sessions' devices go in revoke_sessions_batch.
+        await PushService().delete_for_keys(key_ids)
         return await self._end(
             actor_id=actor_id, reason=reason, credential_id__in=key_ids,
             starters={"minted_by_credential_id__in": key_ids},

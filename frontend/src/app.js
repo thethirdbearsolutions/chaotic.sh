@@ -78,6 +78,7 @@ import {
 } from './rituals-view.js';
 import { loadApiKeys, showCreateApiKeyModal } from './api-keys.js';
 import { loadConnections } from './connected-apps.js';
+import { loadPushDevices } from './push-devices.js';
 import {
     setCommands as setCommandPaletteCommands,
     open as openCommandPalette,
@@ -271,6 +272,7 @@ registerViews({
     'settings': () => {
         loadApiKeys();
         loadConnections();
+        loadPushDevices();
         loadAgents();
     },
 });
