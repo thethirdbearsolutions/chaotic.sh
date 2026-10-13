@@ -6,7 +6,7 @@ body:
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, and what happened instead. Paste commands and error output as text.
+      description: What you did, what you expected, and what happened instead. Paste commands and error output as text. Remove API keys, tokens and private hostnames before pasting.
     validations:
       required: true
   - type: textarea

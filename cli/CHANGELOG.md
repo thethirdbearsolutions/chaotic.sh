@@ -142,9 +142,9 @@ before restarting.
 ## [0.1.0a18] - 2026-09-05
 
 Server and CLI changes merged since a17 (PRs #229-#264). `v0.1.0a17` was
-tagged but never reached PyPI, so a18 is the first PyPI release since
-a16 and also carries the changes listed under 0.1.0a17. This release carries one
-database migration (0014): run `chaotic system upgrade`.
+tagged but never reached PyPI, so a18 is the first PyPI release since a16
+and also carries the web UI changes listed under 0.1.0a17. This release
+carries one database migration (0014): run `chaotic system upgrade`.
 
 ### Upgrade notes
 

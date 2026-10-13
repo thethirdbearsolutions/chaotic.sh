@@ -10,11 +10,16 @@ You need Python 3.11 (what CI runs), [uv](https://docs.astral.sh/uv/),
 Node 20 for the frontend, and optionally [just](https://github.com/casey/just).
 
 ```bash
-just sync            # or, per project:
-cd backend && uv sync --locked --extra dev
-cd cli && uv sync --locked --extra dev
-cd e2e && uv sync --locked
-cd frontend && npm ci
+just sync
+(cd frontend && npm ci)
+```
+
+Without `just`, sync each project from the repo root:
+
+```bash
+(cd backend && uv sync --locked --extra dev)
+(cd cli && uv sync --locked --extra dev)
+(cd e2e && uv sync --locked)
 ```
 
 The `uv.lock` files are committed and CI installs with `--locked`. Don't
