@@ -241,6 +241,13 @@ class TestCaller:
         response = await _register(client, session_key, ref="claude-code:session:nested")
         assert response.status_code == 403 and _code(response) == "registered_identity_cannot_register"
 
+    async def test_a_registered_identity_cannot_mint_its_own_keys(self, client, registrar):
+        """Otherwise it could swap its 7-day key for one that never expires."""
+        _, key = registrar
+        session_key = (await _register(client, key)).json()["api_key"]
+        response = await client.post("/api/api-keys", json={"name": "forever"}, headers=_bearer(session_key))
+        assert response.status_code == 403 and _code(response) == "registered_identity_key"
+
     async def test_a_person_may_register_for_themself(self, client, auth_headers, test_user, test_team):
         response = await client.post(
             "/api/agents/register", json={"external_ref": REF, "team_id": test_team.id, "name": "Local"},
