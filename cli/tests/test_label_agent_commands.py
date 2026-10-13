@@ -362,3 +362,105 @@ class TestAgentKeysCreate:
 
         assert result.exit_code != 0
         assert 'not found' in result.output.lower()
+
+
+class TestAgentDeactivate:
+    """Tests for agent deactivate command (CHT-1494)."""
+
+    def test_agent_deactivate_by_name(self, cli_runner):
+        """agent deactivate resolves the agent by name and deactivates it."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": False,
+        })
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot'])
+
+        assert result.exit_code == 0, result.output
+        assert 'deactivated' in result.output
+        client.deactivate_agent.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_deactivate_declined(self, cli_runner):
+        """Declining the confirmation deactivates nothing."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        with patch('cli.main.confirm_action', return_value=False):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'agent-uuid'])
+
+        assert result.exit_code == 0
+        client.deactivate_agent.assert_not_called()
+
+    def test_agent_deactivate_json(self, cli_runner):
+        """agent deactivate --json prints the agent as JSON."""
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": False,
+        })
+
+        with patch('cli.main.confirm_action', return_value=True):
+            result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["is_active"] is False
+
+    def test_agent_deactivate_ambiguous(self, cli_runner):
+        """An ambiguous identifier deactivates nothing."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "bot-1"},
+            {"id": "agent-uuid-456", "name": "bot-2"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'agent-uuid'])
+
+        assert result.exit_code != 0
+        assert 'Ambiguous' in result.output
+        client.deactivate_agent.assert_not_called()
+
+    def test_agent_deactivate_not_found(self, cli_runner):
+        """An unknown identifier shows an error."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[])
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'nonexistent'])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output.lower()
+
+    def test_agent_list_marks_deactivated(self, cli_runner):
+        """agent list marks a deactivated agent."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {
+                "id": "agent-uuid-123456789",
+                "name": "old-bot",
+                "is_active": False,
+                "agent_project_id": None,
+                "parent_user_name": "Alice",
+                "created_at": "2026-02-10T12:00:00",
+            },
+        ])
+
+        result = cli_runner.invoke(cli, ['agent', 'list'])
+
+        assert result.exit_code == 0
+        assert 'deactivated' in result.output

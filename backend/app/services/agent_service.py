@@ -28,9 +28,15 @@ class AgentHasAuthoredContentError(Exception):
         listed = ", ".join(f"{n} {kind}" for kind, n in counts.items() if n)
         super().__init__(
             f"Agent '{agent_name}' cannot be deleted: it authored {listed}. Deleting it "
-            "would leave that work without an author. Revoke its API keys instead "
-            "(`chaotic auth keys revoke`)."
+            "would leave that work without an author. Deactivate it instead "
+            "(`chaotic agent deactivate`): that revokes its API keys and blocks it from "
+            "signing in, and keeps its work attributed to it."
         )
+
+
+class AgentInactiveError(Exception):
+    """Refused: the agent is deactivated, so a key minted for it could
+    never authenticate (CHT-1494)."""
 
 
 class AgentService:
@@ -154,6 +160,23 @@ class AgentService:
             await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
             await agent.delete()
 
+    async def deactivate(self, agent: OxydeUser) -> OxydeUser:
+        """Retire an agent without erasing who wrote what (CHT-1494).
+
+        Revokes every API key that authenticates as the agent and sets
+        is_active=false, which the auth dependency already refuses. The
+        agent row stays, so its authored work keeps its author.
+        Idempotent: deactivating an inactive agent revokes any key that
+        is somehow still active and changes nothing else.
+        """
+        async with atomic():
+            await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=False)
+            await OxydeAPIKey.objects.filter(user_id=agent.id).update(is_active=False)
+            if agent.is_active:
+                agent.is_active = False
+                await agent.save(update_fields={"is_active"})
+        return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
+
     async def get_agent_api_keys(self, agent_id: str) -> list[OxydeAPIKey]:
         """Get all API keys for an agent."""
         return await OxydeAPIKey.objects.filter(
@@ -169,6 +192,8 @@ class AgentService:
         agent = await self.get_by_id(agent_id)
         if not agent:
             raise ValueError("Agent not found")
+        if not agent.is_active:
+            raise AgentInactiveError(f"Agent '{agent.name}' is deactivated; a key for it could not sign in.")
 
         async with atomic():
             api_key_service = APIKeyService()

@@ -93,6 +93,8 @@ def register(cli):
                 scope = f"Project: {a['agent_project_id'][:8]}..."
             else:
                 scope = "Team-wide"
+            if a.get("is_active") is False:
+                name = f"{name} [dim](deactivated)[/dim]"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
             table.add_row(agent_id, name, scope, created_by, created_at)
@@ -130,6 +132,53 @@ def register(cli):
 
         _client().delete_agent(agent_obj["id"])
         console.print(f"[green]Agent '{agent_obj['name']}' deleted.[/green]")
+
+    @agent.command("deactivate")
+    @click.argument("agent_ref", metavar="AGENT")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def agent_deactivate(agent_ref):
+        """Deactivate an agent: revoke all its API keys and block it from
+        signing in, keeping the work it authored attributed to it.
+
+        Use this to retire an agent that `agent delete` refuses to delete
+        because it authored work. Allowed to the agent's creator and to
+        team admins.
+
+        AGENT can be the agent's full ID, an ID prefix, or its exact name.
+
+        Example:
+            chaotic agent deactivate claude-bot
+        """
+        m = _main()
+        team_id = m.get_current_team()
+        agents = _client().get_team_agents(team_id)
+
+        agent_obj = None
+        for a in agents:
+            if a["id"] == agent_ref or a["id"].startswith(agent_ref) or a["name"] == agent_ref:
+                if agent_obj is not None:
+                    console.print(f"[red]Ambiguous agent identifier '{agent_ref}'. Please be more specific.[/red]")
+                    raise SystemExit(1)
+                agent_obj = a
+
+        if not agent_obj:
+            console.print(f"[red]Agent '{agent_ref}' not found.[/red]")
+            raise SystemExit(1)
+
+        if not m.confirm_action(
+            f"Deactivate agent '{agent_obj['name']}'? All its API keys will be revoked."
+        ):
+            raise SystemExit(0)
+
+        result = _client().deactivate_agent(agent_obj["id"])
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        console.print(
+            f"[green]Agent '{result['name']}' deactivated; its API keys are revoked.[/green]"
+        )
 
     @agent.group("keys")
     def agent_keys():

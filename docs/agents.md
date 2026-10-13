@@ -409,6 +409,10 @@ there's no local profile to fall back on the way the stdio server has:
 - An agent-scoped API key (`chaotic agent create`) is confined to its
   own project/team exactly like it is over REST; passing a `team`/
   `project` that doesn't match its scope is rejected the same way.
+- To retire an agent, `chaotic agent deactivate <agent>` revokes all its
+  keys and blocks it from signing in while keeping its work attributed
+  to it. Its creator and any admin of its team may do this; `chaotic
+  agent delete` is refused once the agent has authored anything.
 
 `issue_view`/`issue_update`/`issue_comment`/`issue_start` don't take a
 `team`/`project` parameter at all in either transport -- issue

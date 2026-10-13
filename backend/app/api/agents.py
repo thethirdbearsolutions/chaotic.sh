@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, check_user_team_access
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentCreated
 from app.schemas.api_key import APIKeyCreated
-from app.services.agent_service import AgentHasAuthoredContentError, AgentService
+from app.services.agent_service import AgentHasAuthoredContentError, AgentInactiveError, AgentService
 from app.services.api_key_service import APIKeyService
 from app.services.team_service import TeamService
 from app.services.project_service import ProjectService
@@ -275,7 +275,10 @@ async def create_agent_key(
             detail="Not authorized to mint a key for this agent",
         )
 
-    full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
+    try:
+        full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
+    except AgentInactiveError as refused:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
 
     api_key_service = APIKeyService()
     api_key = await api_key_service.get_by_id(api_key_id)
@@ -287,6 +290,51 @@ async def create_agent_key(
         key_prefix=api_key.key_prefix,
         created_at=api_key.created_at,
         expires_at=api_key.expires_at,
+    )
+
+
+@router.post("/agents/{agent_id}/deactivate", response_model=AgentResponse)
+async def deactivate_agent(
+    agent_id: str,
+    current_user: CurrentUser,
+) -> AgentResponse:
+    """Retire an agent: revoke all its API keys and block it from signing
+    in, keeping its authored work attributed (CHT-1494). Allowed to the
+    agent's parent user and to admins of the agent's team -- the same
+    people who may delete it, so an admin can retire an agent whose
+    delete is refused for having authored work."""
+    agent_service = AgentService()
+    agent = await agent_service.get_by_id(agent_id)
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    team_service = TeamService()
+    is_admin = await team_service.is_team_admin(agent.agent_team_id, current_user.id)
+    is_owner = agent.parent_user_id == current_user.id
+
+    if not (is_admin or is_owner):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to deactivate this agent",
+        )
+
+    agent = await agent_service.deactivate(agent)
+
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        avatar_url=agent.avatar_url,
+        is_active=agent.is_active,
+        parent_user_id=agent.parent_user_id,
+        parent_user_name=agent.parent_user.name if agent.parent_user else None,
+        agent_team_id=agent.agent_team_id,
+        agent_project_id=agent.agent_project_id,
+        created_at=agent.created_at,
+        updated_at=agent.updated_at,
     )
 
 
