@@ -36,7 +36,7 @@ import {
     showIssuesLoadingSkeleton,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadInbox, openInboxEntryElement, archiveInboxEntryElement } from './inbox.js';
+import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler } from './keyboard.js';
@@ -662,8 +662,17 @@ document.addEventListener('keydown', createInboxNavigationHandler({
     getCurrentView,
     getSelectedIndex: getSelectedInboxIndex,
     setSelectedIndex: setSelectedInboxIndex,
-    openInboxEntry: openInboxEntryElement,
+    toggleInboxExpand: toggleInboxEntryElementExpand,
+    collapseInboxExpand,
     archiveInboxEntry: archiveInboxEntryElement,
+    isInlineDropdownOpen,
+    // What the global handler's Escape closes ahead of the list (PR #260
+    // review finding 4): the mobile sidebar drawer and the header dropdowns.
+    isEscapeLayerAbove: () => document.body.classList.contains('sidebar-open')
+        || ['team-dropdown', 'user-dropdown'].some(id => {
+            const el = document.getElementById(id);
+            return !!el && !el.classList.contains('hidden');
+        }),
     isModalOpen,
     isCommandPaletteOpen,
 }));

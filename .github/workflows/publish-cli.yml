@@ -20,8 +20,13 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: publish-cli
+  # One run per tag: a global group keeps only one pending run, so a burst
+  # of releases would silently drop all but the last.
+  group: publish-cli-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -109,6 +114,23 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Check the tag matches the package version
+        # skip-existing (below) would turn a tag/version mismatch into a green
+        # run that publishes nothing, so refuse it here. Only real publishes
+        # (a release, or a dispatch from a v* tag) can reach PyPI at all.
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$REF_TYPE" = "tag" ]; then
+            if [ "$REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $REF_NAME does not match cli/pyproject.toml version $version"
+              exit 1
+            fi
+          fi
+          echo "Building chaotic-cli $version"
+
       - name: Install build dependencies
         run: pip install build
 
@@ -123,6 +145,7 @@ jobs:
 
   publish-test-pypi:
     needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     environment: test-pypi
     permissions:
@@ -145,11 +168,18 @@ jobs:
           # Empty when the secret is unset, which makes the action fall back
           # to trusted publishing (OIDC).
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          # Re-running a release must not fail on files already there. (A
+          # release event runs the workflow file from the tagged commit, so
+          # tags made before this change don't have this.)
+          skip-existing: true
 
   publish-pypi:
     # Deliberately NOT `needs: publish-test-pypi`: the smoke publish is
     # informational. Only a green build gates the release.
     needs: build
+    # Never publish a branch build to PyPI (a dispatch from a feature branch
+    # once tried to): only a release or a dispatch from a v* tag.
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -162,6 +192,17 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Note a version that is already on PyPI
+        # With skip-existing a re-run publishes nothing and still goes green;
+        # say so on the run instead of letting it look like a fresh publish.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="${REF_NAME#v}"
+          if curl -fsS -o /dev/null "https://pypi.org/pypi/chaotic-cli/$version/json"; then
+            echo "::notice::chaotic-cli $version is already on PyPI; files already there will be skipped, only missing ones uploaded."
+          fi
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -169,3 +210,7 @@ jobs:
           # to trusted publishing (OIDC); see the header comment for the
           # publisher claims PyPI must be configured with.
           password: ${{ secrets.PYPI_API_TOKEN }}
+          # A re-run, or a version already uploaded by hand, is skipped rather
+          # than failing with "file exists". Tags made before this change run
+          # their own copy of this file and don't have it.
+          skip-existing: true

@@ -12,6 +12,32 @@ def _main():
     return sys.modules['cli.main']
 
 
+def _require_ref(ref: str) -> str:
+    """Refuse an empty or whitespace-only agent identifier: as an ID
+    prefix it would match every agent, so with one agent in the team
+    (and --yes) it would act on that agent unasked (CHT-1494)."""
+    ref = ref.strip()
+    if not ref:
+        console.print("[red]Agent identifier must not be empty.[/red]")
+        raise SystemExit(1)
+    return ref
+
+
+def _resolve_agent(agents: list, ref: str) -> dict:
+    """The one agent whose ID, ID prefix or exact name is `ref`."""
+    found = None
+    for a in agents:
+        if a["id"] == ref or a["id"].startswith(ref) or a["name"] == ref:
+            if found is not None:
+                console.print(f"[red]Ambiguous agent identifier '{ref}'. Please be more specific.[/red]")
+                raise SystemExit(1)
+            found = a
+    if not found:
+        console.print(f"[red]Agent '{ref}' not found.[/red]")
+        raise SystemExit(1)
+    return found
+
+
 def register(cli):
     """Register agent commands on the CLI group."""
 
@@ -93,6 +119,8 @@ def register(cli):
                 scope = f"Project: {a['agent_project_id'][:8]}..."
             else:
                 scope = "Team-wide"
+            if a.get("is_active") is False:
+                name = f"{name} [dim](deactivated)[/dim]"
             created_by = a.get("parent_user_name", "Unknown")
             created_at = a["created_at"][:10]
             table.add_row(agent_id, name, scope, created_by, created_at)
@@ -109,6 +137,7 @@ def register(cli):
         AGENT_ID can be the full agent ID or a prefix (e.g., the first 8 characters).
         """
         m = _main()
+        agent_id = _require_ref(agent_id)
         if not m.confirm_action("Are you sure you want to delete this agent? This will revoke all its API keys."):
             raise SystemExit(0)
         # Try to find the agent by prefix if not a full ID
@@ -131,6 +160,72 @@ def register(cli):
         _client().delete_agent(agent_obj["id"])
         console.print(f"[green]Agent '{agent_obj['name']}' deleted.[/green]")
 
+    @agent.command("deactivate")
+    @click.argument("agent_ref", metavar="AGENT")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def agent_deactivate(agent_ref):
+        """Deactivate an agent: revoke all its API keys and block it from
+        signing in, keeping the work it authored attributed to it.
+
+        Use this to retire an agent that `agent delete` refuses to delete
+        because it authored work. Allowed to the agent's creator and to
+        team admins. Undo with `chaotic agent reactivate` (its old keys
+        stay revoked).
+
+        AGENT can be the agent's full ID, an ID prefix, or its exact name.
+
+        Example:
+            chaotic agent deactivate claude-bot
+        """
+        m = _main()
+        agent_ref = _require_ref(agent_ref)
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
+
+        if not m.confirm_action(
+            f"Deactivate agent '{agent_obj['name']}'? All its API keys will be revoked "
+            "permanently; reactivating it later needs a new key."
+        ):
+            raise SystemExit(0)
+
+        result = _client().deactivate_agent(agent_obj["id"])
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        console.print(
+            f"[green]Agent '{result['name']}' deactivated; its API keys are revoked.[/green]"
+        )
+        console.print("Issues still assigned to it stay assigned; reassign any open ones.")
+
+    @agent.command("reactivate")
+    @click.argument("agent_ref", metavar="AGENT")
+    @_main().json_option
+    @_main().require_team
+    @_main().handle_error
+    def agent_reactivate(agent_ref):
+        """Reactivate a deactivated agent so it can sign in again.
+
+        Its revoked keys stay revoked: mint a new one with
+        `chaotic agent keys create`. Allowed to the agent's creator and to
+        team admins.
+
+        AGENT can be the agent's full ID, an ID prefix, or its exact name.
+
+        Example:
+            chaotic agent reactivate claude-bot
+        """
+        m = _main()
+        agent_ref = _require_ref(agent_ref)
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
+
+        result = _client().reactivate_agent(agent_obj["id"])
+        if m.is_json_output():
+            m.output_json(result)
+            return
+        console.print(f"[green]Agent '{result['name']}' reactivated.[/green]")
+        console.print(f"Mint it a key with: chaotic agent keys create {result['id']}")
+
     @agent.group("keys")
     def agent_keys():
         """Agent API key management commands."""
@@ -152,21 +247,8 @@ def register(cli):
             chaotic agent keys create claude-bot
         """
         m = _main()
-        team_id = m.get_current_team()
-        agents = _client().get_team_agents(team_id)
-
-        # Find agent by ID, ID prefix, or exact name
-        agent_obj = None
-        for a in agents:
-            if a["id"] == agent_ref or a["id"].startswith(agent_ref) or a["name"] == agent_ref:
-                if agent_obj is not None:
-                    console.print(f"[red]Ambiguous agent identifier '{agent_ref}'. Please be more specific.[/red]")
-                    raise SystemExit(1)
-                agent_obj = a
-
-        if not agent_obj:
-            console.print(f"[red]Agent '{agent_ref}' not found.[/red]")
-            raise SystemExit(1)
+        agent_ref = _require_ref(agent_ref)
+        agent_obj = _resolve_agent(_client().get_team_agents(m.get_current_team()), agent_ref)
 
         result = _client().create_agent_key(agent_obj["id"])
 

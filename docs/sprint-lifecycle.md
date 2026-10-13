@@ -182,6 +182,14 @@ restated here for context:
   (`chaotic ritual pending`, `chaotic ritual attest`) or force-cleared
   by an admin (`chaotic ritual force-clear`).
 
+Arrears and limbo belong to the refused ticket's project, which need not
+be your current one. Since CHT-1270 the 409 names it (`project_id`,
+`project_key`, `team_id`, `sprint_id`), and the CLI prints the exact close
+to run, naming the sprint by id so a second agent following the same
+advice gets "Can only close an active sprint" instead of closing the fresh
+sprint. One close of the right sprint is always enough: the next sprint
+starts at 0 points spent.
+
 ## CLI verbs
 
 | Intent | Command |
@@ -190,7 +198,7 @@ restated here for context:
 | List all sprints (optionally filter by status) | `chaotic sprint list [--status planned\|active\|completed]` |
 | Show a sprint's details + issues | `chaotic sprint show [SPRINT_ID] [--current]` |
 | Check budget/arrears status | `chaotic sprint budget` (root shortcut: `chaotic budget`) |
-| Advance to the next sprint | `chaotic sprint close [SPRINT_ID]` |
+| Advance to the next sprint | `chaotic sprint close [SPRINT_ID] [--project KEY]` |
 | Rename / rebudget a sprint | `chaotic sprint update [SPRINT_ID] --name ... --budget ...` |
 | Add/remove issues from the current sprint | `chaotic sprint add IDENTIFIERS...` / `chaotic sprint remove IDENTIFIERS...` |
 | List issues in the current sprint | `chaotic sprint issues` |

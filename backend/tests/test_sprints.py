@@ -474,6 +474,13 @@ class TestBudgetDeductionRaceSafe:
             json={"title": "Born done", "status": "done", "estimate": 2},
         )
         assert resp.status_code == 409, "creating an issue as DONE while over budget must be rejected"
+        # CHT-1270: the create path's refusal names the project and sprint too.
+        detail = resp.json()["detail"]
+        assert detail["error_code"] == "sprint_in_arrears"
+        assert detail["project_key"] == test_project.key
+        assert detail["project_id"] == test_project.id
+        assert detail["team_id"] == test_project.team_id
+        assert detail["sprint_id"] == sprint.id
         sprint = await OxydeSprint.objects.get(id=sprint.id)
         assert sprint.points_spent == 5, "no deduction on a blocked create-as-done"
         txns = await OxydeBudgetTransaction.objects.filter(sprint_id=sprint.id).all()

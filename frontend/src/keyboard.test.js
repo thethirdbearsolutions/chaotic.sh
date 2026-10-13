@@ -1580,7 +1580,8 @@ describe('Inbox Navigation Handler', () => {
             getCurrentView: vi.fn().mockReturnValue('inbox'),
             getSelectedIndex: vi.fn().mockReturnValue(0),
             setSelectedIndex: vi.fn(),
-            openInboxEntry: vi.fn(),
+            toggleInboxExpand: vi.fn(),
+            collapseInboxExpand: vi.fn().mockReturnValue(false),
             archiveInboxEntry: vi.fn(),
             isModalOpen: vi.fn().mockReturnValue(false),
             isCommandPaletteOpen: vi.fn().mockReturnValue(false),
@@ -1668,21 +1669,32 @@ describe('Inbox Navigation Handler', () => {
         });
     });
 
-    describe('Enter to open entry', () => {
-        it('opens the selected entry element', () => {
+    describe('Enter to expand entry (CHT-1320)', () => {
+        it('toggle-expands the selected entry element in place', () => {
             actions.getSelectedIndex.mockReturnValue(1);
             const event = makeEvent('Enter');
             handler(event);
             expect(event.preventDefault).toHaveBeenCalled();
-            expect(actions.openInboxEntry).toHaveBeenCalledTimes(1);
-            const openedEl = actions.openInboxEntry.mock.calls[0][0];
+            expect(actions.toggleInboxExpand).toHaveBeenCalledTimes(1);
+            const openedEl = actions.toggleInboxExpand.mock.calls[0][0];
             expect(openedEl.dataset.entryId).toBe('e2');
         });
 
         it('does nothing when no item selected (index -1)', () => {
             actions.getSelectedIndex.mockReturnValue(-1);
             handler(makeEvent('Enter'));
-            expect(actions.openInboxEntry).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
+        });
+
+        it.each(['button', 'a'])('leaves Enter on a focused <%s> inside a row to that control', (tag) => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            const control = document.createElement(tag);
+            if (tag === 'a') control.href = '#x';
+            document.querySelectorAll('.inbox-row')[1].appendChild(control);
+            const event = makeEvent('Enter', { target: control });
+            handler(event);
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
         });
     });
 
@@ -1703,8 +1715,9 @@ describe('Inbox Navigation Handler', () => {
         });
     });
 
-    describe('Escape to deselect', () => {
-        it('clears selection when an item is selected', () => {
+    describe('Escape (CHT-1320: collapse first, then deselect)', () => {
+        it('clears selection when nothing is expanded', () => {
+            actions.collapseInboxExpand.mockReturnValue(false); // nothing open
             actions.getSelectedIndex.mockReturnValue(1);
             document.querySelectorAll('.inbox-row')[1].classList.add('keyboard-selected');
             const event = makeEvent('Escape');
@@ -1713,14 +1726,241 @@ describe('Inbox Navigation Handler', () => {
             expect(actions.setSelectedIndex).toHaveBeenCalledWith(-1);
             expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
         });
+
+        it('collapses an open row WITHOUT clearing selection', () => {
+            actions.collapseInboxExpand.mockReturnValue(true); // a row was open
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(event.preventDefault).toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalledWith(-1);
+        });
+
+        it('yields Escape to an open inline dropdown: no collapse, no deselect (CHT-1231)', () => {
+            actions.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+            handler = createInboxNavigationHandler(actions);
+            actions.getSelectedIndex.mockReturnValue(1);
+            const event = makeEvent('Escape');
+            handler(event);
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        });
+
+        it('yields j/k/Enter to an open inline dropdown too', () => {
+            actions.isInlineDropdownOpen = vi.fn().mockReturnValue(true);
+            handler = createInboxNavigationHandler(actions);
+            ['j', 'k', 'Enter', 'e'].forEach(key => handler(makeEvent(key)));
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
+            expect(actions.archiveInboxEntry).not.toHaveBeenCalled();
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+        });
+
+        it('ignores Escape during IME composition (CHT-1231)', () => {
+            actions.getSelectedIndex.mockReturnValue(1);
+            handler(makeEvent('Escape', { isComposing: true }));
+            expect(actions.collapseInboxExpand).not.toHaveBeenCalled();
+            expect(actions.setSelectedIndex).not.toHaveBeenCalled();
+        });
     });
 
     describe('unrecognized keys', () => {
         it('does not act on other keys', () => {
             handler(makeEvent('x'));
             expect(actions.setSelectedIndex).not.toHaveBeenCalled();
-            expect(actions.openInboxEntry).not.toHaveBeenCalled();
+            expect(actions.toggleInboxExpand).not.toHaveBeenCalled();
         });
+    });
+});
+
+// ============================================================================
+// Inbox + global Escape layering through the real listener order
+// (CHT-1320 x CHT-1231). app.js registers the inbox handler BEFORE the global
+// one, so both see every Escape. Topmost layer first: IME composition, inline
+// dropdown, modal (dirty never closes), then expanded row, then selection.
+// ============================================================================
+
+describe('Inbox Escape layering with the global handler (CHT-1320 x CHT-1231)', () => {
+    let state;
+    let inboxActions;
+    let globalActions;
+    let stack;
+
+    // Dispatch through the stack the way the DOM does, including
+    // stopImmediatePropagation (PR #260 review finding 4).
+    function press(key, overrides = {}) {
+        let stopped = false;
+        const event = makeEvent(key, {
+            stopImmediatePropagation: vi.fn(() => { stopped = true; }),
+            ...overrides,
+        });
+        for (const h of stack) {
+            h(event);
+            if (stopped) break;
+        }
+        return event;
+    }
+
+    beforeEach(() => {
+        Element.prototype.scrollIntoView = vi.fn();
+        document.body.className = '';
+        document.body.innerHTML = `
+            <div id="inbox-list">
+                <div class="inbox-row" data-entry-id="e1">Entry 1</div>
+                <div class="inbox-row keyboard-selected" data-entry-id="e2">Entry 2</div>
+            </div>
+        `;
+        state = { dropdown: false, modal: false, dirty: false, expanded: 'e2', selected: 1, layerAbove: false };
+        const isInlineDropdownOpen = () => state.dropdown;
+        const isModalOpen = () => state.modal;
+        inboxActions = {
+            getCurrentView: () => 'inbox',
+            getSelectedIndex: () => state.selected,
+            setSelectedIndex: vi.fn(i => { state.selected = i; }),
+            toggleInboxExpand: vi.fn(),
+            collapseInboxExpand: vi.fn(() => {
+                if (state.expanded === null) return false;
+                state.expanded = null;
+                return true;
+            }),
+            archiveInboxEntry: vi.fn(),
+            isInlineDropdownOpen,
+            isEscapeLayerAbove: () => state.layerAbove,
+            isModalOpen,
+            isCommandPaletteOpen: () => false,
+        };
+        globalActions = {
+            closeModal: vi.fn(() => { state.modal = false; }),
+            closeSidebar: vi.fn(),
+            navigateTo: vi.fn(),
+            showCreateIssueModal: vi.fn(),
+            showKeyboardShortcutsHelp: vi.fn(),
+            isModalOpen,
+            focusSearch: vi.fn(),
+            closeDropdowns: vi.fn(),
+            isDetailViewActive: () => false,
+            isInlineDropdownOpen,
+            closeInlineDropdowns: vi.fn(() => { state.dropdown = false; }),
+            isModalDirty: () => state.dirty,
+            focusModalField: vi.fn(),
+        };
+        // Same order as app.js: inbox list handler, then global shortcuts.
+        stack = [createInboxNavigationHandler(inboxActions), createKeyboardHandler(globalActions)];
+    });
+
+    it('dropdown, then expanded row, then selection: one layer per Escape', () => {
+        state.dropdown = true;
+
+        press('Escape');
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(document.querySelectorAll('.keyboard-selected')).toHaveLength(0);
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+    });
+
+    it('a dirty modal over the inbox never closes and leaves the row expanded', () => {
+        state.modal = true;
+        state.dirty = true;
+
+        press('Escape', { target: { tagName: 'BUTTON' } });
+        press('Escape', { target: { tagName: 'BODY' } });
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+        expect(globalActions.focusModalField).toHaveBeenCalledTimes(2);
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
+    });
+
+    it('a clean modal closes first, then the row collapses, then deselects', () => {
+        state.modal = true;
+
+        press('Escape', { target: { tagName: 'BUTTON' } });
+        expect(globalActions.closeModal).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(state.selected).toBe(1);
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+    });
+
+    it('a dropdown inside a dirty modal closes alone; the modal and row survive', () => {
+        state.modal = true;
+        state.dirty = true;
+        state.dropdown = true;
+
+        press('Escape', { target: { tagName: 'INPUT', blur: vi.fn() } });
+        expect(globalActions.closeInlineDropdowns).toHaveBeenCalledTimes(1);
+        expect(globalActions.closeModal).not.toHaveBeenCalled();
+        expect(state.modal).toBe(true);
+        expect(state.expanded).toBe('e2');
+    });
+
+    it('an Escape spent on the row does not also close a dropdown or the sidebar (finding 4)', () => {
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(globalActions.closeDropdowns).not.toHaveBeenCalled();
+        expect(globalActions.closeSidebar).not.toHaveBeenCalled();
+
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(globalActions.closeDropdowns).not.toHaveBeenCalled();
+
+        // Nothing left in the list: Escape reaches the global handler again.
+        press('Escape');
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
+    });
+
+    it('the mobile sidebar drawer over the list closes alone; the row stays open (finding 4)', () => {
+        document.body.classList.add('sidebar-open');
+        state.layerAbove = true;
+
+        press('Escape');
+        expect(globalActions.closeSidebar).toHaveBeenCalledTimes(1);
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+
+        document.body.classList.remove('sidebar-open');
+        state.layerAbove = false;
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        expect(globalActions.closeSidebar).toHaveBeenCalledTimes(1);
+    });
+
+    it('an open header dropdown closes first; then the row, then the selection (finding 4)', () => {
+        state.layerAbove = true;
+        globalActions.closeDropdowns.mockImplementation(() => { state.layerAbove = false; });
+
+        press('Escape');
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
+        expect(state.expanded).toBe('e2');
+
+        press('Escape');
+        expect(state.expanded).toBe(null);
+        press('Escape');
+        expect(state.selected).toBe(-1);
+        expect(globalActions.closeDropdowns).toHaveBeenCalledTimes(1);
+    });
+
+    it('Escape during IME composition touches no layer', () => {
+        state.dropdown = true;
+        press('Escape', { isComposing: true });
+        expect(globalActions.closeInlineDropdowns).not.toHaveBeenCalled();
+        expect(inboxActions.collapseInboxExpand).not.toHaveBeenCalled();
+        expect(state.expanded).toBe('e2');
+        expect(state.selected).toBe(1);
     });
 });
 
