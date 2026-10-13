@@ -22,7 +22,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from app.enums import ActivityType, InboxEntryKind, TeamRole
+from app.enums import ActivityType, ApprovalMode, InboxEntryKind, TeamRole
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.services.email_service import EmailService, fire_and_forget
 from app.services.team_service import TeamService
@@ -195,6 +195,46 @@ class InboxService:
             )
             await self._broadcast(project.team_id, "created", entry)
 
+    async def notify_gate_rejected(self, *, ritual, issue, project, rejection) -> None:
+        """A human rejected a gate request or review attestation (CHT-1606).
+        Tell whoever it was addressed to, and that agent's owner, why: the
+        reason is the entry's body. Nobody is told about their own reject,
+        and an owner who is also the attester gets one entry.
+        """
+        from app.services.user_service import UserService
+
+        attester_id = rejection.attested_by_id
+        if not attester_id:
+            return
+        users = UserService()
+        attester = await users.get_by_id(attester_id)
+        rejecter = await users.get_by_id(rejection.rejected_by_id) if rejection.rejected_by_id else None
+        recipients = [attester_id]
+        if attester is not None and attester.is_agent and attester.parent_user_id:
+            recipients.append(attester.parent_user_id)
+
+        what = "review" if ritual.approval_mode == ApprovalMode.REVIEW else "gate request"
+        who = rejecter.name if rejecter else "Someone"
+        seen = set()
+        for recipient_id in recipients:
+            if recipient_id in seen or recipient_id == rejection.rejected_by_id:
+                continue
+            seen.add(recipient_id)
+            whose = "your" if recipient_id == attester_id else f"{attester.name}'s"
+            title = f"{who} rejected {whose} {what}: {ritual.name} on {issue.identifier}"
+            entry = await OxydeInboxEntry.objects.create(
+                recipient_user_id=recipient_id,
+                kind=InboxEntryKind.GATE_REJECTED,
+                team_id=project.team_id,
+                project_id=project.id,
+                issue_id=issue.id,
+                ritual_id=ritual.id,
+                source_user_id=rejection.rejected_by_id,
+                title=title,
+                body=rejection.note,
+            )
+            await self._broadcast(project.team_id, "created", entry)
+
     async def notify_assignment(self, *, issue, project, assignee_id: str, assigned_by) -> None:
         """An issue was assigned to `assignee_id`. Skip self-assignment --
         no one needs to be told they assigned themselves something.
@@ -341,18 +381,42 @@ class InboxService:
             )
             await self._broadcast(team_id, "created", entry)
 
-    async def resolve_gate_or_review(self, *, ritual_id: str, issue_id: str) -> int:
+    async def resolve_gate_or_review(
+        self, *, ritual_id: str, issue_id: str, recipient_user_id: str | None = None,
+    ) -> int:
         """Mark every open GATE_PENDING/REVIEW_REQUESTED entry for this
         (ritual, issue) as read, for every recipient -- the underlying
         gate/review was just resolved, so it's no longer 'awaiting'
         anyone. Best-effort: called from a fail-soft try/except at the
         call site, same as the other post-resolution side effects there.
+
+        With `recipient_user_id`, only that recipient's entries: a gate
+        reject settles the rejecter's prompt while the gate stays pending
+        for the other approvers (CHT-1606).
         """
         now = datetime.now(timezone.utc)
-        return await OxydeInboxEntry.objects.filter(
+        filters = dict(
             ritual_id=ritual_id, issue_id=issue_id, read_at=None,
             kind__in=[InboxEntryKind.GATE_PENDING.name, InboxEntryKind.REVIEW_REQUESTED.name],
-        ).update(read_at=now)
+        )
+        if recipient_user_id is not None:
+            filters["recipient_user_id"] = recipient_user_id
+        return await OxydeInboxEntry.objects.filter(**filters).update(read_at=now)
+
+    async def resolve_rejected(
+        self, *, ritual_id: str, issue_id: str, recipient_user_ids: list[str],
+    ) -> int:
+        """Mark the open GATE_REJECTED entries of these recipients for this
+        (ritual, issue) as read: they answered the rejection (attested or
+        asked again), or a human completed the gate anyway (CHT-1606).
+        """
+        if not recipient_user_ids:
+            return 0
+        return await OxydeInboxEntry.objects.filter(
+            ritual_id=ritual_id, issue_id=issue_id, read_at=None,
+            kind=InboxEntryKind.GATE_REJECTED.name,
+            recipient_user_id__in=list(recipient_user_ids),
+        ).update(read_at=datetime.now(timezone.utc))
 
     # ------------------------------------------------------------------
     # Readers

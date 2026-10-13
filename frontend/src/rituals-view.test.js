@@ -54,6 +54,7 @@ vi.mock('./api.js', () => ({
         attestTicketRitual: vi.fn(),
         approveTicketRitual: vi.fn(),
         completeTicketGateRitual: vi.fn(),
+        rejectTicketRitual: vi.fn(),
     },
 }));
 
@@ -69,6 +70,8 @@ import {
     attestTicketRitual,
     approveTicketRitual,
     showCompleteTicketRitualModal,
+    showRejectTicketRitualModal,
+    renderOutstandingRejection,
 } from './rituals-view.js';
 
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
@@ -390,6 +393,13 @@ describe('rituals-view', () => {
             expect(html).toContain('Approve');
         });
 
+        it('offers Reject beside Approve for an attestation awaiting review (CHT-1606)', () => {
+            const ritual = { id: 'r1', name: 'Code review', attestation: { approved_at: null } };
+            const html = renderTicketRitualActions(ritual, 'issue-1');
+            expect(html).toContain('data-action="reject-ticket-ritual"');
+            expect(html).toContain('data-ritual-name="Code review"');
+        });
+
         it('shows Complete button for gate mode without attestation', () => {
             const ritual = { id: 'r1', approval_mode: 'gate' };
             const html = renderTicketRitualActions(ritual, 'issue-1');
@@ -418,6 +428,21 @@ describe('rituals-view', () => {
             expect(html).toContain('data-action="attest-ticket-ritual-modal"');
             expect(html).toContain('data-ritual-artifact="document"');
             expect(html).toContain('data-ritual-note-required=""');
+        });
+
+        it('offers Reject beside Complete on a gate (PR #353 review finding 6)', () => {
+            const ritual = { id: 'r1', approval_mode: 'gate', name: 'Deploy' };
+            const html = renderTicketRitualActions(ritual, 'issue-1');
+            expect(html).toContain('data-action="complete-ticket-ritual"');
+            expect(html).toContain('data-action="reject-ticket-ritual"');
+            expect(html).toContain('data-ritual-name="Deploy"');
+        });
+
+        it('offers no Reject on a gate already rejected and not asked again', () => {
+            const rejected = { id: 'r1', approval_mode: 'gate', last_rejection: { note: 'no', superseded_at: null } };
+            expect(renderTicketRitualActions(rejected, 'issue-1')).not.toContain('reject-ticket-ritual');
+            const askedAgain = { id: 'r1', approval_mode: 'gate', last_rejection: { note: 'no', superseded_at: '2026-10-13' } };
+            expect(renderTicketRitualActions(askedAgain, 'issue-1')).toContain('reject-ticket-ritual');
         });
 
         it('carries the artifact on the gate Complete button', () => {
@@ -635,6 +660,74 @@ describe('rituals-view', () => {
             await vi.waitFor(() => {
                 expect(showApiError).toHaveBeenCalledWith('complete ticket ritual', expect.objectContaining({ message: 'Deploy blocked' }));
             });
+        });
+    });
+
+    // ========================================
+    // Reject (CHT-1606)
+    // ========================================
+    describe('renderOutstandingRejection', () => {
+        it('shows who rejected and why', () => {
+            const html = renderOutstandingRejection({ note: 'No tests', rejected_by_name: 'Ethan', superseded_at: null });
+            expect(html).toContain('Rejected by Ethan');
+            expect(html).toContain('No tests');
+        });
+
+        it('is empty once answered, or with no rejection', () => {
+            expect(renderOutstandingRejection({ note: 'x', superseded_at: '2026-10-13' })).toBe('');
+            expect(renderOutstandingRejection(null)).toBe('');
+        });
+    });
+
+    describe('showRejectTicketRitualModal', () => {
+        beforeEach(() => {
+            document.body.innerHTML = `
+                <div id="modal-title"></div>
+                <div id="modal-content"></div>
+            `;
+        });
+
+        const submit = () => document.getElementById('reject-ticket-ritual-form')
+            .dispatchEvent(new Event('submit', { cancelable: true }));
+
+        it('renders a required reason and shows the modal', () => {
+            showRejectTicketRitualModal('r1', 'issue-1', 'Deploy Gate');
+            expect(document.getElementById('modal-title').textContent).toBe('Reject: Deploy Gate');
+            expect(document.getElementById('reject-ritual-note').required).toBe(true);
+            expect(showModal).toHaveBeenCalled();
+        });
+
+        it('refuses a blank reason without calling the API', async () => {
+            showRejectTicketRitualModal('r1', 'issue-1', 'Deploy Gate');
+            document.getElementById('reject-ritual-note').value = '   ';
+            submit();
+            await vi.waitFor(() => {
+                expect(showToast).toHaveBeenCalledWith('A rejection needs a reason.', 'error');
+            });
+            expect(api.rejectTicketRitual).not.toHaveBeenCalled();
+        });
+
+        it('sends the trimmed reason, closes and reloads', async () => {
+            const onRejected = vi.fn();
+            showRejectTicketRitualModal('r1', 'issue-1', 'Deploy Gate', onRejected);
+            document.getElementById('reject-ritual-note').value = '  Not yet  ';
+            submit();
+            await vi.waitFor(() => {
+                expect(onRejected).toHaveBeenCalled();
+            });
+            expect(api.rejectTicketRitual).toHaveBeenCalledWith('r1', 'issue-1', 'Not yet');
+            expect(closeModal).toHaveBeenCalled();
+        });
+
+        it('shows the API error and keeps the modal open', async () => {
+            api.rejectTicketRitual.mockRejectedValue(new Error('Already rejected'));
+            showRejectTicketRitualModal('r1', 'issue-1', 'Deploy Gate');
+            document.getElementById('reject-ritual-note').value = 'why';
+            submit();
+            await vi.waitFor(() => {
+                expect(showApiError).toHaveBeenCalledWith('reject ritual', expect.objectContaining({ message: 'Already rejected' }));
+            });
+            expect(closeModal).not.toHaveBeenCalled();
         });
     });
 });

@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, check_user_project_access
 from app.schemas.ritual import (
+    _coerce_enum,
     RitualCreate,
     RitualUpdate,
     RitualResponse,
@@ -22,14 +23,21 @@ from app.schemas.ritual import (
     PendingApprovalIssueResponse,
     LimboClearedResponse,
     TicketLimboClearedResponse,
+    RitualRejectCreate,
+    RitualRejectionResponse,
 )
+from app.oxyde_models.ritual import OxydeRitualRejection
 from app.services.issue_service import IssueService
-from app.services.ritual_service import RitualService
+from app.services.ritual_service import (
+    NothingToRejectError,
+    RitualAlreadyResolvedError,
+    RitualService,
+)
 from app.services.project_service import ProjectService
 from app.services.team_service import TeamService
 from app.services.sprint_service import SprintService
 from app.enums import ApprovalMode, RitualTrigger, ActivityType
-from app.services.principals import fill_principals
+from app.services.principals import fill_principals, load_principals
 from app.websocket import broadcast_attestation_event
 
 router = APIRouter()
@@ -69,6 +77,7 @@ async def pending_ritual_responses(issue_id: str | None, rituals) -> list[Pendin
     rows = []
     for ritual in rituals:
         att = await ritual_service.get_issue_attestation(ritual.id, issue_id) if issue_id else None
+        rejection = await ritual_service.latest_rejection(ritual.id, issue_id) if issue_id else None
         rows.append(PendingRitualResponse(
             id=ritual.id,
             name=ritual.name,
@@ -79,6 +88,7 @@ async def pending_ritual_responses(issue_id: str | None, rituals) -> list[Pendin
             artifact=ritual.artifact,
             conditions=ritual.conditions,
             attestation=_attestation_response(att) if att else None,
+            last_rejection=_rejection_response(rejection, ritual) if rejection else None,
         ))
     return await fill_principals(rows)
 
@@ -179,10 +189,10 @@ async def list_attestation_history(
             detail="Not a member of this team",
         )
 
-    attestations = await ritual_service.list_attestation_history(project_id, skip, limit)
+    rows = await ritual_service.list_attestation_history(project_id, skip, limit)
 
     return await fill_principals([
-        RitualAttestationHistoryItem(
+        _rejection_history_item(att) if isinstance(att, OxydeRitualRejection) else RitualAttestationHistoryItem(
             id=att.id,
             ritual_name=att.ritual.name if att.ritual else "Unknown",
             ritual_trigger=(att.ritual.trigger.value if isinstance(att.ritual.trigger, RitualTrigger) else RitualTrigger[att.ritual.trigger].value) if att.ritual else "unknown",
@@ -199,8 +209,32 @@ async def list_attestation_history(
             attested_by=att.attested_by,
             approved_by=att.approved_by,
         )
-        for att in attestations
+        for att in rows
     ])
+
+
+def _rejection_history_item(rej) -> RitualAttestationHistoryItem:
+    """A rejection as a history row (CHT-1606): what was sent back (the
+    attestation, or for a GATE the request), and who rejected it and why."""
+    ritual = rej.ritual
+    return RitualAttestationHistoryItem(
+        id=rej.id,
+        ritual_name=ritual.name if ritual else "Unknown",
+        # A joined row may carry the stored name rather than the member,
+        # as the attestation rows above allow for.
+        ritual_trigger=_coerce_enum(RitualTrigger, ritual.trigger).value if ritual else "unknown",
+        approval_mode=_coerce_enum(ApprovalMode, ritual.approval_mode).value if ritual else "unknown",
+        issue_id=rej.issue_id,
+        issue_identifier=rej.issue.identifier if rej.issue else None,
+        attested_by_name=rej.attester.name if rej.attester else "Unknown",
+        attested_at=rej.attested_at or rej.rejected_at,
+        note=rej.attestation_note,
+        attested_by=rej.attested_by_id,
+        rejected_by=rej.rejected_by_id,
+        rejected_by_name=rej.rejecter.name if rej.rejecter else None,
+        rejected_at=rej.rejected_at,
+        rejection_note=rej.note,
+    )
 
 
 @router.get("/limbo", response_model=LimboStatusResponse)
@@ -734,14 +768,11 @@ async def complete_gate_ritual_for_issue(
     return await _build_attestation_response(attestation)
 
 
-@router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
-@writes
-async def approve_issue_attestation(
-    ritual_id: str,
-    issue_id: str,
-    current_user: CurrentUser,
-) -> RitualAttestationResponse:
-    """Approve a ticket-close ritual attestation (for REVIEW mode)."""
+async def _human_ritual_decider(ritual_id: str, issue_id: str, current_user, verb: str):
+    """The checks approve and reject share (CHT-1606), so the two can
+    never drift apart: the ritual, issue and project exist, the caller is
+    a team admin and a human, and the ritual is a ticket-level ritual of
+    the issue's project. Returns (ritual, issue, project)."""
     ritual_service = RitualService()
     issue_service = IssueService()
     project_service = ProjectService()
@@ -771,13 +802,13 @@ async def approve_issue_attestation(
     if not await team_service.is_team_admin(project.team_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can approve attestations",
+            detail=f"Only admins can {verb} attestations",
         )
 
     if current_user.is_agent:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agents cannot approve attestations. A human admin must approve.",
+            detail=f"Agents cannot {verb} attestations. A human admin must {verb}.",
         )
 
     if ritual.project_id != issue.project_id:
@@ -793,6 +824,42 @@ async def approve_issue_attestation(
             detail="Ritual is not a ticket-level ritual (must be TICKET_CLOSE or TICKET_CLAIM)",
         )
 
+    return ritual, issue, project
+
+
+async def _already_resolved(resolution: str, resolved_by: str | None, resolved_at) -> HTTPException:
+    """The 409 for approving or rejecting a gate/review someone already
+    decided (CHT-1606): who decided it and when, so a client acting on a
+    stale notification can say so instead of failing blankly."""
+    principals = await load_principals([resolved_by])
+    who = principals.get(resolved_by) if resolved_by else None
+    when = resolved_at.isoformat() if resolved_at else None
+    by = f" by {who.name}" if who else ""
+    at = f" at {when}" if when else ""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error_code": "ritual_already_resolved",
+            "message": f"Already {resolution}{by}{at}.",
+            "resolution": resolution,
+            "resolved_by": resolved_by,
+            "resolved_by_name": who.name if who else None,
+            "resolved_at": when,
+        },
+    )
+
+
+@router.post("/{ritual_id}/approve-issue/{issue_id}", response_model=RitualAttestationResponse)
+@writes
+async def approve_issue_attestation(
+    ritual_id: str,
+    issue_id: str,
+    current_user: CurrentUser,
+) -> RitualAttestationResponse:
+    """Approve a ticket-close ritual attestation (for REVIEW mode)."""
+    ritual_service = RitualService()
+    ritual, _issue, _project = await _human_ritual_decider(ritual_id, issue_id, current_user, "approve")
+
     if ritual.approval_mode != ApprovalMode.REVIEW:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -801,16 +868,16 @@ async def approve_issue_attestation(
 
     attestation = await ritual_service.get_issue_attestation(ritual.id, issue_id)
     if not attestation:
+        rejected = await ritual_service.outstanding_rejection(ritual.id, issue_id)
+        if rejected:
+            raise await _already_resolved("rejected", rejected.rejected_by_id, rejected.rejected_at)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No attestation found for this ritual",
         )
 
     if attestation.approved_at:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Attestation already approved",
-        )
+        raise await _already_resolved("approved", attestation.approved_by, attestation.approved_at)
 
     try:
         # Same duplicate-broadcast shape as CHT-1200 (attest): approve_for_issue()
@@ -824,6 +891,69 @@ async def approve_issue_attestation(
         )
 
     return await _build_attestation_response(attestation)
+
+
+async def _build_rejection_response(rejection, ritual) -> RitualRejectionResponse:
+    """One rejection with its principals loaded."""
+    return await fill_principals(_rejection_response(rejection, ritual))
+
+
+def _rejection_response(rejection, ritual) -> RitualRejectionResponse:
+    return RitualRejectionResponse(
+        id=rejection.id,
+        ritual_id=rejection.ritual_id,
+        issue_id=rejection.issue_id,
+        approval_mode=ritual.approval_mode,
+        attested_by=rejection.attested_by_id,
+        attested_at=rejection.attested_at,
+        attestation_note=rejection.attestation_note,
+        artifact_ref=rejection.artifact_ref,
+        rejected_by=rejection.rejected_by_id,
+        rejected_at=rejection.rejected_at,
+        note=rejection.note,
+        superseded_at=rejection.superseded_at,
+    )
+
+
+@router.post("/{ritual_id}/reject-issue/{issue_id}", response_model=RitualRejectionResponse)
+@writes
+async def reject_issue_attestation(
+    ritual_id: str,
+    issue_id: str,
+    reject_in: RitualRejectCreate,
+    current_user: CurrentUser,
+) -> RitualRejectionResponse:
+    """Reject a ticket-level GATE request or REVIEW attestation, with a
+    required reason (CHT-1606). Same permission as approve: a human team
+    admin.
+
+    The gate stays pending and the ticket does not move. A REVIEW
+    attestation is withdrawn, so the agent attests again; a GATE request
+    stays open until the requester asks again. The reason reaches the
+    attester (and its owner) in the inbox, the issue's activity, and the
+    ritual's pending view. 409 when it was already approved or rejected,
+    404 when nothing is waiting.
+    """
+    ritual, _issue, _project = await _human_ritual_decider(ritual_id, issue_id, current_user, "reject")
+
+    if ritual.approval_mode not in (ApprovalMode.GATE, ApprovalMode.REVIEW):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ritual '{ritual.name}' is not a GATE or REVIEW mode ritual. Only those wait on a human.",
+        )
+
+    try:
+        rejection = await RitualService().reject_for_issue(
+            ritual, issue_id, current_user.id, reject_in.note,
+        )
+    except RitualAlreadyResolvedError as e:
+        raise await _already_resolved(e.resolution, e.resolved_by, e.resolved_at)
+    except NothingToRejectError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return await _build_rejection_response(rejection, ritual)
 
 
 # ============================================================================

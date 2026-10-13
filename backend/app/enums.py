@@ -61,6 +61,7 @@ class ActivityType(str, Enum):
     REMOVED_FROM_SPRINT = "removed_from_sprint"
     RITUAL_ATTESTED = "ritual_attested"
     RITUAL_APPROVED = "ritual_approved"
+    RITUAL_REJECTED = "ritual_rejected"  # CHT-1606: a human sent a gate/review back; field_name=ritual, new_value=reason
     INTENT_OPENED = "intent_opened"
     INTENT_CLEARED = "intent_cleared"
     INTENT_CANCELED = "intent_canceled"
@@ -167,6 +168,7 @@ class InboxEntryKind(str, Enum):
     ASSIGNMENT = "assignment"               # An issue was assigned to this user
     REVIEW_REQUESTED = "review_requested"  # A REVIEW ritual was attested; an admin must approve it
     AGENT_STATUS = "agent_status"          # Someone else deactivated/reactivated an agent this user created, or a departing member's agent keys were revoked (admins)
+    GATE_REJECTED = "gate_rejected"        # A human rejected this user's (or their agent's) gate request or review attestation (CHT-1606)
 
 
 # --- Agent identity enums (CHT-1497) ---

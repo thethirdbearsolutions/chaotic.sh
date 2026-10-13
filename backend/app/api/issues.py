@@ -358,6 +358,32 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
         parts.append(f"{len(awaiting)} attested, awaiting human approval ({', '.join(awaiting)})")
     if gate:
         parts.append(f"{len(gate)} gate ritual{'s' if len(gate) != 1 else ''} only a human can complete ({', '.join(gate)})")
+    # CHT-1606: a human's rejection is what the caller must fix, so the
+    # refusal names it -- the outstanding ones, and the ones this attempt
+    # answered by asking again (already marked superseded, but the reason
+    # still has to reach whoever is retrying; PR #353 review finding 1).
+    answered = getattr(e, "answered_rejection_ids", set())
+    rejections = []
+    for r in rows:
+        rej = r.last_rejection
+        if rej is None or (rej.superseded_at is not None and rej.id not in answered):
+            continue
+        rejections.append({
+            "ritual_id": r.id,
+            "ritual": r.name,
+            "rejection_id": rej.id,
+            "rejected_by": rej.rejected_by,
+            "rejected_by_name": rej.rejected_by_name,
+            "rejected_at": rej.rejected_at.isoformat() if rej.rejected_at else None,
+            "note": rej.note,
+            "asked_again": rej.superseded_at is not None,
+        })
+    if rejections:
+        parts.extend(
+            f"{x['ritual']} was rejected by {x['rejected_by_name'] or 'a human'}: {x['note']}"
+            + (" (asked again; the approvers were notified)" if x["asked_again"] else "")
+            for x in rejections
+        )
     if unattested:
         action = f"Attest the unattested ones before {verb}."
     else:
@@ -375,6 +401,7 @@ async def _ritual_refusal_detail(e, error_code: str, lead: str, verb: str) -> di
         "unattested": unattested,
         "awaiting_approval": awaiting,
         "gate": gate,
+        "rejections": rejections,
     }
 
 

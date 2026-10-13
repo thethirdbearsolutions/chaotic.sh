@@ -84,6 +84,7 @@
       "ritual_complete",
       "ritual_list",
       "ritual_pending",
+      "ritual_reject",
       "sprint_add",
       "sprint_close",
       "sprint_current",
@@ -1498,6 +1499,48 @@
           }
         },
         "title": "ritual_pendingArguments",
+        "type": "object"
+      }
+    },
+    "ritual_reject": {
+      "description": "Reject a ticket's GATE request or REVIEW attestation, with a reason.\n\n    The counterpart of approving: a human team admin sends the ritual back\n    instead. The gate stays pending and the ticket does not move. A REVIEW\n    attestation is withdrawn, so the attester attests again; a GATE\n    request stays open until the requester asks again. The reason reaches\n    the attester (and an agent's owner) in the inbox, the ticket's\n    activity, and ritual_pending's `last_rejection`.\n\n    Like ritual_complete, the server allows this only for a human team\n    admin: expect a permission error otherwise. A ritual already approved\n    or already rejected is a conflict naming who decided it and when.\n    ",
+      "inputSchema": {
+        "properties": {
+          "identifier": {
+            "description": "Issue identifier of the ticket the ritual gates, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "note": {
+            "description": "Why it is rejected (required). The attester reads this to know what to fix.",
+            "title": "Note",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Project id, key, or name. Defaults to the current project.",
+            "title": "Project"
+          },
+          "ritual": {
+            "description": "Ritual name (or id), from ritual_pending/ritual_list.",
+            "title": "Ritual",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ritual",
+          "identifier",
+          "note"
+        ],
+        "title": "ritual_rejectArguments",
         "type": "object"
       }
     },

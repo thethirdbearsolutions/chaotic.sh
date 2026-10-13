@@ -15,7 +15,7 @@ import { escapeHtml, escapeAttr } from './utils.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects } from './projects.js';
 import { getPendingGates, setPendingGates, getCurrentTeam, getCurrentProject, getCurrentView, subscribe } from './state.js';
-import { completeGateRitual } from './rituals-view.js';
+import { completeGateRitual, showRejectTicketRitualModal } from './rituals-view.js';
 import { isApprovalsExplainerDismissed, dismissApprovalsExplainer as persistDismissExplainer } from './storage.js';
 import { viewIssue } from './issue-detail-view.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
@@ -494,6 +494,15 @@ function renderGateApprovals() {
         });
     });
 
+    // Reject buttons, GATE and REVIEW alike (CHT-1606): a modal asks for
+    // the required reason, then the list reloads.
+    container.querySelectorAll('.gate-reject-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const d = btn.dataset;
+            showRejectTicketRitualModal(d.ritualId, d.issueId, d.ritualName, () => loadGateApprovals());
+        });
+    });
+
     // Attach click handlers for sprint ritual buttons (CHT-905)
     container.querySelectorAll('.sprint-approve-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -540,6 +549,16 @@ function renderApprovalIssue(approvalIssue) {
         const modeLabel = isReview
             ? '<span class="badge badge-review">review</span>'
             : '<span class="badge badge-gate">gate</span>';
+        // CHT-1606: a rejected GATE request stays listed until the
+        // requester asks again; say so, and offer no second reject.
+        const rejected = !isReview && r.rejection_note;
+        const rejectionInfo = rejected
+            ? `<div class="gate-rejection-note"><strong>Rejected by ${escapeHtml(r.rejected_by_name || 'Someone')}</strong>${r.rejected_at ? ` (${formatRelativeTime(r.rejected_at)})` : ''}: ${escapeHtml(r.rejection_note)}<br><span class="text-muted">Waiting for the requester to ask again.</span></div>`
+            : '';
+        const rejectButton = `<button class="btn btn-small btn-secondary gate-reject-btn"
+                        data-ritual-id="${escapeAttr(r.ritual_id)}"
+                        data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
+                        data-ritual-name="${escapeAttr(r.ritual_name)}">Reject</button>`;
 
         const actionButtons = isReview
             ? `<div class="gate-ritual-actions">
@@ -557,8 +576,10 @@ function renderApprovalIssue(approvalIssue) {
                         data-requested-by="${escapeAttr(r.requested_by_name || '')}"
                         data-requested-at="${escapeAttr(r.requested_at || '')}"
                         data-attestation-note="${escapeAttr(r.attestation_note || '')}">Comment &amp; Approve</button>
+                    ${rejectButton}
                 </div>`
-            : `<button class="btn btn-small btn-primary gate-approve-btn"
+            : `<div class="gate-ritual-actions">
+                    <button class="btn btn-small btn-primary gate-approve-btn"
                     data-ritual-id="${escapeAttr(r.ritual_id)}"
                     data-issue-id="${escapeAttr(approvalIssue.issue_id)}"
                     data-ritual-name="${escapeAttr(r.ritual_name)}"
@@ -566,7 +587,9 @@ function renderApprovalIssue(approvalIssue) {
                     data-issue-identifier="${escapeAttr(approvalIssue.identifier)}"
                     data-issue-title="${escapeAttr(approvalIssue.title)}"
                     data-requested-by="${escapeAttr(r.requested_by_name || '')}"
-                    data-requested-at="${escapeAttr(r.requested_at || '')}">Complete</button>`;
+                    data-requested-at="${escapeAttr(r.requested_at || '')}">Complete</button>
+                    ${rejected ? '' : rejectButton}
+                </div>`;
 
         return `
             <div class="gate-ritual">
@@ -575,6 +598,7 @@ function renderApprovalIssue(approvalIssue) {
                     <span class="gate-ritual-prompt">${escapeHtml(r.ritual_prompt)}</span>
                     ${waitingInfo}
                     ${attestationNote}
+                    ${rejectionInfo}
                 </div>
                 ${actionButtons}
             </div>

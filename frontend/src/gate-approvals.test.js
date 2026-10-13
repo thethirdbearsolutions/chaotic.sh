@@ -46,6 +46,7 @@ vi.mock('./state.js', () => ({
 
 vi.mock('./rituals-view.js', () => ({
     completeGateRitual: vi.fn(),
+    showRejectTicketRitualModal: vi.fn(),
 }));
 
 vi.mock('marked', () => ({
@@ -330,6 +331,57 @@ describe('quick approve button rendering', () => {
         expect(api.approveTicketRitual).toHaveBeenCalledWith('r1', 'i1');
         expect(showToast).toHaveBeenCalledWith('Review ritual "Code Review" approved!', 'success');
         expect(showModal).not.toHaveBeenCalled();
+    });
+});
+
+describe('reject buttons (CHT-1606)', () => {
+    let storedGates;
+    beforeEach(() => {
+        storedGates = [];
+        setPendingGates.mockImplementation(v => { storedGates = v; });
+        getPendingGates.mockImplementation(() => storedGates);
+        getCurrentTeam.mockReturnValue({ id: 'team-1' });
+        getProjects.mockReturnValue([{ id: 'p1' }]);
+        api.getLimboStatus.mockResolvedValue({ in_limbo: false });
+        document.body.innerHTML = '<div id="approvals-list"></div>';
+    });
+
+    const item = (approval) => [{
+        issue_id: 'i1', identifier: 'CHT-1', title: 'T', status: 'in_progress', project_name: 'P',
+        pending_approvals: [{
+            ritual_id: 'r1', ritual_name: 'Signoff', ritual_prompt: 'OK?', requested_by_name: 'Bot',
+            requested_at: '2026-01-01', attestation_note: null, ...approval,
+        }],
+    }];
+
+    it('offers Reject for a review and a gate, and opens the reason modal', async () => {
+        const { showRejectTicketRitualModal } = await import('./rituals-view.js');
+        api.getPendingApprovals.mockResolvedValue([
+            ...item({ approval_mode: 'review', limbo_type: null }),
+            ...item({ approval_mode: 'gate', limbo_type: 'close', ritual_id: 'r2' }).map(i => ({ ...i, issue_id: 'i2' })),
+        ]);
+
+        await loadGateApprovals();
+
+        const buttons = document.querySelectorAll('.gate-reject-btn');
+        expect(buttons.length).toBe(2);
+        document.querySelector('.gate-reject-btn[data-ritual-id="r2"]').click();
+        expect(showRejectTicketRitualModal).toHaveBeenCalledWith('r2', 'i2', 'Signoff', expect.any(Function));
+    });
+
+    it('marks a rejected gate request and offers no second reject', async () => {
+        api.getPendingApprovals.mockResolvedValue(item({
+            approval_mode: 'gate', limbo_type: 'close',
+            rejected_by_name: 'Ethan', rejected_at: '2026-01-02', rejection_note: 'Not this sprint',
+        }));
+
+        await loadGateApprovals();
+
+        const container = document.getElementById('approvals-list');
+        expect(container.querySelector('.gate-rejection-note').textContent).toContain('Not this sprint');
+        expect(container.querySelector('.gate-rejection-note').textContent).toContain('Ethan');
+        expect(container.querySelectorAll('.gate-reject-btn').length).toBe(0);
+        expect(container.querySelectorAll('.gate-approve-btn').length).toBe(1);
     });
 });
 

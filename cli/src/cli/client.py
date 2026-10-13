@@ -230,6 +230,29 @@ class Client:
         gate = [r for r in pending if _is_dict(r) and not r.get("attestation") and r.get("approval_mode") == "gate"]
         todo = [r for r in pending if r not in awaiting and r not in gate]
 
+        # The server lists the rejections this refusal is about, including
+        # one this very attempt answered by asking again (already marked
+        # superseded on the row, but its reason is the point of the retry).
+        listed = {
+            x.get("ritual_id"): x for x in (detail.get("rejections") or []) if _is_dict(x)
+        }
+
+        def _rejected(r) -> str | None:
+            """The rejection's line (CHT-1606): a human sent this ritual
+            back; the reason is what to fix before trying again."""
+            if not _is_dict(r):
+                return None
+            rej = r.get("last_rejection") or {}
+            if r.get("id") in listed:
+                x = listed[r.get("id")]
+                by = principal_label(rej.get("rejecter"), x.get("rejected_by_name")) or "a human"
+                again = " (asked again; the approvers were notified)" if x.get("asked_again") else ""
+                return f"  Rejected by {by}: {x.get('note', '')}{again}"
+            if not rej or rej.get("superseded_at"):
+                return None
+            by = principal_label(rej.get("rejecter"), rej.get("rejected_by_name")) or "a human"
+            return f"  Rejected by {by}: {rej.get('note', '')}"
+
         lines = []
         for r in awaiting:
             att = r.get("attestation") or {}
@@ -241,6 +264,8 @@ class Client:
         for r in gate:
             name = r.get("name", "unknown")
             lines.append(f"Gate ritual (human completion only): {name}")
+            if _rejected(r):
+                lines.append(_rejected(r))
             lines.append(f"  A human runs: chaotic ritual complete {name} --ticket {issue_id}")
 
         if todo:
@@ -254,6 +279,8 @@ class Client:
                 lines.append(f"Pending ritual: {name}")
                 if prompt:
                     lines.append(f"  {prompt}")
+                if _rejected(r):
+                    lines.append(_rejected(r))
                 lines.append(
                     f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
                 )
@@ -789,6 +816,11 @@ class Client:
             "POST", f"/rituals/{ritual_id}/complete-issue/{issue_id}",
             self._attestation_body(note, document_id, url),
         )
+
+    def reject_ritual_for_issue(self, ritual_id: str, issue_id: str, note: str) -> dict:
+        """Send a ticket's GATE request or REVIEW attestation back with a
+        reason (CHT-1606). Human team admins only, like approve."""
+        return self._request("POST", f"/rituals/{ritual_id}/reject-issue/{issue_id}", {"note": note})
 
     # Ritual Groups
     def get_ritual_groups(self, project_id: str, skip: int | None = None, limit: int | None = None) -> list:

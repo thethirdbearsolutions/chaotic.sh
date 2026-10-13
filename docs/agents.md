@@ -202,7 +202,7 @@ one of them (there is deliberately no count here to rot, CHT-1395):
 - **sprints:** `sprint_current`, `sprint_list`, `sprint_close`,
   `sprint_transactions`, `sprint_add`, `sprint_remove`
 - **rituals:** `ritual_pending`, `ritual_list`, `ritual_attest`,
-  `ritual_complete`
+  `ritual_complete`, `ritual_reject`
 - **inbox:** `inbox_list`, `inbox_mark_read`, `inbox_mark_all_read` (what
   is waiting on you: @mentions, assignments, gates and reviews awaiting
   an admin -- the human-to-agent handoff channel, CHT-1338)

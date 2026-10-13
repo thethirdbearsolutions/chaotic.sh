@@ -88,6 +88,7 @@ TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
     "removed_from_sprint": ["removed_from_sprint"],
     "attested": ["ritual_attested"],
     "approved": ["ritual_approved"],
+    "rejected": ["ritual_rejected"],  # CHT-1606: a human sent a gate/review back
     "intent_opened": ["intent_opened"],
     "intent_cleared": ["intent_cleared"],
     "intent_canceled": ["intent_canceled"],
@@ -98,7 +99,7 @@ TYPE_TOKEN_TO_WIRE: dict[str, list[str]] = {
 specially (empty filter)."""
 
 _RITUAL_DEFAULT_TYPES = (
-    "attested,approved,intent_opened,intent_cleared,intent_canceled"
+    "attested,approved,rejected,intent_opened,intent_cleared,intent_canceled"
 )
 """Default --type filter for `await ritual` / `await rituals`. Also
 spelled out literally in those subcommands' docstrings — keep in sync."""
@@ -212,9 +213,9 @@ def _event_matches_scope(event: dict, scope: dict) -> bool:
             if "ritual_ticket_id" not in scope:
                 return False
             # ritual_ticket_id is enforced below.
-        elif activity_type == "ritual_attested":
-            # RITUAL_ATTESTED stores the ritual name in `field_name`
-            # (`new_value` holds the attestation note).
+        elif activity_type in ("ritual_attested", "ritual_rejected"):
+            # RITUAL_ATTESTED and RITUAL_REJECTED store the ritual name in
+            # `field_name` (`new_value` holds the note, or the reason).
             if event.get("field_name") != rn:
                 return False
         elif activity_type == "ritual_approved":
@@ -320,7 +321,7 @@ def _run_until_predicate(cmd: str, event: dict) -> bool:
 _TRANSITION_ACTIVITY_TYPES = frozenset({
     "status_changed", "priority_changed", "assigned", "unassigned",
     "labeled", "unlabeled", "moved_to_sprint", "removed_from_sprint",
-    "ritual_attested", "ritual_approved",
+    "ritual_attested", "ritual_approved", "ritual_rejected",
 })
 
 
@@ -1014,7 +1015,7 @@ def register(cli):
 
         \b
         Default --type filter:
-          attested,approved,intent_opened,intent_cleared,intent_canceled
+          attested,approved,rejected,intent_opened,intent_cleared,intent_canceled
         """
         team_id = _require_current_team()
         project_id = _require_current_project()
@@ -1046,7 +1047,7 @@ def register(cli):
 
         \b
         Default --type filter:
-          attested,approved,intent_opened,intent_cleared,intent_canceled
+          attested,approved,rejected,intent_opened,intent_cleared,intent_canceled
         """
         team_id = _require_current_team()
         project_id = _require_current_project()

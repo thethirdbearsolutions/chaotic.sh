@@ -152,7 +152,7 @@ def _indexes(path: str, table: str) -> set[str]:
 def test_creates_the_store_and_changes_nothing_else(at_before):
     before = _snapshot(at_before)
 
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
 
     assert _snapshot(at_before) == before
     assert _fks(at_before) == EXPECTED_FKS
@@ -195,7 +195,7 @@ def _seed_store(c) -> None:
 
 
 def test_a_token_digest_names_one_row(at_before):
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         _seed_store(c)
@@ -213,7 +213,7 @@ def test_a_token_digest_names_one_row(at_before):
 
 
 def test_tokens_go_with_their_principal_and_audit_survives_the_actor(at_before):
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         _seed_store(c)
@@ -230,7 +230,7 @@ def test_tokens_go_with_their_principal_and_audit_survives_the_actor(at_before):
 def test_the_revocation_audit_outlives_its_team_and_seq_is_unique(at_before):
     """Events are never deleted by a cascade: MAX(seq) is the revocation
     epoch, and it must never go backwards."""
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         _seed_store(c)
@@ -244,7 +244,7 @@ def test_the_revocation_audit_outlives_its_team_and_seq_is_unique(at_before):
 
 
 def test_deleting_a_client_takes_its_sessions_and_tokens(at_before):
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
     with closing(sqlite3.connect(at_before)) as c:
         c.execute("PRAGMA foreign_keys = ON")
         _seed_store(c)
@@ -276,7 +276,7 @@ os._exit(0)
 
 def test_downgrade_drops_exactly_the_store(at_before):
     before = _snapshot(at_before)
-    _migrate(at_before)
+    _migrate(at_before, target="0024_token_store")
     result = subprocess.run(
         [sys.executable, "-c", _ROLLBACK, at_before],
         cwd=BACKEND, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,

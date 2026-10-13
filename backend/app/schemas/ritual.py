@@ -241,6 +241,58 @@ class RitualAttestationCreate(BaseModel):
     url: str | None = None
 
 
+class RitualRejectCreate(BaseModel):
+    """The body of a reject (CHT-1606). The reason is required: it is what
+    the attesting agent reads to know what to fix."""
+
+    note: str = Field(min_length=1, max_length=10_000)
+
+    @field_validator("note")
+    @classmethod
+    def note_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("A rejection needs a reason")
+        return v
+
+
+class RitualRejectionResponse(HasPrincipals, BaseModel):
+    """A rejected gate request or review attestation (CHT-1606).
+
+    ``attested_*`` describe what was rejected: the REVIEW attestation that
+    was sent back (deleted on reject, so this is its only record), or for a
+    GATE the request that is still waiting. ``superseded_at`` is set once
+    the attester tried again or the gate was completed anyway.
+    """
+
+    principal_fields: ClassVar[dict[str, str]] = {"attester": "attested_by", "rejecter": "rejected_by"}
+    principal_name_fields: ClassVar[dict[str, str]] = {
+        "attester": "attested_by_name", "rejecter": "rejected_by_name",
+    }
+
+    id: str
+    ritual_id: str
+    issue_id: str
+    approval_mode: ApprovalMode
+    attested_by: str | None = None
+    attested_by_name: str | None = None
+    attested_at: DateTimeUTC | None = None
+    attestation_note: str | None = None
+    artifact_ref: str | None = None
+    rejected_by: str | None = None
+    rejected_by_name: str | None = None
+    rejected_at: DateTimeUTC
+    note: str
+    superseded_at: DateTimeUTC | None = None
+    attester: PrincipalSummary | None = None
+    rejecter: PrincipalSummary | None = None
+
+    @field_validator("approval_mode", mode="before")
+    @classmethod
+    def coerce_approval_mode(cls, v):
+        return _coerce_enum(ApprovalMode, v)
+
+
 class RitualAttestationResponse(HasPrincipals, BaseModel):
     """Schema for ritual attestation response."""
 
@@ -281,6 +333,11 @@ class PendingRitualResponse(BaseModel):
     conditions: dict | None = None  # Django-style conditions
     # If attested but pending approval
     attestation: RitualAttestationResponse | None = None
+    # The newest rejection of this ritual on this ticket (CHT-1606), so the
+    # attester reads why before trying again. Kept after a re-attest
+    # (superseded_at set) as context for the reviewer; None for sprint
+    # rituals and for a ritual never rejected.
+    last_rejection: RitualRejectionResponse | None = None
 
     @field_validator("trigger", mode="before")
     @classmethod
@@ -364,7 +421,9 @@ class TicketRitualsStatusResponse(BaseModel):
 class RitualAttestationHistoryItem(HasPrincipals, BaseModel):
     """Schema for attestation history response."""
 
-    principal_fields: ClassVar[dict[str, str]] = {"attester": "attested_by", "approver": "approved_by"}
+    principal_fields: ClassVar[dict[str, str]] = {
+        "attester": "attested_by", "approver": "approved_by", "rejecter": "rejected_by",
+    }
 
     id: str
     ritual_name: str
@@ -384,6 +443,14 @@ class RitualAttestationHistoryItem(HasPrincipals, BaseModel):
     approved_by: str | None = None
     attester: PrincipalSummary | None = None
     approver: PrincipalSummary | None = None
+    # A rejection row (CHT-1606): what was sent back, by whom and why. A
+    # rejected GATE request has no attestation note; its attested_at is
+    # when the gated transition was requested.
+    rejected_by: str | None = None
+    rejected_by_name: str | None = None
+    rejected_at: DateTimeUTC | None = None
+    rejection_note: str | None = None
+    rejecter: PrincipalSummary | None = None
 
 
 class PendingGateRitualInfo(BaseModel):
@@ -422,6 +489,12 @@ class PendingApprovalRitualInfo(BaseModel):
     requested_by_name: str  # Who is waiting (GATE: who tried, REVIEW: who attested)
     requested_at: str | None  # ISO timestamp
     attestation_note: str | None  # The attestation content (REVIEW only)
+    # GATE only (CHT-1606): an outstanding rejection of this request. The
+    # gate stays listed (a human may still complete it), marked as sent
+    # back until the requester asks again.
+    rejected_by_name: str | None = None
+    rejected_at: str | None = None
+    rejection_note: str | None = None
 
 
 class PendingApprovalIssueResponse(BaseModel):

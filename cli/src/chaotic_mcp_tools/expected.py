@@ -51,6 +51,7 @@ EXPECTED_TOOLS: dict[str, bool] = {
     "ritual_complete": True,
     "ritual_list": True,
     "ritual_pending": True,
+    "ritual_reject": True,
     "server_info": False,
     "sprint_add": True,
     "sprint_close": True,

@@ -14,7 +14,7 @@ from app.oxyde_models.issue import (
     OxydeBudgetTransaction, OxydeIssue, OxydeIssueActivity, OxydeIssueComment,
     OxydeIssueDescriptionRevision, OxydeTicketLimbo, OxydeTicketLimboBlocker,
 )
-from app.oxyde_models.ritual import OxydeRitualAttestation
+from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 from app.enums import AgentKind
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
@@ -263,6 +263,9 @@ class AgentService:
             # SET NULL already, but each still loses its attribution.
             "ritual attestations": await OxydeRitualAttestation.objects.filter(attested_by=agent_id).count(),
             "ritual approvals": await OxydeRitualAttestation.objects.filter(approved_by=agent_id).count(),
+            # CHT-1606, SET NULL like the attestation columns above.
+            "ritual rejections received": await OxydeRitualRejection.objects.filter(attested_by_id=agent_id).count(),
+            "ritual rejections": await OxydeRitualRejection.objects.filter(rejected_by_id=agent_id).count(),
             # Who cleared a ritual gate, and who resolved each blocker
             # (SET NULL; CHT-1467's review).
             "ritual gate clearances": await OxydeTicketLimbo.objects.filter(cleared_by_id=agent_id).count(),
