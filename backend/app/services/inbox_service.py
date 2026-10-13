@@ -328,21 +328,28 @@ class InboxService:
         )
         await self._broadcast(session.team_id, "created", entry)
 
-    async def notify_push_device_added(self, *, user_id: str, device, created: bool, credential_label: str) -> None:
+    async def add_push_device_entry(
+        self, *, user_id: str, device, created: bool, credential_label: str,
+    ) -> OxydeInboxEntry | None:
         """A device was registered for this person's push notifications,
         or an existing one's endpoint changed (CHT-1604). Whoever holds any
         of their credentials can register one, so they are told, in one
         entry in the first of their teams (an inbox entry needs a team; a
-        person in no team has no inbox and gets none)."""
+        person in no team has no inbox and gets none).
+
+        Written in the registration's own transaction, so a device is
+        never registered without its notice; the caller broadcasts the
+        entry after commit (``broadcast_created``)."""
         team_ids = await self.current_team_ids(user_id)
         if not team_ids:
-            return
+            return None
         from urllib.parse import urlsplit
 
         name = device.label or device.platform or "a device"
         host = urlsplit(device.endpoint).hostname or "an unknown host"
-        title = f"New device for push notifications: {name}" if created else (
-            f"Push notifications for {name} now go to a new address"
+        # Quoted: the label is the registrant's own text.
+        title = f'New device for push notifications: "{name}"' if created else (
+            f'Push notifications for "{name}" now go to a new address'
         )
         entry = await OxydeInboxEntry.objects.create(
             recipient_user_id=user_id,
@@ -356,7 +363,11 @@ class InboxService:
                 "and revoke the API key or session it was registered with."
             ),
         )
-        await self._broadcast(team_ids[0], "created", entry)
+        return entry
+
+    async def broadcast_created(self, entry: OxydeInboxEntry) -> None:
+        """Announce an entry written inside a transaction, once it committed."""
+        await self._broadcast(entry.team_id, "created", entry)
 
     async def notify_mentions(
         self, *, content: str, team_id: str, author, issue=None, document=None,

@@ -162,6 +162,9 @@ _METADATA = tuple(ipaddress.ip_network(n) for n in (
     "168.63.129.16/32", "100.100.100.200/32",
 ))
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# "This network" (only 0.0.0.0 itself is unspecified) and IPv6's
+# deprecated site-local range: nothing a push endpoint lives on.
+_NEVER = (ipaddress.ip_network("0.0.0.0/8"), ipaddress.ip_network("fec0::/10"))
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
@@ -187,7 +190,7 @@ def is_permitted_private_address(address: str) -> bool:
         embedded = _embedded_ipv4(ip)
         if embedded is not None and not is_permitted_private_address(str(embedded)):
             return False
-    if any(ip in net for net in _METADATA if net.version == ip.version):
+    if any(ip in net for net in (*_METADATA, *_NEVER) if net.version == ip.version):
         return False
     if ip.is_loopback:  # ::1 sits in IPv6's reserved ::/8
         return True
@@ -317,6 +320,8 @@ class PushService:
         A new device, or a new endpoint for an existing one, is reported
         to the person in their inbox (PUSH_DEVICE_ADDED), so a device they
         did not register does not go unnoticed."""
+        from app.services.inbox_service import InboxService
+
         if registration.transport is not PushTransport.WEB_PUSH:  # pragma: no cover -- the only member
             raise PushRegistrationError("unsupported_push_transport", "only web_push is supported")
         if not registration.p256dh or not registration.auth:
@@ -372,18 +377,19 @@ class PushService:
                         **fields,
                     )
                     created, endpoint_changed = True, True
+                notice = None
+                if endpoint_changed:
+                    notice = await InboxService().add_push_device_entry(
+                        user_id=user_id, device=device, created=created, credential_label=credential_label,
+                    )
         except IntegrityError:
             # Two registrations of the same installation or endpoint at once.
             raise PushRegistrationError(
                 "push_registration_conflict", "a registration of this device is already in progress; retry",
                 status_code=409,
             ) from None
-        if endpoint_changed:
-            from app.services.inbox_service import InboxService
-
-            await InboxService().notify_push_device_added(
-                user_id=user_id, device=device, created=created, credential_label=credential_label,
-            )
+        if notice is not None:
+            await InboxService().broadcast_created(notice)
         return device, created
 
     async def unregister(self, user_id: str, installation_id: str) -> bool:

@@ -601,7 +601,7 @@ class TestCredentialBinding:
             recipient_user_id=test_user.id, kind=InboxEntryKind.PUSH_DEVICE_ADDED,
         ).all()
         assert len(entries) == 1 and entries[0].team_id == test_team.id
-        assert "Pixel 9" in entries[0].title and "ntfy.example.net" in entries[0].body
+        assert '"Pixel 9"' in entries[0].title and "ntfy.example.net" in entries[0].body
         assert "a web or CLI sign-in" in entries[0].body
 
         body = _body()
@@ -669,6 +669,7 @@ class TestPrivatePolicy:
         "https://[fd00:ec2::254]/x", "https://100.100.100.200/x", "https://168.63.129.16/x",
         "https://169.254.170.2/v2", "https://0.0.0.0/x", "https://[::]/x", "https://224.0.0.1/x",
         "https://240.0.0.1/x", "https://[::ffff:169.254.169.254]/x", "https://[64:ff9b::a9fe:a9fe]/x",
+        "https://0.1.2.3/x", "https://[fec0::1]/x",
         "https://meta.example.net/x", "https://lan-and-meta.example.net/x",
     ])
     async def test_refused_even_when_private_is_allowed(self, private_allowed, endpoint):
@@ -756,3 +757,18 @@ class TestVapidFingerprint:
         with pytest.raises(RuntimeError, match="VAPID_PRIVATE_KEY"):
             async with lifespan(app):
                 pass  # pragma: no cover
+
+
+async def test_a_failed_notice_registers_nothing(client, test_team, test_user, auth_headers, monkeypatch):
+    """Re-review finding 1: the device and its "New device" notice are one
+    transaction, so a failure cannot leave a device nobody was told of."""
+    from app.services.inbox_service import InboxService
+
+    async def boom(self, **kwargs):
+        raise RuntimeError("inbox is down")
+
+    monkeypatch.setattr(InboxService, "add_push_device_entry", boom)
+    with pytest.raises(RuntimeError):
+        await client.put(f"/api/push/devices/{INSTALL}", json=_body(), headers=auth_headers)
+    assert await OxydePushDevice.objects.count() == 0
+    assert await OxydeInboxEntry.objects.count() == 0
