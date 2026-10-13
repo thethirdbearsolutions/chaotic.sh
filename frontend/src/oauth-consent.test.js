@@ -74,6 +74,7 @@ describe('isSafeRedirect', () => {
         'java\tscript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'DATA:text/html,x',
         'vbscript:msgbox(1)', 'file:///etc/passwd', 'blob:https://app.example/x', 'about:blank', 'myapp:/cb',
         '/relative', '', null, undefined,
+        'Com.Example.App:/cb', 'COM.EXAMPLE.APP:/cb', 'HTTPS://app.example/cb', 'Https://app.example/cb',
     ])('refuses %s', (url) => {
         expect(isSafeRedirect(url)).toBe(false);
     });
