@@ -436,10 +436,11 @@ class TestRegisterOnly:
 
     async def test_mcp_writes_are_refused_and_reads_allowed(self, client, registrar, test_project):
         from app.mcp_server import context, tools
+        from .mcp_principal import api_key_principal
 
         registrar_id, _ = registrar
         user = await OxydeUser.objects.get(id=registrar_id)
-        token = context.current_mcp_user.set(user)
+        token = context.current_mcp_principal.set(api_key_principal(user))
         try:
             refused = await tools.issue_create(title="as the harness", project=test_project.id)
             assert refused["error"]["error_code"] == "registrar_cannot_write", refused
@@ -447,14 +448,14 @@ class TestRegisterOnly:
             listed = await tools.issue_list(project=test_project.id)
             assert "error" not in listed, listed
         finally:
-            context.current_mcp_user.reset(token)
+            context.current_mcp_principal.reset(token)
 
     def test_every_mcp_backend_method_is_classified(self):
         """A backend method that is not a read must refuse registrars. The
         wrapper judges a method by the API function it names, with the
         same @reads/@writes marker as that function's REST route
-        (CHT-1561). This pins that every public coroutine is either a
-        resolver (reads only) or wrapped, that each wrapped method's one
+        (CHT-1561). This pins that every public coroutine is wrapped (a
+        resolver as a read, CHT-1562), that each wrapped method's one
         ``app.api`` call is the function it names, and the split itself,
         so a new write can't hide behind a read's marker unnoticed. It
         checks the ``<module>_api.<fn>(`` call only: a method that also
@@ -471,9 +472,13 @@ class TestRegisterOnly:
         }
         writes, reads = set(), set()
         for name, fn in inspect.getmembers(InProcessBackend, inspect.iscoroutinefunction):
-            if name.startswith("_") or name in resolvers:
+            if name.startswith("_"):
                 continue
-            assert hasattr(fn, "__wrapped__"), f"{name} is not behind _translated, so no registrar check"
+            assert hasattr(fn, "__wrapped__"), f"{name} is not behind _translated, so no registrar or scope check"
+            if name in resolvers:
+                # Resolvers are reads, checked like one (CHT-1562 review, B1).
+                assert fn.api_access is Access.READ and fn.api_fn is None, name
+                continue
             if fn.api_fn is not None:
                 body = inspect.getsource(fn.__wrapped__)
                 module = fn.api_fn.__module__.rsplit(".", 1)[-1]

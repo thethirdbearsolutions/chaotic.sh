@@ -687,3 +687,39 @@ class TestRegistrarOverHTTP:
 
         read = await _tool_call(client, headers, "issue_list", {"project": test_project.id})
         assert read.status_code == 200 and "registrar_cannot_write" not in read.text
+
+
+class TestScopedPrincipalOverHTTP:
+    """The /mcp wrapper binds the resolver's Principal, scopes and all,
+    not a re-wrapped user (CHT-1562 review, S2). The resolver stands in
+    for an OAuth verifier, which does not exist yet (CHT-1520)."""
+
+    @pytest.fixture
+    def resolves_to(self, monkeypatch):
+        from app.auth import credentials
+
+        def bind(user, scopes):
+            async def resolve(token):
+                return credentials.Principal(
+                    user=user, holder_user_id=user.id,
+                    kind=credentials.CredentialKind.OAUTH_ACCESS, scopes=frozenset(scopes),
+                )
+            monkeypatch.setattr(credentials.mcp_resolver, "resolve", resolve)
+        return bind
+
+    async def test_read_scope_over_http(self, client, test_user, test_project, resolves_to):
+        resolves_to(test_user, {"chaotic:read"})
+        headers = {**_MCP_HEADERS, "Authorization": "Bearer stand-in"}
+
+        write = await _tool_call(client, headers, "issue_create", {"title": "x", "project": test_project.id})
+        assert write.status_code == 200, write.text
+        assert "policy_denied" in write.text
+
+        read = await _tool_call(client, headers, "issue_list", {"project": test_project.id})
+        assert read.status_code == 200 and "policy_denied" not in read.text, read.text
+
+    async def test_write_scope_over_http(self, client, test_user, test_project, resolves_to):
+        resolves_to(test_user, {"chaotic:write"})
+        headers = {**_MCP_HEADERS, "Authorization": "Bearer stand-in"}
+        write = await _tool_call(client, headers, "issue_create", {"title": "x", "project": test_project.id})
+        assert write.status_code == 200 and "policy_denied" not in write.text, write.text
