@@ -1,7 +1,7 @@
 """System commands for self-hosted server management.
 
 The system commands manage the lifecycle of a local Chaotic server installation:
-install, status, start, stop, reconfigure, logs, upgrade, backup.
+install, status, start, stop, reconfigure, config, logs, upgrade, backup.
 
 There is no standalone `migrate` command -- migrations run automatically
 inside install/upgrade -- and no `uninstall` command.
@@ -21,6 +21,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,8 @@ from rich.console import Console
 from rich.markup import escape
 
 from .config import GLOBAL_CONFIG_DIR, DEFAULT_PORT, set_api_url
+from . import server_settings
+from .server_settings import SETTINGS_KEY, stored_settings
 
 
 def _confirm_action(prompt: str, **kwargs) -> bool:
@@ -211,12 +214,11 @@ def load_server_json() -> dict:
 
 
 def save_server_json(data: dict):
-    """Save server metadata to server.json."""
+    """Save server metadata to server.json: atomically and 0600 from the
+    moment it exists, since it holds SECRET_KEY and a crash mid-write
+    must not leave a truncated file (PR #349 review)."""
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SERVER_JSON, "w") as f:
-        json.dump(data, f, indent=2)
-    # Restrict permissions since server.json contains SECRET_KEY
-    os.chmod(SERVER_JSON, 0o600)
+    _write_private_file(SERVER_JSON, json.dumps(data, indent=2))
 
 
 def generate_secret_key() -> str:
@@ -259,12 +261,23 @@ def get_service_file_path() -> Path:
         raise RuntimeError(f"Unsupported OS: {os_type}")
 
 
-def generate_systemd_service(port: int, secret_key: str, host: str = "127.0.0.1") -> str:
+def _setting_items(settings: dict[str, str] | None) -> list[tuple[str, str]]:
+    """The operator's settings (server.json "settings", CHT-1592) in the
+    order every service file lists them. Only names and values that
+    stored_settings() accepts get here, so none needs quoting."""
+    return sorted(stored_settings({SETTINGS_KEY: settings or {}}).items())
+
+
+def generate_systemd_service(port: int, secret_key: str, host: str = "127.0.0.1",
+                             settings: dict[str, str] | None = None) -> str:
     """Generate systemd user service file content.
 
     Paths are quoted to handle spaces and special characters safely.
     systemd uses a minimal PATH, so we explicitly include common tool paths.
+    `settings` (server.json's "settings") follow as one Environment= line
+    each; with none, the unit is exactly what it was before CHT-1592.
     """
+    setting_lines = "".join(f"Environment={name}={value}\n" for name, value in _setting_items(settings))
     home = Path.home()
     # Quote paths for systemd (handles spaces and special chars)
     project_dir = shlex.quote(str(PROJECT_DIR))
@@ -291,13 +304,14 @@ Environment=DATABASE_PATH={database_path}
 Environment=HOST={host}
 Environment=PORT={port}
 Environment=SECRET_KEY={secret_key}
-
+{setting_lines}
 [Install]
 WantedBy=default.target
 """
 
 
-def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1") -> str:
+def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1",
+                           settings: dict[str, str] | None = None) -> str:
     """Generate launchd plist file content.
 
     Note: launchd doesn't expand ~ in paths, so we use absolute paths.
@@ -322,6 +336,9 @@ def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1") 
     logs_dir = html.escape(str(LOGS_DIR))
     # Escape secret key for XML in case it contains special chars
     secret_key_escaped = html.escape(secret_key)
+    setting_entries = "".join(
+        f"        <key>{html.escape(name)}</key>\n        <string>{html.escape(value)}</string>\n"
+        for name, value in _setting_items(settings))
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -357,7 +374,7 @@ def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1") 
         <string>{port}</string>
         <key>SECRET_KEY</key>
         <string>{secret_key_escaped}</string>
-    </dict>
+{setting_entries}    </dict>
     <key>StandardOutPath</key>
     <string>{logs_dir}/server.log</string>
     <key>StandardErrorPath</key>
@@ -367,24 +384,25 @@ def generate_launchd_plist(port: int, secret_key: str, host: str = "127.0.0.1") 
 """
 
 
-def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1"):
-    """Write the appropriate service file for the current OS."""
+def write_service_file(port: int, secret_key: str, host: str = "127.0.0.1",
+                       settings: dict[str, str] | None = None):
+    """Write the appropriate service file for the current OS, with the
+    operator's `settings` (server.json "settings"; pass them, or a
+    rewrite drops them)."""
     os_type = get_os()
     service_path = get_service_file_path()
     service_path.parent.mkdir(parents=True, exist_ok=True)
 
     if os_type == "linux":
-        content = generate_systemd_service(port, secret_key, host)
+        content = generate_systemd_service(port, secret_key, host, settings)
     elif os_type == "darwin":
-        content = generate_launchd_plist(port, secret_key, host)
+        content = generate_launchd_plist(port, secret_key, host, settings)
     else:
         raise RuntimeError(f"Unsupported OS: {os_type}")
 
-    with open(service_path, "w") as f:
-        f.write(content)
-
-    # Restrict permissions - service files contain SECRET_KEY
-    os.chmod(service_path, 0o600)
+    # Atomic and 0600 throughout (service files contain SECRET_KEY): a
+    # failed write leaves the previous file, never a truncated one.
+    _write_private_file(service_path, content)
 
     return service_path
 
@@ -518,10 +536,13 @@ def _parse_service(content: str, os_type: str) -> _ParsedService | None:
     return None
 
 
-def _rewrite_blockers(have: _ParsedService, want: _ParsedService) -> list[str]:
+def _rewrite_blockers(have: _ParsedService, want: _ParsedService,
+                      owned: frozenset[str] = frozenset()) -> list[str]:
     """Why the file on disk must not be replaced by the regenerated one,
     naming settings but never their values. Empty means the rewrite only
-    adds settings and changes none the file already makes."""
+    adds settings and changes none the file already makes, other than
+    the environment variables in `owned`: the ones `system config` was
+    just told to set or unset, which it may change or drop."""
     reasons = list(have.unsafe)
     # A comment may hold anything (an old secret, a note the owner needs),
     # and the regenerated file has none: never drop one.
@@ -543,7 +564,7 @@ def _rewrite_blockers(have: _ParsedService, want: _ParsedService) -> list[str]:
     changed = {key for (section, key), values in have.directives.items()
                if key not in _SERVICE_IDENTITY_KEYS and want.directives.get((section, key)) != values}
     changed |= {f"Environment {var}" for var, value in have.env.items()
-                if var not in _SERVICE_IDENTITY_KEYS and want.env.get(var) != value}
+                if var not in _SERVICE_IDENTITY_KEYS and var not in owned and want.env.get(var) != value}
     if changed:
         reasons.append(f"the rewrite would drop or change {', '.join(sorted(changed))}")
     return reasons
@@ -642,7 +663,9 @@ def _daemon_reload() -> bool:
         return False
 
 
-def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFileUpdate:
+def reconcile_service_file(port: int, host: str, secret_key: str,
+                           settings: dict[str, str] | None = None,
+                           owned: frozenset[str] = frozenset()) -> ServiceFileUpdate:
     """Bring an existing service file up to what this CLI generates
     (CHT-1476), so a fix to the generated unit (e.g. TimeoutStopSec)
     reaches installs made before it. Only `system install` and
@@ -655,9 +678,11 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     `systemctl --user daemon-reload`. Never raises. Anything it cannot
     vouch for (no secret in server.json, no file, a symlink, an
     unreadable or unparseable file, a blocker) is "skipped" with the
-    reason. Customisations belong in a systemd drop-in
-    (chaotic.service.d/), which is never touched and keeps the file
-    rewritable.
+    reason. Server settings belong in server.json (`chaotic system
+    config set`, CHT-1592), which `settings` carries into the file;
+    anything else in a systemd drop-in (chaotic.service.d/), which is
+    never touched and keeps the file rewritable. `owned` names the
+    settings the caller is changing on purpose (see _rewrite_blockers).
     """
     os_type = get_os()
     if os_type not in ("linux", "darwin"):
@@ -677,10 +702,13 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     except (OSError, UnicodeDecodeError) as e:
         return ServiceFileUpdate("skipped", path, reason=f"could not read {path}: {e}")
 
-    if os_type == "linux":
-        desired = generate_systemd_service(port, secret_key, host)
-    else:
-        desired = generate_launchd_plist(port, secret_key, host)
+    try:
+        if os_type == "linux":
+            desired = generate_systemd_service(port, secret_key, host, settings)
+        else:
+            desired = generate_launchd_plist(port, secret_key, host, settings)
+    except Exception as e:  # noqa: BLE001 -- "never raises": upgrade must reach start_service
+        return ServiceFileUpdate("skipped", path, reason=f"could not generate it ({type(e).__name__})")
     if current == desired:
         return ServiceFileUpdate("unchanged", path)
 
@@ -688,7 +716,7 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     want = _parse_service(desired, os_type)
     if have is None or want is None:
         return ServiceFileUpdate("skipped", path, reason=f"could not parse {path}")
-    blockers = _rewrite_blockers(have, want)
+    blockers = _rewrite_blockers(have, want, owned)
     if blockers:
         return ServiceFileUpdate("skipped", path, reason=f"{path}: {'; '.join(blockers)}")
 
@@ -697,6 +725,8 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
         _write_private_file(path, desired)
     except OSError as e:
         return ServiceFileUpdate("skipped", path, reason=f"could not write {path}: {e}")
+    except ValueError as e:  # UnicodeEncodeError: name the kind, never the text
+        return ServiceFileUpdate("skipped", path, reason=f"could not write {path} ({type(e).__name__})")
     if os_type == "linux" and not _daemon_reload():
         # Not fatal: start_service() runs daemon-reload again before
         # starting, and fails loudly (with a rollback) if it cannot.
@@ -1472,7 +1502,10 @@ def system():
 @click.option("--no-start", is_flag=True, help="Install but don't start the server")
 @click.option("--repo", default="https://github.com/thethirdbearsolutions/chaotic.sh.git", help="Git repository URL")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
-def system_install(git_version, host, port, no_start, repo, yes):
+@click.option("--config", "config_pairs", multiple=True, metavar="NAME=VALUE",
+              help="A server setting, e.g. APP_BASE_URL=https://chaotic.example.com (repeatable; "
+                   "see 'chaotic system config')")
+def system_install(git_version, host, port, no_start, repo, yes, config_pairs):
     """Install and start a local Chaotic server.
 
     This command clones the Chaotic repository, sets up the database,
@@ -1507,6 +1540,8 @@ def system_install(git_version, host, port, no_start, repo, yes):
         console.print("Version must be a valid git tag or branch name.")
         raise SystemExit(1)
 
+    settings = _parse_install_settings(config_pairs)
+
     # Check if already installed
     if is_server_installed():
         console.print("[yellow]Chaotic server is already installed.[/yellow]")
@@ -1529,6 +1564,9 @@ def system_install(git_version, host, port, no_start, repo, yes):
         console.print(f"[bold]Database:[/bold] {DATABASE_PATH}")
         console.print(f"[bold]Host:[/bold] {host}")
         console.print(f"[bold]Port:[/bold] {port}")
+        for name, value in sorted(settings.items()):
+            console.print(f"[bold]{name}:[/bold] {escape(server_settings.display_value(name, value))}",
+                          highlight=False)
         if not _confirm_action("\nProceed with installation?"):
             console.print("[yellow]Installation cancelled.[/yellow]")
             raise SystemExit(0)
@@ -1612,17 +1650,20 @@ def system_install(git_version, host, port, no_start, repo, yes):
     secret_key = generate_secret_key()
 
     # Save server metadata (including secret key)
-    save_server_json({
+    server_info = {
         "host": host,
         "port": port,
         "secret_key": secret_key,
         "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    })
+    }
+    if settings:
+        server_info[SETTINGS_KEY] = settings
+    save_server_json(server_info)
     console.print("  [dim]Stored in ~/.chaotic/server.json[/dim]")
 
     # Write service file
     console.print(f"Installing {'systemd' if os_type == 'linux' else 'launchd'} service...")
-    service_path = write_service_file(port, secret_key, host)
+    service_path = write_service_file(port, secret_key, host, settings)
     console.print(f"  [dim]{service_path}[/dim]")
 
     # Start service
@@ -1665,6 +1706,29 @@ def system_install(git_version, host, port, no_start, repo, yes):
     console.print("[bold]Next steps:[/bold]")
     console.print("  chaotic quickstart     # Interactive setup (recommended)")
     console.print("  chaotic init           # Browser-based setup")
+
+
+def _parse_install_settings(pairs) -> dict[str, str]:
+    """install --config NAME=VALUE pairs, validated as 'system config set'
+    validates them (without --force) before anything is installed."""
+    settings: dict[str, str] = {}
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        name = name.strip().upper()
+        problem = None if sep else "--config: expected NAME=VALUE"  # never echo it: it may be a secret
+        problem = problem or server_settings.name_problem(name)
+        if not problem:
+            value, problem = server_settings.normalize(name, value)
+        if problem:
+            console.print(f"[red]{escape(problem)}[/red]")
+            raise SystemExit(1)
+        settings[name] = value
+    errors, warnings = server_settings.check({SETTINGS_KEY: settings})
+    if errors:
+        _print_problems(errors, [])
+        raise SystemExit(1)
+    _print_problems([], warnings)
+    return settings
 
 
 @system.command("status")
@@ -1874,7 +1938,7 @@ def system_reconfigure(host, port, yes):
     console.print("Updated server.json.")
 
     # Regenerate service file
-    service_path = write_service_file(new_port, secret_key, new_host)
+    service_path = write_service_file(new_port, secret_key, new_host, server_settings.valid_settings(server_info))
     console.print(f"Regenerated service file: {service_path}")
 
     # Restart if running
@@ -1985,9 +2049,11 @@ def _report_service_file_update(update: ServiceFileUpdate) -> None:
         console.print("  [dim]Service file is up to date.[/dim]")
     else:
         console.print(f"  [yellow]Service file not updated: {escape(update.reason)}.[/yellow]")
-        console.print("  [dim]It is used as it is. Settings of your own belong in a drop-in "
-                      "(systemctl --user edit chaotic) so future upgrades can update the unit.[/dim]"
-                      if get_os() == "linux" else "  [dim]It is used as it is.[/dim]")
+        console.print("  [dim]It is used as it is. Server settings such as OAUTH_ENABLED belong in "
+                      "'chaotic system config set' (see 'chaotic system config list').[/dim]")
+        if get_os() == "linux":
+            console.print("  [dim]Other settings of your own belong in a drop-in "
+                          "(systemctl --user edit chaotic) so future upgrades can update the unit.[/dim]")
 
 
 def _roll_back(
@@ -2281,8 +2347,25 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # install and reconfigure were the only writers, so fixes to the unit
     # never reached existing installs. No-op when nothing differs.
     console.print("Checking service file...")
-    service_update = reconcile_service_file(port, host, server_info.get("secret_key", ""))
+    # Settings never stop an upgrade (PR #349 review): an entry the server
+    # would refuse is named and left out of the regenerated file (which
+    # then keeps the file as it is if that would drop it), and anything
+    # unexpected is reported by type, never value, before the start.
+    try:
+        bad_settings = server_settings.invalid_settings(server_info)
+        settings_errors, _ = server_settings.check(server_info)
+        service_update = reconcile_service_file(
+            port, host, server_info.get("secret_key", ""), settings=server_settings.valid_settings(server_info))
+    except Exception as e:  # noqa: BLE001
+        bad_settings, settings_errors = [], []
+        service_update = ServiceFileUpdate("skipped", reason=f"checking server settings failed ({type(e).__name__})")
     _report_service_file_update(service_update)
+    if bad_settings:
+        console.print(f"  [yellow]Left out of the service file (invalid in server.json): "
+                      f"{escape(', '.join(bad_settings))}. See 'chaotic system config check'.[/yellow]")
+    # Including a setting saved with `system config set --force` the
+    # server cannot start with: say so before the start fails.
+    _print_problems(settings_errors, [])
 
     # Start server, whatever state the upgrade found it in (CHT-1475): an
     # upgrade ends with the server running the new commit and verified, or
@@ -2455,3 +2538,308 @@ def system_backup(list_mode, restore_timestamp):
     else:
         console.print("[red]Failed to create backup.[/red]")
         raise SystemExit(1)
+
+
+# --- Server settings (CHT-1592) -------------------------------------------
+#
+# server.json's "settings" map is the one supported place for server
+# settings such as OAUTH_ENABLED and APP_BASE_URL. Every service file
+# writer renders it, so a setting survives reconfigure and upgrade; a
+# setting is never read back from the service file.
+
+
+def _dropin_dir() -> Path:
+    return get_systemd_user_dir() / f"{SYSTEMD_SERVICE}.d"
+
+
+def _dropin_settings() -> dict[str, list[str]]:
+    """Variable name -> the systemd drop-ins that set it. A drop-in is
+    applied after the unit, so it wins over server.json."""
+    if get_os() != "linux":
+        return {}
+    found: dict[str, list[str]] = {}
+    try:
+        files = sorted(_dropin_dir().glob("*.conf"))
+    except OSError:
+        return {}
+    for conf in files:
+        try:
+            parsed = _parse_systemd_unit(conf.read_text())
+        except (OSError, UnicodeDecodeError):
+            parsed = None
+        if parsed is None:
+            found.setdefault("?", []).append(conf.name)
+            continue
+        for var in parsed.env:
+            found.setdefault(var, []).append(conf.name)
+    return found
+
+
+def _service_file_env() -> dict[str, str] | None:
+    """The environment the service file on disk sets, or None if there is
+    no readable, parseable one."""
+    os_type = get_os()
+    if os_type not in ("linux", "darwin"):
+        return None
+    try:
+        parsed = _parse_service(get_service_file_path().read_text(), os_type)
+    except (OSError, UnicodeDecodeError, RuntimeError):
+        return None
+    return parsed.env if parsed else None
+
+
+def _dotenv_settings() -> dict[str, str]:
+    """What backend/.env in the install sets (the server's fallback: any
+    variable the service file sets wins over it)."""
+    try:
+        return server_settings.parse_dotenv_names((PROJECT_DIR / "backend" / ".env").read_text())
+    except (OSError, UnicodeDecodeError):
+        return {}
+
+
+def _settings_notes(settings: dict[str, str]) -> list[str]:
+    """Where the service file, a drop-in or backend/.env disagrees with
+    server.json about a setting. Names only, never values."""
+    notes = []
+    unit_env = _service_file_env()
+    if unit_env is not None:
+        for name in sorted(settings):
+            if unit_env.get(name) != settings[name]:
+                notes.append(f"{name}: the service file does not say what server.json says. "
+                             f"Run 'chaotic system config set {name} ...' again to rewrite it.")
+        for name in sorted(set(unit_env) - set(settings) - set(_IDENTITY_ENV_KEYS) - {"PATH"}):
+            notes.append(f"{name}: set in the service file by hand, not in server.json, so "
+                         "'chaotic system upgrade' will not update the file while it is there. "
+                         f"Adopt it with 'chaotic system config set {name} <value>'"
+                         f"{'' if name in server_settings.KNOWN else ' --force'}.")
+    for name, files in sorted(_dropin_settings().items()):
+        if name == "?":
+            notes.append(f"Could not read drop-in {', '.join(files)} in {_dropin_dir()}.")
+        elif name in settings or name in server_settings.KNOWN:
+            notes.append(f"{name}: also set in drop-in {', '.join(files)}, which overrides server.json.")
+    dotenv = _dotenv_settings()
+    for name in sorted(dotenv):
+        if name in settings:
+            notes.append(f"{name}: also set in {PROJECT_DIR / 'backend' / '.env'}, where the service "
+                         "file's value overrides it. Remove it there to avoid confusion.")
+        elif name in server_settings.KNOWN:
+            notes.append(f"{name}: set in {PROJECT_DIR / 'backend' / '.env'}, not in server.json. "
+                         f"Move it with 'chaotic system config set {name} <value>' and delete the line.")
+    return notes
+
+
+def _print_problems(errors: list[str], warnings: list[str]) -> None:
+    for error in errors:
+        console.print(f"[red]Error:[/red] {escape(error)}")
+    for warning in warnings:
+        console.print(f"[yellow]Warning:[/yellow] {escape(warning)}")
+
+
+def _restart_hint() -> None:
+    if is_service_running():
+        console.print("Restart the server to apply it: chaotic system stop && chaotic system start")
+    else:
+        console.print("[dim]The server is not running; it applies at the next 'chaotic system start'.[/dim]")
+
+
+def _apply_settings(server_info: dict, settings: dict[str, str], owned: set[str], force: bool) -> None:
+    """Save `settings` to server.json and rewrite the service file with
+    them, refusing (unless forced) a combination the server would not
+    start with. Exits non-zero if the service file could not be
+    rewritten, since the server will not see the change."""
+    candidate = {**server_info, SETTINGS_KEY: settings}
+    raw = server_info.get(SETTINGS_KEY)
+    dropped = sorted(name for name in (raw if isinstance(raw, dict) else {})
+                     if name not in settings and name not in owned)
+    errors, warnings = server_settings.check(candidate)
+    if errors and not force:
+        _print_problems(errors, [])
+        unit_env = _service_file_env() or {}
+        for name in sorted(n for n in set(unit_env) & set(server_settings.KNOWN) - set(settings)
+                           if any(n in error for error in errors)):
+            # Adopting hand-added lines: the server runs fine with this
+            # one, server.json just does not have it yet.
+            console.print(f"{name} is set in the service file by hand; adopt it first with "
+                          f"'chaotic system config set {name} <value>'.")
+        console.print("Nothing was changed. (--force saves it anyway.)")
+        raise SystemExit(1)
+    save_server_json(candidate)
+    console.print("Saved to server.json.")
+    for name in dropped:
+        console.print(f"[yellow]Removed invalid server.json setting {escape(repr(name))}[/yellow] "
+                      "(it was never written to the service file).")
+    _print_problems(errors, warnings)
+
+    update = reconcile_service_file(
+        server_info.get("port", DEFAULT_PORT), server_info.get("host", "127.0.0.1"),
+        server_info.get("secret_key", ""), settings=server_settings.valid_settings(candidate),
+        owned=frozenset(owned))
+    if update.status == "skipped":
+        console.print(f"[yellow]Service file not updated: {escape(update.reason)}.[/yellow]")
+        console.print("The server will not see this setting until the service file carries it. "
+                      "See 'chaotic system config list'.")
+        raise SystemExit(1)
+    if update.status == "updated":
+        console.print(f"Updated service file {update.path} (previous kept at {update.backup}).")
+    else:
+        console.print("[dim]Service file already says this.[/dim]")
+    for name in sorted(owned):
+        files = _dropin_settings().get(name)
+        if files:
+            console.print(f"[yellow]Warning:[/yellow] {name} is also set in drop-in {', '.join(files)}, "
+                          "which overrides this.")
+    _restart_hint()
+
+
+def _require_installed() -> dict:
+    """server.json of an installed server, read strictly: `set`/`unset`
+    rewrite the whole file, so one that does not parse, or has lost its
+    secret_key, is refused rather than replaced (PR #349 review)."""
+    if not is_server_installed():
+        console.print("[red]Chaotic server is not installed.[/red]")
+        console.print("Run 'chaotic system install' first (it takes --config NAME=VALUE).")
+        raise SystemExit(1)
+    try:
+        server_info = json.loads(SERVER_JSON.read_text())
+        problem = None if isinstance(server_info, dict) and server_info.get("secret_key") else "it has no secret_key"
+    except FileNotFoundError:
+        problem = "it does not exist"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        problem = f"it cannot be read ({type(e).__name__})"
+    if problem:
+        console.print(f"[red]{SERVER_JSON}: {problem}.[/red]")
+        console.print("Nothing was changed. Fix it or restore it from a backup first; it holds the "
+                      "server's SECRET_KEY, host and port (the service file has the same values).")
+        raise SystemExit(1)
+    return server_info
+
+
+@system.group("config")
+def system_config():
+    """Show and change server settings such as OAUTH_ENABLED and APP_BASE_URL.
+
+    Settings are kept in ~/.chaotic/server.json and written into the
+    service file (systemd unit / launchd plist) as environment variables,
+    so they survive 'system reconfigure' and 'system upgrade'. Values of
+    secret settings are never printed.
+    """
+
+
+@system_config.command("list")
+def system_config_list():
+    """List settings: what server.json sets, and the defaults of the rest."""
+    server_info = load_server_json()
+    settings = stored_settings(server_info)
+    width = max(len(name) for name in [*server_settings.KNOWN, *settings])
+    console.print("[bold]Server settings[/bold] (~/.chaotic/server.json)")
+    for name in sorted(set(server_settings.KNOWN) | set(settings)):
+        if name in settings:
+            shown = server_settings.display_value(name, settings[name])
+            console.print(f"  {name:<{width}}  {escape(shown)}", highlight=False)
+        else:
+            default = server_settings.KNOWN[name].default
+            console.print(f"  {name:<{width}}  [dim]not set (server default: {escape(default or '<empty>')})[/dim]",
+                          highlight=False)
+    notes = _settings_notes(settings) if is_server_installed() else []
+    if notes:
+        console.print()
+        for note in notes:
+            console.print(f"[yellow]Note:[/yellow] {escape(note)}")
+    errors, warnings = server_settings.check(server_info)
+    if errors or warnings:
+        console.print()
+        _print_problems(errors, warnings)
+
+
+@system_config.command("get")
+@click.argument("name")
+def system_config_get(name):
+    """Print one setting's value (exit 1 if it is not set).
+
+    A secret setting's value is never printed, only whether it is set.
+    """
+    name = name.upper()
+    settings = stored_settings(load_server_json())
+    if name not in settings:
+        known = server_settings.KNOWN.get(name)
+        default = f"; the server default is {known.default or '<empty>'}" if known else ""
+        click.echo(f"{name} is not set in server.json{default}", err=True)
+        raise SystemExit(1)
+    if server_settings.is_secret(name):
+        click.echo(f"{name} is set (secret; not shown)", err=True)
+        return
+    click.echo(settings[name])
+
+
+@system_config.command("set")
+@click.argument("name")
+@click.argument("value")
+@click.option("--force", is_flag=True,
+              help="Set a name this CLI does not know, or save despite errors the server would not start with")
+def system_config_set(name, value, force):
+    """Set a server setting and write it into the service file.
+
+    \b
+    Examples:
+      chaotic system config set APP_BASE_URL https://chaotic.example.com
+      chaotic system config set OAUTH_ENABLED true
+      chaotic system config set MCP_CAPABILITY_URL_ENABLED false
+      chaotic system config set SMTP_PASSWORD - < password-file
+
+    A VALUE of - reads it from standard input (one trailing newline is
+    dropped), which keeps a secret out of shell history and the process
+    list. Takes effect when the server restarts.
+    """
+    name = name.upper()
+    server_info = _require_installed()
+    if value == "-":
+        value = sys.stdin.read()
+        value = value[:-1] if value.endswith("\n") else value
+        value = value[:-1] if value.endswith("\r") else value
+    problem = server_settings.name_problem(name, force)
+    if problem:
+        console.print(f"[red]{escape(problem)}[/red]")
+        raise SystemExit(1)
+    value, problem = server_settings.normalize(name, value)
+    if problem:
+        console.print(f"[red]{escape(problem)}[/red]")
+        raise SystemExit(1)
+    settings = stored_settings(server_info)
+    settings[name] = value
+    console.print(f"{name} = {escape(server_settings.display_value(name, value))}", highlight=False)
+    _apply_settings(server_info, settings, {name}, force)
+
+
+@system_config.command("unset")
+@click.argument("name")
+@click.option("--force", is_flag=True, help="Remove it even though the server would not start without it")
+def system_config_unset(name, force):
+    """Remove a setting, so the server uses its default again."""
+    name = name.upper()
+    server_info = _require_installed()
+    settings = stored_settings(server_info)
+    raw = server_info.get(SETTINGS_KEY)
+    if name not in settings and not (isinstance(raw, dict) and name in raw):
+        console.print(f"[yellow]{escape(name)} is not set in server.json.[/yellow]")
+        return
+    settings.pop(name, None)
+    _apply_settings(server_info, settings, {name}, force)
+
+
+@system_config.command("check")
+def system_config_check():
+    """Check the settings for mistakes (exit 1 on an error).
+
+    An error is something the server would not start with, such as
+    OAUTH_ENABLED=true without an https APP_BASE_URL.
+    """
+    server_info = load_server_json()
+    errors, warnings = server_settings.check(server_info)
+    notes = _settings_notes(stored_settings(server_info)) if is_server_installed() else []
+    _print_problems(errors, warnings)
+    for note in notes:
+        console.print(f"[yellow]Note:[/yellow] {escape(note)}")
+    if errors:
+        raise SystemExit(1)
+    if not (warnings or notes):
+        console.print("[green]Settings look right.[/green]")
