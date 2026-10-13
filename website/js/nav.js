@@ -31,6 +31,13 @@
         if (isOpen() && !header.contains(event.target)) setOpen(false);
     });
 
+    // Tabbing (or otherwise moving focus) out of the header closes it too.
+    header.addEventListener('focusout', function (event) {
+        if (isOpen() && event.relatedTarget && !header.contains(event.relatedTarget)) {
+            setOpen(false);
+        }
+    });
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && isOpen()) {
             setOpen(false);

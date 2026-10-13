@@ -1385,15 +1385,33 @@ section[id] {
 
 /* Responsive */
 @media (max-width: 900px) {
-    .nav-toggle {
+    /* The collapse needs js/nav.js. <html> starts as .no-js and an inline
+       script in <head> swaps it to .js, so without JS the links stay
+       visible, wrapped under the logo, and the header scrolls away. */
+    .no-js .header {
+        position: static;
+    }
+
+    .no-js .header-content {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    .no-js .nav {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.25rem;
+    }
+
+    .js .nav-toggle {
         display: flex;
     }
 
-    .nav {
+    .js .nav {
         display: none;
     }
 
-    body.nav-open .nav {
+    .js body.nav-open .nav {
         display: flex;
         position: absolute;
         top: 100%;
@@ -1410,13 +1428,13 @@ section[id] {
         overflow-y: auto;
     }
 
-    body.nav-open .nav .nav-link {
+    .js body.nav-open .nav .nav-link {
         font-size: 1rem;
         padding: 0.75rem 0.25rem;
         border-bottom: 1px solid var(--border-color);
     }
 
-    body.nav-open .nav .btn {
+    .js body.nav-open .nav .btn {
         margin-top: 1rem;
         padding: 0.75rem 1rem;
     }

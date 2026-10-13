@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="no-js">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>document.documentElement.className = document.documentElement.className.replace(/\bno-js\b/, 'js');</script>
     <title>Chaotic - Agent-First Project Infrastructure</title>
     <meta name="description" content="Stop managing agents. Start designing their world. Chaotic is agent-first project infrastructure. You build the physics. Agents learn the rules.">
     <link rel="icon" href="favicon.ico" sizes="48x48">
@@ -534,7 +535,7 @@ claude mcp add --transport http chaotic \
            1. Add a new <li class="release"> at the top of the list below with
               the version, the date from the CHANGELOG heading, and two to four
               one-line highlights from that entry.
-           2. Keep the four most recent entries; delete the oldest.
+           2. Keep up to four entries, the most recent first; delete the oldest.
            3. Update the version in the install section's "Latest release" line.
          Link targets stay the same: the full notes live in cli/CHANGELOG.md. -->
     <section class="section" id="whats-new">
@@ -555,23 +556,35 @@ claude mcp add --transport http chaotic \
                 </li>
                 <li class="release">
                     <div class="release-meta">
-                        <span class="release-version">0.1.0a17</span>
-                        <time datetime="2026-07-11">Jul 11, 2026</time>
+                        <span class="release-version">0.1.0a19</span>
+                        <time datetime="2026-09-06">Sep 6, 2026</time>
                     </div>
                     <ul class="release-notes">
-                        <li>Keyboard navigation across the web UI: roving focus and <code>j</code>/<code>k</code> in every list, sprint and epic views, and inline field dropdowns.</li>
+                        <li><strong>Eight new MCP tools</strong>: the inbox, issue and doc revision history, and <code>server_info</code> to check what a server is running.</li>
+                        <li>Claim and close refusals report each ritual's attestation state, and off-scale estimates come back as warnings.</li>
+                        <li><code>chaotic system upgrade</code> refuses silent downgrades, and <code>chaotic system backup</code> is consistent against a running server.</li>
+                        <li>Two database migrations; sprint dates are now <code>activated_at</code>/<code>closed_at</code>, stamped by the server. MCP clients should reconnect.</li>
                     </ul>
                 </li>
                 <li class="release">
                     <div class="release-meta">
-                        <span class="release-version">0.1.0a16</span>
-                        <time datetime="2026-07-05">Jul 5, 2026</time>
+                        <span class="release-version">0.1.0a18</span>
+                        <time datetime="2026-09-05">Sep 5, 2026</time>
                     </div>
                     <ul class="release-notes">
-                        <li><strong>MCP servers</strong>: <code>chaotic mcp</code> over stdio and <code>/mcp</code> over Streamable HTTP.</li>
-                        <li><code>chaotic issue ready</code> and claim leases, so a crashed agent can't wedge a ticket.</li>
-                        <li>An inbox for everything awaiting you, revision history for issues and docs, and <code>chaotic await</code>.</li>
-                        <li>Project templates and starter packs: <code>rigor</code>, <code>consulting</code>, <code>human-led</code>, <code>solo-agent</code>.</li>
+                        <li><strong>The MCP toolset grows from 10 to 30 tools</strong>: docs, relations, labels, sprints, rituals and projects.</li>
+                        <li><code>chaotic agent keys create</code> mints or rotates an agent's API key, and the inbox gains an archive.</li>
+                        <li>Ritual and estimate exemptions need an interactive human; a script running as you is gated like an agent.</li>
+                        <li>A stuck close intent expires and can be taken over, so a failed non-interactive close no longer wedges a ticket.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
+                        <span class="release-version">0.1.0a17</span>
+                        <time datetime="2026-07-11">Jul 11, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li>Keyboard navigation across the web UI: roving focus and <code>j</code>/<code>k</code> in every list, sprint and epic views, and inline field dropdowns. (Tagged but never published to PyPI; it reached PyPI with a18.)</li>
                     </ul>
                 </li>
             </ol>
