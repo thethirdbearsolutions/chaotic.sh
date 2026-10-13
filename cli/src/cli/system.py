@@ -1394,7 +1394,18 @@ def run_migrations(fake_initial: bool = False) -> tuple[bool, str]:
                 "To fix, re-run with --fake-initial:\n"
                 "  chaotic system upgrade --fake-initial --yes"
             )
-        return False, f"Migration failed: {e.stderr}"
+        return False, f"Migration failed:\n{_command_output(e)}"
+
+
+def _command_output(error: subprocess.CalledProcessError) -> str:
+    """Everything a failed command printed. `oxyde migrate` reports its
+    errors (a migration's refusal and what to fix) on stdout, not stderr,
+    so reporting stderr alone showed an operator nothing (CHT-1548)."""
+    parts = [
+        text.strip() for text in (error.stdout, error.stderr)
+        if isinstance(text, str) and text.strip()
+    ]
+    return "\n".join(parts) or f"exit status {error.returncode}"
 
 
 def rebuild_frontend() -> tuple[bool, str]:
@@ -1587,7 +1598,8 @@ def system_install(git_version, host, port, no_start, repo, yes):
     console.print("Installing dependencies and running migrations...")
     success, message = run_migrations()
     if not success:
-        console.print(f"[red]{message}[/red]")
+        # escape(): the message carries the command's own output.
+        console.print(f"[red]{escape(message)}[/red]")
         raise SystemExit(1)
     console.print(f"  [dim]{message}[/dim]")
 
@@ -2239,7 +2251,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     console.print("Syncing dependencies and running migrations...")
     success, message = run_migrations(fake_initial=fake_initial)
     if not success:
-        console.print(f"[red]{message}[/red]")
+        # escape(): the message carries the command's own output.
+        console.print(f"[red]{escape(message)}[/red]")
         console.print("[yellow]Code has been updated but migrations did not complete.[/yellow]")
         console.print("[yellow]Fix the issue above, then run 'chaotic system upgrade --yes' again.[/yellow]")
         if was_running:

@@ -312,6 +312,53 @@ class TestUpgradeFromStopped:
         assert result.exit_code == 1
         assert "Server is DOWN. Start it with 'chaotic system start'" in _flat(result.output)
 
+    def test_the_migrations_own_error_reaches_the_operator(self):
+        """The message is the command's output, which may contain square
+        brackets: printed as text, not as Rich markup (CHT-1548)."""
+        message = "Migration failed:\n❌ Error applying migrations: 0021 [dim] delete it (DELETE FROM api_keys)"
+        result, _ = _upgrade(
+            is_service_running=dict(return_value=False),
+            service_state=dict(return_value="inactive"),
+            run_migrations=dict(return_value=(False, message)),
+        )
+
+        assert result.exit_code == 1
+        assert "0021 [dim] delete it (DELETE FROM api_keys)" in result.output
+
+
+class TestRunMigrationsReportsOxydesOutput:
+    """`oxyde migrate` prints its errors on stdout. Reporting only stderr
+    left "Migration failed: " and nothing else, hiding a migration's
+    refusal and what to fix, 0020's among them (CHT-1548)."""
+
+    def _fail_migrate_with(self, **streams):
+        def run(cmd, **kwargs):
+            if cmd[:4] == ["uv", "run", "--frozen", "oxyde"]:
+                raise subprocess.CalledProcessError(1, cmd, **streams)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(system, "run_command", side_effect=run), \
+                patch.object(system, "reinstall_cli", return_value=(True, "ok")):
+            return system.run_migrations()
+
+    def test_stdout_is_reported(self):
+        ok, message = self._fail_migrate_with(
+            output="❌ Error applying migrations: 0020 cannot add a foreign key ...; nothing was changed\n",
+            stderr="",
+        )
+        assert ok is False
+        assert "0020 cannot add a foreign key" in message
+
+    def test_both_streams_are_reported(self):
+        ok, message = self._fail_migrate_with(output="from stdout\n", stderr="from stderr\n")
+        assert ok is False
+        assert "from stdout" in message and "from stderr" in message
+
+    def test_silence_still_says_something(self):
+        ok, message = self._fail_migrate_with(output=None, stderr=None)
+        assert ok is False
+        assert message == "Migration failed:\nexit status 1"
+
 
 class TestUpgradeCancelled:
     """Declining the confirmation after the server was stopped restarts it
