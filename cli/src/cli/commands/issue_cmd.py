@@ -3,6 +3,7 @@ import sys
 
 import click
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -54,6 +55,42 @@ class IssueTypeChoice(click.ParamType):
             f"  Aliases: {aliases_str}",
             param, ctx,
         )
+
+
+def _text(value, default="-"):
+    """A table-safe string for one relation field: never raises, escapes markup."""
+    if value is None or value == "":
+        return default
+    return escape(str(value))
+
+
+def _relation_row(r) -> tuple:
+    """One `issue relations` table row from an IssueRelationResponse dict.
+
+    The wire shape (backend/app/schemas/issue.py IssueRelationResponse) is
+    flat: ``related_issue_identifier`` / ``related_issue_title`` /
+    ``related_issue_status``, with ``relation_type`` already read from this
+    issue's side (incoming blocks arrive as ``blocked_by``). There is no
+    nested ``related_issue`` object; reading one is what crashed CHT-1431.
+    Every lookup tolerates a missing or wrong-typed field, so a malformed
+    row renders as "-" rather than a traceback.
+    """
+    if not isinstance(r, dict):
+        r = {}
+    rel_id = r.get("id")
+    rel_id = f"{rel_id[:8]}..." if isinstance(rel_id, str) and len(rel_id) > 8 else rel_id
+    rel_type = r.get("relation_type")
+    rel_type = rel_type.replace("_", " ").title() if isinstance(rel_type, str) else rel_type
+    status = r.get("related_issue_status")
+    status = status.replace("_", " ").title() if isinstance(status, str) else status
+    return (
+        _text(rel_id),
+        _text(rel_type),
+        _text(r.get("related_issue_identifier") or r.get("related_issue_id")),
+        _text(r.get("related_issue_title"), default=""),
+        _text(status),
+        _text(r.get("direction")),
+    )
 
 
 def register(cli):
@@ -556,6 +593,12 @@ def register(cli):
                     iss['sub_issues'] = _client().get_sub_issues(iss["id"])
                 except m.APIError:
                     iss['sub_issues'] = []
+                # Relations are not on the issue payload; fetch them like
+                # sub_issues so `view --json` shows blockers (CHT-1431).
+                try:
+                    iss['relations'] = _client().get_relations(iss["id"]) or []
+                except m.APIError:
+                    iss['relations'] = []
                 m.output_json(iss)
             else:
                 issues = [_client().get_issue_by_identifier(i) for i in identifiers]
@@ -618,6 +661,18 @@ def register(cli):
                     else:
                         console.print(f"  \u2022 [dim]{c.get('author_name', 'User')}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
+
+            # Show relations (CHT-1431): blockers matter before claiming.
+            try:
+                relations = _client().get_relations(iss['id']) or []
+                if relations:
+                    console.print("\n[bold]Relations:[/bold]")
+                    for r in relations:
+                        _, rel_type, related, title, status, _ = _relation_row(r)
+                        suffix = f": {title}" if title else ""
+                        console.print(f"  • {rel_type} {related}{suffix} [dim]({status})[/dim]")
+            except m.APIError:
+                pass
 
             # Show ritual attestation notes
             try:
@@ -1008,15 +1063,12 @@ def register(cli):
         table.add_column("Relation ID", style="dim")
         table.add_column("Type")
         table.add_column("Related Issue")
+        table.add_column("Title")
+        table.add_column("Status")
         table.add_column("Direction")
 
         for r in relations:
-            table.add_row(
-                r["id"][:8] + "...",
-                r["relation_type"].replace("_", " ").title(),
-                r["related_issue"]["identifier"],
-                r["direction"]
-            )
+            table.add_row(*_relation_row(r))
 
         console.print(table)
 

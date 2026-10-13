@@ -102,6 +102,31 @@ class TestIssueSubIssues:
         assert 'CHT-101' in result.output
 
 
+# The wire shape of GET /issues/{id}/relations (IssueRelationResponse):
+# flat related_issue_* fields, no nested related_issue object (CHT-1431).
+WIRE_RELATION = {
+    "id": "rel-uuid-123456789",
+    "issue_id": "issue-uuid-123",
+    "related_issue_id": "issue-uuid-200",
+    "relation_type": "blocks",
+    "created_at": "2026-09-13T13:57:58.332760Z",
+    "related_issue_identifier": "CHT-200",
+    "related_issue_title": "Downstream work",
+    "related_issue_status": "backlog",
+    "direction": "outgoing",
+}
+WIRE_INCOMING = {
+    **WIRE_RELATION,
+    "id": "rel-uuid-987654321",
+    "related_issue_id": "issue-uuid-50",
+    "relation_type": "blocked_by",
+    "related_issue_identifier": "CHT-50",
+    "related_issue_title": "Upstream work",
+    "related_issue_status": "in_progress",
+    "direction": "incoming",
+}
+
+
 class TestIssueRelations:
     """Tests for issue relations command."""
 
@@ -110,19 +135,48 @@ class TestIssueRelations:
         from cli.main import cli, client
 
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=[WIRE_RELATION, WIRE_INCOMING])
+
+        result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert 'CHT-200' in result.output
+        assert 'CHT-50' in result.output
+        assert 'Blocked By' in result.output
+        assert 'Traceback' not in result.output
+
+    def test_relations_malformed_rows_do_not_crash(self, cli_runner, mock_issue):
+        """CHT-1431: a row missing fields (or not a dict) renders as '-', no traceback."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
         client.get_relations = MagicMock(return_value=[
-            {
-                "id": "rel-uuid-123456789",
-                "relation_type": "blocks",
-                "related_issue": {"identifier": "CHT-200"},
-                "direction": "outgoing",
-            },
+            {"id": "short"},
+            {"relation_type": None, "related_issue": {"identifier": "OLD-1"}},
+            {"id": 12345, "relation_type": 7, "related_issue_title": "[bold]x[/bold]"},
+            "not-a-dict",
+            None,
         ])
 
         result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-100'])
 
-        assert result.exit_code == 0
-        assert 'CHT-200' in result.output
+        assert result.exit_code == 0, result.output
+        assert result.exception is None
+        assert '[bold]x[/bold]' in result.output  # markup escaped, not interpreted
+
+    def test_relations_falls_back_to_related_issue_id(self, cli_runner, mock_issue):
+        """No identifier on the row: show the related issue id instead of '-'."""
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.get_relations = MagicMock(return_value=[
+            {**WIRE_RELATION, "related_issue_identifier": None},
+        ])
+
+        result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-100'])
+
+        assert result.exit_code == 0, result.output
+        assert 'issue-uuid-200' in result.output
 
     def test_relations_empty(self, cli_runner, mock_issue):
         """issue relations with no relations shows message."""
@@ -141,11 +195,12 @@ class TestIssueRelations:
         from cli.main import cli, client
 
         client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
-        client.get_relations = MagicMock(return_value=[])
+        client.get_relations = MagicMock(return_value=[WIRE_RELATION])
 
         result = cli_runner.invoke(cli, ['issue', 'relations', 'CHT-100', '--json'])
 
         assert result.exit_code == 0
+        assert json.loads(result.output) == [WIRE_RELATION]
 
 
 class TestIssueBlock:

@@ -228,6 +228,59 @@ class TestRelations:
         relations = api_client.get_relations(issue1["id"])
         assert not any(r["id"] == relation["id"] for r in relations)
 
+    def test_relations_shape_end_to_end(self, api_client, test_team, test_project):
+        """CHT-1431: pin the relations wire shape and drive the real CLI over it.
+
+        GET /issues/{id}/relations returns flat related_issue_* fields
+        (IssueRelationResponse), read from the asked-about issue's side;
+        `issue relations` (table and --json) and `issue view --json` must
+        both consume that shape. Includes a cross-project relation in the
+        same team, the case the bug was first seen on.
+        """
+        import json
+        from click.testing import CliRunner
+        from cli.main import cli as chaotic_cli
+        from app.schemas.issue import IssueRelationResponse
+
+        other_project = api_client.create_project(
+            team_id=test_team["id"], name="E2E Other", key="OTH"
+        )
+        blocker = api_client.create_issue(test_project["id"], "Blocker")
+        target = api_client.create_issue(test_project["id"], "Target")
+        downstream = api_client.create_issue(other_project["id"], "Downstream")
+        api_client.create_relation(blocker["id"], target["id"], "blocks")
+        api_client.create_relation(target["id"], downstream["id"], "relates_to")
+
+        relations = api_client.get_relations(target["id"])
+        assert all(set(r) == set(IssueRelationResponse.model_fields) for r in relations)
+        by_identifier = {r["related_issue_identifier"]: r for r in relations}
+        assert set(by_identifier) == {blocker["identifier"], downstream["identifier"]}
+        incoming = by_identifier[blocker["identifier"]]
+        assert incoming["relation_type"] == "blocked_by"
+        assert incoming["direction"] == "incoming"
+        assert incoming["related_issue_id"] == blocker["id"]
+        assert incoming["related_issue_title"] == "Blocker"
+        outgoing = by_identifier[downstream["identifier"]]
+        assert outgoing["relation_type"] == "relates_to"
+        assert outgoing["direction"] == "outgoing"
+        assert outgoing["related_issue_status"] == "backlog"
+
+        runner = CliRunner()
+        table = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"]])
+        assert table.exit_code == 0, table.output
+        assert table.exception is None
+        assert blocker["identifier"] in table.output
+        assert downstream["identifier"] in table.output
+        assert "Blocked By" in table.output
+
+        as_json = runner.invoke(chaotic_cli, ["issue", "relations", target["identifier"], "--json"])
+        assert as_json.exit_code == 0, as_json.output
+        assert json.loads(as_json.output) == relations
+
+        view = runner.invoke(chaotic_cli, ["issue", "view", target["identifier"], "--json"])
+        assert view.exit_code == 0, view.output
+        assert json.loads(view.output)["relations"] == relations
+
 
 class TestComments:
     def test_create_comment(self, api_client, test_project):
