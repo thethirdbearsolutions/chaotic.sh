@@ -66,7 +66,7 @@ async def test_an_agent_with_authored_work_blocks_its_owners_deletion(
     assert "Idle" not in detail
     for agent in (worker, idle):
         assert await service.get_by_id(agent.id) is not None, "nothing may be deleted on refusal"
-        assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id).count() == 1
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == 1
     assert await OxydeUser.objects.filter(id=test_user.id).count() == 1
     assert await OxydeTicketLimbo.objects.filter(id=limbo.id).count() == 1
     assert await OxydeIssueComment.objects.filter(author_id=worker.id).count() == 1
@@ -167,8 +167,8 @@ async def test_a_human_whose_agents_authored_nothing_is_deleted_with_them(
     assert await OxydeUser.objects.filter(id=test_user.id).count() == 0
     for agent in agents:
         assert await OxydeUser.objects.filter(id=agent.id).count() == 0
-        assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id).count() == 0
-    assert await OxydeAPIKey.objects.filter(user_id=test_user.id).count() == 0
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id).count() == 0
+    assert await OxydeAPIKey.objects.filter(holder_user_id=test_user.id).count() == 0
     assert await OxydeTeamMember.objects.filter(user_id=test_user.id).count() == 0
 
 
@@ -180,7 +180,7 @@ async def test_another_humans_agents_are_untouched(client, auth_headers, test_us
 
     assert response.status_code == 204, response.text
     assert await OxydeUser.objects.filter(id=other.id).count() == 1
-    assert await OxydeAPIKey.objects.filter(agent_user_id=other.id).count() == 1
+    assert await OxydeAPIKey.objects.filter(principal_user_id=other.id).count() == 1
 
 
 @pytest.mark.asyncio

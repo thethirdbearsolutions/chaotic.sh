@@ -431,8 +431,11 @@ there's no local profile to fall back on the way the stdio server has:
   agent's creator.
 - **Changed for existing keys:** before this release, every key minted
   for an agent was recorded as its creator's, even one a team admin
-  minted, and a key an agent minted for itself recorded no human at all
-  (it shows as `(creator, legacy)` in `keys list`). Existing rows cannot
+  minted, and a key an agent minted for itself recorded no human at all.
+  Upgrading to a release with migration 0021 records the agent's creator
+  as the holder of each of those self-minted keys, so `keys list` shows
+  the creator by name (older servers showed `(creator, legacy)`).
+  Existing rows cannot
   tell an admin's mint from the creator's, so all of those keys stand or
   fall with the agent's creator. That cuts both ways:
   - When the creator leaves, an admin's bot running on such a key stops.
@@ -452,14 +455,15 @@ there's no local profile to fall back on the way the stdio server has:
   is removed from a team, or leaves it, every key they hold for that
   team's agents is revoked in the same step: keys they minted, keys an
   agent minted for itself with one of their keys, and the legacy
-  self-minted keys of agents they created. Anything still running on those keys
+  self-minted keys of agents they created (held by the creator).
+  Anything still running on those keys
   stops, with the same 401 as any revoked key, over REST and MCP alike.
   The agents stay. Agents the member created pass to the admin who
   removed them, or to the team's owner if they left on their own. The
   team's other admins get an inbox entry for each affected agent, so
   someone can mint a replacement key. Separately from that revocation,
-  an agent key whose holder (for a legacy self-minted key, the agent's
-  creator) is no longer in the agent's team does not sign in. The removed creator also loses every right over the agent
+  an agent key whose holder is no longer in the agent's team does not
+  sign in. The removed creator also loses every right over the agent
   (update, delete, deactivate/reactivate, listing, minting or revoking
   its keys). Rejoining does not bring back revoked keys or ownership.
   The sign-in check is separate from revocation, though: a key that was

@@ -159,7 +159,7 @@ def test_0018_cascades_which_is_the_bug(at_0018):
 def test_deleting_an_author_after_0019_keeps_everything_it_wrote(at_0018):
     before_counts, before_indexes = _counts(at_0018), _indexes(at_0018)
 
-    _migrate(at_0018)
+    _migrate(at_0018, target="0019_authorship_fks_set_null")
 
     assert set(_on_delete(at_0018).values()) == {"SET NULL"}
     assert _counts(at_0018) == before_counts, "the migration must not touch a row"
@@ -181,7 +181,7 @@ def test_deleting_an_author_after_0019_keeps_everything_it_wrote(at_0018):
 
 
 def test_downgrade_restores_cascade_without_touching_rows(at_0018):
-    _migrate(at_0018)
+    _migrate(at_0018, target="0019_authorship_fks_set_null")
     before = _counts(at_0018)
 
     ctx = _Ctx(at_0018)

@@ -318,11 +318,11 @@ async def list_agent_keys(
 
     keys = await agent_service.list_keys(agent.id)
     user_service = UserService()
-    names: dict[str, str | None] = {}
+    names: dict[str | None, str | None] = {None: None}
     for key in keys:
-        if key.user_id not in names:
-            owner = await user_service.get_by_id(key.user_id)
-            names[key.user_id] = owner.name if owner else None
+        if key.holder_user_id not in names:
+            holder = await user_service.get_by_id(key.holder_user_id)
+            names[key.holder_user_id] = holder.name if holder else None
 
     return [
         AgentKeyResponse(
@@ -333,9 +333,9 @@ async def list_agent_keys(
             last_used_at=key.last_used_at,
             expires_at=key.expires_at,
             is_active=key.is_active,
-            owner_id=key.user_id,
-            owner_name=names[key.user_id],
-            legacy_self_minted=key.user_id == agent.id,
+            owner_id=key.holder_user_id,
+            owner_name=names[key.holder_user_id],
+            legacy_self_minted=False,
         )
         for key in keys
     ]

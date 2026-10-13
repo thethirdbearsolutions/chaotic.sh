@@ -71,21 +71,25 @@ class APIKeyService:
         return key[:11]
 
     async def create(
-        self, user_id: str, api_key_in: APIKeyCreate, agent_user_id: str | None = None,
+        self, principal_user_id: str, api_key_in: APIKeyCreate, holder_user_id: str | None = None,
     ) -> tuple[OxydeAPIKey, str]:
-        """Create a new API key held by `user_id`, signing in as
-        `agent_user_id` when given. Returns (api_key_model, full_key)."""
+        """Create a new API key that signs in as `principal_user_id` and is
+        held by `holder_user_id` (CHT-1537). Leaving the holder out makes
+        the principal hold it, which is what a human's own key is; an
+        agent's key must name the human who answers for it, since an
+        agent is no team member and a key it held itself would never
+        sign in. Returns (api_key_model, full_key)."""
         full_key = self._generate_key()
         key_prefix = self._get_prefix(full_key)
         key_hash = _sha256_key_hash(full_key)
 
         api_key = await OxydeAPIKey.objects.create(
-            user_id=user_id,
+            principal_user_id=principal_user_id,
+            holder_user_id=holder_user_id if holder_user_id is not None else principal_user_id,
             name=api_key_in.name,
             key_prefix=key_prefix,
             key_hash=key_hash,
             expires_at=api_key_in.expires_at,
-            agent_user_id=agent_user_id,
         )
         await api_key.refresh()
 
@@ -156,10 +160,17 @@ class APIKeyService:
 
         return api_key
 
-    async def list_by_user(self, user_id: str) -> list[OxydeAPIKey]:
-        """List all API keys for a user."""
+    async def list_by_holder(self, user_id: str) -> list[OxydeAPIKey]:
+        """Every API key `user_id` holds, newest first: their own, and the
+        ones they hold for agents (CHT-1508, CHT-1537)."""
         return await OxydeAPIKey.objects.filter(
-            user_id=user_id
+            holder_user_id=user_id
+        ).order_by("-created_at").all()
+
+    async def list_by_principal(self, user_id: str) -> list[OxydeAPIKey]:
+        """Every API key that signs in as `user_id`, newest first."""
+        return await OxydeAPIKey.objects.filter(
+            principal_user_id=user_id
         ).order_by("-created_at").all()
 
     async def revoke(self, api_key: OxydeAPIKey) -> OxydeAPIKey:

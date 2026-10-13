@@ -29,7 +29,7 @@ async def _assert_untouched(agent, key, client):
     from app.services.user_service import UserService
 
     assert (await UserService().get_by_id(agent.id)).is_active is True
-    assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id, is_active=True).count() == 1
+    assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id, is_active=True).count() == 1
     response = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200, response.text
 
@@ -55,7 +55,7 @@ class TestDeactivateAgent:
         body = response.json()
         assert body["id"] == agent.id and body["is_active"] is False
         assert body["parent_user_name"] == test_user.name
-        assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id, is_active=True).count() == 0
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id, is_active=True).count() == 0
         assert (await OxydeIssue.objects.get(id=issue.id)).creator_id == agent.id
 
         signed_in = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})
@@ -79,7 +79,7 @@ class TestDeactivateAgent:
         is somehow still active (e.g. re-enabled by hand) cannot sign in."""
         agent, key, _ = await _agent_with_work(test_user, test_team, test_project)
         await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
-        await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=True)
+        await OxydeAPIKey.objects.filter(principal_user_id=agent.id).update(is_active=True)
 
         response = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {key}"})
 
@@ -140,7 +140,7 @@ class TestDeactivateAgent:
 
         assert response.status_code == 409
         assert "deactivated" in response.json()["detail"]
-        assert await OxydeAPIKey.objects.filter(agent_user_id=agent.id, is_active=True).count() == 0
+        assert await OxydeAPIKey.objects.filter(principal_user_id=agent.id, is_active=True).count() == 0
 
     async def test_an_agent_cannot_deactivate_itself(self, client, test_user, test_team, test_project):
         agent, key, _ = await _agent_with_work(test_user, test_team, test_project)
@@ -168,9 +168,9 @@ class TestDeactivateAgent:
         self, client, auth_headers, test_user, test_team, test_project,
     ):
         """A key the agent created through POST /api-keys must be revoked:
-        both today's shape (linked to the agent, held by the human behind
-        the calling key, CHT-1508) and the legacy one (user_id=agent.id,
-        no agent_user_id)."""
+        both today's shape (held by the human behind the calling key,
+        CHT-1508) and a legacy one as migration 0021 leaves it (held by the
+        agent's creator, CHT-1537)."""
         from app.schemas.api_key import APIKeyCreate
         from app.services.api_key_service import APIKeyService
 
@@ -180,12 +180,14 @@ class TestDeactivateAgent:
         )
         assert minted.status_code == 201, minted.text
         own_key = minted.json()["key"]
-        legacy, legacy_key = await APIKeyService().create(agent.id, APIKeyCreate(name="legacy"))
+        legacy, legacy_key = await APIKeyService().create(
+            agent.id, APIKeyCreate(name="legacy"), holder_user_id=agent.parent_user_id,
+        )
 
         await client.post(f"/api/agents/{agent.id}/deactivate", headers=auth_headers)
 
         own = await OxydeAPIKey.objects.get(id=minted.json()["id"])
-        assert own.user_id == test_user.id and own.agent_user_id == agent.id
+        assert own.holder_user_id == test_user.id and own.principal_user_id == agent.id
         assert own.is_active is False
         assert (await OxydeAPIKey.objects.get(id=legacy.id)).is_active is False
         for k in (own_key, legacy_key):

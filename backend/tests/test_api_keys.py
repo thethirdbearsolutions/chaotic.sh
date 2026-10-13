@@ -79,7 +79,8 @@ class TestAPIKeyServiceCreate:
 
         assert api_key is not None
         assert api_key.name == "Test Key"
-        assert api_key.user_id == test_user.id
+        assert api_key.principal_user_id == test_user.id
+        assert api_key.holder_user_id == test_user.id
         assert full_key.startswith("ck_")
 
     async def test_create_stores_hashed_key(self, db, test_user):
@@ -180,7 +181,7 @@ class TestAPIKeyServiceValidation:
 class TestAPIKeyServiceOperations:
     """Tests for other API key operations."""
 
-    async def test_list_by_user(self, db, test_user, test_user2):
+    async def test_list_by_holder(self, db, test_user, test_user2):
         """Should only list keys for the specified user."""
         service = APIKeyService()
 
@@ -189,8 +190,8 @@ class TestAPIKeyServiceOperations:
         await service.create(test_user.id, APIKeyCreate(name="User1 Key2"))
         await service.create(test_user2.id, APIKeyCreate(name="User2 Key"))
 
-        user1_keys = await service.list_by_user(test_user.id)
-        user2_keys = await service.list_by_user(test_user2.id)
+        user1_keys = await service.list_by_holder(test_user.id)
+        user2_keys = await service.list_by_holder(test_user2.id)
 
         assert len(user1_keys) == 2
         assert len(user2_keys) == 1
@@ -258,7 +259,7 @@ class TestBcryptCompatibility:
         service = APIKeyService()
         full_key = service._generate_key()
         legacy = await OxydeAPIKey.objects.create(
-            user_id=test_user.id, name="legacy", key_prefix=service._get_prefix(full_key),
+            principal_user_id=test_user.id, holder_user_id=test_user.id, name="legacy", key_prefix=service._get_prefix(full_key),
             key_hash=get_password_hash(_prehash_key(full_key)),
         )
         assert legacy.key_hash.startswith("$2")
@@ -299,7 +300,7 @@ class TestBcryptCompatibility:
         for bad_hash in ("", "garbage", "$2b$notreal", "sha256X"):
             full_key = service._generate_key()
             await OxydeAPIKey.objects.create(
-                user_id=test_user.id, name="broken", key_prefix=service._get_prefix(full_key),
+                principal_user_id=test_user.id, holder_user_id=test_user.id, name="broken", key_prefix=service._get_prefix(full_key),
                 key_hash=bad_hash,
             )
             assert await service.validate_key(full_key) is None, bad_hash
