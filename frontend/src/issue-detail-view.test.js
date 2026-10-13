@@ -454,6 +454,107 @@ describe('issue-detail-view', () => {
             expect(pushStateSpy).not.toHaveBeenCalled();
         });
 
+        // Remote refreshes (ws-handlers.js) only became live with CHT-1237;
+        // these guard what that exposed (PR #318 review findings 1 and 2).
+        describe('background refresh ({ refresh: true })', () => {
+            const issue2 = { ...mockIssue, id: 'issue-2', identifier: 'TEST-2', title: 'Second' };
+
+            function deferred() {
+                let resolve;
+                const promise = new Promise(r => { resolve = r; });
+                return { promise, resolve };
+            }
+
+            it('drops a refresh that resolves after a newer navigation', async () => {
+                await viewIssue('issue-1');
+                const slow = deferred();
+                api.getIssue.mockImplementationOnce(() => slow.promise);
+                const refresh = viewIssue('issue-1', false, { refresh: true });
+
+                api.getIssue.mockResolvedValueOnce(issue2);
+                await viewIssue('issue-2');
+                slow.resolve(mockIssue);
+                await refresh;
+
+                expect(getCurrentDetailIssue().id).toBe('issue-2');
+            });
+
+            it('never cancels a navigation the user started before it', async () => {
+                await viewIssue('issue-1');
+                const slowNav = deferred();
+                api.getIssue.mockImplementationOnce(() => slowNav.promise);
+                const nav = viewIssue('issue-2');
+
+                await viewIssue('issue-1', false, { refresh: true });
+                slowNav.resolve(issue2);
+                await nav;
+
+                expect(getCurrentDetailIssue().id).toBe('issue-2');
+            });
+
+            it('does not re-show the detail after the user navigated away', async () => {
+                await viewIssue('issue-1');
+                const slow = deferred();
+                api.getIssue.mockImplementationOnce(() => slow.promise);
+                const refresh = viewIssue('issue-1', false, { refresh: true });
+
+                // navigateTo() back to a list hides the detail view.
+                document.getElementById('issue-detail-view').classList.add('hidden');
+                document.getElementById('my-issues-view').classList.remove('hidden');
+                slow.resolve(mockIssue);
+                await refresh;
+
+                expect(document.getElementById('issue-detail-view').classList.contains('hidden')).toBe(true);
+                expect(document.getElementById('my-issues-view').classList.contains('hidden')).toBe(false);
+            });
+
+            it('does not tear down a description editor opened while it was in flight', async () => {
+                await viewIssue('issue-1');
+                const slow = deferred();
+                api.getIssue.mockImplementationOnce(() => slow.promise);
+                const refresh = viewIssue('issue-1', false, { refresh: true });
+
+                const editor = document.createElement('div');
+                editor.className = 'description-inline-editor';
+                document.getElementById('issue-detail-content').appendChild(editor);
+                slow.resolve(mockIssue);
+                await refresh;
+
+                expect(editor.isConnected).toBe(true);
+            });
+
+            it('keeps focus in the comment box across the re-render', async () => {
+                // The base fixture has a stray #new-comment outside the
+                // detail view; drop it so the id resolves to the rendered one.
+                document.querySelector('body > #new-comment')?.remove();
+                await viewIssue('issue-1');
+                const before = document.getElementById('new-comment');
+                expect(before).not.toBeNull();
+                before.value = 'hello world';
+                before.focus();
+                before.setSelectionRange(5, 5);
+
+                await viewIssue('issue-1', false, { refresh: true });
+
+                const after = document.getElementById('new-comment');
+                expect(after).not.toBe(before);
+                expect(document.activeElement).toBe(after);
+            });
+
+            it('logs instead of showing an error toast when the refresh fails', async () => {
+                await viewIssue('issue-1');
+                showApiError.mockClear();
+                const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+                api.getIssue.mockRejectedValueOnce(new Error('boom'));
+
+                await viewIssue('issue-1', false, { refresh: true });
+
+                expect(showApiError).not.toHaveBeenCalled();
+                expect(errSpy).toHaveBeenCalled();
+                errSpy.mockRestore();
+            });
+        });
+
         // CHT-1211 item 1: detail views never saved the originating list's
         // scroll position, so Back always landed at the top of the list.
         describe('scroll position (CHT-1211)', () => {

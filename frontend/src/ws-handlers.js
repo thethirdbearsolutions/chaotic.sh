@@ -223,7 +223,7 @@ function handleIssueUpdated(data) {
         if (hasOpenDescriptionEditor()) {
             noteSkippedDetailRefresh(data);
         } else {
-            viewIssue(data.id, false);
+            viewIssue(data.id, false, { refresh: true });
         }
     }
 }
@@ -273,7 +273,7 @@ function refreshOpenDetail(issueId) {
     if (hasOpenDescriptionEditor()) {
         noteSkippedDetailRefresh();
     } else {
-        viewIssue(issueId, false);
+        viewIssue(issueId, false, { refresh: true });
     }
 }
 

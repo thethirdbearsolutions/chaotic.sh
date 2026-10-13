@@ -472,7 +472,38 @@ subscribe((key) => {
  * @param {string} issueId - Issue ID
  * @param {boolean} pushHistory - Whether to push to browser history
  */
-export async function viewIssue(issueId, pushHistory = true) {
+// Bumped by every navigating viewIssue() call -- not by background
+// refreshes (see `refresh` below).
+let viewIssueNavigationId = 0;
+
+/**
+ * True while issueId's detail is the one on screen.
+ * @param {string} issueId
+ */
+function isShowingIssueDetail(issueId) {
+    const el = document.getElementById('issue-detail-view');
+    return !!el && !el.classList.contains('hidden') && getCurrentDetailIssue()?.id === issueId;
+}
+
+/**
+ * @param {string} issueId
+ * @param {boolean} [pushHistory=true]
+ * @param {{refresh?: boolean}} [options] refresh: a background re-render of
+ *   the issue already on screen, triggered by a websocket event
+ *   (ws-handlers.js). Remote refreshes became live with CHT-1237, which
+ *   exposed two things this guards against:
+ *   - Stale responses. Only navigating calls bump viewIssueNavigationId, so
+ *     a refresh never cancels a navigation the user already started, and a
+ *     refresh whose fetch resolves after a newer navigation, or after the
+ *     user left the detail, or after they opened the description editor,
+ *     renders nothing instead of yanking them back to this issue.
+ *   - Focus loss. Typing a comment while a teammate or agent comments
+ *     would otherwise lose the caret mid-word: the text survives via the
+ *     CHT-1041 draft, but the textarea is replaced. Focus and selection are
+ *     restored to the same element id after the re-render.
+ */
+export async function viewIssue(issueId, pushHistory = true, { refresh = false } = {}) {
+    const navigationId = refresh ? viewIssueNavigationId : ++viewIssueNavigationId;
     try {
         // Record the list's scroll position before we replace it with detail
         // content, so Back can restore it (CHT-1211 item 1).
@@ -511,9 +542,6 @@ export async function viewIssue(issueId, pushHistory = true) {
                 is_pending: !r.attestation.approved_at,
             }));
 
-        // Store ritual status for renderTicketRituals (avoids duplicate API call)
-        currentTicketRituals = ritualStatus;
-
         // Combine and sort chronologically
         const allComments = [...comments, ...attestationNotes].sort((a, b) =>
             new Date(a.created_at) - new Date(b.created_at)
@@ -525,6 +553,29 @@ export async function viewIssue(issueId, pushHistory = true) {
             api.getSprints(issue.project_id).catch(e => { console.error('Failed to load sprints:', e); return []; }),
         ];
         const [parentIssue, projectSprints] = await Promise.all(secondaryFetches);
+
+        // Last await above: from here to the end of the try, rendering is
+        // synchronous, so these checks cannot go stale before it finishes.
+        if (navigationId !== viewIssueNavigationId) return;
+        let restoreFocus = null;
+        if (refresh) {
+            if (!isShowingIssueDetail(issueId)) return;
+            if (document.querySelector('.description-inline-editor')) {
+                noteSkippedDetailRefresh();
+                return;
+            }
+            const active = document.activeElement;
+            if (active?.id && document.getElementById('issue-detail-view').contains(active)) {
+                restoreFocus = {
+                    id: active.id,
+                    start: active.selectionStart,
+                    end: active.selectionEnd,
+                };
+            }
+        }
+
+        // Store ritual status for renderTicketRituals (avoids duplicate API call)
+        currentTicketRituals = ritualStatus;
 
         // Separate relations by type
         const blockingIssues = relations.filter(r => r.relation_type === 'blocks' && r.direction === 'outgoing');
@@ -1006,8 +1057,29 @@ export async function viewIssue(issueId, pushHistory = true) {
             }
         };
         document.addEventListener('keydown', detailKeyHandler, { signal: detailSignal });
+
+        if (restoreFocus) {
+            const el = document.getElementById(restoreFocus.id);
+            if (el) {
+                el.focus();
+                if (typeof restoreFocus.start === 'number' && typeof el.setSelectionRange === 'function') {
+                    try {
+                        el.setSelectionRange(restoreFocus.start, restoreFocus.end);
+                    } catch {
+                        // Input types without selection support (e.g. checkbox).
+                    }
+                }
+            }
+        }
     } catch (e) {
-        showApiError('load issue', e);
+        if (refresh) {
+            // A failed background refresh leaves the current render in
+            // place; an error toast for an action the user never took is
+            // noise (and an issue:deleted handler covers the 404 case).
+            console.error('Failed to refresh issue detail:', e);
+        } else {
+            showApiError('load issue', e);
+        }
     }
 }
 

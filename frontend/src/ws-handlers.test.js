@@ -238,7 +238,7 @@ describe('ws-handlers.js', () => {
             const childIssue = { ...newIssue, parent_id: 'parent-1' };
 
             dispatch({ type: 'created', entity: 'issue', data: childIssue });
-            expect(viewIssue).toHaveBeenCalledWith('parent-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('parent-1', false, { refresh: true });
         });
     });
 
@@ -314,7 +314,7 @@ describe('ws-handlers.js', () => {
             openIssueDetail('issue-1');
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         // CHT-1237: the detail refresh used to be the last branch of the
@@ -325,7 +325,7 @@ describe('ws-handlers.js', () => {
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(renderIssues).toHaveBeenCalled();
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         // CHT-1487: an issue opened from a sprint detail -- the sprint
@@ -337,7 +337,7 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(viewSprint).not.toHaveBeenCalled();
             expect(loadSprints).not.toHaveBeenCalled();
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('does not refresh detail view for a different issue', () => {
@@ -516,7 +516,7 @@ describe('ws-handlers.js', () => {
             openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         // CHT-1214: a comment landing on the open issue while its description
@@ -543,7 +543,7 @@ describe('ws-handlers.js', () => {
                 vi.clearAllMocks();
                 openIssueDetail('issue-1', underlying);
                 dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
-                expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+                expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
             }
         });
 
@@ -609,7 +609,7 @@ describe('ws-handlers.js', () => {
                 entity: 'relation',
                 data: { source_issue_id: 'issue-1', target_issue_id: 'issue-2' },
             });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('defers instead of clobbering an in-progress description edit', () => {
@@ -730,7 +730,7 @@ describe('ws-handlers.js', () => {
             openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('calls loadGateApprovals on approvals view', () => {
@@ -763,7 +763,7 @@ describe('ws-handlers.js', () => {
             openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('defers instead of clobbering an in-progress description edit', () => {
@@ -894,7 +894,7 @@ describe('ws-handlers.js', () => {
         it('refreshes the open issue detail', () => {
             openIssueDetail('issue-1');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         // CHT-1237: the detail sits on top of the list getCurrentView()
@@ -903,7 +903,7 @@ describe('ws-handlers.js', () => {
             openIssueDetail('issue-1', 'issues');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
             expect(loadIssues).toHaveBeenCalled();
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('does nothing on an unrecognized view', () => {
