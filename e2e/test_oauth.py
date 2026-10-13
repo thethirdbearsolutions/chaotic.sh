@@ -37,11 +37,15 @@ def oauth_on(monkeypatch):
     monkeypatch.setenv("OAUTH_ENABLED", "true")
     monkeypatch.setenv("APP_BASE_URL", ORIGIN)
     monkeypatch.setenv("OAUTH_DCR_ENABLED", "true")
+    from app.oauth import ratelimit
+
     get_settings.cache_clear()
     token_service._reset_for_tests()
+    ratelimit.authorize_requests.clear()
     yield
     get_settings.cache_clear()
     token_service._reset_for_tests()
+    ratelimit.authorize_requests.clear()
 
 
 def _rpc(method, params=None, id=1):
@@ -86,7 +90,16 @@ def access_log():
         logger.setLevel(previous)
 
 
-def test_connector_flow_end_to_end(test_server, oauth_on, auth_token, test_team, test_project, access_log):
+@pytest.fixture
+def web_login_token(test_user):
+    """The web app's login (the web-login claim): consent refuses the
+    CLI-style session JWT the conftest's auth_token is."""
+    from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
+
+    return create_access_token(data={"sub": test_user.id, WEB_LOGIN_CLAIM: WEB_LOGIN})
+
+
+def test_connector_flow_end_to_end(test_server, oauth_on, web_login_token, test_team, test_project, access_log):
     # 1. Dynamic client registration (a public client, loopback redirect).
     registered = httpx.post(f"{ORIGIN}/oauth/register", json={
         "client_name": "E2E Connector", "redirect_uris": [REDIRECT],
@@ -106,7 +119,7 @@ def test_connector_flow_end_to_end(test_server, oauth_on, auth_token, test_team,
     request_id = consent.rsplit("/", 1)[1]
 
     # 3. The human approves with their web login (what the SPA does).
-    human = {"Authorization": f"Bearer {auth_token}"}
+    human = {"Authorization": f"Bearer {web_login_token}"}
     view = httpx.get(f"{ORIGIN}/api/oauth/requests/{request_id}", headers=human, timeout=5.0)
     assert view.status_code == 200, view.text
     approved = httpx.post(

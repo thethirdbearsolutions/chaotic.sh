@@ -14,9 +14,11 @@ import pytest
 
 from app.config import get_settings
 from app.enums import HolderVia, TokenKind
+from app.oauth import ratelimit
 from app.oxyde_models.oauth import OxydeAuthToken, OxydeHolderSession, OxydeOAuthClient
 from app.services import token_service as ts
 from app.services.token_service import TokenError, TokenService
+from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 BASE = "https://tracker.example.com"
 MCP = BASE + "/mcp"
@@ -35,15 +37,28 @@ def _query(location):
 
 
 @pytest.fixture
+async def auth_headers(test_user):
+    """Consent needs the web app's login (the web-login claim); this
+    overrides conftest's CLI-style session JWT. The token endpoint itself
+    takes no login of any kind."""
+    token = create_access_token(data={"sub": test_user.id, WEB_LOGIN_CLAIM: WEB_LOGIN})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
 def oauth_on(monkeypatch):
     monkeypatch.setenv("OAUTH_ENABLED", "true")
     monkeypatch.setenv("APP_BASE_URL", BASE)
     monkeypatch.setenv("OAUTH_DCR_ENABLED", "true")
     get_settings.cache_clear()
     ts._reset_for_tests()
+    ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
     yield
     get_settings.cache_clear()
     ts._reset_for_tests()
+    ratelimit.authorize_requests.clear()
+    ratelimit.cimd_fetches.clear()
 
 
 async def _register(client, **metadata):
