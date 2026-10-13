@@ -10,6 +10,7 @@ from oxyde import atomic
 from app.oxyde_models.team import OxydeTeamMember, OxydeTeamInvitation
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.services.agent_service import AgentService, describe_counts
+from app.services.revocation_service import REASON_PRINCIPAL_DELETED, RevocationService
 
 # Type alias: callers still see "User" but it's now an Oxyde model
 User = OxydeUser
@@ -150,6 +151,13 @@ class UserService:
             # without a registrar (CHT-1498); ones they own are deleted
             # below with their other agents.
             await agent_service._retire_identities(user.id)
+            # The deletes below cascade their sessions away; revoking them
+            # first moves the revocation epoch, so no cached validation
+            # outlives the account (CHT-1523).
+            await RevocationService().revoke_for_holder(user.id, actor_id=None)
+            await agent_service.revoke_credentials_of(
+                [user.id] + [agent.id for agent in agents], actor_id=None, reason=REASON_PRINCIPAL_DELETED,
+            )
             for agent in agents:
                 await agent_service._retire_identities(agent.id)
                 await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()

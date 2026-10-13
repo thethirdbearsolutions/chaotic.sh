@@ -157,3 +157,29 @@ class TokenResponse(BaseModel):
     refresh_token: str | None = None
     scope: str
     chaotic: TokenConnection
+
+
+# --- connected apps (CHT-1523) -----------------------------------------------
+
+
+class ConnectionResponse(BaseModel):
+    """One of the caller's own OAuth connections (design §4.3, S7): an
+    app they consented to, acting as an agent in a team. ``project_ids``
+    None means the whole team. ``idle_expires_at`` is when it stops
+    refreshing unless used; ``absolute_expires_at`` is when it ends
+    regardless."""
+
+    id: str
+    client_id: str | None = None
+    client_name: str | None = None
+    agent: TokenAgent | None = None
+    team_id: str | None = None
+    team_name: str | None = None
+    project_ids: list[str] | None = None
+    policy: str
+    scopes: list[str]
+    created_at: DateTimeUTC
+    last_used_at: DateTimeUTC | None = None
+    last_refreshed_at: DateTimeUTC | None = None
+    idle_expires_at: DateTimeUTC
+    absolute_expires_at: DateTimeUTC

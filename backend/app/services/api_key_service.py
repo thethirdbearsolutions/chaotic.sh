@@ -9,6 +9,8 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from oxyde import atomic
+
 from app.oxyde_models.api_key import OxydeAPIKey
 from app.schemas.api_key import APIKeyCreate
 from app.utils.security import verify_password
@@ -232,10 +234,16 @@ class APIKeyService:
             principal_user_id=user_id
         ).order_by("-created_at").all()
 
-    async def revoke(self, api_key: OxydeAPIKey) -> OxydeAPIKey:
-        """Revoke an API key."""
-        api_key.is_active = False
-        await api_key.save(update_fields={"is_active"})
+    async def revoke(self, api_key: OxydeAPIKey, *, actor_id: str | None = None) -> OxydeAPIKey:
+        """Revoke an API key, and in the same transaction the holder
+        sessions opened with it and the unredeemed claim tickets it minted
+        (CHT-1523; RevocationService)."""
+        from app.services.revocation_service import RevocationService
+
+        async with atomic():
+            api_key.is_active = False
+            await api_key.save(update_fields={"is_active"})
+            await RevocationService().revoke_for_keys([api_key.id], actor_id=actor_id)
         await api_key.refresh()
         return api_key
 

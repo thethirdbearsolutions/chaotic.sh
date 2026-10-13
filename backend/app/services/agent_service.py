@@ -18,6 +18,11 @@ from app.oxyde_models.ritual import OxydeRitualAttestation
 from app.enums import AgentKind
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
+from app.services.revocation_service import (
+    REASON_PRINCIPAL_DEACTIVATED,
+    REASON_PRINCIPAL_DELETED,
+    RevocationService,
+)
 from app.schemas.api_key import APIKeyCreate
 
 logger = logging.getLogger(__name__)
@@ -151,7 +156,7 @@ class AgentService:
         return await APIKeyService().list_by_principal(agent_id)
 
     async def release_member_agents(
-        self, team_id: str, removed_user_id: str, new_owner_id: str | None,
+        self, team_id: str, removed_user_id: str, new_owner_id: str | None, *, actor_id: str | None = None,
     ) -> list[tuple[OxydeUser, int, bool]]:
         """A member is leaving `team_id` (CHT-1510). Call inside the
         transaction that deletes the membership.
@@ -166,15 +171,27 @@ class AgentService:
         replacement keys; with no new owner the agent stays put and any
         team admin can still manage it.
 
+        Then ends, through the RevocationService (CHT-1523), the holder
+        sessions the leaver answers for in the team (the OAuth connections
+        they consented to, and claims made with their keys), the codes and
+        tickets they would answer for there, and what the revoked keys had
+        opened or minted. `actor_id` is who removed them (themself when
+        leaving).
+
         Returns (agent, keys revoked, owner reassigned) for each agent
         that changed.
         """
         agents = await OxydeUser.objects.filter(is_agent=True, agent_team_id=team_id).all()
         changed = []
+        revoked_key_ids: list[str] = []
         for agent in agents:
-            revoked = await OxydeAPIKey.objects.filter(
+            keys = await OxydeAPIKey.objects.filter(
                 principal_user_id=agent.id, holder_user_id=removed_user_id, is_active=True,
-            ).update(is_active=False)
+            ).all()
+            revoked_key_ids += [key.id for key in keys]
+            revoked = await OxydeAPIKey.objects.filter(
+                id__in=[key.id for key in keys], is_active=True,
+            ).update(is_active=False) if keys else 0
             reassigned = False
             if agent.parent_user_id == removed_user_id:
                 if new_owner_id:
@@ -183,6 +200,9 @@ class AgentService:
                     reassigned = True
             if revoked or reassigned:
                 changed.append((agent, revoked, reassigned))
+        await RevocationService().revoke_for_member(
+            team_id, removed_user_id, revoked_key_ids=revoked_key_ids, actor_id=actor_id,
+        )
         return changed
 
     async def get_by_id(self, agent_id: str) -> OxydeUser | None:
@@ -270,6 +290,10 @@ class AgentService:
             # are retired with it, exactly as on deactivate. Their
             # registered_by_id stays, naming an agent that no longer exists.
             identities = await self._retire_identities(agent.id)
+            # The deletes below would cascade its sessions away; revoking
+            # them first moves the revocation epoch, so no cached
+            # validation outlives the agent (CHT-1523).
+            await self.revoke_credentials_of([agent.id], actor_id=None, reason=REASON_PRINCIPAL_DELETED)
             await OxydeAPIKey.objects.filter(principal_user_id=agent.id).delete()
             await agent.delete()
         self._log_retired(identities, agent.id, None)
@@ -319,10 +343,13 @@ class AgentService:
             if current is None:
                 return None, 0
             if not active:
+                # Its holder sessions, and what its keys opened or minted,
+                # end with it (CHT-1523).
+                await self.revoke_credentials_of([agent.id], actor_id=actor.id)
                 # A registrar's identities go with it (CHT-1498). Reactivating
                 # the registrar does not bring them back: each is reactivated
                 # on its own, like any agent.
-                identities = await self._retire_identities(agent.id)
+                identities = await self._retire_identities(agent.id, actor_id=actor.id)
             if current.is_active != active:
                 current.is_active = active
                 await current.save(update_fields={"is_active"})
@@ -343,10 +370,11 @@ class AgentService:
             await self._notify_parent(current, actor, verb)
         return current, len(identities)
 
-    async def _retire_identities(self, registrar_id: str) -> list[OxydeUser]:
+    async def _retire_identities(self, registrar_id: str, *, actor_id: str | None = None) -> list[OxydeUser]:
         """Deactivate every active identity `registrar_id` registered and
-        revoke their keys (CHT-1498). Call inside the transaction that
-        deactivates or deletes the registrar."""
+        revoke their keys (CHT-1498), and end their holder sessions and
+        what those keys opened or minted (CHT-1523). Call inside the
+        transaction that deactivates or deletes the registrar."""
         identities = await OxydeUser.objects.filter(
             registered_by_id=registrar_id, is_agent=True, is_active=True,
         ).all()
@@ -354,7 +382,21 @@ class AgentService:
         if ids:
             await OxydeAPIKey.objects.filter(principal_user_id__in=ids).update(is_active=False)
             await OxydeUser.objects.filter(id__in=ids).update(is_active=False)
+            await self.revoke_credentials_of(ids, actor_id=actor_id)
         return identities
+
+    @staticmethod
+    async def revoke_credentials_of(
+        user_ids: list[str], *, actor_id: str | None, reason: str = REASON_PRINCIPAL_DEACTIVATED,
+    ) -> None:
+        """End every holder session acting as `user_ids`, and what each
+        key that signs in as them opened or minted (CHT-1523). Call inside
+        the transaction that deactivates, retires or deletes them, after
+        its first write."""
+        revocations = RevocationService()
+        keys = await OxydeAPIKey.objects.filter(principal_user_id__in=user_ids).all()
+        await revocations.revoke_for_keys([key.id for key in keys], actor_id=actor_id, reason=reason)
+        await revocations.revoke_for_principals(user_ids, actor_id=actor_id, reason=reason)
 
     @staticmethod
     def _log_retired(identities, registrar_id: str, actor_id: str | None) -> None:

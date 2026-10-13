@@ -259,7 +259,9 @@ async def remove_member(
                 team_id=team_id, role=TeamRole.OWNER,
             ).order_by("joined_at").all()
             new_owner_id = owners[0].user_id if owners else None
-        released = await agent_service.release_member_agents(team_id, user_id, new_owner_id)
+        released = await agent_service.release_member_agents(
+            team_id, user_id, new_owner_id, actor_id=current_user.id,
+        )
 
     if released:
         removed = await UserService().get_by_id(user_id)

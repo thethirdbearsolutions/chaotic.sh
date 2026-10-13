@@ -27,8 +27,10 @@ What this module does not do yet:
   ``app.auth.access.authorize`` (CHT-1562).
 * Endpoints: /oauth/token and /oauth/revoke (CHT-1520) are
   ``app.api.oauth`` over ``app.services.oauth_grant_service``; claim
-  grants are CHT-1447, and the RevocationService with cascades CHT-1449.
-  ``revoke_session`` here is the one primitive they build on.
+  grants are CHT-1447. Cascades (a revoked key, a deactivated agent, a
+  departed member) are ``app.services.revocation_service`` (CHT-1523);
+  the admin view and bulk revocation are CHT-1449. ``revoke_session``
+  here is the one primitive they build on.
 
 Everything refuses while ``OAUTH_ENABLED`` is off.
 

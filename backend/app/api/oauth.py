@@ -29,11 +29,14 @@ from urllib.parse import parse_qsl
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.api.deps import HumanUser
+from app.api.deps import CurrentUser, HumanUser
 from app.auth.access import reads, writes
 from app.config import get_settings
 from app.enums import OAuthClientRegistration
 from app.oauth import ratelimit
+from app.oxyde_models.oauth import OxydeOAuthClient
+from app.oxyde_models.team import OxydeTeam
+from app.oxyde_models.user import OxydeUser
 from app.oauth.clients import canonical_resource, redirect_uri_matches, redirect_uri_problem
 from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, oauth_enabled
 from app.oauth.errors import FRAME_HEADERS, NO_STORE, OAuthHTTPError
@@ -42,9 +45,12 @@ from app.schemas.oauth import (
     AuthorizationDecision,
     AuthorizationRequestView,
     ClientRegistrationResponse,
+    ConnectionResponse,
+    TokenAgent,
     TokenResponse,
 )
 from app.services.oauth_client_service import OAuthClientError, OAuthClientService, redirect_uris_of
+from app.services.revocation_service import RevocationService
 from app.services.oauth_grant_service import GrantError, OAuthGrantService, TokenRequest
 from app.services.oauth_consent_service import (
     AVAILABLE_POLICIES,
@@ -426,3 +432,77 @@ async def deny_authorization_request(request_id: str, user: HumanUser) -> Author
         return AuthorizationDecision(redirect=await OAuthConsentService().deny(request_id, user))
     except ConsentError as exc:
         raise _http(exc) from None
+
+
+# --- connected apps (CHT-1523), mounted under /api/oauth ---------------------
+#
+# A person's own OAuth connections: the holder sessions they consented to
+# (design §4.3, S7). Only their own: the service filters on the consenting
+# human, and a connection that is not theirs is a 404 whatever it is.
+# Not gated on OAUTH_ENABLED: turning OAuth off must never stop anyone
+# seeing or ending a connection made while it was on. A person may use
+# any of their own credentials (the CLI's login or key, or the web app);
+# an agent may not, whatever it holds, so a connection can never list or
+# revoke the connections of the human it answers to.
+
+HUMAN_REQUIRED = {
+    "error_code": "human_required",
+    "message": "Only a person can list or revoke their connected apps; an agent cannot.",
+}
+
+
+def _require_human(user) -> None:
+    if user.is_agent:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=dict(HUMAN_REQUIRED))
+
+
+async def _connection_responses(rows) -> list[ConnectionResponse]:
+    def ids(attr):
+        return list({getattr(r, attr) for r in rows if getattr(r, attr)})
+
+    clients = {c.id: c for c in await OxydeOAuthClient.objects.filter(id__in=ids("oauth_client_id")).all()}
+    agents = {u.id: u for u in await OxydeUser.objects.filter(id__in=ids("principal_user_id")).all()}
+    teams = {t.id: t for t in await OxydeTeam.objects.filter(id__in=ids("team_id")).all()}
+    out = []
+    for row in rows:
+        client = clients.get(row.oauth_client_id)
+        agent = agents.get(row.principal_user_id)
+        team = teams.get(row.team_id)
+        out.append(ConnectionResponse(
+            id=row.id,
+            client_id=row.oauth_client_id,
+            client_name=(client.client_name if client else None),
+            agent=TokenAgent(id=agent.id, name=agent.name, kind=agent.kind) if agent else None,
+            team_id=row.team_id,
+            team_name=team.name if team else None,
+            project_ids=json.loads(row.scope_project_ids) if row.scope_project_ids is not None else None,
+            policy=row.policy_name,
+            scopes=[s for s in (row.scopes or "").split(" ") if s],
+            created_at=row.created_at,
+            last_used_at=row.last_used_at,
+            last_refreshed_at=row.last_refreshed_at,
+            idle_expires_at=row.idle_expires_at,
+            absolute_expires_at=row.absolute_expires_at,
+        ))
+    return out
+
+
+@router.get("/connections", response_model=list[ConnectionResponse])
+@reads
+async def list_connections(current_user: CurrentUser) -> list[ConnectionResponse]:
+    """The caller's live OAuth connections, newest first."""
+    _require_human(current_user)
+    rows = await RevocationService().list_connections(current_user.id)
+    return await _connection_responses(rows)
+
+
+@router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@writes
+async def revoke_connection(connection_id: str, current_user: CurrentUser) -> None:
+    """Revoke one of the caller's own OAuth connections: the holder
+    session and every token on it, effective on the app's next request.
+    Idempotent; 404 for a connection that is not the caller's."""
+    _require_human(current_user)
+    result = await RevocationService().revoke_connection(current_user.id, connection_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
