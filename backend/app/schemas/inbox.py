@@ -1,6 +1,8 @@
 """Inbox schemas (CHT-1250)."""
+from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, field_validator
 from app.enums import InboxEntryKind
+from app.schemas.principal import HasPrincipals, PrincipalSummary
 from app.utils import DateTimeUTC
 
 
@@ -16,8 +18,10 @@ def _coerce_enum(enum_cls, v):
     return v
 
 
-class InboxEntryResponse(BaseModel):
+class InboxEntryResponse(HasPrincipals, BaseModel):
     """An 'awaiting you' entry, with source names filled in for display."""
+
+    principal_fields: ClassVar[dict[str, str]] = {"source_user": "source_user_id"}
 
     id: str
     recipient_user_id: str
@@ -31,6 +35,8 @@ class InboxEntryResponse(BaseModel):
     ritual_id: str | None = None
     source_user_id: str | None = None
     source_user_name: str | None = None
+    # Who, as a person or an agent (CHT-1500); see app.schemas.principal.
+    source_user: PrincipalSummary | None = None
     title: str
     body: str | None = None
     created_at: DateTimeUTC

@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo } from './utils.js';
+import { escapeHtml, escapeAttr, sanitizeColor, formatTimeAgo, renderPrincipalBadge } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import {
     getDocViewMode, setDocViewMode as persistDocViewMode,
@@ -829,6 +829,7 @@ async function renderDocumentCommentsSection(doc) {
             <div class="comment-body">
               <div class="comment-header">
                 <span class="comment-author">${escapeHtml(comment.author_name || 'Unknown')}</span>
+                ${renderPrincipalBadge(comment.author)}
                 <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
               </div>
               <div class="comment-content markdown-body">${renderCommentContent(comment.content)}</div>
@@ -1051,7 +1052,7 @@ export async function viewDocument(documentId, pushHistory = true) {
 
             <div class="property-row">
               <span class="property-label">Author</span>
-              <span class="property-value-static">${escapeHtml(doc.author_name || 'Unknown')}</span>
+              <span class="property-value-static">${escapeHtml(doc.author_name || 'Unknown')} ${renderPrincipalBadge(doc.author)}</span>
             </div>
 
             <div class="property-row">

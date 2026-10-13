@@ -31,7 +31,6 @@ from app.utils.markdown import strip_code_spans
 if TYPE_CHECKING:
     from app.oxyde_models.document import OxydeDocument
     from app.oxyde_models.issue import OxydeIssue
-    from app.oxyde_models.user import OxydeUser
 
 logger = logging.getLogger(__name__)
 
@@ -334,9 +333,11 @@ class InboxService:
 
     async def resolve_display_fields(
         self, entries: list[OxydeInboxEntry],
-    ) -> tuple[dict[str, "OxydeIssue"], dict[str, "OxydeDocument"], dict[str, "OxydeUser"]]:
-        """The issues, documents and users a page of entries refers to,
-        keyed by id, in three queries for the whole page (CHT-1399).
+    ) -> tuple[dict[str, "OxydeIssue"], dict[str, "OxydeDocument"]]:
+        """The issues and documents a page of entries refers to, keyed by
+        id, in two queries for the whole page (CHT-1399). The source user
+        is a principal summary, which the API batch-loads with
+        ``fill_principals`` (CHT-1500).
 
         The API used to resolve each entry's issue identifier, document
         title and source user name with one service lookup apiece, per
@@ -348,19 +349,16 @@ class InboxService:
         """
         from app.oxyde_models.document import OxydeDocument
         from app.oxyde_models.issue import OxydeIssue
-        from app.oxyde_models.user import OxydeUser
 
         issue_ids = sorted({e.issue_id for e in entries if e.issue_id})
         document_ids = sorted({e.document_id for e in entries if e.document_id})
-        user_ids = sorted({e.source_user_id for e in entries if e.source_user_id})
 
         issues = {i.id: i for i in await OxydeIssue.objects.filter(id__in=issue_ids).all()} if issue_ids else {}
         documents = (
             {d.id: d for d in await OxydeDocument.objects.filter(id__in=document_ids).all()}
             if document_ids else {}
         )
-        users = {u.id: u for u in await OxydeUser.objects.filter(id__in=user_ids).all()} if user_ids else {}
-        return issues, documents, users
+        return issues, documents
 
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,

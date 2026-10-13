@@ -3,6 +3,7 @@ import sys
 import httpx
 from urllib.parse import quote, urlencode
 from cli.config import get_api_url, get_token, get_api_key
+from cli.principals import principal_label
 
 
 class APIError(Exception):
@@ -232,7 +233,7 @@ class Client:
         lines = []
         for r in awaiting:
             att = r.get("attestation") or {}
-            by = att.get("attested_by_name") or att.get("attested_by")
+            by = principal_label(att.get("attester"), att.get("attested_by_name") or att.get("attested_by"))
             mode = r.get("approval_mode")
             who = f" by {by}" if by else ""
             how = f" ({mode})" if mode else ""
