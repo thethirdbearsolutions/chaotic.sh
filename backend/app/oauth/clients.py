@@ -13,6 +13,7 @@ folding, no default-port elision, no trailing-slash games).
 """
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -66,12 +67,57 @@ _DANGEROUS_SCHEMES = frozenset({"javascript", "data", "vbscript", "file", "blob"
 _PRIVATE_USE_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+\-]*(?:\.[a-z0-9+\-]+)+$")
 
 
+# RFC 3986 §2: unreserved, reserved and "%". Anything else (a backslash
+# above all: WHATWG URL parsing reads it as "/" in http(s) URLs, Python's
+# urlsplit doesn't, so the two disagree on the host) is refused.
+_URI_CHARS_RE = re.compile(r"^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$")
+_DNS_LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+
+
+def has_only_uri_characters(uri: str) -> bool:
+    return bool(_URI_CHARS_RE.match(uri))
+
+
+def _host_problem(netloc: str) -> str | None:
+    """Why the host in ``netloc`` (userinfo already refused) is not a
+    DNS name or an IP literal, or None."""
+    host = netloc
+    if host.startswith("["):
+        literal, _, _rest = host[1:].partition("]")
+        try:
+            ipaddress.IPv6Address(literal)
+        except ValueError:
+            return "a redirect_uri's host must be a DNS name or an IP address"
+        return None
+    host = host.rsplit(":", 1)[0] if ":" in host else host
+    labels = host.split(".")
+    # WHATWG reads a host whose last label is a number (decimal or 0x hex)
+    # as an IPv4 address ("0x7f.1" is 127.0.0.1); only the dotted-decimal
+    # form both parsers agree on is allowed.
+    if all(label.isdigit() for label in labels) or re.match(r"^(\d+|0x[0-9a-f]*)$", labels[-1]):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return "a redirect_uri's host must be a DNS name or an IP address"
+        return None
+    if (
+        not host
+        or len(host) > 253
+        or host != host.lower()
+        or not all(_DNS_LABEL_RE.match(label) for label in labels)
+    ):
+        return "a redirect_uri's host must be a lower-case DNS name or an IP address"
+    return None
+
+
 def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str | None:
     """Why ``uri`` may not be a client's redirect URI, or None if it may:
     ``https://`` with a host, or loopback ``http://``, both spelled in
     lower case with a port, if any, in 1-65535; no fragment, wildcard,
     userinfo, whitespace or control characters; at most
-    DCR_MAX_REDIRECT_URI_LENGTH characters.
+    DCR_MAX_REDIRECT_URI_LENGTH characters; only RFC 3986 characters (no
+    backslash); an http(s) host that is a lower-case DNS name or an IP
+    literal, so every URL parser, and the consent page, agree on it.
 
     With ``allow_private_use`` (metadata documents: a client proven by
     its https host), also an RFC 8252 §7.1 private-use scheme in reverse
@@ -88,6 +134,8 @@ def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str
         return "a redirect_uri must not have a fragment"
     if "*" in uri:
         return "a redirect_uri must not contain wildcards"
+    if not _URI_CHARS_RE.match(uri):
+        return "a redirect_uri may contain only RFC 3986 characters (no backslash, quotes, spaces, <>, {}, | or ^)"
     scheme = uri.split(":", 1)[0] if ":" in uri else ""
     if scheme.lower() in _DANGEROUS_SCHEMES:
         return f"a redirect_uri must not use the {scheme.lower()}: scheme"
@@ -101,7 +149,7 @@ def redirect_uri_problem(uri: object, *, allow_private_use: bool = False) -> str
     if port == 0:
         return "a redirect_uri must not use port 0"
     if uri.startswith("https://") and parts.hostname:
-        return None
+        return _host_problem(parts.netloc)
     if uri.startswith("http://") and is_loopback_redirect(uri):
         return None
     if (
@@ -123,7 +171,13 @@ def dcr_redirect_uri_problem(uri: object) -> str | None:
 
 
 def redirect_host(uri: str) -> str:
-    """What the consent page shows as where the code goes."""
+    """What the consent page shows as where the code goes: the host a
+    browser would go to. redirect_uri_problem keeps the parsers in
+    agreement for anything stored from now on; for http(s) a backslash is
+    also read as "/" here, as WHATWG URL parsing does, so even a row
+    stored before that rule can't show one host and send to another."""
+    if uri[:8].lower() == "https://" or uri[:7].lower() == "http://":
+        uri = uri.replace("\\", "/")
     try:
         return urlsplit(uri).hostname or uri
     except ValueError:
