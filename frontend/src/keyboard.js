@@ -16,6 +16,13 @@
  * @param {Function} actions.isModalOpen - Returns true if a modal is currently open
  * @param {Function} actions.focusSearch - Focus the issue search input
  * @param {Function} actions.closeDropdowns - Close any open dropdown menus
+ * @param {Function} [actions.isInlineDropdownOpen] - Returns true if an
+ *   `.inline-dropdown` popup (field pickers, incl. the create-issue toolbar's)
+ *   is open. Such a popup is the topmost layer, so Escape closes it alone.
+ * @param {Function} [actions.closeInlineDropdowns] - Close those popups
+ * @param {Function} [actions.isModalDirty] - Returns true if the open modal
+ *   holds anything the user entered. Escape from a field in a clean modal
+ *   closes it; in a dirty one it only blurs the field (CHT-1231).
  * @param {Function} [actions.isDetailViewActive] - Returns true if the issue
  *   detail view is currently showing. Detail view's own hotkey listener is
  *   registered dynamically per-view (always AFTER this global one), so bare
@@ -33,11 +40,31 @@ export function createKeyboardHandler(actions) {
             return;
         }
 
+        // CHT-1231: an open inline dropdown sits above everything else
+        // (including a modal), so Escape closes just the dropdown. Before,
+        // the dropdown's own key handler was registered after this one, and
+        // the modal branch below closed the whole create-issue modal first,
+        // discarding the draft. Checked before the input-field branch so it
+        // also covers inputs inside the dropdown (the label-create box).
+        if (e.key === 'Escape' && actions.isInlineDropdownOpen?.()) {
+            e.preventDefault();
+            actions.closeInlineDropdowns();
+            return;
+        }
+
         // Don't trigger shortcuts when typing in input fields
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-            // Allow Escape to blur input fields
             if (e.key === 'Escape') {
-                e.target.blur();
+                // CHT-1231: a modal auto-focuses its first field, so blurring
+                // made Escape a no-op the first time. Close the modal when
+                // nothing in it has been entered; otherwise keep the old
+                // blur so one stray Escape can't throw the input away.
+                if (actions.isModalOpen() && actions.isModalDirty && !actions.isModalDirty()) {
+                    e.preventDefault();
+                    actions.closeModal();
+                } else {
+                    e.target.blur();
+                }
             }
             return;
         }

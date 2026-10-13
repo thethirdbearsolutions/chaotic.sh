@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { getIssues, setIssues, getLabels, setLabels, getCurrentTeam, getCurrentProject, getCurrentDetailIssue, setCurrentDetailIssue, getCurrentDetailSprints } from './state.js';
 import { getMyIssues, setMyIssues } from './dashboard.js';
-import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError } from './ui.js';
+import { closeAllDropdowns, registerDropdownClickOutside, setDropdownKeyHandler, showToast, showApiError, markModalDirty } from './ui.js';
 import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
 import { formatStatus, formatPriority, formatIssueType, escapeHtml, escapeAttr, sanitizeColor, renderAvatar } from './utils.js';
 import { registerActions } from './event-delegation.js';
@@ -617,6 +617,7 @@ export function toggleCreateIssueLabelSelection(labelId) {
     } else {
         createIssueLabelIds.push(labelId);
     }
+    markModalDirty(); // labels live in module state, not the form (CHT-1231)
     updateCreateIssueLabelsLabel();
     const dropdown = document.querySelector('.inline-dropdown[data-dropdown-type="create-labels"]');
     if (dropdown) {
@@ -654,6 +655,7 @@ export async function createLabelForCreateIssue() {
         setLabels(labels);
         if (created?.id && !createIssueLabelIds.includes(created.id)) {
             createIssueLabelIds.push(created.id);
+            markModalDirty();
         }
         updateCreateIssueLabelsLabel();
         if (dropdown) {

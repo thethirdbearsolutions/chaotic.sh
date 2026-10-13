@@ -134,6 +134,68 @@ describe('Keyboard Handler', () => {
         });
     });
 
+    describe('Escape layering in modals (CHT-1231)', () => {
+        beforeEach(() => {
+            actions.isInlineDropdownOpen = vi.fn().mockReturnValue(false);
+            actions.closeInlineDropdowns = vi.fn();
+            actions.isModalDirty = vi.fn().mockReturnValue(false);
+            handler = createKeyboardHandler(actions);
+        });
+
+        it('closes only the open inline dropdown, not the modal under it', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isInlineDropdownOpen.mockReturnValue(true);
+            const event = makeEvent('Escape', { target: { tagName: 'BUTTON' } });
+            handler(event);
+            expect(actions.closeInlineDropdowns).toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+            expect(event.preventDefault).toHaveBeenCalled();
+        });
+
+        it('closes the dropdown, not the modal, from an input inside the dropdown', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isInlineDropdownOpen.mockReturnValue(true);
+            const blur = vi.fn();
+            handler(makeEvent('Escape', { target: { tagName: 'INPUT', blur } }));
+            expect(actions.closeInlineDropdowns).toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+            expect(blur).not.toHaveBeenCalled();
+        });
+
+        it('closes the modal once its dropdown is gone', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            handler(makeEvent('Escape', { target: { tagName: 'BUTTON' } }));
+            expect(actions.closeModal).toHaveBeenCalled();
+            expect(actions.closeInlineDropdowns).not.toHaveBeenCalled();
+        });
+
+        it('closes a clean modal from its auto-focused input in one press', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            const blur = vi.fn();
+            const event = makeEvent('Escape', { target: { tagName: 'INPUT', blur } });
+            handler(event);
+            expect(actions.closeModal).toHaveBeenCalled();
+            expect(blur).not.toHaveBeenCalled();
+            expect(event.preventDefault).toHaveBeenCalled();
+        });
+
+        it('only blurs a field in a dirty modal, keeping the draft', () => {
+            actions.isModalOpen.mockReturnValue(true);
+            actions.isModalDirty.mockReturnValue(true);
+            const blur = vi.fn();
+            handler(makeEvent('Escape', { target: { tagName: 'TEXTAREA', blur } }));
+            expect(blur).toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+        });
+
+        it('still only blurs an input when no modal is open', () => {
+            const blur = vi.fn();
+            handler(makeEvent('Escape', { target: { tagName: 'INPUT', blur } }));
+            expect(blur).toHaveBeenCalled();
+            expect(actions.closeModal).not.toHaveBeenCalled();
+        });
+    });
+
     describe('modal suppression', () => {
         it('suppresses non-Escape shortcuts when modal is open', () => {
             actions.isModalOpen.mockReturnValue(true);

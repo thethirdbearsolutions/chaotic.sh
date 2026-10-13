@@ -10,6 +10,8 @@ import {
   registerDropdownClickOutside,
   extractErrorMessage,
   showApiError,
+  isModalDirty,
+  markModalDirty,
 } from './ui.js';
 
 describe('showModal', () => {
@@ -47,6 +49,63 @@ describe('closeModal', () => {
     expect(
       document.getElementById('modal-overlay').classList.contains('hidden')
     ).toBe(true);
+  });
+});
+
+// CHT-1231: Escape from a field closes the modal only when this says nothing
+// the user entered would be lost.
+describe('isModalDirty', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <div id="modal-overlay" class="hidden"><div id="modal-content">
+        <select id="proj"><option value="">Pick</option><option value="p1">P1</option></select>
+        <select id="pre"><option value="a">A</option><option value="b" selected>B</option></select>
+        <input type="text" id="title">
+        <input type="text" id="named" value="seed">
+        <textarea id="desc"></textarea>
+        <input type="checkbox" id="flag">
+        <input type="hidden" id="status" value="backlog">
+      </div></div>`;
+    showModal();
+  });
+
+  it('is clean for a freshly opened modal', () => {
+    expect(isModalDirty()).toBe(false);
+  });
+
+  it.each([
+    ['typed text', () => { document.getElementById('title').value = 'x'; }],
+    ['edited prefilled text', () => { document.getElementById('named').value = 'other'; }],
+    ['textarea', () => { document.getElementById('desc').value = 'x'; }],
+    ['select with no default', () => { document.getElementById('proj').value = 'p1'; }],
+    ['select with a default', () => { document.getElementById('pre').value = 'a'; }],
+    ['checkbox', () => { document.getElementById('flag').checked = true; }],
+  ])('is dirty after a change to a %s', (_name, change) => {
+    change();
+    expect(isModalDirty()).toBe(true);
+  });
+
+  it('ignores hidden inputs, whose default tracks their value', () => {
+    document.getElementById('status').value = 'todo';
+    expect(isModalDirty()).toBe(false);
+  });
+
+  it('is dirty after markModalDirty, until the next modal opens', () => {
+    markModalDirty();
+    expect(isModalDirty()).toBe(true);
+    showModal();
+    expect(isModalDirty()).toBe(false);
+  });
+
+  it('closeModal clears the mark', () => {
+    markModalDirty();
+    closeModal();
+    expect(isModalDirty()).toBe(false);
+  });
+
+  it('is clean with no modal content', () => {
+    document.body.innerHTML = '';
+    expect(isModalDirty()).toBe(false);
   });
 });
 

@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
-import { closeModal, isModalOpen, showToast } from './ui.js';
+import { closeModal, isModalOpen, showToast, closeAllDropdowns, isModalDirty } from './ui.js';
 import { showAuthScreen, logout, initAuth } from './auth.js';
 import { initApp } from './init.js';
 import { loadDocuments, viewDocument, showCreateDocumentModal, showEditDocumentModal, setDocViewMode, enterSelectionMode, filterDocuments, debounceDocSearch } from './documents.js';
@@ -712,6 +712,11 @@ document.addEventListener('keydown', createKeyboardHandler({
         navigateTo('issues');
         setTimeout(() => document.getElementById('issue-search')?.focus(), 100);
     },
+    // CHT-1231: an open field picker is the topmost layer for Escape, and
+    // a field in a clean modal closes it instead of just blurring.
+    isInlineDropdownOpen,
+    closeInlineDropdowns: closeAllDropdowns,
+    isModalDirty,
     closeDropdowns: () => {
         document.getElementById('team-dropdown').classList.add('hidden');
         document.getElementById('user-dropdown').classList.add('hidden');

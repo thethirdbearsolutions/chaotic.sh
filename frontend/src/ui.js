@@ -17,8 +17,53 @@ let modalTriggerElement = null;
 /**
  * Show the modal overlay
  */
+// Set by modals whose state lives outside their form controls (the
+// create-issue toolbar writes hidden inputs, whose defaultValue tracks value,
+// and keeps labels in module state), so isModalDirty() can see it (CHT-1231).
+let modalMarkedDirty = false;
+
+/**
+ * Record that the open modal holds user-entered state its visible form
+ * controls don't show.
+ */
+export function markModalDirty() {
+  modalMarkedDirty = true;
+}
+
+/**
+ * Whether the open modal holds anything the user entered: a markModalDirty()
+ * call, or a visible form control whose value differs from its initial one.
+ * Used to decide whether Escape from a field may close the modal (CHT-1231).
+ * @returns {boolean}
+ */
+export function isModalDirty() {
+  if (modalMarkedDirty) return true;
+  const content = document.getElementById('modal-content');
+  if (!content) return false;
+  for (const el of content.querySelectorAll('input, textarea, select')) {
+    if (el.tagName === 'SELECT') {
+      const options = Array.from(el.options);
+      if (el.multiple) {
+        if (options.some(o => o.selected !== o.defaultSelected)) return true;
+      } else {
+        // With no `selected` attribute the browser selects the first option.
+        const initial = Math.max(0, options.findIndex(o => o.defaultSelected));
+        if (options.length && el.selectedIndex !== initial) return true;
+      }
+    } else if (el.type === 'hidden') {
+      continue;
+    } else if (el.type === 'checkbox' || el.type === 'radio') {
+      if (el.checked !== el.defaultChecked) return true;
+    } else if (el.value !== el.defaultValue) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function showModal() {
   modalTriggerElement = document.activeElement;
+  modalMarkedDirty = false;
   document.getElementById('modal-overlay').classList.remove('hidden');
   // Auto-focus first input after animation
   setTimeout(() => {
@@ -34,6 +79,7 @@ export function showModal() {
  */
 export function closeModal() {
   closeAllDropdowns();
+  modalMarkedDirty = false;
   document.getElementById('modal-overlay').classList.add('hidden');
   document.querySelector('.modal')?.classList.remove('modal-wide');
 

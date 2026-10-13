@@ -49,6 +49,7 @@ vi.mock('./ui.js', () => ({
     showApiError: vi.fn(),
     closeAllDropdowns: vi.fn(),
     registerDropdownClickOutside: vi.fn(),
+    markModalDirty: vi.fn(),
 }));
 
 vi.mock('./issue-detail-view.js', () => ({
@@ -771,6 +772,13 @@ describe('issue-creation', () => {
             const btn = document.getElementById('create-issue-type-btn');
             expect(btn.innerHTML).toContain('type-bug');
             expect(document.getElementById('create-issue-type').value).toBe('bug');
+        });
+
+        it('marks the modal dirty so Escape keeps the choice (CHT-1231)', async () => {
+            const { markModalDirty } = await import('./ui.js');
+            markModalDirty.mockClear();
+            setCreateIssueField('priority', 'high', 'High');
+            expect(markModalDirty).toHaveBeenCalled();
         });
 
         it('updates assignee field', () => {
