@@ -17,7 +17,7 @@ from starlette.datastructures import Headers
 from starlette.websockets import WebSocketDisconnect
 
 from app import ws_auth
-from app.auth.credentials import CredentialKind, Principal
+from app.auth.credentials import CredentialKind, Principal, rest_resolver
 from app.config import get_settings
 from app.main import websocket_endpoint
 from app.oxyde_models.team import OxydeTeam, OxydeTeamMember
@@ -121,20 +121,24 @@ class TestWhereTheCredentialComesFrom:
 
 
 class TestAuthenticate:
-    async def test_session_jwt_and_api_keys_connect(self, test_user, test_team, agent_user):
+    async def test_session_jwt_and_api_keys_connect(self, test_user, test_team):
         assert (await authenticate(jwt_for(test_user), test_team.id)).kind is CredentialKind.SESSION_JWT
         _row, raw = await key_for(test_user)
         assert (await authenticate(raw, test_team.id)).kind is CredentialKind.API_KEY
 
-    async def test_agent_key_of_its_own_team_connects(self, test_user, test_team):
-        agent = await OxydeUser.objects.create(
-            email="bot@example.com", hashed_password="x", name="bot", is_agent=True,
-            parent_user_id=test_user.id, agent_team_id=test_team.id,
-        )
-        _row, raw = await key_for(agent, holder=test_user)
-        assert (await authenticate(raw, test_team.id)).user.id == agent.id
-        other = await OxydeTeam.objects.create(name="Other", key="OTH")
-        assert await refused_code(raw, other.id) == 4003
+    async def test_agents_are_refused_whatever_the_credential(self, test_user, test_team, test_project):
+        """PR #352 review F1: the feed is team-wide and carries every
+        recipient's inbox events, broader than REST gives an agent (a
+        project-scoped one reads one project). Refused 4003, by key or JWT."""
+        for email, project_id in (("bot@example.com", None), ("pbot@example.com", test_project.id)):
+            agent = await OxydeUser.objects.create(
+                email=email, hashed_password="x", name="bot", is_agent=True,
+                parent_user_id=test_user.id, agent_team_id=test_team.id, agent_project_id=project_id,
+            )
+            _row, raw = await key_for(agent, holder=test_user)
+            await rest_resolver.resolve(raw)  # a good credential on REST
+            assert await refused_code(raw, test_team.id) == 4003
+            assert await refused_code(jwt_for(agent), test_team.id) == 4003
 
     async def test_missing_malformed_and_unknown_are_4001(self, test_team):
         assert await refused_code(None, test_team.id) == 4001
@@ -186,7 +190,7 @@ class TestAuthenticate:
         as_principal(test_user, {"offline_access"})
         assert await refused_code("cat_x", test_team.id) == 4003
         as_principal(agent, {"chaotic:write"})
-        assert await refused_code("cat_x", test_team.id) == 4001
+        assert await refused_code("cat_x", test_team.id) == 4003
 
 
 @pytest.mark.usefixtures("no_recheck")

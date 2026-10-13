@@ -325,8 +325,8 @@ CAPABILITY_URL_KINDS = frozenset({CredentialKind.API_KEY})
 
 # /ws takes what REST takes, as the same resource (``<base>``): it is the
 # REST API's live feed, so a connector token is refused there too. Its
-# adapter (``app.ws_auth``) also refuses an OAuth token acting as an
-# agent: /ws is for the people's own clients (CHT-1603).
+# adapter (``app.ws_auth``) also refuses every agent, whatever its
+# credential: /ws is for the people's own clients (CHT-1603).
 WS_KINDS = REST_KINDS
 
 rest_resolver = CredentialResolver(REST_KINDS, audience=token_service.issuer)

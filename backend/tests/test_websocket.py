@@ -1,6 +1,6 @@
 """Tests for WebSocket connection manager and broadcast functions (CHT-275)."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event, broadcast_document_event
 

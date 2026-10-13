@@ -96,7 +96,7 @@ checks team membership before accepting. It takes the credential from an
 `chaotic.bearer.<token>` entry in `Sec-WebSocket-Protocol` (the web app's
 way, offered beside `chaotic`), so it stays out of the URL. The old
 `?token=` query parameter still works but is deprecated, and logs a
-warning. An OAuth token acting as an agent is refused there. While the
+warning. Agents are refused there, whatever their credential. While the
 socket is open the check is repeated every `WS_AUTH_RECHECK_SECONDS`
 (default 30): a revoked or expired credential, a deactivated user, or a
 member removed from the team is closed at the next check. The `/mcp` mount

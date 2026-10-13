@@ -5,13 +5,16 @@
 check REST makes applies here too: a revoked or expired key or token, a
 deactivated user, an agent key whose holder left the agent's team. It
 takes what REST takes (API keys, session JWTs, and OAuth access tokens
-issued for the whole server, ``<base>``), with one more rule: an OAuth
-token acting as an agent is refused. /ws is the live feed of the
+issued for the whole server, ``<base>``), with one more rule: an agent
+is refused, whatever its credential (4003). /ws is the live feed of the
 people's own clients (the web app, the native app's human session,
-CHT-1602), and an agent has nothing to watch there. Today every OAuth
+CHT-1602), and that feed is broader than REST gives an agent: every
+project's events in the team, and inbox events for every recipient
+(filtered by the client, CHT-1250), where a project-scoped agent reads
+one project and an agent only its own inbox on REST. Today every OAuth
 session acts as an agent, so in practice /ws refuses every OAuth token
 until CHT-1602 adds human sessions; a connector token (issued for
-``<base>/mcp``) is refused by its audience either way.
+``<base>/mcp``) is refused by its audience either way (4001).
 
 Where the credential comes from, in this order (``presented_credential``):
 
@@ -33,8 +36,9 @@ secret.
 
 Close codes: 4001 when the credential is missing, malformed, of a kind /ws
 does not take, unknown, expired or revoked (the client should sign in
-again); 4003 when the credential is good but its user is deactivated, its
-scope does not allow reading, or it has no access to ``team_id``; 4011
+again); 4003 when the credential is good but its user is deactivated or
+an agent, its scope does not allow reading, or it has no access to
+``team_id``; 4011
 when the check itself failed. A user who no longer exists is 4001, as it
 is 401 on REST (it was 4003 before CHT-1567).
 
@@ -59,7 +63,6 @@ from app.auth.access import authorize, reads
 from app.auth.credentials import (
     CredentialError,
     CredentialFailure,
-    CredentialKind,
     Principal,
     ws_resolver,
 )
@@ -156,8 +159,8 @@ async def authenticate(token: str | None, team_id: str) -> Principal:
     except CredentialError as exc:
         code = CLOSE_FORBIDDEN if exc.failure is CredentialFailure.INACTIVE else CLOSE_UNAUTHENTICATED
         raise WsRefused(code, exc.detail) from None
-    if principal.kind is CredentialKind.OAUTH_ACCESS and principal.user.is_agent:
-        raise WsRefused(CLOSE_UNAUTHENTICATED, "Unsupported credential")
+    if principal.user.is_agent:
+        raise WsRefused(CLOSE_FORBIDDEN, "Agents cannot subscribe to the live feed")
     try:
         authorize(principal, realtime_feed)
     except HTTPException:
