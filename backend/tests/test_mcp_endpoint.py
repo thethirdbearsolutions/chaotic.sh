@@ -298,8 +298,8 @@ class TestOAuthChallenge:
 
     @pytest.mark.parametrize("enabled", [False, True])
     async def test_non_ck_bearer(self, client, oauth, enabled):
-        # e.g. an OAuth access token, which /mcp can't validate until
-        # CHT-1516; the client is pointed at discovery either way.
+        # An OAuth access token this server never issued (CHT-1520); the
+        # client is pointed at discovery either way.
         oauth(enabled)
         resp = await self._init(client, {**_MCP_HEADERS, "Authorization": "Bearer cat_somethingelse"})
         assert resp.status_code == 401
@@ -689,27 +689,36 @@ class TestRegistrarOverHTTP:
         assert read.status_code == 200 and "registrar_cannot_write" not in read.text
 
 
-class TestScopedPrincipalOverHTTP:
-    """The /mcp wrapper binds the resolver's Principal, scopes and all,
-    not a re-wrapped user (CHT-1562 review, S2). The resolver stands in
-    for an OAuth verifier, which does not exist yet (CHT-1520)."""
+class TestOAuthAccessTokens:
+    """Real OAuth access tokens at /mcp (CHT-1520), minted with
+    TokenService: the wrapper binds the resolver's Principal, scopes and
+    all (CHT-1562 review, S2), and a failed token gets the invalid_token
+    challenge."""
 
     @pytest.fixture
-    def resolves_to(self, monkeypatch):
-        from app.auth import credentials
+    def oauth_on(self, monkeypatch):
+        from app.services import token_service as ts
 
-        def bind(user, scopes):
-            async def resolve(token):
-                return credentials.Principal(
-                    user=user, holder_user_id=user.id,
-                    kind=credentials.CredentialKind.OAUTH_ACCESS, scopes=frozenset(scopes),
-                )
-            monkeypatch.setattr(credentials.mcp_resolver, "resolve", resolve)
-        return bind
+        from .oauth_tokens import enable_oauth
 
-    async def test_read_scope_over_http(self, client, test_user, test_project, resolves_to):
-        resolves_to(test_user, {"chaotic:read"})
-        headers = {**_MCP_HEADERS, "Authorization": "Bearer stand-in"}
+        enable_oauth(monkeypatch)
+        yield
+        ts._reset_for_tests()
+
+    @pytest.fixture
+    async def agent(self, oauth_on, db, test_team, test_user):
+        from .oauth_tokens import make_agent
+
+        return await make_agent(test_team, test_user)
+
+    async def _connector(self, agent, team, user, scopes):
+        from .oauth_tokens import connector_token
+
+        issued = await connector_token(agent, team, user, scopes=scopes)
+        return issued, {**_MCP_HEADERS, "Authorization": f"Bearer {issued.access_token}"}
+
+    async def test_read_scope(self, client, agent, test_team, test_user, test_project):
+        _, headers = await self._connector(agent, test_team, test_user, ("chaotic:read", "offline_access"))
 
         write = await _tool_call(client, headers, "issue_create", {"title": "x", "project": test_project.id})
         assert write.status_code == 200, write.text
@@ -718,8 +727,51 @@ class TestScopedPrincipalOverHTTP:
         read = await _tool_call(client, headers, "issue_list", {"project": test_project.id})
         assert read.status_code == 200 and "policy_denied" not in read.text, read.text
 
-    async def test_write_scope_over_http(self, client, test_user, test_project, resolves_to):
-        resolves_to(test_user, {"chaotic:write"})
-        headers = {**_MCP_HEADERS, "Authorization": "Bearer stand-in"}
+    async def test_write_scope_acts_as_the_agent(self, client, agent, test_team, test_user, test_project):
+        _, headers = await self._connector(agent, test_team, test_user, ("chaotic:write",))
         write = await _tool_call(client, headers, "issue_create", {"title": "x", "project": test_project.id})
         assert write.status_code == 200 and "policy_denied" not in write.text, write.text
+        from app.oxyde_models.issue import OxydeIssue
+
+        created = await OxydeIssue.objects.get(project_id=test_project.id, title="x")
+        assert created.creator_id == agent.id
+
+    async def test_whole_server_token(self, client, agent, test_team, test_user, test_project):
+        from .oauth_tokens import server_token
+
+        issued, _ = await server_token(agent, test_team, test_user, scopes=("chaotic:read",))
+        headers = {**_MCP_HEADERS, "Authorization": f"Bearer {issued.access_token}"}
+        read = await _tool_call(client, headers, "issue_list", {"project": test_project.id})
+        assert read.status_code == 200 and "policy_denied" not in read.text, read.text
+
+    async def test_failed_token_gets_invalid_token(self, client, agent, test_team, test_user):
+        from app.services.token_service import TokenService
+
+        issued, headers = await self._connector(agent, test_team, test_user, ("chaotic:write",))
+        ok = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert ok.status_code == 200, ok.text
+
+        await TokenService().revoke_session(issued.holder_session_id, actor_id=None, reason="test")
+        for presented in (headers, {**headers, "Authorization": f"Bearer {issued.refresh_token}"}):
+            resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=presented)
+            assert resp.status_code == 401
+            assert resp.headers["www-authenticate"] == TestOAuthChallenge._INVALID_TOKEN_CHALLENGE
+
+    async def test_capability_url_refuses_a_valid_token(self, client, agent, test_team, test_user):
+        """CHT-1570: a token is never accepted in a path, even one that is
+        valid at /mcp with a header; the capability URL is for keys."""
+        issued, headers = await self._connector(agent, test_team, test_user, ("chaotic:write",))
+        assert (await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)).status_code == 200
+        resp = await client.post(
+            f"/mcp/{issued.access_token}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS,
+        )
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == "Bearer"
+
+    async def test_off_unless_oauth_enabled(self, client, agent, test_team, test_user, monkeypatch):
+        from .oauth_tokens import enable_oauth
+
+        _, headers = await self._connector(agent, test_team, test_user, ("chaotic:write",))
+        enable_oauth(monkeypatch, enabled=False)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=headers)
+        assert resp.status_code == 401 and resp.headers["www-authenticate"] == "Bearer"
