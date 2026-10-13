@@ -26,12 +26,12 @@ old -> new value, so an operator knows exactly which rows to revisit.
 The suffix is a safety valve, not a good permanent name -- rename the
 affected project key(s) / label name(s) to something sane afterward.
 
-(Reporting caveat: the per-row lines come from a read-only pre-scan of
-the SQLite file before the batched UPDATE executes. Migration
-execution is transactional, so if the migration fails after printing,
-nothing was renamed -- the failure itself is the louder signal. On
-non-SQLite dialects or when the DB file isn't directly readable, the
-scan is skipped and a one-line notice prints instead; the renames
+(Reporting caveat: the per-row lines come from a pre-scan read through
+the migration's own Oxyde connection before the batched UPDATE executes.
+Migration execution is transactional, so if the migration fails after
+printing, nothing was renamed -- the failure itself is the louder
+signal. On non-SQLite dialects or when the context has no connection,
+the scan is skipped and a one-line notice prints instead; the renames
 still happen either way.)
 
 Created: 2026-07-05
@@ -46,40 +46,65 @@ DEDUPE_TARGETS = [
 ]
 
 
-def _planned_renames(conn, table, column):
+def _planned_renames(fetch, table, column):
     """Return [(row_id, old_value, new_value)] for every row the dedupe
     UPDATE in upgrade() will rename: rows that are not the MIN(id) of
-    their (team_id, column) group. `conn` is any DB-API connection over
-    the pre-migration data (sqlite3 in practice)."""
-    rows = conn.execute(
+    their (team_id, column) group. `fetch(sql)` returns the rows of
+    `sql` over the pre-migration data."""
+    rows = fetch(
         f'SELECT id, "{column}" FROM "{table}" '
         f'WHERE id NOT IN (SELECT MIN(id) FROM "{table}" GROUP BY team_id, "{column}")'
-    ).fetchall()
+    )
     return [(row_id, value, f"{value}-dup-{row_id[:8]}") for row_id, value in rows]
 
 
-def _open_readonly_sqlite(ctx):
-    """Best-effort read-only sqlite3 connection to the migration target DB.
+def _read_through_oxyde(database, sql, params=None):
+    """Rows of `sql` (as tuples), read through Oxyde's own connection to
+    the migration target.
 
-    Returns None when the target isn't a directly-readable SQLite file
-    (non-sqlite dialect, in-memory DB, or no connection info on ctx) --
-    callers must treat None as "skip the pre-scan report", never as
-    "skip the migration work".
+    Never sqlite3.connect() the target here. That loads a second, separate
+    copy of SQLite into a process where Oxyde's bundled one has the same
+    database open in WAL mode, and POSIX locks are per process, so neither
+    copy can see the other's: Python's takes itself for the only user,
+    truncates and rebuilds the -shm index Oxyde has mapped, and drops
+    Oxyde's locks when it closes. The result is SIGBUS or "database disk
+    image is malformed" (CHT-1491). upgrade() is synchronous and runs
+    inside the executor's event loop, so the query runs on a short-lived
+    thread with an event loop of its own.
+    """
+    import asyncio
+    import threading
+
+    from oxyde import execute_raw
+
+    outcome = {}
+
+    def run():
+        try:
+            outcome["rows"] = asyncio.run(execute_raw(sql, params, client=database))
+        except BaseException as error:  # re-raised on the migration's thread
+            outcome["error"] = error
+
+    reader = threading.Thread(target=run, name="migration-0008-read")
+    reader.start()
+    reader.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return [tuple(row.values()) for row in outcome["rows"]]
+
+
+def _target_reader(ctx):
+    """A `fetch(sql)` over the migration target, or None when there is
+    nothing to read through (non-sqlite dialect, or a context with no
+    database connection) -- callers must treat None as "skip the pre-scan
+    report", never as "skip the migration work".
     """
     if getattr(ctx, "dialect", "sqlite") != "sqlite":
         return None
-    url = getattr(getattr(ctx, "_db_conn", None), "url", None)
-    if not url or not url.startswith("sqlite"):
+    database = getattr(ctx, "_db_conn", None)
+    if database is None or not callable(getattr(database, "execute", None)):
         return None
-    path = url.split("///", 1)[-1]
-    if not path or path == ":memory:":
-        return None
-    import sqlite3
-
-    try:
-        return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return None
+    return lambda sql: _read_through_oxyde(database, sql)
 
 
 def report_renames(ctx, echo=print):
@@ -104,25 +129,22 @@ def report_renames(ctx, echo=print):
     """
     if getattr(ctx, "_mode", "execute") == "collect":
         return
-    conn = _open_readonly_sqlite(ctx)
-    if conn is None:
+    fetch = _target_reader(ctx)
+    if fetch is None:
         echo(
             "[0008] cannot pre-scan target DB for duplicate project keys / "
-            "label names (not a readable SQLite file); any duplicates will "
-            "still be renamed with a -dup-<id> suffix -- diff project/label "
-            "listings after migrating."
+            "label names (no SQLite connection to read through); any "
+            "duplicates will still be renamed with a -dup-<id> suffix -- diff "
+            "project/label listings after migrating."
         )
         return
-    try:
-        for table, column in DEDUPE_TARGETS:
-            for row_id, old, new in _planned_renames(conn, table, column):
-                echo(
-                    f"[0008] duplicate {table}.{column} -- renaming row "
-                    f"{row_id}: {old!r} -> {new!r} (rename it to something "
-                    f"sane after migrating)"
-                )
-    finally:
-        conn.close()
+    for table, column in DEDUPE_TARGETS:
+        for row_id, old, new in _planned_renames(fetch, table, column):
+            echo(
+                f"[0008] duplicate {table}.{column} -- renaming row "
+                f"{row_id}: {old!r} -> {new!r} (rename it to something "
+                f"sane after migrating)"
+            )
 
 
 def upgrade(ctx):

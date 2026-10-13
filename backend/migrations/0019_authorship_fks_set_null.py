@@ -244,39 +244,61 @@ def _recording(ctx) -> bool:
     return getattr(ctx, "_mode", "execute") == "collect"
 
 
-def _database_path(ctx) -> str | None:
-    if getattr(ctx, "dialect", "sqlite") != "sqlite":
-        return None
-    url = getattr(getattr(ctx, "_db_conn", None), "url", None)
-    if not url or not url.startswith("sqlite"):
-        return None
-    path = url.split("///", 1)[-1]
-    if not path or path == ":memory:":
-        return None
-    return path
+def _read_through_oxyde(database, sql: str, params: list) -> list[tuple]:
+    """Rows of `sql` (as tuples), read through Oxyde's own connection to
+    the migration target.
+
+    Never sqlite3.connect() the target here. That loads a second, separate
+    copy of SQLite into a process where Oxyde's bundled one has the same
+    database open in WAL mode, and POSIX locks are per process, so neither
+    copy can see the other's: Python's takes itself for the only user,
+    truncates and rebuilds the -shm index Oxyde has mapped, and drops
+    Oxyde's locks when it closes. The result is SIGBUS or "database disk
+    image is malformed" (CHT-1491). upgrade() is synchronous and runs
+    inside the executor's event loop, so the query runs on a short-lived
+    thread with an event loop of its own.
+    """
+    import asyncio
+    import threading
+
+    from oxyde import execute_raw
+
+    outcome = {}
+
+    def run():
+        try:
+            outcome["rows"] = asyncio.run(execute_raw(sql, params, client=database))
+        except BaseException as error:  # re-raised on the migration's thread
+            outcome["error"] = error
+
+    reader = threading.Thread(target=run, name="migration-0019-read")
+    reader.start()
+    reader.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return [tuple(row.values()) for row in outcome["rows"]]
 
 
 def _read_create_statements(ctx) -> dict[str, str]:
     """CREATE TABLE text of every target table that exists, read through
-    a read-only connection before the migration's transaction."""
-    import sqlite3
-
-    path = _database_path(ctx)
-    if path is None:
+    the migration's own connection before the migration's transaction."""
+    database = getattr(ctx, "_db_conn", None)
+    if (
+        getattr(ctx, "dialect", "sqlite") != "sqlite"
+        or database is None
+        or not callable(getattr(database, "execute", None))
+    ):
         raise RuntimeError(
-            "0019 needs to read the SQLite schema it rewrites and could not open the "
-            "target database file; nothing was changed"
+            "0019 needs to read the SQLite schema it rewrites and has no connection to "
+            "the target database; nothing was changed"
         )
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    try:
-        tables = sorted({table for table, _ in TARGETS})
-        rows = connection.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN "
-            f"({', '.join('?' for _ in tables)})",
-            tables,
-        ).fetchall()
-    finally:
-        connection.close()
+    tables = sorted({table for table, _ in TARGETS})
+    rows = _read_through_oxyde(
+        database,
+        "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN "
+        f"({', '.join('?' for _ in tables)})",
+        tables,
+    )
     return dict(rows)
 
 

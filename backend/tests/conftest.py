@@ -44,6 +44,8 @@ def _build_schema_template(path: str) -> None:
     import asyncio
     import threading
 
+    from .oxyde_files import leave_wal_mode
+
     async def _apply():
         from oxyde import AsyncDatabase, PoolSettings, disconnect_all
         from oxyde.migrations.executor import apply_migrations
@@ -53,6 +55,11 @@ def _build_schema_template(path: str) -> None:
         import app.oxyde_models  # noqa: F401 -- register models before migrating
         try:
             await apply_migrations(migrations_dir=_MIGRATIONS_DIR)
+            # Every test copies this file with Python's sqlite3, a second
+            # SQLite library, and Oxyde's close can still be running when
+            # disconnect_all() returns. Out of WAL mode there is no -shm or
+            # -wal for the two to fight over (CHT-1491; tests/oxyde_files.py).
+            await leave_wal_mode()
         finally:
             await disconnect_all()
 
@@ -80,8 +87,9 @@ def schema_template(tmp_path_factory) -> str:
 
 
 def _copy_database(src: str, dst: str) -> None:
-    """Snapshot `src` into `dst` through SQLite's backup API, so a WAL left by
-    the builder is folded in rather than copied alongside."""
+    """Snapshot `src` into `dst` through SQLite's backup API. `src` is the
+    template, which the builder leaves in rollback-journal mode, so this
+    second SQLite library never meets a WAL that Oxyde has open."""
     import sqlite3
     from contextlib import closing
 

@@ -9,10 +9,11 @@ be LOUD -- one stdout line per renamed row -- so an operator running
 `chaotic system upgrade` sees exactly which rows were touched.
 """
 import importlib.util
-import sqlite3
 from pathlib import Path
 
 import pytest
+
+from .oxyde_files import OxydeFile
 
 MIGRATION = Path(__file__).parent.parent / "migrations" / "0008_unique_project_key_label_name.py"
 
@@ -24,33 +25,55 @@ def _load_migration():
     return mod
 
 
-class _FakeDbConn:
-    def __init__(self, url):
-        self.url = url
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _OxydeConn:
+    """The few DB-API calls these tests make, run through Oxyde: the file
+    is never opened by Python's sqlite3, a second SQLite library
+    (CHT-1491). Every statement autocommits, so commit() has nothing to do."""
+
+    def __init__(self, file):
+        self._file = file
+
+    def execute(self, sql, params=()):
+        return _Rows(self._file.query(sql, list(params)))
+
+    def executemany(self, sql, rows):
+        for params in rows:
+            self._file.execute(sql, list(params))
+
+    def commit(self):
+        pass
 
 
 class _FileCtx:
-    """MigrationContext stand-in over a file-backed sqlite DB.
+    """MigrationContext stand-in over a file-backed SQLite DB.
 
-    Mimics the two ctx surfaces 0008 uses: `execute` (real
-    MigrationContext defers these; here they run immediately, which is
-    fine -- report_renames() pre-scans before any execute call) and
-    the `dialect`/`_db_conn.url` attributes the read-only pre-scan
-    reads. File-backed (not :memory:) so the migration's separate
-    read-only sqlite3 connection sees the same data, exactly as it
-    would against a real install.
+    Mimics the ctx surfaces 0008 uses: `execute` (real MigrationContext
+    defers these; here they run immediately, which is fine --
+    report_renames() pre-scans before any execute call), `dialect`, and
+    `_db_conn`, the Oxyde database the pre-scan reads through, exactly as
+    it does under the executor.
     """
 
     dialect = "sqlite"
 
-    def __init__(self, conn, db_path):
-        self.conn = conn
-        self._db_conn = _FakeDbConn(f"sqlite:///{db_path}")
+    def __init__(self, file):
+        self.conn = _OxydeConn(file)
+        self._db_conn = file.database
         self.created_indexes = []
 
     def execute(self, sql):
         self.conn.execute(sql)
-        self.conn.commit()
 
     def create_index(self, table, index):
         self.created_indexes.append((table, index))
@@ -59,7 +82,6 @@ class _FileCtx:
         self.conn.execute(
             f'CREATE {unique}INDEX "{index["name"]}" ON "{table}" ({cols})'
         )
-        self.conn.commit()
 
 
 @pytest.fixture
@@ -69,13 +91,13 @@ def mig():
 
 @pytest.fixture
 def ctx(tmp_path):
-    db_path = tmp_path / "m0008.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, team_id TEXT, \"key\" TEXT)")
-    conn.execute("CREATE TABLE labels (id TEXT PRIMARY KEY, team_id TEXT, name TEXT)")
-    conn.commit()
-    yield _FileCtx(conn, db_path)
-    conn.close()
+    file = OxydeFile(str(tmp_path / "m0008.db"))
+    try:
+        file.execute('CREATE TABLE projects (id TEXT PRIMARY KEY, team_id TEXT, "key" TEXT)')
+        file.execute("CREATE TABLE labels (id TEXT PRIMARY KEY, team_id TEXT, name TEXT)")
+        yield _FileCtx(file)
+    finally:
+        file.close()
 
 
 def _seed_duplicates(ctx):
@@ -131,11 +153,11 @@ def test_unique_indexes_created_and_enforced(mig, ctx):
 
     assert [t for t, _ in ctx.created_indexes] == ["projects", "labels"]
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(Exception, match="UNIQUE constraint failed"):
         ctx.conn.execute(
             "INSERT INTO projects (id, team_id, \"key\") VALUES ('x', 't1', 'PROJ')"
         )
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(Exception, match="UNIQUE constraint failed"):
         ctx.conn.execute(
             "INSERT INTO labels (id, team_id, name) VALUES ('y', 't1', 'bug')"
         )
