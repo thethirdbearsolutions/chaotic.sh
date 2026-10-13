@@ -126,13 +126,17 @@ class CapabilityPathRedaction:
         await self._app(scope, receive, send)
 
 
-async def _resolve(api_key: str | None, challenge: dict[str, str] = _WWW_AUTHENTICATE):
+async def _resolve(
+    api_key: str | None,
+    challenge: dict[str, str] = _WWW_AUTHENTICATE,
+    invalid_token_challenge: dict[str, str] | None = None,
+):
     """Validate `api_key` exactly the way the REST API's `ck_...` bearer
     path does. Returns (user, None) on success or (None, error_response).
 
-    ``challenge`` is the WWW-Authenticate header for the two cases where
-    no ``ck_`` key was presented (missing, or some other token); a failed
-    ``ck_`` key always gets the bare one.
+    ``challenge`` is the WWW-Authenticate header when no token was sent,
+    ``invalid_token_challenge`` (default: the same) when some non-``ck_``
+    token was; a failed ``ck_`` key always gets the bare one.
     """
     if not api_key:
         return None, JSONResponse(
@@ -144,7 +148,7 @@ async def _resolve(api_key: str | None, challenge: dict[str, str] = _WWW_AUTHENT
         return None, JSONResponse(
             {"error": "Not a chaotic API key (expected a `ck_...` token)."},
             status_code=401,
-            headers=challenge,
+            headers=invalid_token_challenge or challenge,
         )
     try:
         user = await _authenticate_with_api_key(api_key)
@@ -165,15 +169,16 @@ class _AuthWrapperBase:
     def _extract_key(self, scope: Scope) -> str | None:
         raise NotImplementedError
 
-    def _challenge(self) -> dict[str, str]:
-        return _WWW_AUTHENTICATE
+    def _challenges(self) -> tuple[dict[str, str], dict[str, str]]:
+        """(no token sent, non-ck_ token sent)."""
+        return _WWW_AUTHENTICATE, _WWW_AUTHENTICATE
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":  # pragma: no cover -- Route only ever matches "http" scopes
             await self._app(scope, receive, send)
             return
 
-        user, error = await _resolve(self._extract_key(scope), self._challenge())
+        user, error = await _resolve(self._extract_key(scope), *self._challenges())
         if error is not None:
             await error(scope, receive, send)
             return
@@ -194,9 +199,12 @@ class BearerHeaderAuth(_AuthWrapperBase):
             return auth_header[7:].strip()
         return None
 
-    def _challenge(self) -> dict[str, str]:
+    def _challenges(self) -> tuple[dict[str, str], dict[str, str]]:
         # Read per request, so OAUTH_ENABLED needs no remount (CHT-1517).
-        return {"WWW-Authenticate": www_authenticate_challenge()}
+        return (
+            {"WWW-Authenticate": www_authenticate_challenge()},
+            {"WWW-Authenticate": www_authenticate_challenge(token_presented=True)},
+        )
 
 
 class CapabilityURLAuth(_AuthWrapperBase):

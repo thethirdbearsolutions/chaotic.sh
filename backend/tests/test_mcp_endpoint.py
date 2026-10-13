@@ -265,7 +265,13 @@ class TestOAuthChallenge:
 
     _CHALLENGE = (
         'Bearer resource_metadata="https://tracker.example.com/.well-known/oauth-protected-resource/mcp", '
-        'scope="chaotic:write offline_access"'
+        'scope="chaotic:write"'
+    )
+    # RFC 6750 §3.1: a token was sent and rejected.
+    _INVALID_TOKEN_CHALLENGE = (
+        'Bearer error="invalid_token", '
+        'resource_metadata="https://tracker.example.com/.well-known/oauth-protected-resource/mcp", '
+        'scope="chaotic:write"'
     )
 
     @pytest.fixture
@@ -297,7 +303,7 @@ class TestOAuthChallenge:
         oauth(enabled)
         resp = await self._init(client, {**_MCP_HEADERS, "Authorization": "Bearer cat_somethingelse"})
         assert resp.status_code == 401
-        assert resp.headers["www-authenticate"] == (self._CHALLENGE if enabled else "Bearer")
+        assert resp.headers["www-authenticate"] == (self._INVALID_TOKEN_CHALLENGE if enabled else "Bearer")
 
     @pytest.mark.parametrize("enabled", [False, True])
     async def test_bad_ck_key_stays_bare(self, client, oauth, enabled):
