@@ -39,9 +39,14 @@ class OxydeAPIKey(Model):
         is_table = True
         table_name = "api_keys"
         indexes = [
+            # The sign-in lookup (CHT-1534, CHT-1554, migration 0022): a
+            # key's SHA-256 digest names exactly one row. Legacy bcrypt
+            # hashes are salted, so they are unique too.
+            Index(("key_hash",), unique=True, name="ux_api_keys_key_hash"),
             # Created by migration 0021's rebuild; declared here so the
-            # migration record keeps them (CHT-1410). key_prefix is the
-            # sign-in lookup.
+            # migration record keeps them (CHT-1410). key_prefix is for
+            # display, and narrows the legacy bcrypt rows a key could be;
+            # it is 32 bits, so several keys can share it.
             Index(("key_prefix",), name="ix_api_keys_key_prefix"),
             Index(("principal_user_id",), name="ix_api_keys_principal_user_id"),
             Index(("holder_user_id",), name="ix_api_keys_holder_user_id"),

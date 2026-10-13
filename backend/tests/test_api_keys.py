@@ -482,7 +482,7 @@ class TestAPIKeyAPIEndpoints:
 
 @pytest.mark.asyncio
 class TestAPIKeyServiceLookups:
-    """Tests for get_by_id and get_by_prefix."""
+    """Tests for get_by_id and find_by_key."""
 
     async def test_get_by_id_found(self, db, test_user):
         """get_by_id should return key when it exists."""
@@ -498,19 +498,166 @@ class TestAPIKeyServiceLookups:
         result = await service.get_by_id("00000000-0000-0000-0000-000000000000")
         assert result is None
 
-    async def test_get_by_prefix_found(self, db, test_user):
-        """get_by_prefix should return key matching prefix."""
+    async def test_find_by_key_found(self, db, test_user):
+        """find_by_key returns the row the full key belongs to."""
         service = APIKeyService()
-        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="Prefix"))
-        result = await service.get_by_prefix(full_key[:11])
-        assert result is not None
-        assert result.id == api_key.id
+        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="Lookup"))
+        result, legacy = await service.find_by_key(full_key)
+        assert result is not None and result.id == api_key.id
+        assert legacy is False
 
-    async def test_get_by_prefix_not_found(self, db):
-        """get_by_prefix should return None for unknown prefix."""
+    async def test_find_by_key_not_found(self, db, test_user):
+        """An unknown key, a key with a known prefix but the wrong body, and
+        a non-`ck_` token all find nothing."""
         service = APIKeyService()
-        result = await service.get_by_prefix("ck_unknown")
-        assert result is None
+        _, full_key = await service.create(test_user.id, APIKeyCreate(name="Lookup"))
+        wrong_same_prefix = full_key[:-1] + ("0" if full_key[-1] != "0" else "1")
+        for token in ("ck_" + "0" * 64, wrong_same_prefix, "not-a-key", ""):
+            assert await service.find_by_key(token) == (None, False), token
+
+
+def _sibling(full_key: str) -> str:
+    """Another key with the same 11-character prefix."""
+    return full_key[:11] + ("0" if full_key[11] != "0" else "1") + full_key[12:]
+
+
+@pytest.mark.asyncio
+class TestPrefixCollisions:
+    """The display prefix is `ck_` plus 8 hex characters: 32 bits, shared
+    by unrelated keys well before a deployment's key count looks large.
+    A shared prefix used to make every request with either key a 500
+    (get_or_none saw two rows, CHT-1554). Keys are now looked up by their
+    unique SHA-256 digest (CHT-1534); legacy bcrypt rows by prefix, trying
+    each candidate."""
+
+    async def _legacy(self, user_id: str, full_key: str) -> OxydeAPIKey:
+        from app.utils.security import get_password_hash
+
+        return await OxydeAPIKey.objects.create(
+            principal_user_id=user_id, holder_user_id=user_id, name="legacy", key_prefix=full_key[:11],
+            key_hash=get_password_hash(_prehash_key(full_key)),
+        )
+
+    async def test_two_current_keys_sharing_a_prefix_both_validate(self, db, test_user, test_user2):
+        service = APIKeyService()
+        first, first_key = await service.create(test_user.id, APIKeyCreate(name="a"))
+        second, second_key = await service.create(test_user2.id, APIKeyCreate(name="b"))
+        # Force the collision: rewrite the second key so its prefix is the
+        # first's, keeping its row's hash and prefix consistent with it.
+        second_key = first_key[:11] + second_key[11:]
+        second.key_prefix = first.key_prefix
+        second.key_hash = "sha256$" + _prehash_key(second_key)
+        await second.save(update_fields={"key_prefix", "key_hash"})
+        assert second_key != first_key and second_key[:11] == first_key[:11]
+
+        assert (await service.validate_key(first_key)).id == first.id
+        assert (await service.validate_key(second_key)).id == second.id
+        assert await service.validate_key(_sibling(first_key)) is None
+
+    async def test_legacy_rows_sharing_a_prefix_each_validate(self, db, test_user, test_user2):
+        """Several bcrypt rows (and a current row) under one prefix: every
+        one of them is tried, so each key finds its own row, is upgraded,
+        and nobody else's row is touched."""
+        service = APIKeyService()
+        current, current_key = await service.create(test_user.id, APIKeyCreate(name="current"))
+        legacy_keys = [_sibling(current_key), current_key[:11] + "f" * 56]
+        legacy_rows = [await self._legacy(test_user2.id, key) for key in legacy_keys]
+        assert len({current_key, *legacy_keys}) == 3
+
+        assert await service.validate_key(current_key[:11] + "e" * 56) is None
+        for key, row in zip(reversed(legacy_keys), reversed(legacy_rows)):
+            assert (await service.validate_key(key)).id == row.id
+            await row.refresh()
+            assert row.key_hash == "sha256$" + _prehash_key(key)
+        assert (await service.validate_key(current_key)).id == current.id
+        await current.refresh()
+        assert current.key_hash == "sha256$" + _prehash_key(current_key)
+
+    async def test_a_malformed_legacy_row_does_not_hide_its_neighbour(self, db, test_user):
+        service = APIKeyService()
+        full_key = service._generate_key()
+        await OxydeAPIKey.objects.create(
+            principal_user_id=test_user.id, holder_user_id=test_user.id, name="broken",
+            key_prefix=full_key[:11], key_hash="$2b$notreal",
+        )
+        good = await self._legacy(test_user.id, full_key)
+        assert (await service.validate_key(full_key)).id == good.id
+
+    async def test_the_key_hash_is_unique(self, db, test_user):
+        """The index the lookup relies on: two rows cannot share a hash, so
+        a hash lookup names at most one row."""
+        service = APIKeyService()
+        api_key, _ = await service.create(test_user.id, APIKeyCreate(name="a"))
+        with pytest.raises(Exception, match="(?i)unique"):
+            await OxydeAPIKey.objects.create(
+                principal_user_id=test_user.id, holder_user_id=test_user.id, name="dup",
+                key_prefix=api_key.key_prefix, key_hash=api_key.key_hash,
+            )
+
+    async def test_the_hash_is_compared_in_constant_time(self, db, test_user, monkeypatch):
+        """The stored and computed digests go through hmac.compare_digest,
+        never `==`, whatever the database did to find the row."""
+        import app.services.api_key_service as module
+
+        calls = []
+        real = module.hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(module.hmac, "compare_digest", spy)
+        service = APIKeyService()
+        api_key, full_key = await service.create(test_user.id, APIKeyCreate(name="a"))
+        assert (await service.validate_key(full_key)).id == api_key.id
+        assert calls == [(api_key.key_hash, "sha256$" + _prehash_key(full_key))]
+
+    async def test_a_row_the_database_returns_wrongly_is_not_trusted(self, db, test_user, monkeypatch):
+        """If the lookup ever handed back a row whose hash is not the
+        key's, the compare rejects it rather than signing in as it."""
+        service = APIKeyService()
+        api_key, _ = await service.create(test_user.id, APIKeyCreate(name="a"))
+
+        async def wrong_row(**_lookup):
+            return api_key
+
+        monkeypatch.setattr(OxydeAPIKey.objects, "get_or_none", wrong_row)
+        assert await service.validate_key(service._generate_key()) is None
+
+    async def test_colliding_agent_keys_sign_in_and_mint_with_their_own_holder(
+        self, client, auth_headers, auth_headers2, test_team, test_user, test_user2,
+    ):
+        """End to end over HTTP: two agent keys held by different humans,
+        forced to share a prefix. Both sign in (no 500), and minting with
+        each takes the holder of the key actually used (get_api_key_record)."""
+        from app.enums import TeamRole
+        from app.oxyde_models.team import OxydeTeamMember
+
+        await OxydeTeamMember.objects.create(team_id=test_team.id, user_id=test_user2.id, role=TeamRole.MEMBER)
+        made = []
+        for headers in (auth_headers, auth_headers2):
+            response = await client.post(
+                f"/api/teams/{test_team.id}/agents", json={"name": f"agent{len(made)}"}, headers=headers,
+            )
+            assert response.status_code == 201, response.text
+            made.append(response.json()["api_key"])
+        first_key, second_key = made
+        rows = [await OxydeAPIKey.objects.get(key_hash="sha256$" + _prehash_key(k)) for k in made]
+        assert [r.holder_user_id for r in rows] == [test_user.id, test_user2.id]
+
+        second_key = first_key[:11] + second_key[11:]
+        rows[1].key_prefix = rows[0].key_prefix
+        rows[1].key_hash = "sha256$" + _prehash_key(second_key)
+        await rows[1].save(update_fields={"key_prefix", "key_hash"})
+
+        for key, holder in ((first_key, test_user.id), (second_key, test_user2.id)):
+            bearer = {"Authorization": f"Bearer {key}"}
+            me = await client.get("/api/auth/me", headers=bearer)
+            assert me.status_code == 200, me.text
+            minted = await client.post("/api/api-keys", json={"name": "child"}, headers=bearer)
+            assert minted.status_code == 201, minted.text
+            child = await OxydeAPIKey.objects.get(id=minted.json()["id"])
+            assert child.holder_user_id == holder
 
 
 @pytest.mark.asyncio
