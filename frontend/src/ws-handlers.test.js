@@ -1,7 +1,7 @@
 /**
  * Tests for ws-handlers.js module (CHT-1039)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock state.js
 vi.mock('./state.js', () => ({
@@ -116,12 +116,44 @@ import { loadEpics } from './epics.js';
 import { loadInbox, refreshInboxUnreadCount } from './inbox.js';
 import { navigateTo } from './router.js';
 import { showToast } from './ui.js';
-import { dispatch, resetWsState } from './ws.js';
-import { registerWsHandlers } from './ws-handlers.js';
+import { dispatch as rawDispatch, resetWsState } from './ws.js';
+import { registerWsHandlers, resetDetailRefreshes, DETAIL_REFRESH_DELAY_MS, DETAIL_REFRESH_RETRY_MS } from './ws-handlers.js';
+
+/**
+ * Dispatch an event and run out the open-detail refresh debounce
+ * (PR #318 review 2), so assertions see the coalesced viewIssue() call.
+ * Tests of the coalescing itself use rawDispatch.
+ */
+function dispatch(event) {
+    rawDispatch(event);
+    vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+}
+
+/**
+ * Put the issue detail on screen the way production does (CHT-1237):
+ * #issue-detail-view visible and getCurrentDetailIssue() set, while
+ * getCurrentView() keeps naming the list the user came from, because detail
+ * routes never call navigateTo(). Tests used to mock getCurrentView() to
+ * 'issue-detail', a value it never takes in the app, which is how the dead
+ * gates went unnoticed.
+ */
+function openIssueDetail(issueId, underlyingView = 'issues') {
+    getCurrentView.mockReturnValue(underlyingView);
+    getCurrentDetailIssue.mockReturnValue({ id: issueId });
+    document.body.innerHTML = '<div id="issue-detail-view" class="view"></div>';
+}
+
+/** Make exactly one top-level view visible (CHT-1487). */
+function showView(id) {
+    document.body.innerHTML = `<div id="${id}" class="view"></div>`;
+}
 
 describe('ws-handlers.js', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         vi.clearAllMocks();
+        resetDetailRefreshes();
+        document.body.innerHTML = '';
         resetWsState();
         registerWsHandlers();
 
@@ -131,6 +163,11 @@ describe('ws-handlers.js', () => {
         getCurrentView.mockReturnValue('my-issues');
         getCurrentUser.mockReturnValue({ id: 'user-1' });
         getCurrentDetailIssue.mockReturnValue(null);
+    });
+
+    afterEach(() => {
+        resetDetailRefreshes();
+        vi.useRealTimers();
     });
 
     describe('issue:created', () => {
@@ -191,6 +228,7 @@ describe('ws-handlers.js', () => {
         it('reloads sprints on sprints view (list)', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'created', entity: 'issue', data: newIssue });
             expect(loadSprints).toHaveBeenCalled();
         });
@@ -206,18 +244,18 @@ describe('ws-handlers.js', () => {
         it('refreshes sprint detail on sprints view (CHT-325)', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprint-detail-view');
             dispatch({ type: 'created', entity: 'issue', data: newIssue });
             expect(viewSprint).toHaveBeenCalledWith('s1', false);
             expect(loadSprints).not.toHaveBeenCalled();
         });
 
         it('refreshes detail if child issue created', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'parent-1' });
+            openIssueDetail('parent-1');
             const childIssue = { ...newIssue, parent_id: 'parent-1' };
 
             dispatch({ type: 'created', entity: 'issue', data: childIssue });
-            expect(viewIssue).toHaveBeenCalledWith('parent-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('parent-1', false, { refresh: true });
         });
     });
 
@@ -262,6 +300,7 @@ describe('ws-handlers.js', () => {
             getCurrentView.mockReturnValue('sprints');
             getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(loadSprints).toHaveBeenCalled();
         });
@@ -278,6 +317,7 @@ describe('ws-handlers.js', () => {
             getCurrentView.mockReturnValue('sprints');
             getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprint-detail-view');
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(viewSprint).toHaveBeenCalledWith('s1', false);
             expect(loadSprints).not.toHaveBeenCalled();
@@ -288,18 +328,37 @@ describe('ws-handlers.js', () => {
         // dead code. Confirmed by getCurrentDetailIssue(), which every other
         // handler in this file already uses consistently.
         it('refreshes detail view if viewing updated issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '';
+            openIssueDetail('issue-1');
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+        });
+
+        // CHT-1237: the detail refresh used to be the last branch of the
+        // view chain, unreachable because getCurrentView() is the list.
+        it('refreshes the open detail and re-renders the list underneath it', () => {
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Old' }]);
+            openIssueDetail('issue-1', 'issues');
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(renderIssues).toHaveBeenCalled();
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+        });
+
+        // CHT-1487: an issue opened from a sprint detail -- the sprint
+        // refresh must not rebuild the sprint detail over the open issue.
+        it('does not re-open the sprint detail over an issue opened from it', () => {
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            openIssueDetail('issue-1', 'sprints');
+
+            dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
+            expect(viewSprint).not.toHaveBeenCalled();
+            expect(loadSprints).not.toHaveBeenCalled();
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('does not refresh detail view for a different issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-2' });
-            document.body.innerHTML = '';
+            openIssueDetail('issue-2');
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
             expect(viewIssue).not.toHaveBeenCalled();
@@ -311,9 +370,8 @@ describe('ws-handlers.js', () => {
         // payload stashed for the editor's conflict check), not dropped
         // (PR #209 review finding 3).
         it('defers instead of clobbering an in-progress description edit, stashing the fresh issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '<div class="description-inline-editor"><textarea id="edit-description">my in-progress edit</textarea></div>';
+            openIssueDetail('issue-1');
+            document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"><textarea id="edit-description">my in-progress edit</textarea></div>';
 
             dispatch({ type: 'updated', entity: 'issue', data: updatedIssue });
 
@@ -391,6 +449,7 @@ describe('ws-handlers.js', () => {
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
             getMyIssues.mockReturnValue([]);
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
             expect(loadSprints).toHaveBeenCalled();
         });
@@ -410,14 +469,23 @@ describe('ws-handlers.js', () => {
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
             getMyIssues.mockReturnValue([]);
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprint-detail-view');
             dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
             expect(viewSprint).toHaveBeenCalledWith('s1', false);
             expect(loadSprints).not.toHaveBeenCalled();
         });
 
-        it('navigates away from deleted issue detail', () => {
-            getCurrentView.mockReturnValue('issue-detail');
+        it('does not navigate away when the deleted issue is not on screen', () => {
+            getCurrentView.mockReturnValue('issues');
             getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div id="issue-detail-view" class="view hidden"></div>';
+
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(navigateTo).not.toHaveBeenCalled();
+        });
+
+        it('navigates away from deleted issue detail', () => {
+            openIssueDetail('issue-1');
             getIssues.mockReturnValue([{ id: 'issue-1' }]);
             getMyIssues.mockReturnValue([]);
 
@@ -462,26 +530,56 @@ describe('ws-handlers.js', () => {
         });
 
         it('refreshes issue detail if viewing the commented issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         // CHT-1214: a comment landing on the open issue while its description
         // is being edited must not blow the editor away — deferred, not
         // dropped (PR #209 review finding 3).
         it('defers instead of clobbering an in-progress description edit', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+            openIssueDetail('issue-1');
+            document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"></div>';
 
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
 
             expect(viewIssue).not.toHaveBeenCalled();
             expect(noteSkippedDetailRefresh).toHaveBeenCalled();
             document.body.innerHTML = '';
+        });
+
+        // CHT-1286: a comment posted by an agent (MCP or the API) arrives only
+        // as this broadcast -- unlike a web-UI comment, nothing on this
+        // client re-fetches locally. With the detail open, getCurrentView()
+        // still names the list underneath (CHT-1237), which is what the old
+        // gate missed.
+        it('refreshes the open issue detail for a remote comment, whatever list it was opened from', () => {
+            for (const underlying of ['issues', 'my-issues', 'board', 'sprints', 'epics']) {
+                vi.clearAllMocks();
+                resetDetailRefreshes();
+                openIssueDetail('issue-1', underlying);
+                dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+                expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+            }
+        });
+
+        it('does not refresh a detail the user has navigated away from', () => {
+            // getCurrentDetailIssue() is never cleared on navigation, so the
+            // DOM visibility check is what tells a stale value apart.
+            getCurrentView.mockReturnValue('issues');
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            document.body.innerHTML = '<div id="issue-detail-view" class="view hidden"></div>';
+
+            dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).not.toHaveBeenCalled();
+        });
+
+        it('does not refresh the open detail for a comment on another issue', () => {
+            openIssueDetail('issue-2');
+            dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).not.toHaveBeenCalled();
         });
 
         // CHT-1213: document comments broadcast a document_id field but were
@@ -494,6 +592,88 @@ describe('ws-handlers.js', () => {
         it('does not call refreshDocumentDetailIfViewing for an issue comment', () => {
             dispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
             expect(refreshDocumentDetailIfViewing).not.toHaveBeenCalled();
+        });
+    });
+
+    // PR #318 review 2: refreshes of the open detail are coalesced per issue.
+    describe('open-detail refresh coalescing', () => {
+        it('turns the comment + activity pair for one comment into one trailing refresh', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            rawDispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            expect(viewIssue).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+        });
+
+        it('keeps at most one refresh in flight and runs exactly one more after it', async () => {
+            openIssueDetail('issue-1');
+            let finish;
+            viewIssue.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            // A burst while the first is still fetching.
+            for (let i = 0; i < 5; i++) {
+                rawDispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
+            }
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            finish('rendered');
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 2);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+        });
+
+        it('retries a refresh that transient UI held off', async () => {
+            openIssueDetail('issue-1');
+            viewIssue.mockResolvedValueOnce('retry').mockResolvedValueOnce('rendered');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 2);
+            expect(viewIssue).toHaveBeenCalledTimes(2);
+        });
+
+        it('stops retrying once the user leaves the detail', async () => {
+            openIssueDetail('issue-1');
+            viewIssue.mockResolvedValue('retry');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+
+            document.getElementById('issue-detail-view').classList.add('hidden');
+            await vi.advanceTimersByTimeAsync(DETAIL_REFRESH_RETRY_MS * 3);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            viewIssue.mockReset();
+        });
+
+        it('drops a scheduled refresh if the user leaves before it fires', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            document.getElementById('issue-detail-view').classList.add('hidden');
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).not.toHaveBeenCalled();
+        });
+
+        it('coalesces per issue, not globally', () => {
+            openIssueDetail('issue-1');
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-1' } });
+            // The user switches issues inside the window; the new issue's
+            // event gets its own refresh, the old one is dropped on fire.
+            getCurrentDetailIssue.mockReturnValue({ id: 'issue-2' });
+            rawDispatch({ type: 'created', entity: 'comment', data: { issue_id: 'issue-2' } });
+            vi.advanceTimersByTime(DETAIL_REFRESH_DELAY_MS);
+            expect(viewIssue).toHaveBeenCalledTimes(1);
+            expect(viewIssue).toHaveBeenCalledWith('issue-2', false, { refresh: true });
         });
     });
 
@@ -522,21 +702,19 @@ describe('ws-handlers.js', () => {
 
     describe('relation', () => {
         it('refreshes detail if viewing related issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            openIssueDetail('issue-1');
 
             dispatch({
                 type: 'created',
                 entity: 'relation',
                 data: { source_issue_id: 'issue-1', target_issue_id: 'issue-2' },
             });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('defers instead of clobbering an in-progress description edit', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+            openIssueDetail('issue-1');
+            document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"></div>';
 
             dispatch({
                 type: 'created',
@@ -571,6 +749,7 @@ describe('ws-handlers.js', () => {
         it('reloads sprints list when on sprints view with no detail open', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'created', entity: 'sprint', data: { id: 's1' } });
             expect(loadSprints).toHaveBeenCalled();
             expect(viewSprint).not.toHaveBeenCalled();
@@ -579,9 +758,22 @@ describe('ws-handlers.js', () => {
         it('refreshes sprint detail when viewing one (CHT-325)', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprint-detail-view');
             dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
             expect(viewSprint).toHaveBeenCalledWith('s1', false);
             expect(loadSprints).not.toHaveBeenCalled();
+        });
+
+        // CHT-1487: currentSprintDetail is never cleared, so after visiting
+        // a sprint and going back to the list, a sprint event used to pull
+        // the user back into that stale sprint.
+        it('reloads the list, not a stale sprint detail, when the list is on screen', () => {
+            getCurrentView.mockReturnValue('sprints');
+            getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprints-view');
+            dispatch({ type: 'updated', entity: 'sprint', data: { id: 's1' } });
+            expect(loadSprints).toHaveBeenCalled();
+            expect(viewSprint).not.toHaveBeenCalled();
         });
 
         it('does not reload sprints when on other view', () => {
@@ -604,6 +796,7 @@ describe('ws-handlers.js', () => {
         it('clears the cached current-sprint ids on the sprints view too', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'created', entity: 'sprint', data: { id: 's1' } });
             expect(clearCachedCurrentSprintIds).toHaveBeenCalled();
         });
@@ -634,11 +827,10 @@ describe('ws-handlers.js', () => {
 
     describe('attestation', () => {
         it('refreshes issue detail if viewing attested issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('calls loadGateApprovals on approvals view', () => {
@@ -649,9 +841,8 @@ describe('ws-handlers.js', () => {
         });
 
         it('defers instead of clobbering an in-progress description edit', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+            openIssueDetail('issue-1');
+            document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"></div>';
 
             dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
 
@@ -669,17 +860,15 @@ describe('ws-handlers.js', () => {
         });
 
         it('refreshes issue detail if viewing the activity issue', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+            openIssueDetail('issue-1');
 
             dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('defers instead of clobbering an in-progress description edit', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
-            document.body.innerHTML = '<div class="description-inline-editor"></div>';
+            openIssueDetail('issue-1');
+            document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"></div>';
 
             dispatch({ type: 'created', entity: 'activity', data: { issue_id: 'issue-1' } });
 
@@ -764,6 +953,7 @@ describe('ws-handlers.js', () => {
         it('refreshes the sprints list on the sprints view with no detail open', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue(null);
+            showView('sprints-view');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
             expect(loadSprints).toHaveBeenCalled();
         });
@@ -771,6 +961,7 @@ describe('ws-handlers.js', () => {
         it('refreshes the open sprint detail on the sprints view', () => {
             getCurrentView.mockReturnValue('sprints');
             getCurrentSprintDetail.mockReturnValue({ id: 's1' });
+            showView('sprint-detail-view');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
             expect(viewSprint).toHaveBeenCalledWith('s1', false);
         });
@@ -800,11 +991,19 @@ describe('ws-handlers.js', () => {
             expect(mockLoadGateApprovals).toHaveBeenCalled();
         });
 
-        it('refreshes the open issue detail on the issue-detail view', () => {
-            getCurrentView.mockReturnValue('issue-detail');
-            getCurrentDetailIssue.mockReturnValue({ id: 'issue-1' });
+        it('refreshes the open issue detail', () => {
+            openIssueDetail('issue-1');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
-            expect(viewIssue).toHaveBeenCalledWith('issue-1', false);
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
+        });
+
+        // CHT-1237: the detail sits on top of the list getCurrentView()
+        // names; both are refreshed.
+        it('refreshes an open issue detail as well as the list underneath it', () => {
+            openIssueDetail('issue-1', 'issues');
+            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
+            expect(loadIssues).toHaveBeenCalled();
+            expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
         it('does nothing on an unrecognized view', () => {
