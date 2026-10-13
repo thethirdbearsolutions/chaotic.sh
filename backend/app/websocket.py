@@ -10,9 +10,10 @@ class ConnectionManager:
         # Map of team_id -> set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, team_id: str):
-        """Accept a new WebSocket connection."""
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, team_id: str, subprotocol: str | None = None):
+        """Accept a new WebSocket connection, selecting ``subprotocol``
+        (``chaotic`` when the client offered it, CHT-1603)."""
+        await websocket.accept(subprotocol=subprotocol)
         if team_id not in self.active_connections:
             self.active_connections[team_id] = set()
         self.active_connections[team_id].add(websocket)
@@ -26,19 +27,22 @@ class ConnectionManager:
 
     async def broadcast_to_team(self, team_id: str, message: dict):
         """Broadcast a message to all connections in a team."""
-        if team_id not in self.active_connections:
-            return
-
+        # A snapshot (PR #352 review, finding 1): each send awaits, and a
+        # connection can be added or removed meanwhile (a client closing,
+        # or /ws closing a socket whose credential failed its re-check).
+        # Iterating the live set raised "Set changed size during
+        # iteration" and turned the committed write that broadcast into a
+        # 500.
         dead_connections = set()
-        for connection in self.active_connections[team_id]:
+        for connection in list(self.active_connections.get(team_id, ())):
             try:
                 await connection.send_json(message)
             except Exception:
                 dead_connections.add(connection)
 
-        # Clean up dead connections
+        # Clean up dead connections; the team's set may be gone by now.
         for connection in dead_connections:
-            self.active_connections[team_id].discard(connection)
+            self.disconnect(connection, team_id)
 
 
 # Global connection manager instance

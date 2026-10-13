@@ -31,7 +31,7 @@ vi.mock('./api.js', () => ({
 import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
-import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState } from './ws.js';
+import { connectWebSocket, dispatch, subscribe, getReconnectDelay, resetWsState, wsProtocols, WS_SUBPROTOCOL } from './ws.js';
 
 describe('ws.js', () => {
     beforeEach(() => {
@@ -71,8 +71,84 @@ describe('ws.js', () => {
             connectWebSocket('team-1');
             expect(MockWebSocket).toHaveBeenCalledTimes(1);
             const url = MockWebSocket.mock.calls[0][0];
-            expect(url).toContain('ws?token=test-token&team_id=team-1');
+            expect(url).toMatch(/\/ws\?team_id=team-1$/);
             expect(url).toMatch(/^wss?:\/\//);
+        });
+
+        // CHT-1603: the credential never goes in the URL (access and proxy
+        // logs); it is offered as a subprotocol entry beside 'chaotic'.
+        it('sends the token as a subprotocol, not in the URL', () => {
+            connectWebSocket('team-1');
+            const [url, protocols] = MockWebSocket.mock.calls[0];
+            expect(url).not.toContain('test-token');
+            expect(url).not.toContain('token=');
+            expect(protocols).toEqual(['chaotic', 'chaotic.bearer.test-token']);
+            expect(wsProtocols('abc')).toEqual([WS_SUBPROTOCOL, 'chaotic.bearer.abc']);
+        });
+
+        it('reconnects after a drop, with the current token', () => {
+            // CHT-1603: the reconnect reads the token afresh rather than
+            // replaying the old one.
+            vi.useFakeTimers();
+            try {
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                api.getToken.mockReturnValue('fresh-token');
+                ws.onclose({ code: 1006 });
+                vi.advanceTimersByTime(1500);
+                expect(MockWebSocket).toHaveBeenCalledTimes(2);
+                const [url, protocols] = MockWebSocket.mock.calls[1];
+                expect(url).toMatch(/\/ws\?team_id=team-1$/);
+                expect(protocols).toEqual(['chaotic', 'chaotic.bearer.fresh-token']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        // PR #352 review, finding 2: 4001 / 4003 mean the credential stopped
+        // being good; retrying cannot help, so the client stops and hands
+        // the decision to ws-handlers.js through a synthetic event.
+        // stored: what localStorage holds when the close arrives (the api
+        // mock's token, 'test-token', is what the socket was opened with).
+        it.each([
+            [4001, 'test-token', 'unauthorized', true],
+            [4001, 'newer-token', 'superseded', false],
+            [4003, 'test-token', 'forbidden', false],
+        ])('stops reconnecting on close %i (stored token %s) and dispatches connection:%s', (code, stored, type, badgeHidden) => {
+            const handler = vi.fn();
+            subscribe(`connection:${type}`, handler);
+            vi.useFakeTimers();
+            try {
+                localStorage.setItem('chaotic_token', 'test-token');
+                connectWebSocket('team-1');
+                const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+                localStorage.setItem('chaotic_token', stored);
+                ws.onclose({ code });
+                vi.advanceTimersByTime(60000);
+                expect(MockWebSocket).toHaveBeenCalledTimes(1);
+                expect(handler).toHaveBeenCalledWith({ code, teamId: 'team-1' }, { type, entity: 'connection' });
+                expect(showToast).not.toHaveBeenCalledWith('Live updates disconnected. Reconnecting...', 'warning');
+                expect(setWebsocket).toHaveBeenLastCalledWith(null);
+                // PR #352 re-review: a stop the user is not signed out for
+                // shows a 'Stopped' badge instead of hiding it.
+                const badge = document.getElementById('ws-status-badge');
+                expect(badge.classList.contains('hidden')).toBe(badgeHidden);
+                if (!badgeHidden) expect(badge.textContent).toBe('Stopped');
+            } finally {
+                localStorage.removeItem('chaotic_token');
+                vi.useRealTimers();
+            }
+        });
+
+        it('a fresh connect after a stop clears the Stopped badge', () => {
+            connectWebSocket('team-1');
+            const ws = setWebsocket.mock.calls[setWebsocket.mock.calls.length - 1][0];
+            ws.onclose({ code: 4003 });
+            const badge = document.getElementById('ws-status-badge');
+            expect(badge.classList.contains('hidden')).toBe(false);
+            connectWebSocket('team-2');
+            expect(badge.classList.contains('hidden')).toBe(true);
+            expect(badge.textContent).toBe('Offline');
         });
 
         it('stores the WebSocket via setWebsocket', () => {

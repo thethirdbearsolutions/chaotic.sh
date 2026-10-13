@@ -1,6 +1,6 @@
 """Tests for WebSocket connection manager and broadcast functions (CHT-275)."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 from app.websocket import ConnectionManager, broadcast_issue_event, broadcast_comment_event, broadcast_project_event, broadcast_activity_event, broadcast_relation_event, broadcast_attestation_event, broadcast_document_event
 
@@ -213,114 +213,46 @@ class TestBroadcastHelpers:
         })
 
 
-class TestWebSocketEndpointTeamValidation:
-    """Tests for CHT-1110: team membership validation on WS connect."""
+class TestBroadcastWhileDisconnecting:
+    """PR #352 review, finding 1: a disconnect landing during a
+    broadcast's await (a client closing, or /ws closing a socket whose
+    credential failed its re-check) must not break the broadcast."""
 
     @pytest.mark.asyncio
-    async def test_invalid_token_closes_with_4001(self):
-        """WS with invalid token should close with 4001."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        with patch("app.main.decode_token", return_value=None):
-            await websocket_endpoint(ws, token="bad-token", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4001)
+    async def test_other_socket_removed_mid_broadcast(self, manager):
+        import asyncio
+
+        slow, other = make_ws(), make_ws()
+
+        async def slow_send(message):
+            await asyncio.sleep(0.05)
+
+        slow.send_json.side_effect = slow_send
+        manager.active_connections["team-1"] = {slow, other}
+
+        async def drop_soon():
+            await asyncio.sleep(0.01)
+            manager.disconnect(other, "team-1")
+
+        await asyncio.gather(manager.broadcast_to_team("team-1", {"type": "t"}), drop_soon())
+        assert manager.active_connections["team-1"] == {slow}
 
     @pytest.mark.asyncio
-    async def test_token_missing_sub_closes_with_4001(self):
-        """WS with token lacking 'sub' claim should close with 4001."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        with patch("app.main.decode_token", return_value={"exp": 99999}):
-            await websocket_endpoint(ws, token="no-sub", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4001)
+    async def test_dead_socket_whose_team_is_gone_by_cleanup(self, manager):
+        import asyncio
 
-    @pytest.mark.asyncio
-    async def test_user_not_found_closes_with_4003(self):
-        """WS with token for nonexistent user should close with 4003."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.return_value = None
-        with patch("app.main.decode_token", return_value={"sub": "ghost-user"}), \
-             patch("app.main.UserService", return_value=mock_user_service):
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4003)
+        dead = make_ws()
 
-    @pytest.mark.asyncio
-    async def test_user_not_team_member_closes_with_4003(self):
-        """WS with token for user NOT in team should close with 4003."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        mock_user = MagicMock(id="user-1")
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.return_value = mock_user
-        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
-             patch("app.main.UserService", return_value=mock_user_service), \
-             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=False):
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4003)
+        async def dies(message):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("closed")
 
-    @pytest.mark.asyncio
-    async def test_valid_team_member_connects(self):
-        """WS with valid token for team member should connect."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        # Simulate WebSocketDisconnect to exit the while True loop
-        from starlette.websockets import WebSocketDisconnect
-        ws.receive_text.side_effect = WebSocketDisconnect()
-        mock_user = MagicMock(id="user-1")
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.return_value = mock_user
-        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
-             patch("app.main.UserService", return_value=mock_user_service), \
-             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=True), \
-             patch("app.main.manager", new_callable=AsyncMock) as mock_manager:
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        mock_manager.connect.assert_awaited_once_with(ws, "team-1")
-        ws.close.assert_not_awaited()
+        dead.send_json.side_effect = dies
+        manager.active_connections["team-1"] = {dead}
 
-    @pytest.mark.asyncio
-    async def test_non_disconnect_exception_still_cleans_up_connection(self):
-        """CHT-1225: receive_text() raising anything other than
-        WebSocketDisconnect (e.g. an abrupt network drop surfacing as a
-        different exception type) must still remove the connection from
-        the registry -- the except clause used to only catch
-        WebSocketDisconnect, leaking dead connections."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        ws.receive_text.side_effect = RuntimeError("connection reset")
-        mock_user = MagicMock(id="user-1")
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.return_value = mock_user
-        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
-             patch("app.main.UserService", return_value=mock_user_service), \
-             patch("app.main.check_user_team_access", new_callable=AsyncMock, return_value=True), \
-             patch("app.main.manager", new_callable=AsyncMock) as mock_manager:
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        mock_manager.connect.assert_awaited_once_with(ws, "team-1")
-        mock_manager.disconnect.assert_called_once_with(ws, "team-1")
+        async def drop_soon():
+            await asyncio.sleep(0.01)
+            manager.disconnect(dead, "team-1")  # empties and deletes the team
 
-    @pytest.mark.asyncio
-    async def test_inactive_user_closes_with_4003(self):
-        """WS with token for inactive user should close with 4003."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        mock_user = MagicMock(id="user-1", is_active=False)
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.return_value = mock_user
-        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
-             patch("app.main.UserService", return_value=mock_user_service):
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4003)
-
-    @pytest.mark.asyncio
-    async def test_db_error_closes_with_4011(self):
-        """WS should close with 4011 if DB call fails during validation."""
-        from app.main import websocket_endpoint
-        ws = AsyncMock()
-        mock_user_service = AsyncMock()
-        mock_user_service.get_by_id.side_effect = Exception("DB unreachable")
-        with patch("app.main.decode_token", return_value={"sub": "user-1"}), \
-             patch("app.main.UserService", return_value=mock_user_service):
-            await websocket_endpoint(ws, token="valid", team_id="team-1")
-        ws.close.assert_awaited_once_with(code=4011)
+        await asyncio.gather(manager.broadcast_to_team("team-1", {"type": "t"}), drop_soon())
+        assert "team-1" not in manager.active_connections
