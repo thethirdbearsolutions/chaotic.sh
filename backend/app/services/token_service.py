@@ -25,8 +25,9 @@ What this module does not do yet:
   an active agent in the session's team, and the human who answers for
   it is active and still in that team. Scopes are enforced by
   ``app.auth.access.authorize`` (CHT-1562).
-* Endpoints: the token endpoint and code exchange are CHT-1520, claim
-  grants CHT-1447, and the RevocationService with cascades CHT-1449.
+* Endpoints: /oauth/token and /oauth/revoke (CHT-1520) are
+  ``app.api.oauth`` over ``app.services.oauth_grant_service``; claim
+  grants are CHT-1447, and the RevocationService with cascades CHT-1449.
   ``revoke_session`` here is the one primitive they build on.
 
 Everything refuses while ``OAUTH_ENABLED`` is off.

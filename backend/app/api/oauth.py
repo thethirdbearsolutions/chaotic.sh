@@ -3,7 +3,8 @@
 ``public_router`` is mounted at the server root, next to the discovery
 documents (``app.oauth.discovery``), because the paths are the ones the
 authorization-server metadata advertises: ``/oauth/register``
-(CHT-1518) and ``/oauth/authorize`` (CHT-1519). ``router`` is the
+(CHT-1518), ``/oauth/authorize`` (CHT-1519), and ``/oauth/token`` and
+``/oauth/revoke`` (CHT-1520). ``router`` is the
 consent API the SPA calls, under ``/api/oauth`` (CHT-1519). Everything
 404s while ``OAUTH_ENABLED`` is off.
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -31,15 +33,17 @@ from app.api.deps import HumanUser
 from app.auth.access import reads, writes
 from app.config import get_settings
 from app.oauth.clients import canonical_resource, redirect_uri_matches
-from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, oauth_enabled
+from app.oauth.discovery import AUTHORIZE_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, oauth_enabled
 from app.oauth.errors import FRAME_HEADERS, NO_STORE, OAuthHTTPError
 from app.schemas.oauth import (
     AuthorizationApproval,
     AuthorizationDecision,
     AuthorizationRequestView,
     ClientRegistrationResponse,
+    TokenResponse,
 )
 from app.services.oauth_client_service import OAuthClientError, OAuthClientService, redirect_uris_of
+from app.services.oauth_grant_service import GrantError, OAuthGrantService, TokenRequest
 from app.services.oauth_consent_service import (
     MAX_STATE_LENGTH,
     ConsentError,
@@ -218,6 +222,101 @@ async def authorize(request: Request) -> Response:
         client=client, redirect_uri=redirect_uri, state=state, code_challenge=challenge, scopes=scopes,
     )
     return _redirect(f"{iss}{CONSENT_PATH}/{stored.id}")
+
+
+# --- /oauth/token and /oauth/revoke (CHT-1520) --------------------------------
+
+FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+# A token request is a few hundred bytes.
+MAX_FORM_BYTES = 16 * 1024
+_MAX_FORM_FIELDS = 32
+_TOKEN_PARAMS = (
+    "grant_type", "client_id", "client_secret", "code", "redirect_uri", "code_verifier",
+    "refresh_token", "scope", "resource",
+)
+_REVOKE_PARAMS = ("token", "token_type_hint", "client_id", "client_secret")
+
+
+async def _form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
+    """The named parameters of a form-encoded POST body (RFC 6749 §3.2,
+    RFC 7009 §2.1), each at most once; an empty value counts as absent
+    (§3.1). Unknown parameters are ignored, as RFC 6749 asks.
+
+    Refused: any other content type (Claude sends form encoding; JSON
+    is for the P2 claim grants), and any query string at all. Codes,
+    tokens and secrets belong in the body: uvicorn's access log records
+    the URL, so one carried there would be written down (CHT-1570). It is
+    refused, not read."""
+    if request.url.query:
+        raise OAuthHTTPError(400, "invalid_request", "parameters go in the form-encoded body, never the URL")
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type != FORM_CONTENT_TYPE:
+        raise OAuthHTTPError(400, "invalid_request", f"the request body must be {FORM_CONTENT_TYPE}")
+    raw = await request.body()
+    if len(raw) > MAX_FORM_BYTES:
+        raise OAuthHTTPError(400, "invalid_request", "the request is too large")
+    try:
+        pairs = parse_qsl(raw.decode("utf-8"), keep_blank_values=True, max_num_fields=_MAX_FORM_FIELDS)
+    except (UnicodeDecodeError, ValueError):
+        raise OAuthHTTPError(400, "invalid_request", "the request body is not valid form encoding") from None
+    form: dict[str, str] = {}
+    seen: set[str] = set()
+    for name, value in pairs:
+        if name not in names:
+            continue
+        if name in seen:
+            raise OAuthHTTPError(400, "invalid_request", f"repeated parameter: {name}")
+        seen.add(name)
+        if value != "":
+            form[name] = value
+    return form
+
+
+def _from_grant_error(exc: GrantError) -> OAuthHTTPError:
+    return OAuthHTTPError(exc.status_code, exc.error, exc.description)
+
+
+@public_router.post(TOKEN_PATH, response_model=TokenResponse, response_model_exclude_unset=True)
+@writes
+async def token(request: Request, response: Response) -> TokenResponse:
+    """OAuth 2.1 token endpoint (design §2.4): the ``authorization_code``
+    grant (PKCE S256, exact redirect_uri, client and RFC 8707 resource
+    all matching the code) and ``refresh_token`` (rotation with reuse
+    detection). The client authenticates by its registered method, in
+    the body (``app.services.oauth_grant_service``). Nothing ambient is
+    read (CHT-1564), and every answer, success or error, is
+    ``Cache-Control: no-store``."""
+    if not oauth_enabled():
+        raise _not_found()
+    form = await _form(request, _TOKEN_PARAMS)
+    try:
+        issued = await OAuthGrantService().token(TokenRequest(
+            **{name: form.get(name) for name in _TOKEN_PARAMS},
+            user_agent=request.headers.get("user-agent"),
+        ))
+    except GrantError as exc:
+        raise _from_grant_error(exc) from None
+    response.headers.update(NO_STORE)
+    return issued
+
+
+@public_router.post(REVOKE_PATH)
+@writes
+async def revoke(request: Request) -> Response:
+    """RFC 7009 token revocation: revokes the holder session behind an
+    access or refresh token issued to the authenticated client. 200 for
+    every token, valid or not (§2.2); only a malformed request or a
+    failed client authentication is an error."""
+    if not oauth_enabled():
+        raise _not_found()
+    form = await _form(request, _REVOKE_PARAMS)
+    try:
+        await OAuthGrantService().revoke(
+            token=form.get("token"), client_id=form.get("client_id"), client_secret=form.get("client_secret"),
+        )
+    except GrantError as exc:
+        raise _from_grant_error(exc) from None
+    return Response(status_code=status.HTTP_200_OK, headers=NO_STORE)
 
 
 # --- consent API (CHT-1519), mounted under /api/oauth ------------------------

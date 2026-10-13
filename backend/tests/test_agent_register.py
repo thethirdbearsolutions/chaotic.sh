@@ -594,6 +594,9 @@ class TestRegisterOnly:
             "/api/auth/signup", "/api/auth/login", "/api/teams/invitations/{token}/accept",
             # RFC 7591: registration is unauthenticated (CHT-1518).
             "/oauth/register",
+            # OAuth clients authenticate in the request body, never as a
+            # user (CHT-1520, CHT-1564).
+            "/oauth/token", "/oauth/revoke",
         }
         escaped = [
             (sorted(methods), path) for methods, path, _endpoint, dependant in _api_routes()

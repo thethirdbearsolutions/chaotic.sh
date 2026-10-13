@@ -1,8 +1,9 @@
-"""OAuth endpoint schemas (CHT-1518, CHT-1519)."""
+"""OAuth endpoint schemas (CHT-1518, CHT-1519, CHT-1520)."""
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.enums import AgentKind
 from app.utils import DateTimeUTC
 
 
@@ -115,3 +116,37 @@ class AuthorizationDecision(BaseModel):
 
     redirect: str
     agent_id: str | None = None
+
+
+# --- token endpoint (CHT-1520) -----------------------------------------------
+
+
+class TokenAgent(BaseModel):
+    """The agent a connection acts as."""
+
+    id: str
+    name: str
+    kind: AgentKind | None = None
+
+
+class TokenConnection(BaseModel):
+    """Who and where a connection's tokens act (design §2.4): not part of
+    OAuth, so under its own key. ``project_ids`` None means the whole
+    team."""
+
+    agent: TokenAgent
+    team_id: str
+    project_ids: list[str] | None = None
+    holder_session_id: str
+
+
+class TokenResponse(BaseModel):
+    """RFC 6749 §5.1 successful token response. ``refresh_token`` only
+    when ``offline_access`` was granted."""
+
+    access_token: str
+    token_type: Literal["Bearer"] = "Bearer"
+    expires_in: int
+    refresh_token: str | None = None
+    scope: str
+    chaotic: TokenConnection

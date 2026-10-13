@@ -22,8 +22,8 @@ When off, the discovery paths 404 and /mcp's 401 stays the bare
 ``Bearer`` challenge it has always been.
 
 The authorize, token, revoke and register endpoints advertised here are
-implemented by CHT-1518 (register), CHT-1519 (authorize) and CHT-1520
-(token, revoke); until they land the flag must stay off.
+implemented in ``app.api.oauth``: register (CHT-1518), authorize
+(CHT-1519), token and revoke (CHT-1520).
 """
 from __future__ import annotations
 
