@@ -49,8 +49,10 @@ The check is repeated while the socket is open (``watch``), every
 revoked or has expired, a user deactivated, or a member removed from the
 team is closed with the code above at the next check, and stops getting
 broadcasts at once. An OAuth access token lives ten minutes, so a socket
-opened with one closes when it expires, and the client reconnects with
-its refreshed token.
+opened with one closes (4001) when it expires; a client that can refresh
+(the native app) reconnects with its new token. The web app cannot
+refresh its login JWT, so on 4001 it signs out (or, if another tab has
+signed in since, just stops), and on 4003 it stops reconnecting.
 """
 from __future__ import annotations
 

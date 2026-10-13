@@ -114,6 +114,16 @@ export function registerWsHandlers() {
     // good (CHT-1603); ws.js does not reconnect after these.
     subscribe('connection:unauthorized', handleSessionEnded);
     subscribe('connection:forbidden', handleLiveFeedForbidden);
+    subscribe('connection:superseded', handleSessionSuperseded);
+}
+
+/**
+ * /ws closed with 4001, but another tab has signed in since this socket
+ * opened (storage holds a newer token). Signing out here would clear that
+ * newer session, so this tab only stops its live updates (CHT-1603).
+ */
+function handleSessionSuperseded() {
+    showToast('Live updates stopped: you signed in again in another tab. Reload this tab to continue.', 'warning');
 }
 
 /**

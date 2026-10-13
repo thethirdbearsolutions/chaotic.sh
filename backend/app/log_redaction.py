@@ -14,7 +14,8 @@ logged request target it redacts
 
 * the value of a credential parameter (``CREDENTIAL_PARAMS``, any case,
   percent-encoded names included), whatever the value looks like: this is
-  what hides the login JWT the SPA sends as ``/ws?token=``;
+  what hides a login JWT sent as ``/ws?token=``, which the web app did
+  until CHT-1603 and a client that still uses the deprecated path does;
 * every secret this server mints, anywhere in the line, by its exact shape
   (a prefix from ``ALL_SECRET_PREFIXES`` plus ``SECRET_BYTES`` of hex, as
   ``mint_secret`` makes them): ``ck_...19a0``, the same short form the

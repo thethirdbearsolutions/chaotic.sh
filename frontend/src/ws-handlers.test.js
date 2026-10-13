@@ -979,6 +979,16 @@ describe('ws-handlers.js', () => {
         });
     });
 
+    describe('connection:superseded', () => {
+        it('stops without signing out the newer session', () => {
+            dispatch({ type: 'superseded', entity: 'connection', data: { code: 4001 } });
+            expect(api.logout).not.toHaveBeenCalled();
+            expect(showAuthScreen).not.toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith(
+                'Live updates stopped: you signed in again in another tab. Reload this tab to continue.', 'warning');
+        });
+    });
+
     describe('connection:reconnected', () => {
         it('refreshes the inbox unread badge regardless of current view', () => {
             getCurrentView.mockReturnValue('issues');

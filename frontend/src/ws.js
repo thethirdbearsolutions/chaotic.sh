@@ -11,8 +11,12 @@
 import { api } from './api.js';
 import { getWebsocket, setWebsocket, getCurrentTeam } from './state.js';
 import { showToast } from './ui.js';
+import { getToken as getStoredToken } from './storage.js';
 
 let wsFailCount = 0;
+// True once the server closed the socket for a credential reason
+// (4001/4003, CHT-1603) and the client gave up reconnecting.
+let wsStopped = false;
 let reconnectTimer = null;
 
 // Connection generation (CHT-1224 PR #211 review finding 1): incremented on
@@ -38,7 +42,14 @@ const subscribers = new Map();
 function updateWsStatusIndicator() {
     const badge = document.getElementById('ws-status-badge');
     if (!badge) return;
-    badge.classList.toggle('hidden', wsFailCount === 0);
+    // CHT-1603: after the server refused the credential (4003, or a 4001
+    // that did not sign this tab out) nothing reconnects, so the badge
+    // says live updates have stopped rather than hiding.
+    badge.classList.toggle('hidden', wsFailCount === 0 && !wsStopped);
+    badge.textContent = wsStopped ? 'Stopped' : 'Offline';
+    badge.title = wsStopped
+        ? 'Live updates stopped — reload to try again'
+        : 'Live updates disconnected — reconnecting';
 }
 
 /**
@@ -120,8 +131,9 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
 
     // Fresh connect = new outage scope: clear any leftover fail state from
     // the previous connection generation (e.g. switching teams mid-outage).
-    if (!isReconnect && wsFailCount > 0) {
+    if (!isReconnect && (wsFailCount > 0 || wsStopped)) {
         wsFailCount = 0;
+        wsStopped = false;
         updateWsStatusIndicator();
     }
 
@@ -189,12 +201,16 @@ export function connectWebSocket(teamId, { isReconnect = false } = {}) {
             if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
                 setWebsocket(null);
                 wsFailCount = 0;
+                // A 4001 signs out only if storage still holds the token
+                // this socket was opened with: if another tab has signed in
+                // since, clearing it would sign that newer session out too
+                // (PR #352 re-review). This tab just stops.
+                const signOut = code === WS_CLOSE_UNAUTHENTICATED && getStoredToken() === token;
+                wsStopped = !signOut;
                 updateWsStatusIndicator();
-                dispatch({
-                    type: code === WS_CLOSE_UNAUTHENTICATED ? 'unauthorized' : 'forbidden',
-                    entity: 'connection',
-                    data: { code, teamId },
-                });
+                let type = 'forbidden';
+                if (code === WS_CLOSE_UNAUTHENTICATED) type = signOut ? 'unauthorized' : 'superseded';
+                dispatch({ type, entity: 'connection', data: { code, teamId } });
                 return;
             }
             wsFailCount++;
@@ -274,6 +290,7 @@ export function dispatch(message) {
  */
 export function resetWsState() {
     wsFailCount = 0;
+    wsStopped = false;
     updateWsStatusIndicator();
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
