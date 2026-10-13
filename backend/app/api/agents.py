@@ -14,6 +14,26 @@ from app.services.user_service import UserService
 router = APIRouter()
 
 
+def agent_response(agent) -> AgentResponse:
+    """The wire form of an agent row (with `parent_user` joined)."""
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        avatar_url=agent.avatar_url,
+        is_active=agent.is_active,
+        parent_user_id=agent.parent_user_id,
+        parent_user_name=agent.parent_user.name if agent.parent_user else None,
+        agent_team_id=agent.agent_team_id,
+        agent_project_id=agent.agent_project_id,
+        created_at=agent.created_at,
+        updated_at=agent.updated_at,
+        kind=agent.kind,
+        external_ref=agent.external_ref,
+        registered_by_id=agent.registered_by_id,
+        can_register=agent.can_register,
+    )
+
+
 @router.post(
     "/teams/{team_id}/agents",
     response_model=AgentCreated,
@@ -152,18 +172,7 @@ async def list_team_agents(
     agents = await agent_service.list_by_team(team_id)
 
     return [
-        AgentResponse(
-            id=agent.id,
-            name=agent.name,
-            avatar_url=agent.avatar_url,
-            is_active=agent.is_active,
-            parent_user_id=agent.parent_user_id,
-            parent_user_name=agent.parent_user.name if agent.parent_user else None,
-            agent_team_id=agent.agent_team_id,
-            agent_project_id=agent.agent_project_id,
-            created_at=agent.created_at,
-            updated_at=agent.updated_at,
-        )
+        agent_response(agent)
         for agent in agents
     ]
 
@@ -191,18 +200,7 @@ async def get_agent(
             detail="Not authorized to view this agent",
         )
 
-    return AgentResponse(
-        id=agent.id,
-        name=agent.name,
-        avatar_url=agent.avatar_url,
-        is_active=agent.is_active,
-        parent_user_id=agent.parent_user_id,
-        parent_user_name=agent.parent_user.name if agent.parent_user else None,
-        agent_team_id=agent.agent_team_id,
-        agent_project_id=agent.agent_project_id,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at,
-    )
+    return agent_response(agent)
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -229,18 +227,7 @@ async def update_agent(
 
     agent = await agent_service.update(agent, agent_in)
 
-    return AgentResponse(
-        id=agent.id,
-        name=agent.name,
-        avatar_url=agent.avatar_url,
-        is_active=agent.is_active,
-        parent_user_id=agent.parent_user_id,
-        parent_user_name=agent.parent_user.name if agent.parent_user else None,
-        agent_team_id=agent.agent_team_id,
-        agent_project_id=agent.agent_project_id,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at,
-    )
+    return agent_response(agent)
 
 
 @router.post(
@@ -394,18 +381,7 @@ async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> Age
             detail="Agent not found",
         )
 
-    return AgentResponse(
-        id=agent.id,
-        name=agent.name,
-        avatar_url=agent.avatar_url,
-        is_active=agent.is_active,
-        parent_user_id=agent.parent_user_id,
-        parent_user_name=agent.parent_user.name if agent.parent_user else None,
-        agent_team_id=agent.agent_team_id,
-        agent_project_id=agent.agent_project_id,
-        created_at=agent.created_at,
-        updated_at=agent.updated_at,
-    )
+    return agent_response(agent)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

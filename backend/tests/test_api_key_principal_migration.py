@@ -248,7 +248,8 @@ def test_dead_keys_do_not_stop_oxyde_migrate(request, shape):
 
     assert set(_rows(path)) == set(KEYS)
     with closing(sqlite3.connect(path)) as c:
-        assert c.execute("SELECT max(name) FROM oxyde_migrations").fetchone()[0] == MIGRATION.stem
+        # Applied (later migrations may follow it in the chain).
+        assert c.execute("SELECT 1 FROM oxyde_migrations WHERE name = ?", (MIGRATION.stem,)).fetchone()
 
 
 def test_a_database_with_no_dead_keys_prints_nothing(at_0020, capsys):

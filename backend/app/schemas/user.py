@@ -1,5 +1,6 @@
 """User schemas."""
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from app.enums import AgentKind
 from app.utils import DateTimeUTC
 
 
@@ -30,6 +31,10 @@ class UserResponse(BaseModel):
     parent_user_name: str | None = None
     created_at: DateTimeUTC
     updated_at: DateTimeUTC
+    # Agent identity (CHT-1497); all None for a human. See AgentResponse.
+    kind: AgentKind | None = None
+    external_ref: str | None = None
+    registered_by_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

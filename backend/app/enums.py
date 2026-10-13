@@ -167,3 +167,18 @@ class InboxEntryKind(str, Enum):
     ASSIGNMENT = "assignment"               # An issue was assigned to this user
     REVIEW_REQUESTED = "review_requested"  # A REVIEW ritual was attested; an admin must approve it
     AGENT_STATUS = "agent_status"          # Someone else deactivated/reactivated an agent this user created, or a departing member's agent keys were revoked (admins)
+
+
+# --- Agent identity enums (CHT-1497) ---
+
+class AgentKind(str, Enum):
+    """What kind of agent a users row is. NULL for a human.
+
+    ASSISTANT is every hand-made agent (0022 backfills it). SERVICE is a
+    registrar: a harness agent with `can_register`, which mints session
+    identities and does nothing else (CHT-1498). SESSION is an identity a
+    registrar registered for one harness session, keyed by
+    `external_ref`."""
+    ASSISTANT = "assistant"
+    SERVICE = "service"
+    SESSION = "session"
