@@ -1,7 +1,9 @@
 """API dependencies."""
-from typing import Annotated
-from fastapi import Depends, HTTPException, status
+from typing import AsyncIterator, Annotated
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.actor import ActorContext, actor_scope
+from app.oxyde_models.api_key import OxydeAPIKey
 from app.oxyde_models.user import OxydeUser as User
 from app.services.user_service import UserService
 from app.services.api_key_service import APIKeyService
@@ -11,10 +13,23 @@ from app.utils.security import decode_token
 security = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
+async def get_current_actor(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-) -> User:
-    """Get current authenticated user via JWT token or API key."""
+    x_chaotic_interactive: Annotated[str | None, Header()] = None,
+) -> AsyncIterator[ActorContext]:
+    """Authenticate the request and make its ``ActorContext`` current
+    (CHT-1432) for the rest of the request.
+
+    A yield dependency so the ContextVar is reset by token when the request
+    finishes: the test client runs the app in the test's own task, so a bare
+    ``set`` would leak this request's actor into whatever runs next there.
+    FastAPI caches it per request, so ``CurrentActor`` and ``CurrentUser`` in
+    the same handler share one authentication.
+
+    ``X-Chaotic-Interactive: 1`` is the client-asserted "a person is at a
+    TTY / browser" signal (CHT-1302): the CLI sends it when stdin and stdout
+    are both a TTY, the web app always. It feeds ``actor.is_human_request``.
+    """
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -23,13 +38,35 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+    interactive = x_chaotic_interactive == "1"
 
     # Check if this is an API key (starts with ck_)
     if token.startswith("ck_"):
-        return await _authenticate_with_api_key(token)
+        user, key_record = await _resolve_api_key(token)
+        actor = ActorContext(
+            effective=user,
+            via="api_key",
+            transport="rest",
+            credential_id=key_record.id,
+            credential_name=key_record.name,
+            interactive=interactive,
+        )
+    else:
+        # Otherwise treat as JWT token
+        user = await _authenticate_with_jwt(token)
+        actor = ActorContext(effective=user, via="jwt", transport="rest", interactive=interactive)
 
-    # Otherwise treat as JWT token
-    return await _authenticate_with_jwt(token)
+    with actor_scope(actor):
+        yield actor
+
+
+CurrentActor = Annotated[ActorContext, Depends(get_current_actor)]
+
+
+async def get_current_user(actor: CurrentActor) -> User:
+    """Get current authenticated user via JWT token or API key: the
+    acting principal of the request's ``ActorContext``."""
+    return actor.effective
 
 
 async def _authenticate_with_jwt(token: str) -> User:
@@ -71,10 +108,17 @@ async def _authenticate_with_jwt(token: str) -> User:
 
 
 async def _authenticate_with_api_key(api_key: str) -> User:
-    """Authenticate using API key.
+    """Authenticate using API key; the user only (see ``_resolve_api_key``)."""
+    user, _ = await _resolve_api_key(api_key)
+    return user
 
-    If the API key has an agent_user_id, return the agent User.
-    Otherwise, return the human user who owns the key (backwards compatible).
+
+async def _resolve_api_key(api_key: str) -> tuple[User, OxydeAPIKey]:
+    """Authenticate using API key, returning the user and the key record.
+
+    If the API key has an agent_user_id, the user is the agent.
+    Otherwise, it is the human user who owns the key (backwards compatible).
+    Shared by REST and the HTTP MCP transport (app.mcp_server.auth).
     """
     api_key_service = APIKeyService()
     key_record = await api_key_service.validate_key(api_key)
@@ -113,7 +157,7 @@ async def _authenticate_with_api_key(api_key: str) -> User:
             detail="User is inactive",
         )
 
-    return user
+    return user, key_record
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
@@ -152,30 +196,3 @@ async def check_user_project_access(user: User, project_id: str, team_id: str) -
     team_service = TeamService()
     member = await team_service.get_member(team_id, user.id)
     return member is not None
-
-
-async def get_auth_method(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-) -> str:
-    """Get the authentication method used (jwt or api_key).
-
-    This is used to distinguish human requests (JWT from web UI login) from
-    agent requests (API keys from CLI). The assumption is:
-    - JWT tokens are obtained via web UI login → human user
-    - API keys (ck_*) are used by CLI/programmatic access → agent
-
-    This detection runs as a separate dependency alongside get_current_user.
-    If token validation fails in get_current_user, the request will be rejected
-    before this auth method value is used.
-    """
-    if not credentials:
-        return "unknown"
-
-    token = credentials.credentials
-
-    if token.startswith("ck_"):
-        return "api_key"
-    return "jwt"
-
-
-AuthMethod = Annotated[str, Depends(get_auth_method)]

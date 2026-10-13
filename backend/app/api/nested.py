@@ -49,9 +49,8 @@ CHT-1245 added ``GET /projects/{project_id}/issues/ready`` and
 it's path-nested from the start rather than getting a flat query-param
 route first and migrating later.
 """
-from typing import Annotated
 
-from fastapi import APIRouter, status, Header
+from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser
 from app.schemas.project import ProjectCreate, ProjectResponse
@@ -142,7 +141,6 @@ async def create_project_issue(
     project_id: str,
     issue_in: IssueCreate,
     current_user: CurrentUser,
-    x_chaotic_interactive: Annotated[str | None, Header()] = None,
 ):
     """Create an issue (CHT-1223). Replaces ``POST /issues?project_id=...``.
 
@@ -155,7 +153,6 @@ async def create_project_issue(
         project_id=project_id,
         issue_in=issue_in,
         current_user=current_user,
-        x_chaotic_interactive=x_chaotic_interactive,
     )
 
 

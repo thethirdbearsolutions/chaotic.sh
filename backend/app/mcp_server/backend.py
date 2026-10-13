@@ -4,7 +4,7 @@ Implements ``chaotic_mcp_tools.Backend`` over ``app.api`` directly: a
 hosted server obviously can't loop back through itself over HTTP, so every
 data method calls the API-layer function the corresponding REST route
 would have, as the user ``auth.py`` resolved from the caller's API key
-(``context.current_mcp_user``). Those functions return their response
+(``context.get_current_mcp_user``). Those functions return their response
 schema by construction (CHT-1348; ADR-0005), so what an adapter method
 hands back after ``model_dump(mode="json")`` is exactly what an HTTP
 client sees after ``response_model`` -- filtered to the schema's fields,

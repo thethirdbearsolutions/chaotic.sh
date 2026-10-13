@@ -13,17 +13,22 @@ import re
 
 import pytest
 
-from app.mcp_server import context, tools
+from app.actor import ActorContext, actor_scope
+from app.mcp_server import tools
+
+
+def _mcp_actor(user):
+    """The ActorContext auth.py builds for an /mcp request (CHT-1432)."""
+    return actor_scope(ActorContext(effective=user, via="api_key", transport="mcp_http"))
 
 
 @pytest.fixture(autouse=True)
 def _as(test_user):
     """Run every test in this file as test_user (mirrors auth.py setting
-    the contextvar per-request, just without going through HTTP).
+    the actor per-request, just without going through HTTP).
     """
-    token = context.current_mcp_user.set(test_user)
-    yield
-    context.current_mcp_user.reset(token)
+    with _mcp_actor(test_user):
+        yield
 
 
 class TestIssueListBranches:
@@ -1627,13 +1632,10 @@ class TestProjectList:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_user.set(agent)
-        try:
+        with _mcp_actor(agent):
             result = await tools.project_list()
             assert "error" not in result
             assert any(p["id"] == test_project.id for p in result["projects"])
-        finally:
-            context.current_mcp_user.reset(token)
 
     async def test_project_scoped_agent_has_no_team_wide_access(self, db, test_project):
         # project_list is team-wide; a purely project-scoped agent has no
@@ -1649,16 +1651,13 @@ class TestProjectList:
             is_agent=True,
             agent_project_id=test_project.id,
         )
-        token = context.current_mcp_user.set(agent)
-        try:
+        with _mcp_actor(agent):
             result = await tools.project_list()
             assert "error" in result
             assert "scoped to a single project" in result["error"]["message"]
             # A scope-resolution failure is caller-fixable input, never a
             # server bug (PR #271 review, finding 1).
             assert result["error"]["error_code"] == "tool_input"
-        finally:
-            context.current_mcp_user.reset(token)
 
 
 class TestDocViewFuzzyMatch:
@@ -1714,8 +1713,7 @@ class TestResolveDocumentIdAgentBranches:
             is_agent=True,
             agent_team_id=test_team.id,
         )
-        token = context.current_mcp_user.set(agent)
-        try:
+        with _mcp_actor(agent):
             # Agent-created docs require an emoji icon (CHT-631, enforced
             # in app.api.documents.create_document, unrelated to this
             # fuzzy-match test -- just satisfying it).
@@ -1723,8 +1721,6 @@ class TestResolveDocumentIdAgentBranches:
             assert "error" not in created
             resolved = await tools._resolve_document_id(agent, "Agent-visible doc")
             assert resolved == created["id"]
-        finally:
-            context.current_mcp_user.reset(token)
 
     async def test_project_scoped_agent_fuzzy_match(self, db, test_project):
         from app.oxyde_models.user import OxydeUser

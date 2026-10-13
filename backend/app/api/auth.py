@@ -1,7 +1,7 @@
 """Authentication API routes."""
 from fastapi import APIRouter, HTTPException, status
-from app.api.deps import CurrentUser
-from app.schemas.user import UserCreate, UserLogin, UserResponse, Token
+from app.api.deps import CurrentActor
+from app.schemas.user import CredentialInfo, MeResponse, UserCreate, UserLogin, UserResponse, Token
 from app.services.user_service import UserService
 from app.utils.security import create_access_token
 
@@ -41,16 +41,17 @@ async def login(user_in: UserLogin):
     return Token(access_token=access_token)
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(current_user: CurrentUser):
-    """Get current user info."""
+@router.get("/me", response_model=MeResponse)
+async def get_me(actor: CurrentActor) -> MeResponse:
+    """Get current user info, and the credential this request used (CHT-1432)."""
+    current_user = actor.effective
     parent_user_name = None
     if current_user.is_agent and current_user.parent_user_id:
         user_service = UserService()
         parent_user = await user_service.get_by_id(current_user.parent_user_id)
         parent_user_name = parent_user.name if parent_user else None
 
-    return UserResponse(
+    return MeResponse(
         id=current_user.id,
         email=current_user.email,
         name=current_user.name,
@@ -60,4 +61,10 @@ async def get_me(current_user: CurrentUser):
         parent_user_name=parent_user_name,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
+        credential=CredentialInfo(
+            id=actor.credential_id,
+            name=actor.credential_name,
+            via=actor.via,
+            transport=actor.transport,
+        ),
     )

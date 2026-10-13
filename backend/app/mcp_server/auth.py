@@ -7,7 +7,7 @@ UX is an explicit, separate follow-up):
 
 1. ``Authorization: Bearer ck_...`` on /mcp -- works for Claude Code's
    ``--transport http`` and anything else that lets you set a header.
-   Reuses ``app.api.deps._authenticate_with_api_key`` verbatim: same key
+   Reuses ``app.api.deps._resolve_api_key`` verbatim: same key
    hash/expiry/active checks the REST API uses, same agent-vs-human
    resolution.
 2. ``/mcp/<api-key>`` -- a capability URL, for connector UIs that only
@@ -31,9 +31,10 @@ UX is an explicit, separate follow-up):
    process (reverse proxies, CDNs) or client-side history -- hence the
    dedicated-expiring-key advice above.
 
-Either way, the resolved user is stashed in
-``context.current_mcp_user`` for the life of the request; the
-``InProcessBackend`` adapter (backend.py) reads it back out on every call.
+Either way, the resolved caller becomes the request's ``ActorContext``
+(``app.actor``, CHT-1432: via="api_key", transport="mcp_http", never
+interactive) for the life of the request; the ``InProcessBackend`` adapter
+(backend.py) reads the user back out of it on every call.
 """
 from __future__ import annotations
 
@@ -42,8 +43,8 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.api.deps import _authenticate_with_api_key
-from app.mcp_server.context import current_mcp_user
+from app.actor import ActorContext, actor_scope
+from app.api.deps import _resolve_api_key
 
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
 
@@ -118,7 +119,7 @@ class CapabilityPathRedaction:
 
 async def _resolve(api_key: str | None):
     """Validate `api_key` exactly the way the REST API's `ck_...` bearer
-    path does. Returns (user, None) on success or (None, error_response).
+    path does. Returns (actor, None) on success or (None, error_response).
     """
     if not api_key:
         return None, JSONResponse(
@@ -133,16 +134,25 @@ async def _resolve(api_key: str | None):
             headers=_WWW_AUTHENTICATE,
         )
     try:
-        user = await _authenticate_with_api_key(api_key)
+        user, key_record = await _resolve_api_key(api_key)
     except HTTPException as exc:
         return None, JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=_WWW_AUTHENTICATE)
-    return user, None
+    # MCP traffic is agentic regardless of whose key backs it (CHT-1302):
+    # never interactive, so a human's key is gated like an agent's here.
+    return ActorContext(
+        effective=user,
+        via="api_key",
+        transport="mcp_http",
+        credential_id=key_record.id,
+        credential_name=key_record.name,
+        interactive=False,
+    ), None
 
 
 class _AuthWrapperBase:
-    """Shared plumbing for the two auth wrappers: resolve a user (or
-    short-circuit with an error response), stash it in the contextvar for
-    the duration of the call, delegate to the wrapped MCP ASGI app.
+    """Shared plumbing for the two auth wrappers: resolve the actor (or
+    short-circuit with an error response), make it current for the
+    duration of the call, delegate to the wrapped MCP ASGI app.
     """
 
     def __init__(self, app: ASGIApp):
@@ -156,16 +166,13 @@ class _AuthWrapperBase:
             await self._app(scope, receive, send)
             return
 
-        user, error = await _resolve(self._extract_key(scope))
+        actor, error = await _resolve(self._extract_key(scope))
         if error is not None:
             await error(scope, receive, send)
             return
 
-        reset = current_mcp_user.set(user)
-        try:
+        with actor_scope(actor):
             await self._app(scope, receive, send)
-        finally:
-            current_mcp_user.reset(reset)
 
 
 class BearerHeaderAuth(_AuthWrapperBase):

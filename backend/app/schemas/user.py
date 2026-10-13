@@ -1,5 +1,6 @@
 """User schemas."""
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from app.actor import Transport, Via
 from app.utils import DateTimeUTC
 
 
@@ -32,6 +33,26 @@ class UserResponse(BaseModel):
     updated_at: DateTimeUTC
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CredentialInfo(BaseModel):
+    """The credential a request authenticated with (CHT-1432).
+
+    ``id`` / ``name`` are the API key's (as ``chaotic auth keys list``
+    shows them); both are None for a JWT login session, which is not a
+    stored credential.
+    """
+
+    id: str | None = None
+    name: str | None = None
+    via: Via
+    transport: Transport
+
+
+class MeResponse(UserResponse):
+    """``GET /auth/me``: the user plus the credential behind this request."""
+
+    credential: CredentialInfo | None = None
 
 
 class UserLogin(BaseModel):
