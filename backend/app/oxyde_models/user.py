@@ -20,7 +20,9 @@ class OxydeUser(Model):
 
     # Agent-specific fields
     is_agent: bool = Field(default=False)
-    parent_user: "OxydeUser | None" = Field(default=None, db_on_delete="CASCADE")
+    # RESTRICT, not CASCADE: UserService.delete removes a human's agents
+    # itself, behind the authored-content guard (CHT-1467, migration 0020).
+    parent_user: "OxydeUser | None" = Field(default=None, db_on_delete="RESTRICT")
     agent_team_id: str | None = Field(default=None)
     agent_project_id: str | None = Field(default=None)
 

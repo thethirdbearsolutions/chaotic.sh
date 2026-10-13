@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser
 from app.schemas.user import UserUpdate, UserResponse
-from app.services.user_service import UserService
+from app.services.user_service import UserHasAuthoredContentError, UserService
 from app.services.team_service import TeamService
 
 router = APIRouter()
@@ -43,6 +43,17 @@ async def update_me(user_in: UserUpdate, current_user: CurrentUser):
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(current_user: CurrentUser):
-    """Delete current user."""
+    """Delete the current user and their agents. Refused (409) when the
+    user or any of their agents authored anything (CHT-1467)."""
+    if current_user.is_agent:
+        # An agent is deleted by its owner or a team admin, through the
+        # agent route and its guard; its own API key is not enough.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agents cannot delete themselves; the owner deletes an agent with `chaotic agent delete`",
+        )
     user_service = UserService()
-    await user_service.delete(current_user)
+    try:
+        await user_service.delete(current_user)
+    except UserHasAuthoredContentError as refused:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused

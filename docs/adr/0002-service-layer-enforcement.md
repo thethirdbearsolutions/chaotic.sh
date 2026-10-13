@@ -140,4 +140,4 @@ The last follow-up says Oxyde defaults to `foreign_keys=OFF`, so `delete()` meth
 - `test_foreign_keys_pragma_is_on` in `backend/tests/test_infrastructure.py` pins it;
 - the schema's `ON DELETE CASCADE` rules fire.
 
-"Don't trust the substrate" still applies, pointed the other way: **some cascades delete more than intended.** Deleting a user or agent removes the issues, comments, documents, and activity it authored (CHT-1427).
+"Don't trust the substrate" still applies, pointed the other way: **some cascades delete more than intended.** Deleting a user or agent removed the issues, comments, documents, and activity it authored (CHT-1427; those references are ON DELETE SET NULL since migration 0019), and deleting a human removed every agent they owned, past the agent-delete guard (CHT-1467; `users.parent_user_id` is ON DELETE RESTRICT since 0020). The service layer refuses both deletes while the user, or any agent they own, has authored anything (`AgentService.delete`, `UserService.delete`); `test_deleting_a_user_cascades_only_into_what_the_account_owns` holds the remaining cascades to an allowlist.

@@ -119,9 +119,10 @@ class AgentService:
         return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
 
     async def authored_counts(self, agent_id: str) -> dict[str, int]:
-        """How many records attribute something to this agent: every
+        """How many records attribute something to this user (an agent,
+        or the human UserService.delete checks with it, CHT-1467): every
         column that would lose the attribution (or, for ritual gate
-        requests, the row) if the agent were deleted."""
+        requests, the row) if the user were deleted."""
         return {
             "issues": await OxydeIssue.objects.filter(creator_id=agent_id).count(),
             "issue comments": await OxydeIssueComment.objects.filter(author_id=agent_id).count(),
