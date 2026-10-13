@@ -35,6 +35,13 @@ from app.oxyde_models.ritual import (
 )
 from app.oxyde_models.inbox import OxydeInboxEntry
 from app.oxyde_models.template import OxydeTemplate
+from app.oxyde_models.oauth import (
+    OxydeOAuthClient,
+    OxydeOAuthAuthorizationRequest,
+    OxydeHolderSession,
+    OxydeAuthToken,
+    OxydeRevocationEvent,
+)
 
 __all__ = [
     "OxydeUser",
@@ -63,4 +70,9 @@ __all__ = [
     "OxydeRitualAttestation",
     "OxydeInboxEntry",
     "OxydeTemplate",
+    "OxydeOAuthClient",
+    "OxydeOAuthAuthorizationRequest",
+    "OxydeHolderSession",
+    "OxydeAuthToken",
+    "OxydeRevocationEvent",
 ]

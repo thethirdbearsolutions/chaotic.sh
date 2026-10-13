@@ -182,3 +182,34 @@ class AgentKind(str, Enum):
     ASSISTANT = "assistant"
     SERVICE = "service"
     SESSION = "session"
+
+
+# --- Token store enums (CHT-1515) ---
+
+class HolderVia(str, Enum):
+    """How a holder session came to hold its principal (design doc
+    "MCP OAuth and token service" §4.1). OAUTH: a human consented to an
+    OAuth client acting as the principal. CLAIM_TICKET: a single-use
+    claim ticket was redeemed. GRANTEE_CREDENTIAL: a grantee's `ck_` key
+    claimed the identity directly. WEB_LOGIN joins with CHT-1524."""
+    OAUTH = "oauth"
+    CLAIM_TICKET = "claim_ticket"
+    GRANTEE_CREDENTIAL = "grantee_credential"
+
+
+class TokenKind(str, Enum):
+    """What an `auth_tokens` row is. Each kind has its own prefix on the
+    wire (TokenService): `cac_`, `cat_`, `crt_`, `cct_`."""
+    AUTH_CODE = "auth_code"
+    ACCESS = "access"
+    REFRESH = "refresh"
+    CLAIM_TICKET = "claim_ticket"
+
+
+class OAuthClientRegistration(str, Enum):
+    """How an OAuth client is known (CHT-1518): a Client ID Metadata
+    Document fetched from its URL-shaped client_id, RFC 7591 dynamic
+    registration, or a client built into this server."""
+    CIMD = "cimd"
+    DCR = "dcr"
+    BUILTIN = "builtin"
