@@ -2,6 +2,7 @@
 
 Uses Oxyde ORM (Phase 1 migration from SQLAlchemy).
 """
+import logging
 import uuid
 from oxyde import atomic
 from app.oxyde_models.user import OxydeUser
@@ -18,19 +19,22 @@ from app.schemas.agent import AgentCreate, AgentUpdate
 from app.services.api_key_service import APIKeyService
 from app.schemas.api_key import APIKeyCreate
 
+logger = logging.getLogger(__name__)
+
 
 class AgentHasAuthoredContentError(Exception):
     """Refused: the agent wrote things, and deleting it would erase who
     wrote them (CHT-1427). `counts` maps a kind of record to how many."""
 
-    def __init__(self, agent_name: str, counts: dict[str, int]):
+    def __init__(self, agent_name: str, counts: dict[str, int], agent_id: str = "{id}"):
         self.counts = counts
         listed = ", ".join(f"{n} {kind}" for kind, n in counts.items() if n)
         super().__init__(
             f"Agent '{agent_name}' cannot be deleted: it authored {listed}. Deleting it "
             "would leave that work without an author. Deactivate it instead "
-            "(`chaotic agent deactivate`): that revokes its API keys and blocks it from "
-            "signing in, and keeps its work attributed to it."
+            f"(`chaotic agent deactivate`, or POST /api/agents/{agent_id}/deactivate): that "
+            "revokes its API keys and blocks it from signing in, and keeps its work "
+            "attributed to it. A deactivated agent can be reactivated later."
         )
 
 
@@ -155,27 +159,74 @@ class AgentService:
         async with atomic():
             counts = await self.authored_counts(agent.id)
             if any(counts.values()):
-                raise AgentHasAuthoredContentError(agent.name, counts)
+                raise AgentHasAuthoredContentError(agent.name, counts, agent.id)
             await OxydeAPIKey.objects.filter(agent_user_id=agent.id).delete()
             await OxydeAPIKey.objects.filter(user_id=agent.id).delete()
             await agent.delete()
 
-    async def deactivate(self, agent: OxydeUser) -> OxydeUser:
+    async def deactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
         """Retire an agent without erasing who wrote what (CHT-1494).
 
-        Revokes every API key that authenticates as the agent and sets
-        is_active=false, which the auth dependency already refuses. The
-        agent row stays, so its authored work keeps its author.
-        Idempotent: deactivating an inactive agent revokes any key that
-        is somehow still active and changes nothing else.
+        Revokes every API key that authenticates as the agent -- the ones
+        linked to it (`agent_user_id`) and any it minted for itself through
+        POST /api-keys (`user_id`) -- and sets is_active=false, which the
+        auth dependency already refuses. The agent row stays, so its
+        authored work keeps its author. Idempotent: deactivating an
+        inactive agent revokes any key that is somehow still active and
+        changes nothing else.
+
+        Returns None when the agent no longer exists (a concurrent delete
+        won), so the route can answer 404.
         """
+        return await self._set_active(agent, actor, active=False)
+
+    async def reactivate(self, agent: OxydeUser, actor: OxydeUser) -> OxydeUser | None:
+        """Undo a deactivation (CHT-1494): set is_active=true. Revoked keys
+        stay revoked; mint a new one (`chaotic agent keys create`), so a
+        reactivation never silently re-arms a key that may have been the
+        reason for the deactivation. Idempotent. Returns None when the
+        agent no longer exists."""
+        return await self._set_active(agent, actor, active=True)
+
+    async def _set_active(self, agent: OxydeUser, actor: OxydeUser, *, active: bool) -> OxydeUser | None:
+        changed = False
         async with atomic():
-            await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=False)
-            await OxydeAPIKey.objects.filter(user_id=agent.id).update(is_active=False)
-            if agent.is_active:
-                agent.is_active = False
-                await agent.save(update_fields={"is_active"})
-        return await OxydeUser.objects.join("parent_user").filter(id=agent.id).first()
+            if not active:
+                await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=False)
+                await OxydeAPIKey.objects.filter(user_id=agent.id).update(is_active=False)
+            current = await OxydeUser.objects.filter(id=agent.id, is_agent=True).first()
+            if current is None:
+                return None
+            if current.is_active != active:
+                current.is_active = active
+                await current.save(update_fields={"is_active"})
+                changed = True
+        # Re-read with the parent joined for the response (save() does not
+        # keep a joined relation loaded).
+        current = await OxydeUser.objects.join("parent_user").filter(id=agent.id, is_agent=True).first()
+        if current is None:
+            return None
+        if changed:
+            verb = "reactivated" if active else "deactivated"
+            # No activity table covers agents; this log line and the
+            # creator's inbox entry are the audit trail (CHT-1494).
+            logger.info(
+                "agent %s (%s) %s by user %s (%s)", current.id, current.name, verb, actor.id, actor.name,
+            )
+            await self._notify_parent(current, actor, verb)
+        return current
+
+    async def _notify_parent(self, agent: OxydeUser, actor: OxydeUser, verb: str) -> None:
+        """Tell the agent's creator who changed it, unless they did it
+        themselves. Best-effort: the state change has already committed."""
+        if not agent.parent_user_id or agent.parent_user_id == actor.id:
+            return
+        from app.services.inbox_service import InboxService
+
+        try:
+            await InboxService().notify_agent_status(agent=agent, actor=actor, verb=verb)
+        except Exception:
+            logger.exception("Failed to notify the creator of agent %s that it was %s", agent.id, verb)
 
     async def get_agent_api_keys(self, agent_id: str) -> list[OxydeAPIKey]:
         """Get all API keys for an agent."""
@@ -189,13 +240,17 @@ class AgentService:
         Returns:
             Tuple of (full API key, API key ID)
         """
-        agent = await self.get_by_id(agent_id)
-        if not agent:
-            raise ValueError("Agent not found")
-        if not agent.is_active:
-            raise AgentInactiveError(f"Agent '{agent.name}' is deactivated; a key for it could not sign in.")
-
         async with atomic():
+            # Checked inside the transaction so a deactivation that
+            # commits first is seen (CHT-1494).
+            agent = await self.get_by_id(agent_id)
+            if not agent:
+                raise ValueError("Agent not found")
+            if not agent.is_active:
+                raise AgentInactiveError(
+                    f"Agent '{agent.name}' is deactivated; reactivate it first "
+                    f"(`chaotic agent reactivate`, or POST /api/agents/{agent.id}/reactivate)."
+                )
             api_key_service = APIKeyService()
             api_key_create = APIKeyCreate(name=f"Key for {agent.name}")
             api_key, full_key = await api_key_service.create(

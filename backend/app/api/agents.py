@@ -279,6 +279,9 @@ async def create_agent_key(
         full_key, api_key_id = await agent_service.create_key(agent_id, current_user)
     except AgentInactiveError as refused:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
+    except ValueError as gone:
+        # Deleted between the lookup above and the mint.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found") from gone
 
     api_key_service = APIKeyService()
     api_key = await api_key_service.get_by_id(api_key_id)
@@ -303,6 +306,22 @@ async def deactivate_agent(
     agent's parent user and to admins of the agent's team -- the same
     people who may delete it, so an admin can retire an agent whose
     delete is refused for having authored work."""
+    return await _set_agent_active(agent_id, current_user, active=False)
+
+
+@router.post("/agents/{agent_id}/reactivate", response_model=AgentResponse)
+async def reactivate_agent(
+    agent_id: str,
+    current_user: CurrentUser,
+) -> AgentResponse:
+    """Undo a deactivation (CHT-1494). Its revoked keys stay revoked:
+    mint a new one with POST /agents/{agent_id}/keys. Same authorization
+    as deactivate."""
+    return await _set_agent_active(agent_id, current_user, active=True)
+
+
+async def _set_agent_active(agent_id: str, current_user, *, active: bool) -> AgentResponse:
+    action = "reactivate" if active else "deactivate"
     agent_service = AgentService()
     agent = await agent_service.get_by_id(agent_id)
 
@@ -319,10 +338,19 @@ async def deactivate_agent(
     if not (is_admin or is_owner):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to deactivate this agent",
+            detail=f"Not authorized to {action} this agent",
         )
 
-    agent = await agent_service.deactivate(agent)
+    if active:
+        agent = await agent_service.reactivate(agent, current_user)
+    else:
+        agent = await agent_service.deactivate(agent, current_user)
+    if agent is None:
+        # Deleted between the lookup and the write.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
 
     return AgentResponse(
         id=agent.id,

@@ -445,6 +445,51 @@ class TestAgentDeactivate:
         assert result.exit_code != 0
         assert 'not found' in result.output.lower()
 
+    def test_agent_deactivate_json_without_yes_refuses(self, cli_runner):
+        """Under --json without --yes the confirmation can't be answered:
+        exit 2 with a JSON error, and nothing is deactivated."""
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'deactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 2, result.output
+        assert "error" in json.loads(result.output)
+        client.deactivate_agent.assert_not_called()
+
+    @pytest.mark.parametrize("command", [
+        ['agent', 'deactivate'],
+        ['agent', 'reactivate'],
+        ['agent', 'delete'],
+        ['agent', 'keys', 'create'],
+    ])
+    @pytest.mark.parametrize("ref", ["", "   "])
+    def test_empty_identifier_is_refused(self, cli_runner, command, ref):
+        """An empty ID prefix would match every agent (CHT-1494)."""
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot"},
+        ])
+        client.deactivate_agent = MagicMock()
+        client.reactivate_agent = MagicMock()
+        client.delete_agent = MagicMock()
+        client.create_agent_key = MagicMock()
+
+        result = cli_runner.invoke(cli, ['--yes', *command, ref])
+
+        assert result.exit_code == 1, result.output
+        assert 'must not be empty' in result.output
+        client.deactivate_agent.assert_not_called()
+        client.reactivate_agent.assert_not_called()
+        client.delete_agent.assert_not_called()
+        client.create_agent_key.assert_not_called()
+
     def test_agent_list_marks_deactivated(self, cli_runner):
         """agent list marks a deactivated agent."""
         from cli.main import cli, client
@@ -464,3 +509,52 @@ class TestAgentDeactivate:
 
         assert result.exit_code == 0
         assert 'deactivated' in result.output
+
+
+class TestAgentReactivate:
+    """Tests for agent reactivate command (CHT-1494)."""
+
+    def test_agent_reactivate_by_prefix(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot", "is_active": False},
+        ])
+        client.reactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": True,
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'agent-uuid'])
+
+        assert result.exit_code == 0, result.output
+        assert 'reactivated' in result.output
+        assert 'chaotic agent keys create agent-uuid-123' in result.output
+        client.reactivate_agent.assert_called_once_with('agent-uuid-123')
+
+    def test_agent_reactivate_json(self, cli_runner):
+        import json
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[
+            {"id": "agent-uuid-123", "name": "claude-bot", "is_active": False},
+        ])
+        client.reactivate_agent = MagicMock(return_value={
+            "id": "agent-uuid-123", "name": "claude-bot", "is_active": True,
+        })
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'claude-bot', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["is_active"] is True
+
+    def test_agent_reactivate_not_found(self, cli_runner):
+        from cli.main import cli, client
+
+        client.get_team_agents = MagicMock(return_value=[])
+        client.reactivate_agent = MagicMock()
+
+        result = cli_runner.invoke(cli, ['agent', 'reactivate', 'nope'])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output.lower()
+        client.reactivate_agent.assert_not_called()

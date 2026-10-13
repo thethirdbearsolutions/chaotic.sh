@@ -233,6 +233,28 @@ class TestAuth:
         )
         assert resp.status_code == 401
 
+    async def test_deactivated_agent_is_refused_in_both_modes(self, client, db, test_user, test_team):
+        """CHT-1494: a deactivated agent's key is revoked (401), and even a
+        key re-enabled by hand is refused because the agent is inactive
+        (403), on the bearer and the capability-URL transport alike."""
+        from app.oxyde_models.api_key import OxydeAPIKey
+        from app.schemas.agent import AgentCreate
+        from app.services.agent_service import AgentService
+
+        service = AgentService()
+        agent, key, _ = await service.create(AgentCreate(name="MCP Bot"), test_user, test_team.id)
+        bearer = {**_MCP_HEADERS, "Authorization": f"Bearer {key}"}
+        init = _rpc("initialize", _init_params())
+        assert (await client.post("/mcp", json=init, headers=bearer)).status_code == 200
+
+        await service.deactivate(agent, test_user)
+        assert (await client.post("/mcp", json=init, headers=bearer)).status_code == 401
+        assert (await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)).status_code == 401
+
+        await OxydeAPIKey.objects.filter(agent_user_id=agent.id).update(is_active=True)
+        assert (await client.post("/mcp", json=init, headers=bearer)).status_code == 403
+        assert (await client.post(f"/mcp/{key}", json=init, headers=_MCP_HEADERS)).status_code == 403
+
 
 class TestExpiredKeys:
     """PR #219 review finding 2: expiring keys. Enforcement itself
