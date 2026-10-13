@@ -35,6 +35,7 @@ vi.mock('./ui.js', () => ({
     registerDropdownClickOutside: vi.fn(),
     setDropdownKeyHandler: vi.fn(),
     showToast: vi.fn(),
+    markModalDirty: vi.fn(),
 }));
 
 vi.mock('./issue-list.js', () => ({
@@ -659,6 +660,14 @@ describe('inline-dropdown', () => {
             setCreateIssueLabelIds([]);
             toggleCreateIssueLabelSelection('label-1');
             expect(getCreateIssueLabelIds()).toContain('label-1');
+        });
+
+        it('toggleCreateIssueLabelSelection marks the modal dirty (CHT-1231)', async () => {
+            const { markModalDirty } = await import('./ui.js');
+            markModalDirty.mockClear();
+            setCreateIssueLabelIds([]);
+            toggleCreateIssueLabelSelection('label-1');
+            expect(markModalDirty).toHaveBeenCalled();
         });
 
         it('toggleCreateIssueLabelSelection removes label if present', () => {
