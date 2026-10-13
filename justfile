@@ -4,27 +4,38 @@
 default:
     @just --list
 
-# Sync all dependencies (including dev) for every project `just lint`/`test-*` touch
+# Sync all dependencies (including dev) for every project `just lint`/`test-*` touch.
+# --locked installs exactly the committed uv.lock and fails if it is stale
+# (CHT-1201); after changing any pyproject.toml (a chaotic-cli version bump
+# included: all three locks record it), run `just lock` and commit the result.
+# `chaotic system install`/`upgrade` run this recipe on the server.
 sync:
-    cd backend && uv sync --extra dev
-    cd cli && uv sync --extra dev
-    cd e2e && uv sync
+    cd backend && uv sync --locked --extra dev
+    cd cli && uv sync --locked --extra dev
+    cd e2e && uv sync --locked
+
+# Re-resolve every uv.lock after a pyproject.toml change (then commit them)
+lock:
+    cd backend && uv lock
+    cd cli && uv lock
+    cd e2e && uv lock
 
 # Sync backend dependencies
 sync-backend:
-    cd backend && uv sync --extra dev
+    cd backend && uv sync --locked --extra dev
 
 # Sync CLI dependencies
 sync-cli:
-    cd cli && uv sync
+    cd cli && uv sync --locked
 
 # Run the backend server (with hot reload)
 serve:
     cd backend && uv run uvicorn app.main:app --reload --port 24267
 
-# Run the backend server (production mode, supports PORT and DATABASE_URL env vars)
+# Run the backend server (production mode, supports PORT and DATABASE_URL env vars).
+# --frozen: run the env `just sync` built; never re-resolve or rewrite uv.lock (CHT-1201).
 serve-prod:
-    cd backend && uv run uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
+    cd backend && uv run --frozen uvicorn app.main:app --host ${HOST:-127.0.0.1} --port ${PORT:-24267}
 
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli

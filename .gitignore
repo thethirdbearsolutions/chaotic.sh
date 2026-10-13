@@ -10,7 +10,7 @@
 *.backup*
 
 # Python
-uv.lock
+# uv.lock is tracked (CHT-1201): backend/, cli/ and e2e/ each commit theirs.
 __pycache__/
 *.py[cod]
 *$py.class
