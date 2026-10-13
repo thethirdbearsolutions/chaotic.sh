@@ -22,6 +22,10 @@ logged request target it redacts
 * a query name or value that hides such a secret under percent-encoding,
   up to ``_MAX_DECODE`` layers deep (``cb=http%3A%2F%2Fx%2F%3Fkey%3Dck_...``).
 
+The work is capped: a path or query longer than ``MAX_SCANNED`` is logged
+as its size (``?[60000-byte query omitted]``) without being scanned, and a
+target with no ``?`` and no minted prefix is not scanned at all.
+
 The ``/mcp/<key>`` path is still rewritten in the scope by
 ``CapabilityPathRedaction``: that rewrite is functional (it is how the
 route gets the key), and the path has no other consumer.
@@ -48,6 +52,7 @@ SECRET_PATTERN = re.compile(
 CREDENTIAL_PARAMS = frozenset({
     "token", "access_token", "refresh_token", "key", "api_key",
     "client_secret", "code", "code_verifier",
+    "password", "secret", "jwt", "id_token",
 })
 
 REDACTED = "[redacted]"
@@ -55,6 +60,14 @@ LOGGERS = ("uvicorn.access", "uvicorn.error")
 
 # How many layers of percent-encoding to look through for a hidden secret.
 _MAX_DECODE = 4
+
+# The most of a logged string the filter will scan (PR #350 re-review).
+# The work is linear but runs on the event loop at up to _MAX_DECODE
+# decodes per byte, and httptools accepts request targets of 64 KB and
+# more, so a crafted URL multiplied the cost of a request ~55x. A query
+# or path over this is logged as its size instead: nothing in it is
+# shown, so nothing in it can leak.
+MAX_SCANNED = 8192
 
 
 def _short(match: re.Match[str]) -> str:
@@ -101,25 +114,57 @@ def redact_query(query: str) -> str:
     return "".join(parts)
 
 
+def _needs_scan(text: str) -> bool:
+    """Fast path: with no ``?`` and no minted prefix in it, a target has
+    no query to scrub and no secret in its path (the path is matched
+    as it is logged, never decoded)."""
+    return "?" in text or any(p in text for p in ALL_SECRET_PREFIXES)
+
+
 def redact_request_target(target: str) -> str:
-    """Redact a logged request target (``/path?query``)."""
+    """Redact a logged request target (``/path?query``). A path or query
+    longer than MAX_SCANNED is replaced by its size, unscanned."""
+    if not _needs_scan(target):
+        return target
     path, question, query = target.partition("?")
-    return redact_secrets(path) + (question + redact_query(query) if question else "")
+    if len(path) > MAX_SCANNED:
+        path = f"[{len(path)}-byte path omitted]"
+    else:
+        path = redact_secrets(path)
+    if not question:
+        return path
+    if len(query) > MAX_SCANNED:
+        return f"{path}?[{len(query)}-byte query omitted]"
+    return f"{path}?{redact_query(query)}"
+
+
+def _redact_other(text: str) -> str:
+    """A logged string that is not a request target (the client address,
+    a method, a message): only minted secrets, with the same cap."""
+    if not any(p in text for p in ALL_SECRET_PREFIXES):
+        return text
+    if len(text) > MAX_SCANNED:
+        return f"[{len(text)}-byte string omitted]"
+    return redact_secrets(text)
 
 
 class RequestLineRedactionFilter(logging.Filter):
     """Rewrites a record's arguments before it is formatted. A string
     argument starting with ``/`` is a request target; any other string
-    (the client address, a method) only loses minted secrets."""
+    (the client address, a method) only loses minted secrets.
+
+    A record whose ``args`` is a mapping (``logger.info("%(a)s", {...})``)
+    is passed through as it is: uvicorn never logs that way, and its
+    request lines are the only thing this filter is for."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple) and record.args:
             record.args = tuple(
-                (redact_request_target(a) if a.startswith("/") else redact_secrets(a)) if isinstance(a, str) else a
+                (redact_request_target(a) if a.startswith("/") else _redact_other(a)) if isinstance(a, str) else a
                 for a in record.args
             )
-        elif isinstance(record.msg, str):
-            record.msg = redact_secrets(record.msg)
+        elif isinstance(record.msg, str) and not record.args:
+            record.msg = _redact_other(record.msg)
         return True
 
 

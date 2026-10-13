@@ -42,27 +42,71 @@ class TestSecretFormat:
         """PR #350 review: ccs_ was minted but missing from the set."""
         assert "ccs_" in ALL_SECRET_PREFIXES
 
-    # Random strings that are not minted secrets: each needs a reason.
-    # Anything else that draws from `secrets` must go through mint_secret.
+    # Every call that draws randomness in app/, and why it is not a secret
+    # (a secret must go through mint_secret so the log filter knows its
+    # shape). Keys are (path glob, source); every entry must still match.
     _ALLOWED_RANDOM = {
         ("app/services/token_service.py", "token_hex"): "mint_secret itself",
         ("app/services/oauth_client_service.py", "token_hex"): "DCR client_id: public, not a secret",
         ("app/services/oauth_consent_service.py", "token_urlsafe"): "consent request id, needs a signed-in human",
         ("app/services/team_service.py", "token_urlsafe"): "team invitation token, CHT-1601",
+        ("app/oxyde_models/*.py", "uuid4"): "row primary keys: public ids",
+        ("app/oxyde_db.py", "uuid4"): "primary-key default for a str pk column",
+        ("app/services/agent_service.py", "uuid4"): "placeholder agent email, not a credential",
+        ("app/services/registration_service.py", "uuid4"): "suffix of a placeholder agent email",
+        ("app/services/issue_service.py", "random"): "shuffles issue order for display",
+        ("app/services/ritual_selection.py", "random"): "seeded ritual sampling, deterministic by design",
     }
+    _TOKEN_CALLS = {"token_hex", "token_urlsafe", "token_bytes", "urandom", "uuid4", "randbits", "SystemRandom"}
+
+    @classmethod
+    def _random_source(cls, func: ast.expr) -> str | None:
+        """The randomness a call draws on, or None: a bare or dotted
+        `token_*`, `urandom`, `uuid4`, any `secrets.*`, any `random.*`."""
+        if isinstance(func, ast.Name):
+            return func.id if func.id in cls._TOKEN_CALLS else None
+        if isinstance(func, ast.Attribute):
+            if func.attr in cls._TOKEN_CALLS:
+                return func.attr
+            if isinstance(func.value, ast.Name) and func.value.id in ("secrets", "random"):
+                return func.value.id if func.value.id == "random" else func.attr
+        return None
 
     def test_no_secret_is_minted_outside_mint_secret(self):
+        from fnmatch import fnmatch
+
         app_dir = Path(__file__).resolve().parents[1] / "app"
         found = set()
         for path in app_dir.rglob("*.py"):
             for node in ast.walk(ast.parse(path.read_text())):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("token_hex", "token_urlsafe", "token_bytes")
-                ):
-                    found.add((str(path.relative_to(app_dir.parent)), node.func.attr))
-        assert found == set(self._ALLOWED_RANDOM)
+                if isinstance(node, ast.Call) and (source := self._random_source(node.func)):
+                    found.add((str(path.relative_to(app_dir.parent)), source))
+        unexplained = {
+            (f, src) for f, src in found
+            if not any(fnmatch(f, glob) and src == s for glob, s in self._ALLOWED_RANDOM)
+        }
+        assert not unexplained, f"mint secrets with mint_secret, or allowlist with a reason: {unexplained}"
+        stale = {
+            (glob, s) for glob, s in self._ALLOWED_RANDOM
+            if not any(fnmatch(f, glob) and src == s for f, src in found)
+        }
+        assert not stale, f"allowlist entries that match nothing: {stale}"
+
+    @pytest.mark.parametrize(
+        "code, source",
+        [
+            ("from secrets import token_hex\ntoken_hex(8)", "token_hex"),
+            ("import os\nos.urandom(8)", "urandom"),
+            ("import uuid\nuuid.uuid4().hex", "uuid4"),
+            ("from uuid import uuid4\nuuid4()", "uuid4"),
+            ("import secrets\nsecrets.choice('ab')", "choice"),
+            ("import random\nrandom.getrandbits(8)", "random"),
+            ("len('x')", None),
+        ],
+    )
+    def test_the_guard_sees_every_spelling(self, code, source):
+        calls = [n for n in ast.walk(ast.parse(code)) if isinstance(n, ast.Call)]
+        assert {self._random_source(c.func) for c in calls} - {None} == ({source} if source else set())
 
 
 class TestRequestTarget:
@@ -124,6 +168,59 @@ class TestRequestTarget:
         assert redact_request_target(target) == target
 
 
+class TestScanCap:
+    """PR #350 re-review: the work is linear but runs on the event loop,
+    and a crafted 60 KB target cost ~55x a request. These count the
+    characters the decoder is handed instead of timing anything."""
+
+    @pytest.fixture
+    def decoded(self, monkeypatch):
+        seen = []
+        real = log_redaction.unquote_plus
+
+        def counting(text, *args, **kwargs):
+            seen.append(len(text))
+            return real(text, *args, **kwargs)
+
+        monkeypatch.setattr(log_redaction, "unquote_plus", counting)
+        return seen
+
+    def test_a_60kb_crafted_query_is_omitted_unscanned(self, decoded):
+        query = "%2525=%2525&" * 5000 + f"token={JWT}&k=ck_{HEX}"
+        target = "/p?" + query
+        assert len(target) > 60_000
+        assert redact_request_target(target) == f"/p?[{len(query)}-byte query omitted]"
+        assert decoded == []
+
+    def test_just_under_the_cap_is_scanned_with_bounded_work(self, decoded):
+        unit = "%2525=%2525&"
+        tail = f"k=ck_{HEX}"
+        query = unit * ((log_redaction.MAX_SCANNED - len(tail)) // len(unit)) + tail
+        assert len(query) <= log_redaction.MAX_SCANNED
+        assert redact_request_target("/p?" + query).endswith("k=ck_...abab")
+        # Each name and value is decoded at most _MAX_DECODE times (plus
+        # one decode of each name for the credential check).
+        assert sum(decoded) <= (log_redaction._MAX_DECODE + 1) * len(query)
+
+    def test_a_long_path_is_omitted(self):
+        path = "/" + "a" * log_redaction.MAX_SCANNED + f"ck_{HEX}"
+        assert redact_request_target(path + "?token=x") == f"[{len(path)}-byte path omitted]?token={REDACTED}"
+
+    def test_a_long_non_target_string_is_omitted(self):
+        text = "x" * log_redaction.MAX_SCANNED + f"ck_{HEX}"
+        record = logging.getLogger("uvicorn.error").makeRecord("uvicorn.error", logging.INFO, __file__, 1, "%s", (text,), None)
+        RequestLineRedactionFilter().filter(record)
+        assert record.getMessage() == f"[{len(text)}-byte string omitted]"
+
+    def test_fast_path_scans_nothing(self, monkeypatch, decoded):
+        def boom(*args):
+            raise AssertionError("scanned")
+
+        monkeypatch.setattr(log_redaction, "redact_secrets", boom)
+        assert redact_request_target("/api/issues/CHT-1/comments") == "/api/issues/CHT-1/comments"
+        assert decoded == []
+
+
 class TestFilter:
     def _record(self, logger, msg, args):
         return logging.getLogger(logger).makeRecord(logger, logging.INFO, __file__, 1, msg, args, None)
@@ -150,6 +247,16 @@ class TestFilter:
         record = self._record("uvicorn.error", "%s %d %s", ("not a ?token=x path", 3, None))
         RequestLineRedactionFilter().filter(record)
         assert record.getMessage() == "not a ?token=x path 3 None"
+
+
+class TestMappingArgs:
+    def test_a_mapping_args_record_passes_through_untouched(self):
+        """Not a shape uvicorn logs; documented as passed through."""
+        record = logging.getLogger("uvicorn.error").makeRecord(
+            "uvicorn.error", logging.INFO, __file__, 1, "%(a)s", ({"a": "x"},), None,
+        )
+        assert RequestLineRedactionFilter().filter(record) is True
+        assert record.getMessage() == "x"
 
 
 class TestInstall:
