@@ -1,11 +1,17 @@
 """Application configuration."""
+import logging
 import os
+import ipaddress
 from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, Field, ValidationError, model_validator
+from pydantic import AnyHttpUrl, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1"
 
 # Default DB lives next to the backend package so `just serve` from any cwd
 # resolves to the same file. Production installs override via DATABASE_URL.
@@ -54,6 +60,23 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 24267
 
+    # Reverse proxies whose X-Forwarded-For / X-Forwarded-Proto headers are
+    # believed (CHT-1586): a comma-separated list of IP addresses and CIDR
+    # networks. A request from one of them is treated as coming from the
+    # client the proxy names, so the OAuth per-address limits key on the
+    # real client rather than on the proxy. Requests from anywhere else
+    # keep their socket address and their forwarded headers are ignored.
+    # The default trusts a proxy on the same machine, the topology
+    # docs/self-hosting-security.md recommends. Empty trusts nobody. The
+    # operator owns this list: every address in it can claim to be any
+    # client. An entry that is not usable ("*", a /0 network, a host
+    # name, a typo) is logged as an error and dropped, keeping the rest;
+    # with nothing left the default applies. The server never refuses to
+    # start over it (PR #346 review). The same name as uvicorn's own
+    # variable on purpose; every start path turns uvicorn's handling off
+    # and this app applies the list itself (app.main).
+    forwarded_allow_ips: str = DEFAULT_FORWARDED_ALLOW_IPS
+
     # Public base URL, used to build absolute links in outbound email
     # (invitation accept links). No scheme/host detection from requests --
     # explicit env var, same as everything else here.
@@ -70,6 +93,14 @@ class Settings(BaseSettings):
     # When off, /mcp and both discovery paths behave as before CHT-1517
     # except that the discovery paths 404 instead of serving the SPA.
     oauth_enabled: bool = False
+    # The capability URL /mcp/<api-key> (CHT-1522; design doc §5). It puts
+    # a long-lived key in a URL, so it is deprecated in favour of OAuth:
+    # while on, its responses carry a `Deprecation` header and startup
+    # logs a warning. Off, /mcp/<key> answers 404; the key is still
+    # scrubbed from the logged path (CapabilityPathRedaction stays
+    # installed). The default flips to false in the release that ships
+    # OAuth (decision D8) and the route is removed two releases later.
+    mcp_capability_url_enabled: bool = True
     # Dynamic client registration (RFC 7591) at /oauth/register, the
     # fallback for MCP clients without CIMD support. On by default (design
     # decision D5); while on, the AS metadata advertises the endpoint.
@@ -135,6 +166,33 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env")
 
+    @field_validator("forwarded_allow_ips")
+    @classmethod
+    def _check_forwarded_allow_ips(cls, value: str) -> str:
+        """Drop, loudly, each entry that is not a usable address or
+        network (CHT-1586), keeping the rest; if that leaves nothing of a
+        non-empty value, trust loopback only. Dropping only narrows
+        trust. uvicorn's own parser would silently turn a typo into a
+        literal that never matches and would accept "*"; refusing to
+        start instead would turn an upgrade into an outage."""
+        kept, dropped = parse_trusted_proxies(value)
+        if not dropped:
+            return value
+        if kept:
+            result, outcome = ",".join(str(item) for item in kept), "Trusting forwarded headers from the rest"
+        else:
+            result, outcome = DEFAULT_FORWARDED_ALLOW_IPS, "Nothing usable is left, so trusting forwarded headers only from"
+        logger.error(
+            "FORWARDED_ALLOW_IPS=%r: dropped %s. %s: %s.",
+            value, "; ".join(f"{entry!r} ({why})" for entry, why in dropped), outcome, result,
+        )
+        return result
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        """FORWARDED_ALLOW_IPS as the list ProxyHeadersMiddleware takes."""
+        return [str(item) for item in parse_trusted_proxies(self.forwarded_allow_ips)[0]]
+
     @model_validator(mode="after")
     def _check_oauth_issuer(self) -> "Settings":
         """With OAUTH_ENABLED, APP_BASE_URL becomes the OAuth issuer, so it
@@ -155,6 +213,38 @@ class Settings(BaseSettings):
     def oauth_issuer(self) -> str:
         """APP_BASE_URL exactly, minus any trailing slash (CHT-1517)."""
         return self.app_base_url.rstrip("/")
+
+
+TrustedProxy = ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def parse_trusted_proxies(value: str) -> tuple[list[TrustedProxy], list[tuple[str, str]]]:
+    """Split FORWARDED_ALLOW_IPS (comma-separated, blanks ignored) into
+    the usable IP addresses and CIDR networks, and the entries that are
+    not, each with the reason: "*" or a /0 network (both mean every
+    sender), a host name, or a network with host bits set (``10.0.0.1/8``,
+    almost always a typo). Beyond /0 it does not judge how wide a list
+    is; that is the operator's call (docs/self-hosting-security.md)."""
+    kept: list[TrustedProxy] = []
+    dropped: list[tuple[str, str]] = []
+    every_sender = "it would trust forwarded headers from every sender"
+    for raw in value.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        if entry == "*":
+            dropped.append((entry, every_sender))
+            continue
+        try:
+            item = ipaddress.ip_network(entry, strict=True) if "/" in entry else ipaddress.ip_address(entry)
+        except ValueError as exc:
+            dropped.append((entry, f"not an IP address or CIDR network: {exc}"))
+            continue
+        if isinstance(item, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and item.prefixlen == 0:
+            dropped.append((entry, every_sender))
+            continue
+        kept.append(item)
+    return kept, dropped
 
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})

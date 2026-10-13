@@ -23,13 +23,14 @@ interfaces"), the default is `127.0.0.1`, not `0.0.0.0`.** That commit
 changed both `config.py`'s default and `justfile`'s `serve-prod` recipe.
 Every path that starts the server agrees on this:
 
-- `just serve` (dev): `uvicorn app.main:app --reload --port 24267` — no
-  `--host` flag, so uvicorn's own CLI default (`127.0.0.1`) applies.
+- `just serve` (dev): `uvicorn app.main:app --reload --port 24267
+  --no-proxy-headers` — no `--host` flag, so uvicorn's own CLI default
+  (`127.0.0.1`) applies.
 - `just serve-prod`: `uv run uvicorn ... --host ${HOST:-127.0.0.1}
   --port ${PORT:-24267}`.
 - `python -m app.main` (the `if __name__ == "__main__"` block in
   `backend/app/main.py`): `uvicorn.run("app.main:app", host=settings.host,
-  port=settings.port, reload=settings.debug)` — reads the same
+  port=settings.port, reload=settings.debug, proxy_headers=False)` — reads the same
   `Settings.host` field.
 - `chaotic system install` (the one-line installer's server setup): CLI
   flag `--host`, default `"127.0.0.1"` (`cli/src/cli/system.py`,
@@ -256,11 +257,87 @@ With `OAUTH_ENABLED` on, MCP clients register in one of two ways
   address, and at most `OAUTH_DCR_MAX_PENDING_CLIENTS` (default 500)
   clients that have never been used to authorize. Those are refused 24
   hours after they register and deleted shortly after. A "source
-  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy every request has the
-  proxy's address, so the per-address limit becomes a server-wide one
-  unless uvicorn is run with `--proxy-headers` and `--forwarded-allow-ips`.
+  address" is an IPv4 address or an IPv6 /64. Behind a reverse proxy it
+  is the client the proxy names in `X-Forwarded-For`, provided the proxy
+  is listed in `FORWARDED_ALLOW_IPS` (see "Behind a reverse proxy"
+  below); otherwise every request has the proxy's address and the
+  per-address limit becomes a server-wide one.
   Set `OAUTH_DCR_ENABLED=false` to turn registration off; clients that
   use metadata documents don't need it.
+
+## Behind a reverse proxy: `FORWARDED_ALLOW_IPS`
+
+A request that reaches the app through a reverse proxy arrives from the
+proxy's address. The app believes the proxy's `X-Forwarded-For` (the
+client's address) and `X-Forwarded-Proto` only when the request comes
+from an address in `FORWARDED_ALLOW_IPS` (CHT-1586): a comma-separated
+list of IP addresses and CIDR networks, default `127.0.0.1,::1`.
+
+- **Proxy on the same machine** (the recommended setup above): nothing
+  to set. Each client is counted under its own address by the OAuth
+  limits.
+- **Proxy elsewhere** (another host, a container): set
+  `FORWARDED_ALLOW_IPS` to the proxy's address, e.g.
+  `FORWARDED_ALLOW_IPS=10.0.0.5`. Prefer the proxy's single address to
+  a network: listing a container network such as `172.18.0.0/16` lets
+  every container on that network claim to be any client.
+- **No proxy, served directly**: set `FORWARDED_ALLOW_IPS=` (empty) if
+  anything on the machine itself could otherwise claim an address.
+
+The client address is the right-most entry in `X-Forwarded-For` that is
+not itself a listed proxy, so a value a client sent ahead of the
+proxy's own is ignored. The proxy must set or append the header (nginx:
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` Caddy
+does it by default).
+
+**You own this list.** Every address in it can claim to be any client.
+Apart from `*` and `/0`, the app does not judge how wide a list is (a
+width check would be cosmetic: two `/1` networks cover everything a `/0`
+does). An entry that is not usable is dropped, and the server logs an
+error naming it and keeps serving with the rest. That covers `*`,
+`0.0.0.0/0` and `::/0` (each means every sender), a host name, and a
+network with host bits set such as `10.0.0.1/8`. If nothing usable is
+left, it trusts only `127.0.0.1,::1`. Dropping an entry only ever
+narrows trust.
+
+Every start path in this repo (`just serve-prod`, `just serve`,
+`python -m app.main`) turns off uvicorn's own forwarded-header handling,
+so this list, read from the environment or `backend/.env`, is the only
+one applied. uvicorn has a variable of the same name, which it reads
+from the process environment only; if you run uvicorn by hand, pass
+`--no-proxy-headers` too, or the two can disagree.
+
+## The capability URL: `MCP_CAPABILITY_URL_ENABLED`
+
+`/mcp/<api-key>` takes an API key in the URL, for MCP clients that can
+send only a URL (see `docs/agents.md`). It is deprecated in favour of
+OAuth (CHT-1522; design doc "MCP OAuth and token service: design" §5):
+
+- `MCP_CAPABILITY_URL_ENABLED=true` (the default for now): served as
+  before. Its responses carry `Deprecation: @1791849600` (RFC 9745;
+  2026-10-13) and a `Link` to this section with `rel="deprecation"`;
+  the one exception is a 500 from an unhandled error, which Starlette
+  sends outside the app's middleware. The server logs a warning at
+  startup.
+- `MCP_CAPABILITY_URL_ENABLED=false`: `/mcp/<key>` answers 404 to every
+  method, whether or not the key is valid, without the key being
+  looked up. `/mcp` with an `Authorization` header is unaffected.
+
+Either way the key is scrubbed from the logged request path, including
+on `/mcp/<key>/` and `/mcp/<key>/anything`, which always answer 404
+(CHT-1587). Any other path segment, in an HTTP or a WebSocket request,
+that starts with a prefix this server mints (`ck_`, `cat_`, `crt_`, ...)
+and is long enough to be a secret is scrubbed too. That catches
+`//mcp/<key>` from a base URL with a trailing slash, `/mcp//<key>` and
+`/MCP/<key>`; those still route as they did before (they never reach
+the capability URL). So a key in the path does not reach this server's
+access or error log. Query strings are not scrubbed, and logs upstream
+of the server, such as a reverse proxy's, are another matter.
+
+The default becomes `false` in the release that ships OAuth for MCP,
+and the route is removed two releases after that. Moving a connector
+off it: add it again by URL and authorize, then revoke the old key
+(`chaotic auth keys revoke <key-id>`).
 
 ## OAuth tokens
 

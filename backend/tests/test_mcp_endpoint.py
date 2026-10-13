@@ -471,6 +471,119 @@ class TestCapabilityPathRedaction:
         assert api_key not in caplog.text
         assert f"ck_...{api_key[-4:]}" in caplog.text
 
+    async def test_scope_path_redacted_when_capability_url_disabled(self, recording_client, api_key, monkeypatch):
+        """CHT-1522: with the capability URL off, a stale URL's request
+        still never logs its key."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            resp = await ac.post(f"/mcp/{api_key}", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code == 404
+        (scope,) = recorder.scopes
+        assert api_key not in scope["path"]
+        assert api_key.encode() not in scope["raw_path"]
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("suffix, logged", [("/", "/"), ("/x", "/..."), ("/x/y", "/...")])
+    async def test_paths_below_the_key_are_redacted(self, recording_client, api_key, monkeypatch, enabled, suffix, logged):
+        """CHT-1587: a trailing slash or a sub-path logged the whole key."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            resp = await ac.get(f"/mcp/{api_key}{suffix}")
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code == 404
+        (scope,) = recorder.scopes
+        assert scope["path"] == f"/mcp/ck_...{api_key[-4:]}{logged}"
+        assert api_key.encode() not in scope["raw_path"]
+
+    @pytest.fixture
+    def resolver_calls(self, monkeypatch):
+        from app.auth import credentials
+
+        calls = []
+        real = credentials.capability_url_resolver.resolve
+
+        async def spy(*args, **kwargs):
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(credentials.capability_url_resolver, "resolve", spy)
+        return calls
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("shape", ["//mcp/{key}", "/mcp//{key}", "/MCP/{key}", "/somewhere/{key}/else"])
+    async def test_other_shapes_are_redacted_and_never_resolved(
+        self, recording_client, api_key, monkeypatch, resolver_calls, enabled, shape,
+    ):
+        """PR #346 re-review: a key in any other segment is scrubbed too,
+        and these shapes never reach the capability route."""
+        from app.config import get_settings
+
+        monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+        get_settings.cache_clear()
+        try:
+            ac, recorder = recording_client
+            # Absolute, or httpx reads `//mcp/...` as a host.
+            resp = await ac.get("http://test" + shape.format(key=api_key))
+        finally:
+            get_settings.cache_clear()
+        assert resp.status_code not in (401, 403)
+        assert resolver_calls == []
+        (scope,) = recorder.scopes
+        assert scope["path"] == shape.format(key=f"ck_...{api_key[-4:]}")
+        assert api_key.encode() not in scope["raw_path"]
+
+    @pytest.mark.parametrize("prefix", ["cat_", "crt_"])
+    async def test_oauth_token_shapes_are_redacted_anywhere(self, recording_client, prefix):
+        ac, recorder = recording_client
+        token = prefix + "ab" * 32
+        await ac.get(f"/x/{token}")
+        (scope,) = recorder.scopes
+        assert scope["path"] == f"/x/{prefix}...abab"
+
+    async def test_short_lookalike_segments_still_route(self, recording_client):
+        """Too short to be a secret: left alone, so it routes as before."""
+        ac, recorder = recording_client
+        await ac.get("/api/projects/ck_short")
+        (scope,) = recorder.scopes
+        assert scope["path"] == "/api/projects/ck_short"
+
+    @pytest.mark.parametrize("path", ["/mcp/{key}", "//mcp/{key}"])
+    async def test_websocket_paths_are_redacted(self, db, api_key, resolver_calls, path):
+        """uvicorn logs `"WebSocket <path>" 403` from the same scope."""
+        from app.main import app
+
+        scope = {
+            "type": "websocket", "path": path.format(key=api_key),
+            "raw_path": path.format(key=api_key).encode(), "query_string": b"",
+            "headers": [], "client": ("127.0.0.1", 1), "server": ("test", 80),
+            "scheme": "ws", "root_path": "", "subprotocols": [],
+        }
+        sent = []
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await app(scope, receive, send)
+        assert sent[-1]["type"] == "websocket.close"
+        assert resolver_calls == []
+        assert api_key not in scope["path"]
+        assert api_key.encode() not in scope["raw_path"]
+        assert scope["path"] == path.format(key=f"ck_...{api_key[-4:]}")
+
     async def test_bearer_mode_path_untouched(self, recording_client, api_key):
         ac, recorder = recording_client
         headers = {**_MCP_HEADERS, "Authorization": f"Bearer {api_key}"}
@@ -478,6 +591,144 @@ class TestCapabilityPathRedaction:
         assert resp.status_code == 200
         (scope,) = recorder.scopes
         assert scope["path"] == "/mcp"
+
+
+class TestCapabilityURLFlag:
+    """CHT-1522: /mcp/<key> is deprecated and sits behind
+    MCP_CAPABILITY_URL_ENABLED (design doc §5)."""
+
+    @pytest.fixture
+    def capability_url(self, monkeypatch):
+        from app.config import get_settings
+
+        def _set(enabled: bool):
+            monkeypatch.setenv("MCP_CAPABILITY_URL_ENABLED", "true" if enabled else "false")
+            get_settings.cache_clear()
+
+        yield _set
+        get_settings.cache_clear()
+
+    @staticmethod
+    def _assert_deprecated(resp):
+        from app.mcp_server.auth import CAPABILITY_URL_DEPRECATION_LINK
+
+        assert resp.headers["deprecation"] == "@1791849600"
+        assert resp.headers["link"] == CAPABILITY_URL_DEPRECATION_LINK
+        assert 'rel="deprecation"' in resp.headers["link"]
+
+    def test_on_by_default(self):
+        from app.config import Settings
+
+        assert Settings().mcp_capability_url_enabled is True
+
+    async def test_enabled_responses_carry_deprecation(self, client, api_key, capability_url):
+        capability_url(True)
+        init = _rpc("initialize", _init_params())
+        ok = await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)
+        assert ok.status_code == 200
+        self._assert_deprecated(ok)
+        # Errors from the capability route are deprecated too: a bad key,
+        # and a method the router refuses.
+        bad = await client.post("/mcp/ck_" + "0" * 64, json=init, headers=_MCP_HEADERS)
+        assert bad.status_code == 401
+        self._assert_deprecated(bad)
+        put = await client.put(f"/mcp/{api_key}", json={}, headers=_MCP_HEADERS)
+        assert put.status_code == 405
+        self._assert_deprecated(put)
+
+    async def test_bearer_mode_is_not_deprecated(self, client, bearer_headers, capability_url):
+        capability_url(True)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=bearer_headers)
+        assert resp.status_code == 200
+        assert "deprecation" not in resp.headers
+
+    @pytest.mark.parametrize("method", ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"])
+    @pytest.mark.parametrize("valid", [True, False])
+    async def test_disabled_is_404_for_every_method_and_key(self, client, api_key, capability_url, valid, method):
+        """A stale URL learns nothing about its key, or about the route."""
+        capability_url(False)
+        key = api_key if valid else "ck_" + "0" * 64
+        resp = await client.request(method, f"/mcp/{key}", json={}, headers=_MCP_HEADERS)
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Not Found"}
+        assert "deprecation" not in resp.headers
+        assert "www-authenticate" not in resp.headers
+
+    async def test_disabled_never_reads_the_key(self, client, api_key, capability_url, monkeypatch):
+        """The property the 404 exists for: no resolver call, so no lookup
+        and no timing difference between a valid and an invalid key."""
+        from app.auth import credentials
+        from app.oxyde_models.api_key import OxydeAPIKey
+
+        calls = []
+        real = credentials.capability_url_resolver.resolve
+
+        async def spy(*args, **kwargs):
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(credentials.capability_url_resolver, "resolve", spy)
+        before = (await OxydeAPIKey.objects.get(key_prefix=APIKeyService()._get_prefix(api_key))).last_used_at
+        init = _rpc("initialize", _init_params())
+
+        capability_url(False)
+        assert (await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)).status_code == 404
+        assert calls == []
+        assert (await OxydeAPIKey.objects.get(key_prefix=APIKeyService()._get_prefix(api_key))).last_used_at == before
+
+        # The spy does see a call once the URL is served.
+        capability_url(True)
+        assert (await client.post(f"/mcp/{api_key}", json=init, headers=_MCP_HEADERS)).status_code == 200
+        assert len(calls) == 1
+
+    async def test_disabled_keeps_bearer_mode(self, client, bearer_headers, capability_url):
+        capability_url(False)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=bearer_headers)
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize("suffix", ["/", "/x", "/x/y"])
+    async def test_paths_below_the_key_are_404_not_the_spa(self, client, api_key, capability_url, enabled, suffix):
+        """CHT-1587: these fell through to the SPA catch-all with a 200."""
+        capability_url(enabled)
+        resp = await client.get(f"/mcp/{api_key}{suffix}")
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Not Found"}
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_missing_key_hint_follows_the_setting(self, client, capability_url, enabled):
+        capability_url(enabled)
+        resp = await client.post("/mcp", json=_rpc("initialize", _init_params()), headers=_MCP_HEADERS)
+        assert resp.status_code == 401
+        assert ("capability URL" in resp.json()["error"]) is enabled
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_startup_warning_from_the_lifespan(self, capability_url, caplog, monkeypatch, enabled):
+        """Drive app.main's real lifespan, with only its I/O stubbed."""
+        import contextlib
+        import logging
+
+        import app.main as main
+
+        async def noop(*args, **kwargs):
+            return None
+
+        @contextlib.asynccontextmanager
+        async def no_mcp():
+            yield
+
+        for name in ("init_oxyde", "close_oxyde", "bootstrap_if_empty", "verify_migrations_current",
+                     "_mcp_toolset_fingerprint"):
+            monkeypatch.setattr(main, name, noop)
+        monkeypatch.setattr(main, "get_version_info", lambda *a, **k: None)
+        monkeypatch.setattr(main, "mcp_lifespan", no_mcp)
+        monkeypatch.setattr(main.settings, "secret_key", "x" * 32)
+
+        capability_url(enabled)
+        with caplog.at_level(logging.WARNING, logger="app.mcp_server.auth"):
+            async with main.lifespan(main.app):
+                pass
+        assert ("MCP_CAPABILITY_URL_ENABLED is on" in caplog.text) is enabled
 
 
 class TestToolsList:
