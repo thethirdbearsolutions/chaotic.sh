@@ -56,6 +56,13 @@ KNOWN: dict[str, Setting] = {
     "SMTP_USER": Setting("text", "", "Outgoing mail user name."),
     "SMTP_PASSWORD": Setting("text", "", "Outgoing mail password.", secret=True),
     "SMTP_FROM": Setting("text", "noreply@chaotic.sh", "From address of outgoing mail."),
+    "PUSH_ALLOW_PRIVATE_ENDPOINTS": Setting(
+        "bool", "false",
+        "Accept push endpoints on loopback, private and link-local hosts (an ntfy on this machine or LAN)."),
+    "VAPID_PRIVATE_KEY": Setting(
+        "text", "",
+        "Web Push signing key: a P-256 private key, 32 bytes base64url. Empty: derived from SECRET_KEY.",
+        secret=True),
 }
 
 # Variables the service file already sets from server.json's own fields,

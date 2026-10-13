@@ -43,8 +43,11 @@ from app.oxyde_models.oauth import (
     OxydeAuthToken,
     OxydeRevocationEvent,
 )
+from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
 
 __all__ = [
+    "OxydePushDevice",
+    "OxydePushPreference",
     "OxydeUser",
     "OxydeTeam",
     "OxydeTeamMember",

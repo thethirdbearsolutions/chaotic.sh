@@ -582,6 +582,15 @@ export class ApiClient {
         return this.request('DELETE', `/oauth/connections/${encodeURIComponent(connectionId)}`);
     }
 
+    // Push devices (CHT-1604)
+    async getPushDevices() {
+        return this.request('GET', '/push/devices');
+    }
+
+    async deletePushDevice(installationId) {
+        return this.request('DELETE', `/push/devices/${encodeURIComponent(installationId)}`);
+    }
+
     // Agents
     async createTeamAgent(teamId, name, avatarUrl = null) {
         return this.request('POST', `/teams/${teamId}/agents`, { name, avatar_url: avatarUrl });

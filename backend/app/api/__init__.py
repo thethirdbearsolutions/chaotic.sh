@@ -1,6 +1,6 @@
 """API routes."""
 from fastapi import APIRouter
-from app.api import auth, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth
+from app.api import auth, users, teams, projects, issues, sprints, documents, labels, api_keys, rituals, agents, nested, inbox, templates, oauth, push
 
 api_router = APIRouter()
 
@@ -22,6 +22,8 @@ api_router.include_router(inbox.router, prefix="/inbox", tags=["inbox"])
 # The OAuth consent API the SPA calls (CHT-1519); the authorization
 # server's own endpoints are oauth.public_router, mounted at the root.
 api_router.include_router(oauth.router, prefix="/oauth", tags=["oauth"])
+# Push device registration and preferences for the native app (CHT-1604).
+api_router.include_router(push.router, prefix="/push", tags=["push"])
 # Path-nested aliases (CHT-1223) for the query-param routes above --
 # same handlers, different URL shape. See nested.py's module docstring.
 api_router.include_router(nested.router, tags=["nested-aliases"])

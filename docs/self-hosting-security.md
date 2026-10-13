@@ -215,16 +215,17 @@ chaotic system install --config NAME=VALUE ...   # the same, at install time
 A change takes effect when the server restarts (`chaotic system stop`
 then `chaotic system start`); `set` says so. The names it knows are
 `OAUTH_ENABLED`, `APP_BASE_URL`, `FORWARDED_ALLOW_IPS`,
-`MCP_CAPABILITY_URL_ENABLED`, `OAUTH_DCR_ENABLED`, `CORS_ORIGINS` and
-`SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`. Each value is checked by the
+`MCP_CAPABILITY_URL_ENABLED`, `OAUTH_DCR_ENABLED`, `CORS_ORIGINS`,
+`SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`, `PUSH_ALLOW_PRIVATE_ENDPOINTS`
+and `VAPID_PRIVATE_KEY` (see "Push notifications" below). Each value is checked by the
 rules the server applies (for `APP_BASE_URL`, only values its OAuth
 issuer check accepts; a backend test pins that), so a typo fails at
 `set`, not at the next start. Any other name needs `--force`; `SECRET_KEY`, `HOST`, `PORT`,
 `DATABASE_URL`, `DATABASE_PATH` and `PATH` are never settings (use
 `reconfigure` for host and port). A value may not contain whitespace,
 quotes, a backslash or `%`, which a service file cannot carry as is, nor
-invalid UTF-8. The value of `SMTP_PASSWORD`, and of any name set with
-`--force`, is never printed.
+invalid UTF-8. The values of `SMTP_PASSWORD` and `VAPID_PRIVATE_KEY`, and of any name
+set with `--force`, are never printed.
 
 **Secrets.** A command-line argument is visible to every user on the
 machine in the process list (`ps`, `/proc/<pid>/cmdline`) while the
@@ -566,3 +567,31 @@ doesn't decide these:
    monitoring, or require auth and give monitoring tooling a
    service-scoped API key. This is a breaking-change-risk-vs-safer-default
    tradeoff the same shape as (1); no default has been chosen.
+
+## Push notifications
+
+The Android app registers a Web Push endpoint, issued by a UnifiedPush
+distributor such as ntfy, at `PUT /api/push/devices/{installation_id}`,
+and the server POSTs encrypted notifications to it. Because a signed-in
+person chooses that URL, it is checked when registered: it must be
+`https`, at most 2048 characters, carry no credentials or fragment, and
+its host must be, or resolve only to, public addresses. Loopback,
+private, link-local, CGNAT, multicast and reserved addresses are refused,
+including their IPv4-in-IPv6 forms.
+
+If your ntfy runs on the same machine or your LAN, set
+`PUSH_ALLOW_PRIVATE_ENDPOINTS=true`. Any signed-in person can then make
+this server POST to internal https services, so turn it on only where
+every account is trusted.
+
+Web Push requests are signed with a VAPID key (RFC 8292). By default it
+is derived from `SECRET_KEY`, so push needs no setup, but rotating
+`SECRET_KEY` also rotates it and every phone must register again. To
+keep it fixed, set `VAPID_PRIVATE_KEY` to a P-256 private key: its 32
+raw bytes in base64url, or a PEM in the environment. Notification
+payloads are encrypted to each device's own keys (RFC 8291), so VAPID
+does not protect their content.
+
+A device goes away when you remove it in Settings, when the API key or
+app session it was registered with is revoked, or when its account is
+deleted.

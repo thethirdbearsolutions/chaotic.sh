@@ -227,3 +227,20 @@ class RevocationTarget(str, Enum):
     GRANT = "grant"
     MEMBER = "member"
     BULK = "bulk"
+
+
+# --- Push notification enums (CHT-1604) ---
+
+class PushTransport(str, Enum):
+    """How the server delivers to a `push_devices` row (CHT-1604).
+
+    WEB_PUSH: standard Web Push (RFC 8030) with VAPID (RFC 8292) and an
+    aes128gcm payload encrypted to the device's keys (RFC 8291), POSTed
+    to the device's endpoint URL. UnifiedPush distributors such as ntfy
+    accept it. The only transport today.
+
+    A later transport (an FCM relay, CHT-1608) is a new member here and
+    nothing else: the column stores the member's name as text, so adding
+    one needs no migration, and `p256dh`/`auth` are nullable in the table
+    for a transport that has no per-device keys."""
+    WEB_PUSH = "web_push"
