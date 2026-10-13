@@ -483,7 +483,7 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
     as `<name>.bak` (0600), and on Linux runs `systemctl --user
     daemon-reload`. Never raises. Leaves the file untouched ("skipped")
     when there is no secret in server.json, no service file, the file
-    cannot be read or parsed, or it disagrees with server.json about any
+    is a symlink or cannot be read or parsed, or it disagrees with server.json about any
     _SERVICE_IDENTITY_KEYS setting. Customisations belong in a systemd
     drop-in (chaotic.service.d/), which is never touched.
     """
@@ -494,6 +494,10 @@ def reconcile_service_file(port: int, host: str, secret_key: str) -> ServiceFile
         return ServiceFileUpdate(
             "skipped", reason="server.json has no secret_key, and inventing one would log everyone out")
     path = get_service_file_path()
+    if path.is_symlink():
+        # install writes through a link; an atomic replace would turn it
+        # into a regular file and strand the real target. Leave it alone.
+        return ServiceFileUpdate("skipped", path, reason=f"{path} is a symlink")
     try:
         current = path.read_text()
     except FileNotFoundError:

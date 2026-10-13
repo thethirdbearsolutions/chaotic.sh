@@ -159,6 +159,23 @@ class TestLinux:
         assert "no service file" in result.reason
         assert not env.path.exists()
 
+    def test_symlinked_unit_is_left_alone(self, env, tmp_path):
+        target = tmp_path / "dotfiles-chaotic.service"
+        target.write_text(_legacy_unit())
+        env.path = tmp_path / "chaotic.service"
+        env.path.symlink_to(target)
+        result = reconcile_service_file(PORT, HOST, SECRET)
+        assert result.status == "skipped" and "symlink" in result.reason
+        assert env.path.is_symlink()
+        assert target.read_text() == _legacy_unit()
+        assert not env.path.with_name("chaotic.service.bak").exists()
+
+    def test_restore_with_the_backup_gone_reports_failure(self, env):
+        env.install(_legacy_unit())
+        result = reconcile_service_file(PORT, HOST, SECRET)
+        result.backup.unlink()
+        assert restore_service_file(result) is False
+
     def test_failed_daemon_reload_still_reports_the_write(self, env):
         env.install(_legacy_unit())
         env.run.side_effect = subprocess.CalledProcessError(1, ["systemctl"])
@@ -280,6 +297,14 @@ class TestDuringUpgrade:
         assert seen == [generate_systemd_service(PORT, SECRET, HOST), old]
         assert path.read_text() == old
         assert "Restored the previous service file" in _flat(result.output)
+
+    def test_rollback_that_cannot_restore_the_unit_says_where_it_is(self, tmp_path):
+        with patch("cli.system.restore_service_file", return_value=False):
+            result, _, path, _ = self._run(tmp_path, _legacy_unit(), health_check=dict(return_value=False))
+        assert result.exit_code == 1
+        out = _flat(result.output)
+        assert "Could not restore the previous service file" in out
+        assert f"{path}.bak" in out.replace(" ", "")  # rich may wrap the long path
 
     def test_macos_upgrade_rewrites_the_plist(self, tmp_path):
         path = tmp_path / "com.chaotic.server.plist"
